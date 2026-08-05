@@ -1,0 +1,25 @@
+{
+	"name": "@earendil-works/pi-web",
+	"version": "0.83.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsgo --noEmit -p tsconfig.json && vite build",
+		"test": "vitest --run",
+		"typecheck": "tsgo --noEmit -p tsconfig.json"
+	},
+	"dependencies": {
+		"@earendil-works/pi-client": "^0.83.0",
+		"@earendil-works/pi-protocol": "^0.83.0",
+		"react": "19.2.8",
+		"react-dom": "19.2.8"
+	},
+	"devDependencies": {
+		"@types/react": "19.2.18",
+		"@types/react-dom": "19.2.4",
+		"@vitejs/plugin-react": "6.0.5",
+		"vite": "8.2.0",
+		"vitest": "4.1.9"
+	}
+}
