@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { Command, EventEnvelope, SessionSnapshot, SessionSummary } from "@earendil-works/pi-protocol";
+import type {
+	Command,
+	EventEnvelope,
+	SessionSnapshot,
+	SessionSummary,
+	TranscriptProgress,
+} from "@earendil-works/pi-protocol";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
 import { SessionEventLog } from "./event-log.ts";
@@ -18,6 +24,8 @@ interface LiveSession {
 	log: SessionEventLog;
 	/** Stable id for progress events belonging to the current agent turn. */
 	currentTurnId?: string;
+	/** Runtime snapshot enriched with the in-flight turn for newly attached clients. */
+	transientSnapshot?: SessionSnapshot;
 }
 
 interface LiveSessionManagerOptions {
@@ -210,8 +218,10 @@ export class LiveSessionManager {
 	): Promise<SessionSnapshot> {
 		live.operationCount += 1;
 		live.currentTurnId = randomUUID();
+		live.transientSnapshot = live.runtime.snapshot();
 		try {
 			await operation();
+			live.transientSnapshot = live.runtime.snapshot();
 			return this.forConnection(await this.broadcastSnapshot(live), connection);
 		} finally {
 			live.currentTurnId = undefined;
@@ -297,9 +307,11 @@ export class LiveSessionManager {
 				turnId,
 				progress: event.progress,
 			});
+			live.transientSnapshot = applyProgress(live.transientSnapshot ?? live.runtime.snapshot(), event.progress);
 			const envelope: EventEnvelope = { type: "event", event: progress };
 			for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
 		} else {
+			live.transientSnapshot = mergeRuntimeSnapshot(live.transientSnapshot, live.runtime.snapshot());
 			void this.broadcastSnapshot(live).catch((error: unknown) => this.options.reportError(error));
 		}
 		this.scheduleMaybeDispose(live);
@@ -317,7 +329,7 @@ export class LiveSessionManager {
 	}
 
 	private async normalizedSnapshot(live: LiveSession): Promise<SessionSnapshot> {
-		const snapshot = await live.runtime.snapshot();
+		const snapshot = live.transientSnapshot ?? live.runtime.snapshot();
 		if (snapshot.id !== live.id) {
 			throw new PiServerError("invalid_request", `Runtime session ID changed from ${live.id} to ${snapshot.id}`);
 		}
@@ -416,4 +428,46 @@ export class LiveSessionManager {
 			if (log.lastActivityAtMs < cutoff) this.eventLogs.delete(id);
 		}
 	}
+}
+
+function mergeRuntimeSnapshot(current: SessionSnapshot | undefined, runtime: SessionSnapshot): SessionSnapshot {
+	if (!current) return runtime;
+	const transcript = [...runtime.transcript];
+	for (const item of current.transcript) {
+		if (transcript.some((candidate) => candidate.id === item.id)) continue;
+		if (
+			(item.role === "assistant" && item.status === "streaming") ||
+			(item.role === "tool" && item.status === "running")
+		) {
+			transcript.push(item);
+		}
+	}
+	return { ...runtime, phase: current.phase === "turn" ? "turn" : runtime.phase, transcript };
+}
+
+function applyProgress(snapshot: SessionSnapshot, progress: TranscriptProgress): SessionSnapshot {
+	if (progress.type === "assistant_delta") {
+		const transcript = snapshot.transcript.map((item) => {
+			if (item.id !== progress.messageId || item.role !== "assistant") return item;
+			const part = item.content[progress.contentIndex];
+			if (progress.kind === "text" && part?.type === "text") {
+				const content = [...item.content];
+				content[progress.contentIndex] = { ...part, text: part.text + progress.delta };
+				return { ...item, content };
+			}
+			if (progress.kind === "thinking" && part?.type === "thinking") {
+				const content = [...item.content];
+				content[progress.contentIndex] = { ...part, thinking: part.thinking + progress.delta };
+				return { ...item, content };
+			}
+			return item;
+		});
+		return { ...snapshot, phase: "turn", transcript };
+	}
+	const item = progress.item;
+	const index = snapshot.transcript.findIndex((candidate) => candidate.id === item.id);
+	if (index === -1) return { ...snapshot, phase: "turn", transcript: [...snapshot.transcript, item] };
+	const transcript = [...snapshot.transcript];
+	transcript[index] = item;
+	return { ...snapshot, phase: "turn", transcript };
 }
