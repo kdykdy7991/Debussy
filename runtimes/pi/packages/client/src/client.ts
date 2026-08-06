@@ -179,7 +179,12 @@ export class PiClient {
 	async #attachSession(sessionId: string): Promise<void> {
 		const previous = this.#state.forgetSessionSnapshot(sessionId);
 		try {
-			await this.#request({ command: "attach", sessionId });
+			const afterSequence = this.#state.getLastSequence(sessionId);
+			const command =
+				afterSequence > 0
+					? ({ command: "resume" as const, sessionId, afterSequence } satisfies Command)
+					: ({ command: "attach" as const, sessionId } satisfies Command);
+			await this.#request(command);
 		} catch (error) {
 			if (previous) this.#state.restoreSessionSnapshot(previous);
 			throw error;

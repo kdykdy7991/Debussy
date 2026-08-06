@@ -257,6 +257,7 @@ export function buildSessionSnapshot(sessionManager: SessionManager, hints: Runt
 		thinkingLevel,
 		attached: false,
 		locked: false,
+		lastSequence: 0,
 		revision: branch.length,
 		transcript,
 		queuedSteer: [],

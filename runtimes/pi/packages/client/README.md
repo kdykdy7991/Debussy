@@ -33,6 +33,12 @@ Calling `dispose()` or `detach()` releases only that lease. A lease rejects comm
 
 `subscribe()` observes authoritative snapshots. `onEvent()` observes protocol events. Both return an unsubscribe function. Structured errors returned by the server are exposed as `PiServerError`.
 
+## Resumable progress
+
+`session_progress` events carry a per-session `sequence` and a stable `turnId` for the agent turn that produced them. `SessionSnapshot.lastSequence` records how far the server's replay buffer has advanced. `PiClient` tracks the highest applied sequence per session and silently drops duplicate events or events already covered by a newer snapshot, so a replayed burst cannot duplicate transcript content.
+
+`PiClient` does not expose a separate resume API. Instead, `acquireSession()` / `attachSession()` automatically send the `resume` command in place of `attach` when the client still has sequence state for that session — i.e. after a reconnection to the same server. The server replays the events the client has not yet seen before returning the authoritative snapshot, so a reattached session shows no gaps and no duplicate characters. When the server's replay buffer has expired (bounded by event count and retention time), the resume result carries `resetRequired: true` and the client replaces its view with the authoritative snapshot.
+
 ## Limits and security
 
 `PiClientOptions.maxFrameLength` bounds inbound and outbound CBOR payloads. Configure matching limits on the client and server. Transports should separately bound queued outbound bytes and preserve send order.

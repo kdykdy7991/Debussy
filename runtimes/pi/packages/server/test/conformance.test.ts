@@ -198,10 +198,17 @@ describe("Unix transport conformance", () => {
 			(message) => message.type === "event" && message.event.type === "session_progress",
 		);
 		backend.latestRuntime("first").emitProgress(progress);
-		expect(await progressEvent).toEqual({
-			type: "event",
-			event: { type: "session_progress", sessionId: "first", progress },
+		const received = await progressEvent;
+		if (received.type !== "event" || received.event.type !== "session_progress") {
+			throw new Error("Expected a session_progress event");
+		}
+		expect(received.event).toMatchObject({
+			type: "session_progress",
+			sessionId: "first",
+			sequence: 1,
+			progress,
 		});
+		expect(typeof received.event.turnId).toBe("string");
 
 		expect(await client.request({ command: "detach", sessionId: "first" })).toMatchObject({
 			ok: true,

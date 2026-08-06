@@ -476,3 +476,25 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 		transition-duration: 0.01ms !important;
 	}
 }
+
+.markdown-body { font: 16px/1.82 var(--font-serif); overflow-wrap: anywhere; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 17px; }
+.markdown-body h1, .markdown-body h2 { margin: 38px 0 19px; padding-bottom: 11px; border-bottom: 1px solid var(--color-text-primary); font: 700 27px/1.3 var(--font-serif); }
+.markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { margin: 30px 0 12px; font: 700 18px/1.4 var(--font-serif); }
+.markdown-body ul, .markdown-body ol { margin: 0 0 17px; padding-left: 28px; }
+.markdown-body li { margin: 5px 0; padding-left: 3px; }
+.markdown-body blockquote { width: 88%; margin: 28px auto; padding: 17px 20px; border-left: 2px solid var(--color-editorial); background: var(--color-bg-subtle); }
+.markdown-body a { color: var(--color-source); text-underline-offset: 3px; }
+.markdown-body code { padding: 0.12em 0.35em; border-radius: 4px; background: var(--color-bg-subtle); font: 0.86em/1.6 var(--font-mono); }
+.markdown-body pre { max-height: 420px; margin: 28px 0; padding: 18px 20px; overflow: auto; border: 1px solid var(--color-text-primary); background: var(--color-text-primary); color: var(--color-bg-content); font: 12px/1.7 var(--font-mono); }
+.markdown-body pre code { padding: 0; background: transparent; color: inherit; font: inherit; }
+.markdown-body table { display: block; width: max-content; max-width: 100%; margin: 22px 0; overflow-x: auto; border-collapse: collapse; font: 13px/1.6 var(--font-sans); }
+.markdown-body th, .markdown-body td { padding: 8px 11px; border: 1px solid var(--color-border-default); text-align: left; }
+.markdown-body th { background: var(--color-bg-subtle); }
+.markdown-body hr { margin: 30px 0; border: 0; border-top: 1px solid var(--color-border-strong); }
+.markdown-body img { max-width: 100%; height: auto; }
+.editorial-shell[data-theme="vision-glass"] .markdown-body, .editorial-shell[data-theme="vision-glass"] .markdown-body h1, .editorial-shell[data-theme="vision-glass"] .markdown-body h2, .editorial-shell[data-theme="vision-glass"] .markdown-body h3 { font-family: var(--font-sans); }
+.editorial-shell[data-theme="vision-glass"] .markdown-body blockquote { border: 0; border-radius: 10px; background: #f5f5f6; }
+.editorial-shell[data-theme="vision-glass"] .markdown-body pre { border-color: var(--color-border-strong); border-radius: 9px; }

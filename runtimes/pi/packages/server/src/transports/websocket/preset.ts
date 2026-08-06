@@ -23,5 +23,7 @@ export function createWebSocketServer(backend: PiSessionBackend, options: WebSoc
 		handshakeTimeoutMs: options.handshakeTimeoutMs,
 		serverId: options.serverId,
 		onError: options.onError,
+		sessionEventLogMaxEvents: options.sessionEventLogMaxEvents,
+		sessionEventLogRetentionMs: options.sessionEventLogRetentionMs,
 	});
 }

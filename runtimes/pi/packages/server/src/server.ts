@@ -28,6 +28,8 @@ import { ServerSnapshotPublisher } from "./snapshots.ts";
 import type { PiServerOptions, PiSessionBackend } from "./types.ts";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
+const DEFAULT_SESSION_EVENT_LOG_MAX_EVENTS = 2_000;
+const DEFAULT_SESSION_EVENT_LOG_RETENTION_MS = 10 * 60 * 1_000;
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
@@ -61,6 +63,8 @@ export class PiServer {
 			disconnect: (connection) => this.disconnect(connection),
 			broadcastServerSnapshot: () => void this.snapshots.broadcast(),
 			reportError: (error) => this.reportError(error),
+			sessionEventLogMaxEvents: resolved.sessionEventLogMaxEvents,
+			sessionEventLogRetentionMs: resolved.sessionEventLogRetentionMs,
 		});
 		this.snapshots = new ServerSnapshotPublisher({
 			serverId: this.id,
@@ -368,7 +372,12 @@ export class PiServer {
 	}
 }
 
-function resolveOptions(options: PiServerOptions): { maxFrameLength: number; handshakeTimeoutMs: number } {
+function resolveOptions(options: PiServerOptions): {
+	maxFrameLength: number;
+	handshakeTimeoutMs: number;
+	sessionEventLogMaxEvents: number;
+	sessionEventLogRetentionMs: number;
+} {
 	if (!Array.isArray(options.listeners)) throw new TypeError("PiServer listeners must be an array");
 	if (options.serverId === "") throw new TypeError("PiServer serverId must not be empty");
 	const maxFrameLength = options.maxFrameLength ?? DEFAULT_MAX_FRAME_LENGTH;
@@ -383,5 +392,13 @@ function resolveOptions(options: PiServerOptions): { maxFrameLength: number; han
 	) {
 		throw new TypeError(`PiServer handshakeTimeoutMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`);
 	}
-	return { maxFrameLength, handshakeTimeoutMs };
+	const sessionEventLogMaxEvents = options.sessionEventLogMaxEvents ?? DEFAULT_SESSION_EVENT_LOG_MAX_EVENTS;
+	if (!Number.isSafeInteger(sessionEventLogMaxEvents) || sessionEventLogMaxEvents <= 0) {
+		throw new TypeError("PiServer sessionEventLogMaxEvents must be a positive safe integer");
+	}
+	const sessionEventLogRetentionMs = options.sessionEventLogRetentionMs ?? DEFAULT_SESSION_EVENT_LOG_RETENTION_MS;
+	if (!Number.isSafeInteger(sessionEventLogRetentionMs) || sessionEventLogRetentionMs <= 0) {
+		throw new TypeError("PiServer sessionEventLogRetentionMs must be a positive safe integer");
+	}
+	return { maxFrameLength, handshakeTimeoutMs, sessionEventLogMaxEvents, sessionEventLogRetentionMs };
 }

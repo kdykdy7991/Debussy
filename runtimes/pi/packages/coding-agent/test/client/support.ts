@@ -65,6 +65,7 @@ export function sessionSnapshot(id: string, overrides: Partial<SessionSnapshot> 
 		thinkingLevel: "off",
 		attached: true,
 		locked: true,
+		lastSequence: 0,
 		revision: 1,
 		transcript: [],
 		queuedSteer: [],

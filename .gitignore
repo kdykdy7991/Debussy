@@ -1,2 +1,8 @@
 .pi-git-backup/
 runtimes/pi/debug-ws.mts
+.venv/
+**/__pycache__/
+.pytest_cache/
+services/voice/.env.local
+services/voice/.venv/
+services/voice/src/pi_voice_service.egg-info/

@@ -17,6 +17,10 @@ export interface PiServerOptions {
 	handshakeTimeoutMs?: number;
 	serverId?: string;
 	onError?: (error: Error) => void;
+	/** Maximum `session_progress` events buffered per session for resume replay. Default 2,000. */
+	sessionEventLogMaxEvents?: number;
+	/** How long buffered progress events are retained for resume replay. Default 10 minutes. */
+	sessionEventLogRetentionMs?: number;
 }
 
 export type MaybePromise<T> = T | Promise<T>;

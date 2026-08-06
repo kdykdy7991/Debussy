@@ -19,5 +19,7 @@ export function createUnixServer(backend: PiSessionBackend, options: UnixServerO
 		handshakeTimeoutMs: options.handshakeTimeoutMs,
 		serverId: options.serverId,
 		onError: options.onError,
+		sessionEventLogMaxEvents: options.sessionEventLogMaxEvents,
+		sessionEventLogRetentionMs: options.sessionEventLogRetentionMs,
 	});
 }

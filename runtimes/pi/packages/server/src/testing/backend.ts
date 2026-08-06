@@ -259,6 +259,7 @@ export class TestSessionBackend implements PiSessionBackend {
 				thinkingLevel,
 				attached: false,
 				locked: false,
+				lastSequence: 0,
 				revision: 0,
 				transcript: [],
 				queuedSteer: [],

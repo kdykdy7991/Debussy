@@ -8,6 +8,8 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { PiConnectionStore } from "./lib/connection-controller.ts";
 import type { SessionBrowserStore } from "./lib/session-controller.ts";
 
@@ -529,65 +531,14 @@ function TranscriptItemView({ item, index }: { item: TranscriptItem; index: numb
 }
 
 function MarkdownText({ text }: { text: string }) {
-	let blockOffset = 0;
-	const blocks = text
-		.split(/(```[\s\S]*?```)/g)
-		.filter(Boolean)
-		.map((value) => {
-			const offset = blockOffset;
-			blockOffset += value.length;
-			return { offset, value };
-		});
+	const fenceCount = text.match(/^```/gm)?.length ?? 0;
+	const markdown = fenceCount % 2 === 0 ? text : `${text}\n\`\`\``;
 	return (
-		<>
-			{blocks.map((block) => {
-				if (block.value.startsWith("```")) {
-					const match = block.value.match(/^```([^\n]*)\n?([\s\S]*?)```$/);
-					return (
-						<figure className="code-exhibit" key={`code-${block.offset}`}>
-							<figcaption>
-								<span>EXHIBIT · {match?.[1] || "CODE"}</span>
-							</figcaption>
-							<pre>
-								<code>{match?.[2] ?? block.value}</code>
-							</pre>
-						</figure>
-					);
-				}
-				let lineOffset = block.offset;
-				const lines = block.value.split("\n").map((value) => {
-					const offset = lineOffset;
-					lineOffset += value.length + 1;
-					return { offset, value };
-				});
-				return (
-					<div className="prose-block" key={`prose-${block.offset}`}>
-						{lines.map((line) => {
-							const trimmed = line.value.trim();
-							const key = `line-${line.offset}`;
-							if (!trimmed) return <span className="paragraph-space" key={key} />;
-							if (trimmed.startsWith("### ")) return <h3 key={key}>{trimmed.slice(4)}</h3>;
-							if (trimmed.startsWith("## ")) return <h2 key={key}>{trimmed.slice(3)}</h2>;
-							if (trimmed.startsWith("# ")) return <h2 key={key}>{trimmed.slice(2)}</h2>;
-							if (trimmed.startsWith("> ")) return <blockquote key={key}>{trimmed.slice(2)}</blockquote>;
-							if (/^[-*] /.test(trimmed))
-								return (
-									<p className="list-line" key={key}>
-										• {trimmed.slice(2)}
-									</p>
-								);
-							if (/^\d+\. /.test(trimmed))
-								return (
-									<p className="list-line" key={key}>
-										{trimmed}
-									</p>
-								);
-							return <p key={key}>{line.value}</p>;
-						})}
-					</div>
-				);
-			})}
-		</>
+		<div className="markdown-body">
+			<ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+				{markdown}
+			</ReactMarkdown>
+		</div>
 	);
 }
 

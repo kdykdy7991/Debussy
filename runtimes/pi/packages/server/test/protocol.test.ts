@@ -72,6 +72,7 @@ function assertValidServerPayload(item: ProtocolTranscriptItem): void {
 					attached: true,
 					locked: true,
 					revision: 1,
+					lastSequence: 0,
 					transcript: [item],
 					queuedSteer: [],
 					queuedSteerCount: 0,

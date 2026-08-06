@@ -73,12 +73,18 @@ describe("App", () => {
 			attached: true,
 			locked: false,
 			revision: 2,
+			lastSequence: 0,
 			transcript: [
 				{ id: "user-1", role: "user", content: [{ type: "text", text: "你好" }], timestamp: 1 },
 				{
 					id: "assistant-1",
 					role: "assistant",
-					content: [{ type: "text", text: "正在回答" }],
+					content: [
+						{
+							type: "text",
+							text: "## 正在回答\n\n包含 **重点** 和 [链接](https://example.com)。\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 完成 |",
+						},
+					],
 					model: { provider: "oneapi", id: "qwen" },
 					timestamp: 2,
 					status: "streaming",
@@ -106,5 +112,9 @@ describe("App", () => {
 		expect(markup).toContain("streaming-indicator");
 		expect(markup).toContain("user-brief");
 		expect(markup).toContain("PI ANALYSIS");
+		expect(markup).toContain("<h2>正在回答</h2>");
+		expect(markup).toContain("<strong>重点</strong>");
+		expect(markup).toContain('<a href="https://example.com">链接</a>');
+		expect(markup).toContain("<table>");
 	});
 });

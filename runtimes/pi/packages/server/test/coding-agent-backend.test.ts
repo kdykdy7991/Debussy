@@ -8,7 +8,13 @@ import {
 	ModelRuntime,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { CommandResult, SessionSnapshot, SessionSummary, TranscriptProgress } from "@earendil-works/pi-protocol";
+import type {
+	CommandResult,
+	ResponseEnvelope,
+	SessionSnapshot,
+	SessionSummary,
+	TranscriptProgress,
+} from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { CodingAgentPiSessionBackend } from "../src/coding-agent/index.ts";
 import type { PiServer } from "../src/index.ts";
@@ -593,6 +599,57 @@ describe("coding-agent backend over WebSocket", () => {
 		expect(attached.ok).toBe(true);
 		if (!attached.ok) return;
 		expect(sessionOf(attached.result).transcript).toEqual(transcript);
+	});
+
+	test("reconnecting with resume replays missed progress and aligns the transcript", async () => {
+		const { backend, faux } = await makeHarness();
+		faux.setResponses([fauxAssistantMessage("reply one")]);
+		const url = await startWireServer(backend);
+
+		const a = await connect(url);
+		await a.hello();
+		const created = await a.request({
+			command: "create",
+			model: { provider: "faux", id: "faux-1" },
+			thinkingLevel: "off",
+		});
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		const sessionId = sessionOf(created.result).id;
+
+		const first = await a.request({ command: "prompt", sessionId, text: "hello" });
+		expect(first.ok).toBe(true);
+		if (!first.ok) return;
+		const seenOnA = a.messages
+			.filter((m) => m.type === "event" && m.event.type === "session_progress")
+			.map((m) => (m as { event: { sequence: number } }).event.sequence);
+		expect(seenOnA.length).toBeGreaterThan(0);
+		const lastOnA = Math.max(...seenOnA);
+		await a.close();
+
+		const b = await connect(url);
+		await b.hello();
+		const afterSequence = Math.max(1, lastOnA - 1);
+		const response = b.next((m) => m.type === "response" && m.id === "resume-1");
+		await b.sendMessage({
+			type: "request",
+			id: "resume-1",
+			request: { command: "resume", sessionId, afterSequence },
+		});
+		const resumed = (await response) as ResponseEnvelope;
+		expect(resumed).toMatchObject({ type: "response", id: "resume-1", ok: true });
+		if (!resumed.ok || resumed.result.command !== "resume") throw new Error("Expected resume result");
+		const replayed = b.messages
+			.filter((m) => m.type === "event" && m.event.type === "session_progress")
+			.map((m) => (m as { event: { sequence: number } }).event.sequence);
+		expect(replayed).toEqual(seenOnA.filter((sequence) => sequence > afterSequence));
+		expect(resumed.result).toMatchObject({ command: "resume", replayedThrough: lastOnA, resetRequired: false });
+
+		const transcript = sessionOf(resumed.result).transcript;
+		const assistant = transcript.at(-1);
+		expect(assistant?.role).toBe("assistant");
+		if (assistant?.role !== "assistant") throw new Error("Expected an assistant transcript item");
+		expect(assistant.content.some((c) => c.type === "text" && c.text === "reply one")).toBe(true);
 	});
 
 	test("two clients with two sessions receive no cross-talk", async () => {

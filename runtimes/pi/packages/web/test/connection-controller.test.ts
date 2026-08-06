@@ -1,5 +1,5 @@
 import type { ConnectionState, ConnectionStateChange } from "@earendil-works/pi-client";
-import type { ServerSnapshot } from "@earendil-works/pi-protocol";
+import { PROTOCOL_VERSION, type ServerSnapshot } from "@earendil-works/pi-protocol";
 import { describe, expect, it, vi } from "vitest";
 import { type PiConnectionClient, PiConnectionController } from "../src/lib/connection-controller.ts";
 
@@ -38,7 +38,7 @@ class FakeClient implements PiConnectionClient {
 
 const SNAPSHOT = {
 	serverId: "server-test",
-	protocolVersion: 1,
+	protocolVersion: PROTOCOL_VERSION,
 	revision: 1,
 	sessions: [],
 	models: [],

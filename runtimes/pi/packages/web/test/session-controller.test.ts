@@ -14,6 +14,7 @@ const SESSION = {
 	thinkingLevel: "medium",
 	attached: true,
 	locked: false,
+	lastSequence: 0,
 	revision: 1,
 	transcript: [],
 	queuedSteer: [],
@@ -163,11 +164,15 @@ describe("SessionController", () => {
 		observed.emitEvent({
 			type: "session_progress",
 			sessionId: SESSION.id,
+			turnId: "turn-1",
+			sequence: 1,
 			progress: { type: "item_started", item: streamingItem },
 		});
 		observed.emitEvent({
 			type: "session_progress",
 			sessionId: SESSION.id,
+			turnId: "turn-1",
+			sequence: 2,
 			progress: {
 				type: "assistant_delta",
 				messageId: streamingItem.id,
@@ -179,6 +184,8 @@ describe("SessionController", () => {
 		observed.emitEvent({
 			type: "session_progress",
 			sessionId: SESSION.id,
+			turnId: "turn-1",
+			sequence: 3,
 			progress: {
 				type: "assistant_delta",
 				messageId: streamingItem.id,

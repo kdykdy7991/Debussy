@@ -18,6 +18,7 @@ import {
 	type ServerMessage,
 	ServerMessageDecoder,
 	type ServerSnapshot,
+	type SessionSnapshot,
 } from "../src/index.ts";
 
 const emptyServerSnapshot: ServerSnapshot = {
@@ -40,22 +41,62 @@ const serverHello: ServerHello = {
 	snapshot: emptyServerSnapshot,
 };
 
+function sessionSnapshotForProtocol(): SessionSnapshot {
+	return {
+		id: "session-1",
+		cwd: "/workspace",
+		createdAt: 1,
+		updatedAt: 1,
+		phase: "idle",
+		model: { provider: "test", id: "model" },
+		thinkingLevel: "off",
+		attached: true,
+		locked: false,
+		lastSequence: 0,
+		revision: 1,
+		transcript: [],
+		queuedSteer: [],
+		queuedSteerCount: 0,
+	};
+}
+
+function progressEvent(sequence: number): unknown {
+	return {
+		type: "event",
+		event: {
+			type: "session_progress",
+			sessionId: "session-1",
+			turnId: "turn-1",
+			sequence,
+			progress: {
+				type: "assistant_delta",
+				messageId: "assistant-1",
+				contentIndex: 0,
+				kind: "text",
+				delta: "hi",
+			},
+		},
+	};
+}
+
 function itemMessage(item: unknown, type: "item_updated" | "item_finished" = "item_finished") {
 	return {
 		type: "event",
 		event: {
 			type: "session_progress",
 			sessionId: "session-1",
+			turnId: "turn-1",
+			sequence: 1,
 			progress: { type, item },
 		},
 	};
 }
 
 describe("protocol validation", () => {
-	test("uses protocol version 1", () => {
-		expect(PROTOCOL_VERSION).toBe(1);
-		expect(isSupportedProtocolVersion(1)).toBe(true);
-		expect(isSupportedProtocolVersion(2)).toBe(false);
+	test("uses protocol version 2", () => {
+		expect(PROTOCOL_VERSION).toBe(2);
+		expect(isSupportedProtocolVersion(2)).toBe(true);
+		expect(isSupportedProtocolVersion(1)).toBe(false);
 		expect(isSupportedProtocolVersion(2.5)).toBe(false);
 	});
 
@@ -120,6 +161,8 @@ describe("protocol validation", () => {
 			event: {
 				type: "session_progress",
 				sessionId: "session-1",
+				turnId: "turn-1",
+				sequence: 1,
 				progress: {
 					type: "item_finished",
 					item: {
@@ -378,5 +421,100 @@ describe("validated framed protocol APIs", () => {
 
 		const oversized = new ClientMessageDecoder({ maxFrameLength: 3 });
 		expect(() => oversized.push(new Uint8Array([0, 0, 0, 4]))).toThrow(ProtocolValidationError);
+	});
+});
+
+describe("protocol v2 resumable progress", () => {
+	test("parses a session_progress event carrying turnId and sequence", () => {
+		const message = progressEvent(1);
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("rejects a session_progress event missing sequence or turnId", () => {
+		const base = { type: "event", event: { type: "session_progress", sessionId: "session-1" } };
+		expect(() => parseServerMessage(base)).toThrow(ProtocolValidationError);
+		expect(() => parseServerMessage({ ...base, event: { ...base.event, turnId: "turn-1" } })).toThrow(
+			ProtocolValidationError,
+		);
+		expect(() => parseServerMessage({ ...base, event: { ...base.event, sequence: 1 } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test.each([
+		["zero", 0],
+		["negative", -1],
+		["fractional", 1.5],
+	] as const)("rejects a %s session_progress sequence", (_label, sequence) => {
+		expect(() => parseServerMessage(progressEvent(sequence))).toThrow(ProtocolValidationError);
+	});
+
+	test("rejects a session_progress event with an unknown field", () => {
+		const message = progressEvent(1) as Record<string, unknown>;
+		(message.event as Record<string, unknown>).extra = true;
+		expect(() => parseServerMessage(message)).toThrow(ProtocolValidationError);
+	});
+
+	test("parses a resume command with a zero afterSequence", () => {
+		const request = {
+			type: "request",
+			id: "request-1",
+			request: { command: "resume", sessionId: "session-1", afterSequence: 0 },
+		};
+		expect(parseClientMessage(request)).toEqual(request);
+	});
+
+	test.each([-1, -2, 1.5])("rejects a resume command with afterSequence %s", (afterSequence) => {
+		expect(() =>
+			parseClientMessage({
+				type: "request",
+				id: "request-1",
+				request: { command: "resume", sessionId: "session-1", afterSequence },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("rejects a resume command with an unknown field", () => {
+		expect(() =>
+			parseClientMessage({
+				type: "request",
+				id: "request-1",
+				request: { command: "resume", sessionId: "session-1", afterSequence: 0, extra: true },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("parses a resume result", () => {
+		const response = {
+			type: "response",
+			id: "request-1",
+			ok: true,
+			result: { command: "resume", session: sessionSnapshotForProtocol(), replayedThrough: 3, resetRequired: false },
+		};
+		expect(parseServerMessage(response)).toEqual(response);
+	});
+
+	test("rejects a resume result without resetRequired", () => {
+		expect(() =>
+			parseServerMessage({
+				type: "response",
+				id: "request-1",
+				ok: true,
+				result: { command: "resume", session: sessionSnapshotForProtocol(), replayedThrough: 3 },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("parses a session snapshot carrying lastSequence", () => {
+		const event = { type: "event", event: { type: "session_snapshot", snapshot: sessionSnapshotForProtocol() } };
+		expect(parseServerMessage(event)).toEqual(event);
+	});
+
+	test("rejects a session snapshot without lastSequence", () => {
+		const snapshot = sessionSnapshotForProtocol() as { lastSequence?: number };
+		delete snapshot.lastSequence;
+		expect(() => parseServerMessage({ type: "event", event: { type: "session_snapshot", snapshot } })).toThrow(
+			ProtocolValidationError,
+		);
 	});
 });

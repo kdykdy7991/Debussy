@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Command, EventEnvelope, SessionSnapshot, SessionSummary } from "@earendil-works/pi-protocol";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
+import { SessionEventLog } from "./event-log.ts";
 import type { CreateSessionOptions, PiSessionBackend, PiSessionRuntime, PiSessionRuntimeEvent } from "./types.ts";
 
 interface LiveSession {
@@ -13,6 +14,10 @@ interface LiveSession {
 	ready: boolean;
 	terminal: boolean;
 	disposing?: Promise<void>;
+	/** Bounded per-session replay buffer; survives runtime disposal until expired. */
+	log: SessionEventLog;
+	/** Stable id for progress events belonging to the current agent turn. */
+	currentTurnId?: string;
 }
 
 interface LiveSessionManagerOptions {
@@ -23,6 +28,8 @@ interface LiveSessionManagerOptions {
 	disconnect: (connection: ConnectionState) => Promise<void>;
 	broadcastServerSnapshot: () => void;
 	reportError: (error: unknown) => void;
+	sessionEventLogMaxEvents: number;
+	sessionEventLogRetentionMs: number;
 }
 
 function toSummary(snapshot: SessionSnapshot): SessionSummary {
@@ -44,9 +51,16 @@ export class LiveSessionManager {
 	private readonly options: LiveSessionManagerOptions;
 	private readonly liveSessions = new Map<string, LiveSession>();
 	private readonly openingSessions = new Map<string, Promise<LiveSession>>();
+	private readonly eventLogs = new Map<string, SessionEventLog>();
+	private readonly eventLogSweepTimer: ReturnType<typeof setInterval>;
 
 	constructor(options: LiveSessionManagerOptions) {
 		this.options = options;
+		// Expire event logs for sessions that were disposed long ago so an idle
+		// server does not accumulate unbounded per-session replay buffers.
+		const sweepIntervalMs = Math.max(Math.floor(options.sessionEventLogRetentionMs / 2), 1_000);
+		this.eventLogSweepTimer = setInterval(() => this.sweepEventLogs(), sweepIntervalMs);
+		this.eventLogSweepTimer.unref();
 	}
 
 	async executeCommand(connection: ConnectionState, command: Command) {
@@ -91,6 +105,18 @@ export class LiveSessionManager {
 					this.options.broadcastServerSnapshot();
 				}
 				return { command: "detach" as const, sessionId: command.sessionId };
+			}
+			case "resume": {
+				const live = await this.acquire(command.sessionId, () =>
+					this.options.backend.openSession(command.sessionId),
+				);
+				await this.attach(connection, live);
+				const { replayedThrough, resetRequired } = await live.log.replay(command.afterSequence, (event) =>
+					this.options.sendMessage(connection, { type: "event", event }),
+				);
+				const session = this.forConnection(await this.broadcastSnapshot(live), connection);
+				this.options.broadcastServerSnapshot();
+				return { command: "resume" as const, session, replayedThrough, resetRequired };
 			}
 			case "prompt": {
 				const live = this.requireAttached(connection, command.sessionId);
@@ -157,6 +183,8 @@ export class LiveSessionManager {
 	}
 
 	async close(): Promise<void> {
+		clearInterval(this.eventLogSweepTimer);
+		this.eventLogs.clear();
 		const openingResults = await Promise.allSettled([...this.openingSessions.values()]);
 		for (const result of openingResults) {
 			if (result.status === "rejected") this.options.reportError(result.reason);
@@ -181,10 +209,12 @@ export class LiveSessionManager {
 		operation: () => Promise<void>,
 	): Promise<SessionSnapshot> {
 		live.operationCount += 1;
+		live.currentTurnId = randomUUID();
 		try {
 			await operation();
 			return this.forConnection(await this.broadcastSnapshot(live), connection);
 		} finally {
+			live.currentTurnId = undefined;
 			live.operationCount -= 1;
 			this.scheduleMaybeDispose(live);
 		}
@@ -236,6 +266,7 @@ export class LiveSessionManager {
 				operationCount: 0,
 				ready: false,
 				terminal: false,
+				log: this.eventLogFor(id),
 			};
 			live.unsubscribe = runtime.subscribe((event) => this.handleRuntimeEvent(live!, event));
 			this.liveSessions.set(id, live);
@@ -258,10 +289,15 @@ export class LiveSessionManager {
 			return;
 		}
 		if (event.type === "progress") {
-			const envelope: EventEnvelope = {
-				type: "event",
-				event: { type: "session_progress", sessionId: live.id, progress: event.progress },
-			};
+			const turnId = live.currentTurnId ?? randomUUID();
+			live.currentTurnId = turnId;
+			const progress = live.log.append({
+				type: "session_progress",
+				sessionId: live.id,
+				turnId,
+				progress: event.progress,
+			});
+			const envelope: EventEnvelope = { type: "event", event: progress };
 			for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
 		} else {
 			void this.broadcastSnapshot(live).catch((error: unknown) => this.options.reportError(error));
@@ -290,6 +326,7 @@ export class LiveSessionManager {
 			phase: live.runtime.getPhase(),
 			attached: live.connections.size > 0,
 			locked: true,
+			lastSequence: live.log.lastSequence,
 		};
 	}
 
@@ -349,5 +386,34 @@ export class LiveSessionManager {
 		})();
 		await live.disposing;
 		if (!this.options.isClosing()) this.options.broadcastServerSnapshot();
+	}
+
+	/**
+	 * Get or create the replay log for a session. A log that already exists
+	 * (because an earlier runtime was disposed but its events are still within
+	 * the retention window) is adopted as-is so sequences stay contiguous across
+	 * reopens.
+	 */
+	private eventLogFor(id: string): SessionEventLog {
+		this.sweepEventLogs();
+		let log = this.eventLogs.get(id);
+		if (!log) {
+			log = new SessionEventLog({
+				maxEvents: this.options.sessionEventLogMaxEvents,
+				retentionMs: this.options.sessionEventLogRetentionMs,
+			});
+			this.eventLogs.set(id, log);
+		}
+		return log;
+	}
+
+	/** Drop logs whose sessions are no longer live and have been idle too long. */
+	private sweepEventLogs(): void {
+		if (this.eventLogs.size === 0) return;
+		const cutoff = Date.now() - this.options.sessionEventLogRetentionMs;
+		for (const [id, log] of this.eventLogs) {
+			if (this.liveSessions.has(id)) continue;
+			if (log.lastActivityAtMs < cutoff) this.eventLogs.delete(id);
+		}
 	}
 }

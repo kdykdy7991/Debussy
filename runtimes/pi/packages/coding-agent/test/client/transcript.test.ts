@@ -18,6 +18,7 @@ function snapshot(revision: number, text = "saved"): SessionSnapshot {
 		thinkingLevel: "off",
 		attached: true,
 		locked: true,
+		lastSequence: 0,
 		revision,
 		transcript: [
 			{

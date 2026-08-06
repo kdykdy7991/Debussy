@@ -4,6 +4,12 @@ import type { ListenerErrorHandler, Unsubscribe } from "./types.ts";
 
 export class ClientState {
 	readonly #sessionSnapshots = new Map<string, SessionSnapshot>();
+	/**
+	 * Highest `session_progress` sequence applied per session. Kept across
+	 * reconnects so the client can resume from the last acknowledged position and
+	 * drop events it has already seen or that a newer snapshot already covers.
+	 */
+	readonly #sessionSequences = new Map<string, number>();
 	readonly #attachedSessionIds = new Set<string>();
 	readonly #snapshotListeners = new Set<(snapshot: ServerSnapshot) => void>();
 	readonly #eventListeners = new Set<(event: ServerEvent) => void>();
@@ -24,6 +30,12 @@ export class ClientState {
 		this.#snapshot = undefined;
 		this.#sessionSnapshots.clear();
 		this.#attachedSessionIds.clear();
+		// Per-session sequences survive a reconnect so the client can resume.
+	}
+
+	/** Last acknowledged progress sequence for a session; 0 when none have been seen. */
+	getLastSequence(sessionId: string): number {
+		return this.#sessionSequences.get(sessionId) ?? 0;
 	}
 
 	clearAttachments(): void {
@@ -86,10 +98,17 @@ export class ClientState {
 	}
 
 	applyEvent(event: ServerEvent): void {
+		if (event.type === "session_progress") {
+			const last = this.#sessionSequences.get(event.sessionId) ?? 0;
+			// Drop events already applied directly or covered by a newer snapshot.
+			if (event.sequence <= last) return;
+			this.#sessionSequences.set(event.sessionId, event.sequence);
+		}
 		if (event.type === "server_snapshot") this.applyServerSnapshot(event.snapshot);
 		if (event.type === "session_snapshot") this.#applySessionSnapshot(event.snapshot);
 		if (event.type === "session_removed") {
 			this.#sessionSnapshots.delete(event.sessionId);
+			this.#sessionSequences.delete(event.sessionId);
 			this.#attachedSessionIds.delete(event.sessionId);
 		}
 		this.#notify(this.#eventListeners, event);
@@ -99,6 +118,9 @@ export class ClientState {
 
 	applyServerSnapshot(snapshot: ServerSnapshot): void {
 		if (this.#snapshot && snapshot.revision < this.#snapshot.revision) return;
+		// A new server instance has no memory of prior sessions or their
+		// sequences, so forget what we knew and resume fresh.
+		if (this.#snapshot && this.#snapshot.serverId !== snapshot.serverId) this.#sessionSequences.clear();
 		this.#snapshot = snapshot;
 		this.#attachedSessionIds.clear();
 		for (const session of snapshot.sessions) if (session.attached) this.#attachedSessionIds.add(session.id);
@@ -108,6 +130,7 @@ export class ClientState {
 	#applySessionSnapshot(snapshot: SessionSnapshot, force = false): void {
 		const current = this.#sessionSnapshots.get(snapshot.id);
 		if (!force && current && snapshot.revision < current.revision) return;
+		this.#sessionSequences.set(snapshot.id, snapshot.lastSequence);
 		this.#sessionSnapshots.set(snapshot.id, snapshot);
 		if (snapshot.attached) this.#attachedSessionIds.add(snapshot.id);
 		else this.#attachedSessionIds.delete(snapshot.id);

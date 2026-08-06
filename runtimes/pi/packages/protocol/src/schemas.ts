@@ -1,9 +1,13 @@
 import Type, { type Static } from "typebox";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 const IdSchema = Type.String({ minLength: 1 });
 const TimestampSchema = Type.Integer({ minimum: 0 });
+/** Monotonic sequence assigned by the server to each `session_progress` event. Starts at 1. */
+const SequenceSchema = Type.Integer({ minimum: 1 });
+/** A client-reported or snapshot-reported sequence position; 0 means "no events yet". */
+const SequencePositionSchema = Type.Integer({ minimum: 0 });
 const StrictObject = <const T extends Parameters<typeof Type.Object>[0]>(properties: T) =>
 	Type.Object(properties, { additionalProperties: false });
 
@@ -246,6 +250,7 @@ const SessionSummaryProperties = {
 export const SessionSummarySchema = StrictObject(SessionSummaryProperties);
 export const SessionSnapshotSchema = StrictObject({
 	...SessionSummaryProperties,
+	lastSequence: SequencePositionSchema,
 	revision: Type.Integer({ minimum: 0 }),
 	transcript: Type.Array(TranscriptItemSchema),
 	queuedSteer: Type.Array(UserTranscriptItemSchema),
@@ -293,6 +298,11 @@ export const CreateCommandSchema = StrictObject({
 });
 export const AttachCommandSchema = StrictObject({ command: Type.Literal("attach"), sessionId: IdSchema });
 export const DetachCommandSchema = StrictObject({ command: Type.Literal("detach"), sessionId: IdSchema });
+export const ResumeCommandSchema = StrictObject({
+	command: Type.Literal("resume"),
+	sessionId: IdSchema,
+	afterSequence: SequencePositionSchema,
+});
 export const PromptCommandSchema = StrictObject({ command: Type.Literal("prompt"), ...PromptPayloadProperties });
 export const SteerCommandSchema = StrictObject({ command: Type.Literal("steer"), ...PromptPayloadProperties });
 export const AbortCommandSchema = StrictObject({ command: Type.Literal("abort"), sessionId: IdSchema });
@@ -311,6 +321,7 @@ export const CommandSchema = Type.Union([
 	CreateCommandSchema,
 	AttachCommandSchema,
 	DetachCommandSchema,
+	ResumeCommandSchema,
 	PromptCommandSchema,
 	SteerCommandSchema,
 	AbortCommandSchema,
@@ -319,6 +330,8 @@ export const CommandSchema = Type.Union([
 ]);
 export type Command = Static<typeof CommandSchema>;
 export type CommandName = Command["command"];
+export type ResumeCommand = Static<typeof ResumeCommandSchema>;
+export type ResumeResult = Static<typeof ResumeResultSchema>;
 
 export const CreateResultSchema = StrictObject({
 	command: Type.Literal("create"),
@@ -348,6 +361,12 @@ export const SetThinkingResultSchema = StrictObject({
 	command: Type.Literal("set_thinking"),
 	session: SessionSnapshotSchema,
 });
+export const ResumeResultSchema = StrictObject({
+	command: Type.Literal("resume"),
+	session: SessionSnapshotSchema,
+	replayedThrough: SequencePositionSchema,
+	resetRequired: Type.Boolean(),
+});
 
 export const ListResultSchema = StrictObject({
 	command: Type.Literal("list"),
@@ -362,6 +381,7 @@ export const CommandResultSchema = Type.Union([
 	CreateResultSchema,
 	AttachResultSchema,
 	DetachResultSchema,
+	ResumeResultSchema,
 	PromptResultSchema,
 	SteerResultSchema,
 	AbortResultSchema,
@@ -392,14 +412,19 @@ export type RequestEnvelope = Static<typeof RequestEnvelopeSchema>;
 export const ClientMessageSchema = Type.Union([ClientHelloSchema, RequestEnvelopeSchema]);
 export type ClientMessage = Static<typeof ClientMessageSchema>;
 
+export const SessionProgressEventSchema = StrictObject({
+	type: Type.Literal("session_progress"),
+	sessionId: IdSchema,
+	turnId: IdSchema,
+	sequence: SequenceSchema,
+	progress: TranscriptProgressSchema,
+});
+export type SessionProgressEvent = Static<typeof SessionProgressEventSchema>;
+
 export const ServerEventSchema = Type.Union([
 	StrictObject({ type: Type.Literal("server_snapshot"), snapshot: ServerSnapshotSchema }),
 	StrictObject({ type: Type.Literal("session_snapshot"), snapshot: SessionSnapshotSchema }),
-	StrictObject({
-		type: Type.Literal("session_progress"),
-		sessionId: IdSchema,
-		progress: TranscriptProgressSchema,
-	}),
+	SessionProgressEventSchema,
 	StrictObject({ type: Type.Literal("session_removed"), sessionId: IdSchema }),
 ]);
 export type ServerEvent = Static<typeof ServerEventSchema>;

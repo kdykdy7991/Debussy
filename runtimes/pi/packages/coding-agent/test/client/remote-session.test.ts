@@ -32,6 +32,8 @@ describe("RemoteSession operations", () => {
 			event: {
 				type: "session_progress",
 				sessionId: "session-1",
+				turnId: "turn-1",
+				sequence: 1,
 				progress: {
 					type: "assistant_delta",
 					messageId: "assistant-1",

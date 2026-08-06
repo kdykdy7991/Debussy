@@ -187,10 +187,16 @@ describe("PiServer Unix integration", () => {
 		const progressMessage = await attachedClient.next(
 			(message) => message.type === "event" && message.event.type === "session_progress",
 		);
-		expect(progressMessage).toEqual({
-			type: "event",
-			event: { type: "session_progress", sessionId: "session-1", progress },
+		if (progressMessage.type !== "event" || progressMessage.event.type !== "session_progress") {
+			throw new Error("Expected a session_progress event");
+		}
+		expect(progressMessage.event).toMatchObject({
+			type: "session_progress",
+			sessionId: "session-1",
+			sequence: 1,
+			progress,
 		});
+		expect(typeof progressMessage.event.turnId).toBe("string");
 		expect(
 			unattachedClient.messages.some(
 				(message) => message.type === "event" && message.event.type === "session_progress",
