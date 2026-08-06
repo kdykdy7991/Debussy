@@ -27,6 +27,7 @@
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"diff:model-catalog": "node scripts/diff-model-catalog.mjs",
 		"dev:web": "bash scripts/start-web-dev.sh",
+		"smoke:p0": "tsx scripts/smoke-p0.ts",
 		"eval": "npm run eval --workspace=@earendil-works/pi-evals --",
 		"check:model-catalog": "node scripts/publish-model-catalog.mjs --input .artifacts/model-catalog --dry-run",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",

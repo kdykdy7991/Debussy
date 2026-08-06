@@ -26,7 +26,7 @@ export OPENROUTER_API_KEY="<your-key>"
 export GEMINI_API_KEY="<your-key>"
 ```
 
-只需配置实际使用的 Provider。也可以复用 `~/.pi/agent/auth.json` 中由 Pi 登录流程保存的凭据。不要把 API Key 写入仓库、启动脚本或 `.env` 提交到 Git。
+只需配置实际使用的 Provider。也可以复用 `~/.pi/agent/auth.json` 中由 Pi 登录流程保存的凭据。完整 env 变量清单与 `auth.json` 格式见 [§9 真实模型联调凭据清单](#9-真实模型联调凭据清单)。不要把 API Key 写入仓库、启动脚本或 `.env` 提交到 Git。
 
 ## 3. 配置本地 WebSocket 认证
 
@@ -109,6 +109,8 @@ npm run dev --workspace=@earendil-works/pi-web -- --host 127.0.0.1
 
 ## 6. 联调验收
 
+> 没有模型凭据时，先用 [§8 P0 smoke](#8-p0-smoke无模型凭据可靠性验收) 无凭据验证整条可靠流式链路，再走下面的真实模型验收。
+
 打开 `http://127.0.0.1:5173`，依次验证：
 
 1. 点击连接，状态变为“已连接”。
@@ -151,3 +153,71 @@ npm run dev --workspace=@earendil-works/pi-web -- --host 127.0.0.1
 ### 端口已被占用
 
 在 `.env.web.local` 中修改 `PI_WEB_UI_PORT` 和 `PI_WEB_SERVER_PORT`，启动脚本会同步 WebSocket URL 与 Origin。
+
+## 8. P0 smoke（无模型凭据可靠性验收）
+
+不需要配置任何模型凭据，用 faux provider 端到端跑一遍协议 v2 的可靠流式链路。在仓库根目录运行：
+
+```bash
+npm run smoke:p0
+```
+
+它启动一个真实的 `PiServer` WebSocket 服务（`CodingAgentPiSessionBackend` + faux provider，临时目录，不碰任何真实模型 API），并用真实客户端库 `@earendil-works/pi-client`（与前端 `packages/web` 共用同一套库）驱动以下场景：
+
+1. 首连：hello 握手，协议版本 = 2。
+2. 流式 delta：prompt 产生 text / thinking 的 `assistant_delta` 事件。
+3. 断线：客户端 A 的 WebSocket 被 terminate（模拟网络中断）。
+4. 自动 resume：A 重连后 `attachSession` 自动改发 `resume`，服务端重放漏掉的事件。
+5. 重复事件去重：A 的事件流严格递增、无重复 sequence。
+6. 最终快照一致性：A 恢复后的 transcript / lastSequence 与从未掉线的客户端 B 完全一致。
+
+全部通过时输出 `P0 smoke: 8/8 通过 ✅`；任一步失败以非 0 退出码结束。改动协议后先重建再跑（server/client 的 tsconfig.build.json 解析 dist/）：
+
+```bash
+npm run build --workspace=@earendil-works/pi-protocol
+npm run smoke:p0
+```
+
+smoke 脚本：`scripts/smoke-p0.ts`（已纳入仓库根 `tsconfig.json` 的类型检查，`npm run check` 会覆盖它）。
+
+## 9. 真实模型联调凭据清单
+
+`npm run smoke:p0`（§8）用 faux provider，不需要真实凭据。要走真实模型联调，需为要用的 Provider 配置凭据，两种方式任选其一。
+
+### 方式 A：环境变量（启动后端的同一终端内 export）
+
+后端继承启动进程的环境变量，至少配置一个实际使用的 Provider：
+
+| Provider | 环境变量 |
+| --- | --- |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Gemini | `GEMINI_API_KEY` |
+
+其他 Provider 的变量名见 `packages/ai/src/env-api-keys.ts`（如 `DEEPSEEK_API_KEY`、`GROQ_API_KEY`、`MISTRAL_API_KEY` 等）。
+
+### 方式 B：`~/.pi/agent/auth.json`（agentDir 下的凭据文件）
+
+形状为 `Record<providerId, 凭据>`：
+
+```json
+{
+	"anthropic": { "type": "api_key", "key": "sk-ant-..." },
+	"openrouter": { "type": "oauth", "refresh": "...", "access": "...", "expires": 0 }
+}
+```
+
+- API Key 凭据：`{ "type": "api_key", "key": "<key>" }`
+- OAuth 凭据：`{ "type": "oauth", "refresh": "<refresh-token>", "access": "<access-token>", "expires": <unix-ms> }`
+
+也可以直接复用 Pi 登录流程（`pi auth login`）写入的凭据，不必手写。
+
+### 验证
+
+1. 启动服务后，hello 快照 / 前端模型列表应包含对应 Provider 的模型。
+2. 最可靠的验证是发一条真实 prompt 并确认正常返回——模型列表不一定精确反映可用性。
+3. 不要把 API Key 写入仓库、启动脚本或 `.env` 提交到 Git（`.env.web.local` 已被忽略，只放端口 / token 配置）。
+
+
+2026-08-07 真实模型联调结果：已完成。用户确认真实对话、流式输出、停止、刷新恢复及消息顺序均正常。
