@@ -91,7 +91,6 @@ export class SessionController implements SessionBrowserStore {
 	async abort(): Promise<void> {
 		const handle = this.#requireActiveHandle();
 		if (this.#snapshot.activeSession?.phase === "idle") return;
-		if (this.#snapshot.submitting) throw new Error("正在提交上一项操作");
 		await this.#runSessionAction(handle, () => handle.abort());
 	}
 

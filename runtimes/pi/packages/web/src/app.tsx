@@ -313,12 +313,7 @@ export function App({ connection, sessions }: AppProps) {
 							<div className="composer-submit">
 								<span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
 								{running ? (
-									<button
-										className="stop-button"
-										type="button"
-										onClick={abort}
-										disabled={sessionSnapshot.submitting}
-									>
+									<button className="stop-button" type="button" onClick={abort}>
 										<i aria-hidden="true" />
 										停止
 									</button>

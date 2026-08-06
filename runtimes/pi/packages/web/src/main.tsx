@@ -23,6 +23,8 @@ const connection = createPiConnectionController(
 );
 const sessions = new SessionController(connection.client);
 
+void connection.connect().catch(() => {});
+
 createRoot(root).render(
 	<StrictMode>
 		<App connection={connection} sessions={sessions} />
