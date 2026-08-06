@@ -41,6 +41,7 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	private readonly listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
 	private activeOperation = false;
 	private unsubscribeAgent: (() => void) | undefined;
+	private unsubscribeQueue: (() => void) | undefined;
 	private readonly agentSession: AgentSession;
 	private readonly onDisposed: (() => void) | undefined;
 	private disposed = false;
@@ -53,7 +54,7 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 		});
 		// Mirror queue updates as snapshot ticks so the UI can show pending
 		// steering messages without waiting for a turn boundary.
-		agentSession.subscribe((event) => {
+		this.unsubscribeQueue = agentSession.subscribe((event) => {
 			if (event.type === "queue_update" && event.steering.length > 0) {
 				this.emitSnapshot();
 			}
@@ -125,6 +126,8 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 		this.disposed = true;
 		this.unsubscribeAgent?.();
 		this.unsubscribeAgent = undefined;
+		this.unsubscribeQueue?.();
+		this.unsubscribeQueue = undefined;
 		try {
 			this.agentSession.dispose();
 		} catch (error) {

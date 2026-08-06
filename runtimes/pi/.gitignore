@@ -14,6 +14,7 @@ packages/ai/src/providers/.model-generation-*/
 
 # Environment
 .env
+.env.web.local
 
 # Editor files
 .vscode/

@@ -16,6 +16,7 @@
  * graceful shutdown that drains live session runtimes before exit.
  */
 import { existsSync, mkdirSync } from "node:fs";
+import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
@@ -29,6 +30,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8765;
 const DEFAULT_PATH = "/api/pi/v1/ws";
 const DEFAULT_AGENT_DIR_NAME = ".pi/agent";
+const AUTH_PROTOCOL_PREFIX = "pi-auth.";
+const WEB_TOKEN_REGEX = /^[A-Za-z0-9._~-]+$/;
 
 /** Options accepted by `startWebServer`. */
 export interface StartWebServerOptions {
@@ -50,6 +53,10 @@ export interface StartWebServerOptions {
 	allowedOrigins?: readonly string[];
 	/** Forwarded to the WebSocket listener; useful for proxy hosts. */
 	allowedHosts?: readonly string[];
+	/** Additional synchronous authorization check performed before upgrade. */
+	authorizeUpgrade?: (request: IncomingMessage) => boolean;
+	/** Local WebSocket token expected in the `pi-auth.<token>` subprotocol. */
+	webToken?: string;
 	/** Override the protocol frame length limit. */
 	maxFrameLength?: number;
 	/** Override the per-connection pending byte budget. */
@@ -128,7 +135,8 @@ interface ResolvedOptions {
 	allowedCwds: readonly string[];
 }
 
-function resolveOptions(options: StartWebServerOptions): ResolvedOptions {
+/** @internal Exported for configuration regression tests. */
+export function resolveOptions(options: StartWebServerOptions): ResolvedOptions {
 	const cwd = options.cwd ? resolveAbsolute(options.cwd) : resolveAbsolute(process.cwd());
 	const agentDir = options.agentDir
 		? resolveAbsolute(options.agentDir)
@@ -158,7 +166,15 @@ function resolveOptions(options: StartWebServerOptions): ResolvedOptions {
 		throw new PiServerError("invalid_request", `WebSocket path must start with /: ${path}`);
 	}
 
-	const allowedCwds = (options.allowedCwds ?? [cwd]).map((entry) => resolveAbsolute(entry));
+	const allowedCwds = (options.allowedCwds ?? [cwd]).map((entry) => (entry === "*" ? entry : resolveAbsolute(entry)));
+	const allowedOrigins = options.allowedOrigins ?? ["http://127.0.0.1:*", "http://localhost:*"];
+	if (options.webToken !== undefined && !WEB_TOKEN_REGEX.test(options.webToken)) {
+		throw new PiServerError(
+			"invalid_request",
+			"Web token must contain only alphanumeric characters, dot, underscore, tilde, or hyphen",
+		);
+	}
+	const authorizeUpgrade = createUpgradeAuthorization(options.webToken, options.authorizeUpgrade);
 
 	return {
 		backend: {
@@ -171,8 +187,9 @@ function resolveOptions(options: StartWebServerOptions): ResolvedOptions {
 			host,
 			port,
 			path,
-			allowedOrigins: options.allowedOrigins,
+			allowedOrigins,
 			allowedHosts: options.allowedHosts,
+			authorizeUpgrade,
 			maxFrameLength: options.maxFrameLength,
 			maxPendingBytes: options.maxPendingBytes,
 			onError: options.onError,
@@ -183,6 +200,18 @@ function resolveOptions(options: StartWebServerOptions): ResolvedOptions {
 		agentDir,
 		sessionDir,
 		allowedCwds,
+	};
+}
+
+function createUpgradeAuthorization(
+	webToken: string | undefined,
+	additionalAuthorization: ((request: IncomingMessage) => boolean) | undefined,
+): ((request: IncomingMessage) => boolean) | undefined {
+	if (webToken === undefined) return additionalAuthorization;
+	return (request) => {
+		const protocols = request.headers["sec-websocket-protocol"]?.split(",").map((protocol) => protocol.trim());
+		if (!protocols?.includes(`${AUTH_PROTOCOL_PREFIX}${webToken}`)) return false;
+		return additionalAuthorization?.(request) ?? true;
 	};
 }
 

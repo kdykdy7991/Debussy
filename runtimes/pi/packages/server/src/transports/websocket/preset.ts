@@ -11,6 +11,7 @@ export function createWebSocketServer(backend: PiSessionBackend, options: WebSoc
 		path: options.path,
 		allowedOrigins: options.allowedOrigins,
 		allowedHosts: options.allowedHosts,
+		authorizeUpgrade: options.authorizeUpgrade,
 		maxFrameLength: options.maxFrameLength,
 		maxPendingBytes: options.maxPendingBytes,
 		gracefulCloseTimeoutMs: options.gracefulCloseTimeoutMs,

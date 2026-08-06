@@ -1,5 +1,5 @@
 import type { PiSessionHandle } from "@earendil-works/pi-client";
-import type { SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { AssistantTranscriptItem, ServerEvent, SessionSnapshot } from "@earendil-works/pi-protocol";
 import { describe, expect, it, type Mock, vi } from "vitest";
 import { type PiSessionClient, SessionController } from "../src/lib/session-controller.ts";
 
@@ -42,8 +42,10 @@ function createHandle(snapshot: SessionSnapshot): PiSessionHandle {
 function createObservedHandle(snapshot: SessionSnapshot): {
 	handle: PiSessionHandle;
 	emit(next: SessionSnapshot): void;
+	emitEvent(event: ServerEvent): void;
 } {
 	let listener: ((next: SessionSnapshot) => void) | undefined;
+	let eventListener: ((event: ServerEvent) => void) | undefined;
 	return {
 		handle: {
 			...createHandle(snapshot),
@@ -53,8 +55,15 @@ function createObservedHandle(snapshot: SessionSnapshot): {
 					listener = undefined;
 				};
 			},
+			onEvent: (nextListener) => {
+				eventListener = nextListener;
+				return () => {
+					eventListener = undefined;
+				};
+			},
 		},
 		emit: (next) => listener?.(next),
+		emitEvent: (event) => eventListener?.(event),
 	};
 }
 
@@ -134,6 +143,64 @@ describe("SessionController", () => {
 
 		expect(controller.getSnapshot().activeSession).toBe(streaming);
 		expect(controller.getSnapshot().activeSession?.transcript).toHaveLength(1);
+	});
+
+	it("merges assistant progress until an authoritative snapshot arrives", async () => {
+		const observed = createObservedHandle(SESSION);
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client);
+		await controller.selectSession(SESSION.id);
+		const streamingItem = {
+			id: "assistant-1",
+			role: "assistant",
+			content: [],
+			model: SESSION.model,
+			timestamp: 3,
+			status: "streaming",
+		} satisfies AssistantTranscriptItem;
+
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			progress: { type: "item_started", item: streamingItem },
+		});
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			progress: {
+				type: "assistant_delta",
+				messageId: streamingItem.id,
+				contentIndex: 0,
+				kind: "text",
+				delta: "流式内容",
+			},
+		});
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			progress: {
+				type: "assistant_delta",
+				messageId: streamingItem.id,
+				contentIndex: 0,
+				kind: "text",
+				delta: "持续追加",
+			},
+		});
+
+		const transient = controller.getSnapshot().activeSession;
+		expect(transient?.phase).toBe("turn");
+		expect(transient?.transcript[0]?.content[0]).toEqual({ type: "text", text: "流式内容持续追加" });
+
+		const authoritative = {
+			...SESSION,
+			revision: 2,
+			transcript: [
+				{ ...streamingItem, content: [{ type: "text", text: "最终内容" }], status: "complete", stopReason: "stop" },
+			],
+		} satisfies SessionSnapshot;
+		observed.emit(authoritative);
+		expect(controller.getSnapshot().activeSession).toBe(authoritative);
 	});
 
 	it("sends an idle session message as a prompt", async () => {

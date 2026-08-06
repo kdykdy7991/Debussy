@@ -1,3 +1,4 @@
+import type { IncomingMessage } from "node:http";
 import type { PiServerOptions } from "../../types.ts";
 
 export interface WebSocketListenerOptions {
@@ -18,6 +19,8 @@ export interface WebSocketListenerOptions {
 	 * Defaults to [host, "localhost", "127.0.0.1", "::1"].
 	 */
 	allowedHosts?: readonly string[];
+	/** Additional synchronous authorization check performed before upgrade. */
+	authorizeUpgrade?: (request: IncomingMessage) => boolean;
 	/** Maximum accepted WebSocket message payload. Defaults to DEFAULT_MAX_FRAME_LENGTH. */
 	maxFrameLength?: number;
 	/** Maximum framed bytes queued per connection before a slow peer is disconnected. */

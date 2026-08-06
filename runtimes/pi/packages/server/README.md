@@ -41,6 +41,8 @@ await server.start();
 
 `PiServer` composes transport listeners through the `PiServerListener` interface. Each listener must complete any transport-specific authentication and authorization before passing a connection to `PiServer`. For example, a WebSocket listener can validate credentials during the HTTP upgrade, while the Unix listener relies on socket filesystem permissions. The Unix submodule exports the `createUnixListener()` building block and `createUnixServer()` preset, keeping the common case concise without coupling the primary server to Unix sockets. The listener uses length-prefixed CBOR messages from `@earendil-works/pi-protocol`. It does not yet replace the legacy JSONL IPC control plane, child-process supervisor, standalone `server` CLI, or Radius presence integration.
 
+The WebSocket listener accepts an `authorizeUpgrade(request)` callback for application-specific cookie or proxy authentication. `startWebServer()` defaults its Origin allowlist to loopback HTTP origins; deployments with another browser origin must set `allowedOrigins` explicitly. Host and Origin checks are defense in depth and do not replace authentication when the server is exposed beyond a trusted local machine.
+
 ## Transport testing
 
 Custom transports can use `@earendil-works/pi-server/testing` for deterministic protocol conformance tests. It exports `createTestServer()`, `TestSessionBackend`, `ProtocolTestClient`, and the transport-neutral `WireChannel` contract. `connectUnixTestClient()` is provided for Unix transport tests.

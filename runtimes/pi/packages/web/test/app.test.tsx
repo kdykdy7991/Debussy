@@ -40,9 +40,13 @@ describe("App", () => {
 			<App connection={createConnection({ state: "disconnected", error: undefined })} sessions={createSessions()} />,
 		);
 
-		expect(markup).toContain("Pi Web");
+		expect(markup).toContain("EDITORIAL INTELLIGENCE");
 		expect(markup).toContain("尚未连接");
-		expect(markup).toContain("等待连接后加载会话");
+		expect(markup).toContain("连接后载入会话");
+		expect(markup).toContain("把问题变成一份");
+		expect(markup).toContain('data-theme="editorial"');
+		expect(markup).toContain("Vision Glass");
+		expect(markup).toContain('aria-label="视觉主题"');
 	});
 
 	it("renders connection errors with a retry action", () => {
@@ -100,5 +104,7 @@ describe("App", () => {
 		expect(markup).toContain("你好");
 		expect(markup).toContain("正在回答");
 		expect(markup).toContain("streaming-indicator");
+		expect(markup).toContain("user-brief");
+		expect(markup).toContain("PI ANALYSIS");
 	});
 });

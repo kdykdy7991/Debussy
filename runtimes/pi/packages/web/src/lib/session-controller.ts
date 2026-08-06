@@ -1,5 +1,12 @@
 import type { PiSessionHandle } from "@earendil-works/pi-client";
-import type { ServerSnapshot, SessionSnapshot, SessionSummary } from "@earendil-works/pi-protocol";
+import type {
+	ServerEvent,
+	ServerSnapshot,
+	SessionSnapshot,
+	SessionSummary,
+	TranscriptItem,
+	TranscriptProgress,
+} from "@earendil-works/pi-protocol";
 
 export interface PiSessionClient {
 	readonly snapshot: ServerSnapshot | undefined;
@@ -32,6 +39,7 @@ export class SessionController implements SessionBrowserStore {
 	readonly #unsubscribeClient: () => void;
 	#activeHandle: PiSessionHandle | undefined;
 	#unsubscribeActive: (() => void) | undefined;
+	#unsubscribeActiveEvents: (() => void) | undefined;
 	#operation = 0;
 	#snapshot: SessionBrowserSnapshot;
 
@@ -94,6 +102,8 @@ export class SessionController implements SessionBrowserStore {
 		const handle = this.#activeHandle;
 		this.#unsubscribeActive?.();
 		this.#unsubscribeActive = undefined;
+		this.#unsubscribeActiveEvents?.();
+		this.#unsubscribeActiveEvents = undefined;
 		this.#activeHandle = undefined;
 		await handle?.dispose();
 	}
@@ -106,6 +116,8 @@ export class SessionController implements SessionBrowserStore {
 			this.#activeHandle = undefined;
 			this.#unsubscribeActive?.();
 			this.#unsubscribeActive = undefined;
+			this.#unsubscribeActiveEvents?.();
+			this.#unsubscribeActiveEvents = undefined;
 			await previous?.dispose();
 			const handle = await acquire();
 			if (operation !== this.#operation) {
@@ -130,6 +142,10 @@ export class SessionController implements SessionBrowserStore {
 					sessions: upsertSession(this.#snapshot.sessions, session),
 					activeSession: session,
 				});
+			});
+			this.#unsubscribeActiveEvents = handle.onEvent((event) => {
+				if (this.#activeHandle !== handle || event.type !== "session_progress") return;
+				this.#applyProgress(event);
 			});
 		} catch (error) {
 			if (operation !== this.#operation) return;
@@ -172,10 +188,69 @@ export class SessionController implements SessionBrowserStore {
 		return this.#activeHandle;
 	}
 
+	#applyProgress(event: Extract<ServerEvent, { type: "session_progress" }>): void {
+		const activeSession = this.#snapshot.activeSession;
+		if (!activeSession || activeSession.id !== event.sessionId) return;
+		const session = applyTranscriptProgress(activeSession, event.progress);
+		if (session === activeSession) return;
+		this.#setSnapshot({
+			...this.#snapshot,
+			sessions: upsertSession(this.#snapshot.sessions, session),
+			activeSession: session,
+		});
+	}
+
 	#setSnapshot(snapshot: SessionBrowserSnapshot): void {
 		this.#snapshot = snapshot;
 		for (const listener of this.#listeners) listener();
 	}
+}
+
+function applyTranscriptProgress(session: SessionSnapshot, progress: TranscriptProgress): SessionSnapshot {
+	if (progress.type === "assistant_delta") {
+		let changed = false;
+		const transcript = session.transcript.map((item) => {
+			if (item.id !== progress.messageId || item.role !== "assistant") return item;
+			const part = item.content[progress.contentIndex];
+			if (progress.kind === "text" && part?.type === "text") {
+				changed = true;
+				const content = [...item.content];
+				content[progress.contentIndex] = { ...part, text: part.text + progress.delta };
+				return { ...item, content };
+			}
+			if (progress.kind === "thinking" && part?.type === "thinking") {
+				changed = true;
+				const content = [...item.content];
+				content[progress.contentIndex] = { ...part, thinking: part.thinking + progress.delta };
+				return { ...item, content };
+			}
+			if (progress.contentIndex === item.content.length && progress.kind !== "toolCall") {
+				changed = true;
+				const content = [...item.content];
+				content.push(
+					progress.kind === "text"
+						? { type: "text", text: progress.delta }
+						: { type: "thinking", thinking: progress.delta },
+				);
+				return { ...item, content };
+			}
+			return item;
+		});
+		return changed ? { ...session, phase: "turn", transcript } : session;
+	}
+	return {
+		...session,
+		phase: "turn",
+		transcript: upsertTranscriptItem(session.transcript, progress.item),
+	};
+}
+
+function upsertTranscriptItem(transcript: readonly TranscriptItem[], item: TranscriptItem): TranscriptItem[] {
+	const index = transcript.findIndex((candidate) => candidate.id === item.id);
+	if (index === -1) return [...transcript, item];
+	const next = [...transcript];
+	next[index] = item;
+	return next;
 }
 
 function upsertSession(sessions: readonly SessionSummary[], session: SessionSummary): readonly SessionSummary[] {

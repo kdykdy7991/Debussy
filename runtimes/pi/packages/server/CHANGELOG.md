@@ -6,9 +6,14 @@
 
 - Changed `toProtocolToolResultMessage()` to require the original `ToolCall` and verify tool result association.
 
+### Added
+
+- Added configurable WebSocket upgrade authorization and local Web development token support.
+
 ### Fixed
 
 - Hardened protocol adapters against contradictory lifecycle states, invalid identifiers and timestamps, sparse execution arrays, and additive `pi-ai` contract drift.
+- Added safe loopback Origin defaults, preserved the all-cwd allowlist marker, and released all Coding Agent event subscriptions during runtime disposal.
 
 ## [0.83.0] - 2026-07-29
 

@@ -19,6 +19,7 @@ interface ResolvedWebSocketListenerOptions {
 	path: string;
 	allowedOrigins: readonly string[] | undefined;
 	allowedHosts: readonly string[];
+	authorizeUpgrade: ((request: IncomingMessage) => boolean) | undefined;
 	maxFrameLength: number;
 	maxPendingBytes: number;
 	gracefulCloseTimeoutMs: number;
@@ -58,6 +59,7 @@ function resolveWebSocketListenerOptions(options: WebSocketListenerOptions): Res
 		path,
 		allowedOrigins: options.allowedOrigins,
 		allowedHosts: [...allowedHosts],
+		authorizeUpgrade: options.authorizeUpgrade,
 		maxFrameLength,
 		maxPendingBytes,
 		gracefulCloseTimeoutMs,
@@ -273,6 +275,14 @@ export class WebSocketListener implements PiServerListener {
 			if (origin === undefined || !allowedOrigins.some((allowed) => matchesPattern(origin, allowed))) {
 				return { status: 403, message: "Forbidden" };
 			}
+		}
+		try {
+			if (this.options.authorizeUpgrade && !this.options.authorizeUpgrade(request)) {
+				return { status: 401, message: "Unauthorized" };
+			}
+		} catch (error) {
+			reportError(this.options.onError, error);
+			return { status: 401, message: "Unauthorized" };
 		}
 		return undefined;
 	}

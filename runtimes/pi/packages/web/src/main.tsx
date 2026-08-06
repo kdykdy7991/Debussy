@@ -14,7 +14,13 @@ if (!root) {
 
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 const webSocketUrl = import.meta.env.VITE_PI_WS_URL ?? `${protocol}//${window.location.host}/api/pi/v1/ws`;
-const connection = createPiConnectionController(createWebSocketTransportFactory({ url: webSocketUrl }));
+const webSocketToken = import.meta.env.VITE_PI_WEB_TOKEN;
+const connection = createPiConnectionController(
+	createWebSocketTransportFactory({
+		url: webSocketUrl,
+		protocols: webSocketToken ? [`pi-auth.${webSocketToken}`] : undefined,
+	}),
+);
 const sessions = new SessionController(connection.client);
 
 createRoot(root).render(

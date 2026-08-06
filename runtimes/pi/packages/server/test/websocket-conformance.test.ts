@@ -177,6 +177,17 @@ describe("WebSocket transport conformance", () => {
 		expect(await rawUpgrade(`ws://${address}/api/pi/v1/ws`, { origin: "https://evil.example" })).toBe(403);
 	});
 
+	test("runs an additional authorization check before upgrading", async () => {
+		const { server } = await startServer(new TestSessionBackend(), {
+			authorizeUpgrade: (request) => request.headers.cookie === "pi_session=allowed",
+		});
+		const address = server.addresses[0]!;
+		const url = `ws://${address}/api/pi/v1/ws`;
+
+		expect(await rawUpgrade(url)).toBe(401);
+		expect(await rawUpgrade(url, { cookie: "pi_session=allowed" })).toBe(101);
+	});
+
 	test("decodes multiple framed requests from one WebSocket message", async () => {
 		const { url } = await startServer();
 		const client = await connect(url);

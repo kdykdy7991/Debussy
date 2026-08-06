@@ -115,6 +115,7 @@ async function main(): Promise<number> {
 		allowedHosts: flags.allowHosts.length > 0 ? flags.allowHosts : undefined,
 		maxFrameLength: flags.maxFrameLength,
 		maxPendingBytes: flags.maxPendingBytes,
+		webToken: process.env.PI_WEB_TOKEN,
 	};
 
 	const handle = await startWebServer(options);
