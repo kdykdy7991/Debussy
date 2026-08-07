@@ -221,3 +221,43 @@ smoke 脚本：`scripts/smoke-p0.ts`（已纳入仓库根 `tsconfig.json` 的类
 
 
 2026-08-07 真实模型联调结果：已完成。用户确认真实对话、流式输出、停止、刷新恢复及消息顺序均正常。
+
+## 10. P1 文件上传与附件
+
+文件二进制不经过会话 WebSocket，走与 WS 同一个 HTTP server 的上传端点。
+
+### 10.1 HTTP 上传端点
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/pi/v2/uploads` | `multipart/form-data`，字段名 `files`（可多个），`Authorization: Bearer <PI_WEB_TOKEN>` |
+| `GET` | `/api/pi/v2/uploads/:uploadId` | 查询上传 / 附件状态 |
+| `DELETE` | `/api/pi/v2/uploads/:uploadId` | 删除未绑定上传（已绑定的用 WS `remove_attachment`） |
+
+限制（默认）：单文件 25 MiB、单次 10 个、MIME 由服务端嗅探并与扩展名交叉校验。鉴权复用 WS 的 Host / Origin 校验与 token；浏览器上传自动带 Origin，`http://127.0.0.1:5173` 需在 `--allow-origin` 内（默认已含）。跨源 preflight（`OPTIONS`）由服务端处理。
+
+### 10.2 Web 端用法
+
+1. 在会话里点 composer 左侧「＋」选择文件（可多选）。
+2. 上传完成后自动绑定到当前会话（`attach_upload`，scope=session），composer 上方出现附件 chip，显示进度 / 失败状态。
+3. 发送消息时附件 ID 随 prompt 一起提交：模型回合内能读到文件内容，但会话记录（transcript / JSONL）只保留 `[附件: 文件名]` 引用，文件内容与暂存路径不进 transcript / 公开日志。
+4. chip 上的「×」调用 `remove_attachment` 移除附件；失败的 chip 可直接丢弃。
+
+### 10.3 faux 验收（无需模型凭据）
+
+```bash
+cd packages/server
+node ../../node_modules/vitest/dist/cli.js --run test/uploads.test.ts   # HTTP 上传 + 附件关联（9 项）
+```
+
+覆盖：正常上传、缺 token 401、错误 token 401、MIME 不匹配、超限 413、未识别二进制、GET/DELETE、attach 前未 ready 拒绝、prompt 注入内容但 transcript 只存引用。
+
+### 10.4 真实模型联调
+
+按 §9 配置凭据后，浏览器走一遍：上传文本 / 图片 → 发送带附件消息 → 确认模型能看到内容且 transcript 无内容泄露 → 移除附件 → 再次上传确认可重复。
+
+### 10.5 新增协议（v2 additive）
+
+- 命令：`attach_upload`（sessionId / uploadId / scope）、`remove_attachment`（sessionId / attachmentId）；`prompt` / `steer` 增加可选 `attachmentIds`。
+- 事件：`attachment_snapshot`、`attachment_removed`。
+- `SessionSnapshot` 增加可选 `attachments`；错误码增加 `unauthorized` / `forbidden` / `conflict` / `invalid_state` / `payload_too_large` / `unsupported_media_type` / `expired`。

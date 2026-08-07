@@ -49,6 +49,7 @@ export function App({ connection, sessions }: AppProps) {
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [railOpen, setRailOpen] = useState(false);
 	const composerRef = useRef<HTMLTextAreaElement>(null);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const conversationScrollRef = useRef<HTMLDivElement>(null);
 	const [theme, setTheme] = useState<VisualTheme>(() => {
 		if (typeof window === "undefined") return "editorial";
@@ -86,11 +87,19 @@ export function App({ connection, sessions }: AppProps) {
 	const submitMessage = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!message.trim() || running) return;
+		const attachmentIds = active?.attachments?.map((attachment) => attachment.id);
 		void sessions
-			.send(message)
+			.send(message, attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined)
 			.then(() => setMessage(""))
 			.catch(() => {});
 	};
+	const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+		const files = event.target.files ? [...event.target.files] : [];
+		event.target.value = "";
+		if (files.length === 0) return;
+		void sessions.uploadFiles(files).catch(() => {});
+	};
+	const removeAttachment = (attachmentId: string) => void sessions.removeAttachment(attachmentId).catch(() => {});
 	const handleMessageKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
 		if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
@@ -295,6 +304,41 @@ export function App({ connection, sessions }: AppProps) {
 
 				<div className="composer-dock">
 					<form className={`editorial-composer ${running ? "running" : ""}`} onSubmit={submitMessage}>
+						{active && ((active.attachments?.length ?? 0) > 0 || sessionSnapshot.uploads.length > 0) ? (
+							<div className="composer-attachments">
+								{sessionSnapshot.uploads.map((upload) => (
+									<span className={`attachment-chip ${upload.status}`} key={upload.localId}>
+										{upload.name}
+										{upload.status === "uploading" ? (
+											<small>{upload.progress ?? 0}%</small>
+										) : (
+											<small title={upload.error}>{upload.error ?? "上传失败"}</small>
+										)}
+										{upload.status === "failed" ? (
+											<button
+												type="button"
+												onClick={() => sessions.dismissUpload(upload.localId)}
+												aria-label="移除失败项"
+											>
+												×
+											</button>
+										) : null}
+									</span>
+								))}
+								{active.attachments?.map((attachment) => (
+									<span className="attachment-chip ready" key={attachment.id}>
+										{attachment.name}
+										<button
+											type="button"
+											onClick={() => removeAttachment(attachment.id)}
+											aria-label={`移除 ${attachment.name}`}
+										>
+											×
+										</button>
+									</span>
+								))}
+							</div>
+						) : null}
 						<label className="sr-only" htmlFor="message">
 							消息
 						</label>
@@ -317,13 +361,16 @@ export function App({ connection, sessions }: AppProps) {
 						<div className="composer-toolbar">
 							<div className="composer-context">
 								<button
-									className="composer-tool disabled-tool"
+									className="composer-tool"
 									type="button"
-									disabled
-									title="当前协议暂不支持文件上传"
+									onClick={() => fileInputRef.current?.click()}
+									disabled={!connected || active === undefined || running || sessionSnapshot.loading}
+									title="上传文件附件"
+									aria-label="上传文件附件"
 								>
 									＋
 								</button>
+								<input ref={fileInputRef} type="file" multiple hidden onChange={handleFilesSelected} />
 								<span className="context-chip">
 									<i>π</i> Pi Agent
 								</span>
@@ -571,14 +618,6 @@ function EmptyConversation({
 }) {
 	return (
 		<section className="empty-conversation">
-			<span className="empty-mark">π</span>
-			<p className="section-kicker">EDITORIAL INTELLIGENCE</p>
-			<h1>
-				把问题变成一份
-				<br />
-				清晰、可行动的分析
-			</h1>
-			<p className="empty-dek">从代码审查到复杂研究，Pi 会保留会话上下文，并把过程与最终回答清晰分层。</p>
 			<div className="prompt-grid">
 				{EMPTY_PROMPTS.map((prompt, index) => (
 					<button type="button" onClick={() => setMessage(prompt)} key={prompt}>

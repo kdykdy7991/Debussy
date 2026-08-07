@@ -7,6 +7,7 @@ import type {
 	TranscriptItem,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
+import type { PiUploadClient } from "./uploader.ts";
 
 export interface PiSessionClient {
 	readonly snapshot: ServerSnapshot | undefined;
@@ -15,13 +16,28 @@ export interface PiSessionClient {
 	attachSession(sessionId: string): Promise<PiSessionHandle>;
 }
 
+/** A file upload that has not yet become an attached attachment. */
+export interface UploadItem {
+	localId: string;
+	name: string;
+	status: "uploading" | "failed";
+	/** 0-100 upload progress while uploading. */
+	progress?: number;
+	error?: string;
+}
+
 export interface SessionBrowserSnapshot {
 	sessions: readonly SessionSummary[];
 	activeSessionId: string | undefined;
 	activeSession: SessionSnapshot | undefined;
+	uploads: readonly UploadItem[];
 	loading: boolean;
 	submitting: boolean;
 	error: string | undefined;
+}
+
+export interface SessionPromptPayload {
+	attachmentIds?: string[];
 }
 
 export interface SessionBrowserStore {
@@ -29,26 +45,33 @@ export interface SessionBrowserStore {
 	subscribe(listener: () => void): () => void;
 	createSession(): Promise<void>;
 	selectSession(sessionId: string): Promise<void>;
-	send(text: string): Promise<void>;
+	send(text: string, options?: SessionPromptPayload): Promise<void>;
 	abort(): Promise<void>;
+	uploadFiles(files: File[]): Promise<void>;
+	removeAttachment(attachmentId: string): Promise<void>;
+	dismissUpload(localId: string): void;
 }
 
 export class SessionController implements SessionBrowserStore {
 	readonly #client: PiSessionClient;
+	readonly #uploads: PiUploadClient;
 	readonly #listeners = new Set<() => void>();
 	readonly #unsubscribeClient: () => void;
 	#activeHandle: PiSessionHandle | undefined;
 	#unsubscribeActive: (() => void) | undefined;
 	#unsubscribeActiveEvents: (() => void) | undefined;
 	#operation = 0;
+	#uploadSequence = 0;
 	#snapshot: SessionBrowserSnapshot;
 
-	constructor(client: PiSessionClient) {
+	constructor(client: PiSessionClient, uploads: PiUploadClient) {
 		this.#client = client;
+		this.#uploads = uploads;
 		this.#snapshot = {
 			sessions: client.snapshot?.sessions ?? [],
 			activeSessionId: undefined,
 			activeSession: undefined,
+			uploads: [],
 			loading: false,
 			submitting: false,
 			error: undefined,
@@ -78,13 +101,21 @@ export class SessionController implements SessionBrowserStore {
 		await this.#activate(() => this.#client.attachSession(sessionId));
 	}
 
-	async send(text: string): Promise<void> {
+	async send(text: string, options?: SessionPromptPayload): Promise<void> {
 		const message = text.trim();
 		if (!message) throw new Error("消息不能为空");
 		const handle = this.#requireActiveHandle();
 		if (this.#snapshot.submitting) throw new Error("正在提交上一项操作");
+		const attachmentIds = options?.attachmentIds;
+		const promptOptions = attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined;
 		await this.#runSessionAction(handle, () =>
-			this.#snapshot.activeSession?.phase === "idle" ? handle.prompt(message) : handle.steer(message),
+			this.#snapshot.activeSession?.phase === "idle"
+				? promptOptions
+					? handle.prompt(message, promptOptions)
+					: handle.prompt(message)
+				: promptOptions
+					? handle.steer(message, promptOptions)
+					: handle.steer(message),
 		);
 	}
 
@@ -92,6 +123,69 @@ export class SessionController implements SessionBrowserStore {
 		const handle = this.#requireActiveHandle();
 		if (this.#snapshot.activeSession?.phase === "idle") return;
 		await this.#runSessionAction(handle, () => handle.abort());
+	}
+
+	async uploadFiles(files: File[]): Promise<void> {
+		if (files.length === 0) return;
+		const handle = this.#requireActiveHandle();
+		if (this.#snapshot.submitting) throw new Error("正在提交上一项操作");
+		const items = files.map(
+			(file): UploadItem => ({
+				localId: `upload-${++this.#uploadSequence}`,
+				name: file.name,
+				status: "uploading",
+				progress: 0,
+			}),
+		);
+		this.#setSnapshot({ ...this.#snapshot, uploads: [...this.#snapshot.uploads, ...items] });
+		await Promise.all(
+			files.map(async (file, index) => {
+				const item = items[index];
+				if (!item) return;
+				try {
+					const attachment = await this.#uploads.uploadFile(file, (fraction) => {
+						this.#updateUpload(item.localId, { progress: Math.round(fraction * 100) });
+					});
+					const session = await handle.attachUpload(attachment.id, "session");
+					this.dismissUpload(item.localId);
+					this.#applySessionUpdate(session);
+				} catch (error) {
+					this.#updateUpload(item.localId, {
+						status: "failed",
+						error: error instanceof Error ? error.message : "上传失败",
+					});
+				}
+			}),
+		);
+	}
+
+	async removeAttachment(attachmentId: string): Promise<void> {
+		const handle = this.#requireActiveHandle();
+		const session = await handle.removeAttachment(attachmentId);
+		this.#applySessionUpdate(session);
+	}
+
+	dismissUpload(localId: string): void {
+		this.#setSnapshot({
+			...this.#snapshot,
+			uploads: this.#snapshot.uploads.filter((item) => item.localId !== localId),
+		});
+	}
+
+	#updateUpload(localId: string, patch: Partial<UploadItem>): void {
+		this.#setSnapshot({
+			...this.#snapshot,
+			uploads: this.#snapshot.uploads.map((item) => (item.localId === localId ? { ...item, ...patch } : item)),
+		});
+	}
+
+	#applySessionUpdate(session: SessionSnapshot): void {
+		if (this.#activeHandle?.id !== session.id) return;
+		this.#setSnapshot({
+			...this.#snapshot,
+			sessions: upsertSession(this.#snapshot.sessions, session),
+			activeSession: session,
+		});
 	}
 
 	async dispose(): Promise<void> {
@@ -130,6 +224,7 @@ export class SessionController implements SessionBrowserStore {
 				sessions,
 				activeSessionId: handle.id,
 				activeSession: summary,
+				uploads: [],
 				loading: false,
 				submitting: false,
 				error: undefined,

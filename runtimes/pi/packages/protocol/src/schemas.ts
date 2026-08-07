@@ -248,6 +248,43 @@ const SessionSummaryProperties = {
 } as const;
 
 export const SessionSummarySchema = StrictObject(SessionSummaryProperties);
+
+export const AttachmentScopeSchema = Type.Union([Type.Literal("turn"), Type.Literal("session")]);
+export type AttachmentScope = Static<typeof AttachmentScopeSchema>;
+
+export const AttachmentStatusSchema = Type.Union([
+	Type.Literal("uploading"),
+	Type.Literal("scanning"),
+	Type.Literal("parsing"),
+	Type.Literal("indexing"),
+	Type.Literal("ready"),
+	Type.Literal("restricted"),
+	Type.Literal("failed"),
+	Type.Literal("removed"),
+]);
+export type AttachmentStatus = Static<typeof AttachmentStatusSchema>;
+
+/** Authoritative attachment metadata surfaced to clients. File bytes never travel over the protocol. */
+export const AttachmentSchema = StrictObject({
+	id: IdSchema,
+	sessionId: Type.Optional(IdSchema),
+	name: Type.String({ minLength: 1 }),
+	mediaType: Type.String({ minLength: 1 }),
+	size: Type.Integer({ minimum: 0 }),
+	sha256: Type.String({ minLength: 1 }),
+	status: AttachmentStatusSchema,
+	scope: Type.Optional(AttachmentScopeSchema),
+	createdAt: TimestampSchema,
+	pageCount: Type.Optional(Type.Integer({ minimum: 0 })),
+	error: Type.Optional(
+		StrictObject({
+			code: Type.String(),
+			message: Type.String(),
+		}),
+	),
+});
+export type Attachment = Static<typeof AttachmentSchema>;
+
 export const SessionSnapshotSchema = StrictObject({
 	...SessionSummaryProperties,
 	lastSequence: SequencePositionSchema,
@@ -255,6 +292,7 @@ export const SessionSnapshotSchema = StrictObject({
 	transcript: Type.Array(TranscriptItemSchema),
 	queuedSteer: Type.Array(UserTranscriptItemSchema),
 	queuedSteerCount: Type.Integer({ minimum: 0 }),
+	attachments: Type.Optional(Type.Array(AttachmentSchema)),
 });
 export type SessionSummary = Static<typeof SessionSummarySchema>;
 export type SessionSnapshot = Static<typeof SessionSnapshotSchema>;
@@ -274,6 +312,13 @@ export const ProtocolErrorCodeSchema = Type.Union([
 	Type.Literal("session_locked"),
 	Type.Literal("not_found"),
 	Type.Literal("invalid_request"),
+	Type.Literal("unauthorized"),
+	Type.Literal("forbidden"),
+	Type.Literal("conflict"),
+	Type.Literal("invalid_state"),
+	Type.Literal("payload_too_large"),
+	Type.Literal("unsupported_media_type"),
+	Type.Literal("expired"),
 ]);
 export const ProtocolErrorSchema = StrictObject({
 	code: ProtocolErrorCodeSchema,
@@ -286,6 +331,7 @@ export type ProtocolError = Static<typeof ProtocolErrorSchema>;
 const PromptPayloadProperties = {
 	sessionId: IdSchema,
 	text: Type.String(),
+	attachmentIds: Type.Optional(Type.Array(IdSchema, { maxItems: 16 })),
 } as const;
 
 export const ListCommandSchema = StrictObject({ command: Type.Literal("list") });
@@ -316,6 +362,17 @@ export const SetThinkingCommandSchema = StrictObject({
 	sessionId: IdSchema,
 	thinkingLevel: ThinkingLevelSchema,
 });
+export const AttachUploadCommandSchema = StrictObject({
+	command: Type.Literal("attach_upload"),
+	sessionId: IdSchema,
+	uploadId: IdSchema,
+	scope: AttachmentScopeSchema,
+});
+export const RemoveAttachmentCommandSchema = StrictObject({
+	command: Type.Literal("remove_attachment"),
+	sessionId: IdSchema,
+	attachmentId: IdSchema,
+});
 export const CommandSchema = Type.Union([
 	ListCommandSchema,
 	CreateCommandSchema,
@@ -327,6 +384,8 @@ export const CommandSchema = Type.Union([
 	AbortCommandSchema,
 	SetModelCommandSchema,
 	SetThinkingCommandSchema,
+	AttachUploadCommandSchema,
+	RemoveAttachmentCommandSchema,
 ]);
 export type Command = Static<typeof CommandSchema>;
 export type CommandName = Command["command"];
@@ -376,6 +435,14 @@ export const DetachResultSchema = StrictObject({
 	command: Type.Literal("detach"),
 	sessionId: IdSchema,
 });
+export const AttachUploadResultSchema = StrictObject({
+	command: Type.Literal("attach_upload"),
+	session: SessionSnapshotSchema,
+});
+export const RemoveAttachmentResultSchema = StrictObject({
+	command: Type.Literal("remove_attachment"),
+	session: SessionSnapshotSchema,
+});
 export const CommandResultSchema = Type.Union([
 	ListResultSchema,
 	CreateResultSchema,
@@ -387,6 +454,8 @@ export const CommandResultSchema = Type.Union([
 	AbortResultSchema,
 	SetModelResultSchema,
 	SetThinkingResultSchema,
+	AttachUploadResultSchema,
+	RemoveAttachmentResultSchema,
 ]);
 export type CommandResult = Static<typeof CommandResultSchema>;
 
@@ -421,11 +490,22 @@ export const SessionProgressEventSchema = StrictObject({
 });
 export type SessionProgressEvent = Static<typeof SessionProgressEventSchema>;
 
+export const AttachmentSnapshotEventSchema = StrictObject({
+	type: Type.Literal("attachment_snapshot"),
+	attachment: AttachmentSchema,
+});
+export const AttachmentRemovedEventSchema = StrictObject({
+	type: Type.Literal("attachment_removed"),
+	sessionId: IdSchema,
+	attachmentId: IdSchema,
+});
 export const ServerEventSchema = Type.Union([
 	StrictObject({ type: Type.Literal("server_snapshot"), snapshot: ServerSnapshotSchema }),
 	StrictObject({ type: Type.Literal("session_snapshot"), snapshot: SessionSnapshotSchema }),
 	SessionProgressEventSchema,
 	StrictObject({ type: Type.Literal("session_removed"), sessionId: IdSchema }),
+	AttachmentSnapshotEventSchema,
+	AttachmentRemovedEventSchema,
 ]);
 export type ServerEvent = Static<typeof ServerEventSchema>;
 

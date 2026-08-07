@@ -12,7 +12,7 @@
  *    emits a final authoritative `SessionSnapshot` after each operation.
  *  - Dispose the AgentSession and stop progress forwarding on `dispose()`.
  */
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AttachmentInput } from "@earendil-works/pi-coding-agent";
 import type {
 	ModelRef,
 	SessionPhase,
@@ -21,7 +21,13 @@ import type {
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
-import type { PiSessionRuntime, PiSessionRuntimeEvent, PromptInput, SteerInput } from "../types.ts";
+import type {
+	PiSessionRuntime,
+	PiSessionRuntimeEvent,
+	PromptInput,
+	ResolvedAttachmentInput,
+	SteerInput,
+} from "../types.ts";
 import { subscribeToAgentSession } from "./progress-adapter.ts";
 import { buildSessionSnapshot, type RuntimeHints } from "./snapshot-adapter.ts";
 
@@ -79,11 +85,23 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	}
 
 	async prompt(input: PromptInput): Promise<void> {
-		await this.runOperation(() => this.agentSession.prompt(input.text));
+		await this.runOperation(() => {
+			const attachments = this.attachmentOptions(input.attachments);
+			return this.agentSession.prompt(input.text, attachments ? { attachments } : undefined);
+		});
 	}
 
 	async steer(input: SteerInput): Promise<void> {
-		await this.runOperation(() => this.agentSession.steer(input.text));
+		await this.runOperation(() =>
+			this.agentSession.steer(input.text, undefined, this.attachmentOptions(input.attachments)),
+		);
+	}
+
+	private attachmentOptions(
+		attachments: readonly ResolvedAttachmentInput[] | undefined,
+	): AttachmentInput[] | undefined {
+		if (!attachments || attachments.length === 0) return undefined;
+		return attachments.map(({ id, name, mediaType, path }) => ({ id, name, mediaType, path }));
 	}
 
 	async abort(): Promise<void> {

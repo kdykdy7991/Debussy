@@ -1,4 +1,5 @@
 import type {
+	AttachmentScope,
 	Command,
 	ModelRef,
 	ResultForCommand,
@@ -16,6 +17,11 @@ export interface AcquireSessionOptions {
 	mode: SessionLeaseMode;
 }
 
+/** Optional payload for prompt/steer, e.g. ready attachments bound to the session. */
+export interface SessionPromptOptions {
+	attachmentIds?: string[];
+}
+
 export interface SessionLease extends AsyncDisposable {
 	readonly id: string;
 	readonly active: boolean;
@@ -25,11 +31,13 @@ export interface SessionLease extends AsyncDisposable {
 	onEvent(listener: (event: ServerEvent) => void): Unsubscribe;
 	detach(): Promise<void>;
 	dispose(): Promise<void>;
-	prompt(text: string): Promise<SessionSnapshot>;
-	steer(text: string): Promise<SessionSnapshot>;
+	prompt(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot>;
+	steer(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot>;
 	abort(): Promise<SessionSnapshot>;
 	setModel(model: ModelRef): Promise<SessionSnapshot>;
 	setThinking(thinkingLevel: ThinkingLevel): Promise<SessionSnapshot>;
+	attachUpload(uploadId: string, scope: AttachmentScope): Promise<SessionSnapshot>;
+	removeAttachment(attachmentId: string): Promise<SessionSnapshot>;
 }
 
 export type PiSessionHandle = SessionLease;
@@ -85,12 +93,26 @@ export class SessionHandle implements SessionLease {
 		return this.dispose();
 	}
 
-	async prompt(text: string): Promise<SessionSnapshot> {
-		return (await this.#request({ command: "prompt", sessionId: this.id, text })).session;
+	async prompt(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot> {
+		return (
+			await this.#request({
+				command: "prompt",
+				sessionId: this.id,
+				text,
+				...(options?.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
+			})
+		).session;
 	}
 
-	async steer(text: string): Promise<SessionSnapshot> {
-		return (await this.#request({ command: "steer", sessionId: this.id, text })).session;
+	async steer(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot> {
+		return (
+			await this.#request({
+				command: "steer",
+				sessionId: this.id,
+				text,
+				...(options?.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
+			})
+		).session;
 	}
 
 	async abort(): Promise<SessionSnapshot> {
@@ -103,6 +125,14 @@ export class SessionHandle implements SessionLease {
 
 	async setThinking(thinkingLevel: ThinkingLevel): Promise<SessionSnapshot> {
 		return (await this.#request({ command: "set_thinking", sessionId: this.id, thinkingLevel })).session;
+	}
+
+	async attachUpload(uploadId: string, scope: AttachmentScope): Promise<SessionSnapshot> {
+		return (await this.#request({ command: "attach_upload", sessionId: this.id, uploadId, scope })).session;
+	}
+
+	async removeAttachment(attachmentId: string): Promise<SessionSnapshot> {
+		return (await this.#request({ command: "remove_attachment", sessionId: this.id, attachmentId })).session;
 	}
 
 	#request<const TCommand extends SessionCommand>(command: TCommand): Promise<ResultForCommand<TCommand>> {

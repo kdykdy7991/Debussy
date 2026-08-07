@@ -25,6 +25,9 @@ import { PiServerError } from "../errors.ts";
 import type { PiServer } from "../server.ts";
 import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
+import type { HttpRequestHandler } from "../types.ts";
+import { AttachmentStore } from "../uploads/store.ts";
+import { createUploadHttpHandler } from "./uploads.ts";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8765;
@@ -83,7 +86,21 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 
 	const backend = await CodingAgentPiSessionBackend.create(resolved.backend);
 
-	const server = createWebSocketServer(backend, resolved.listener);
+	const attachments = new AttachmentStore(join(resolved.agentDir, "uploads"));
+	await attachments.init();
+	await attachments.sweepExpired();
+	const httpHandler: HttpRequestHandler = createUploadHttpHandler({
+		store: attachments,
+		webToken: options.webToken,
+		allowedOrigins: resolved.listener.allowedOrigins,
+		allowedHosts: resolved.listener.allowedHosts,
+	});
+
+	const server = createWebSocketServer(backend, {
+		...resolved.listener,
+		httpHandler,
+		attachments,
+	});
 
 	const autoStart = options.autoStart ?? true;
 	if (autoStart) {

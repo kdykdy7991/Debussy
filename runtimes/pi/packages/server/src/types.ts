@@ -1,5 +1,5 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
-	Command,
 	ModelMetadata,
 	ModelRef,
 	SessionPhase,
@@ -10,6 +10,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import type { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
+import type { AttachmentStore } from "./uploads/store.ts";
 
 export interface PiServerOptions {
 	listeners: readonly PiServerListener[];
@@ -21,12 +22,34 @@ export interface PiServerOptions {
 	sessionEventLogMaxEvents?: number;
 	/** How long buffered progress events are retained for resume replay. Default 10 minutes. */
 	sessionEventLogRetentionMs?: number;
+	/** Upload/attachment store backing `attach_upload` / `remove_attachment`. */
+	attachments?: AttachmentStore;
 }
+
+/** A handler for non-upgrade HTTP requests on the shared listener HTTP server; returns false when unhandled. */
+export type HttpRequestHandler = (request: IncomingMessage, response: ServerResponse) => boolean | Promise<boolean>;
 
 export type MaybePromise<T> = T | Promise<T>;
 
-export type PromptInput = Omit<Extract<Command, { command: "prompt" }>, "command" | "sessionId">;
-export type SteerInput = Omit<Extract<Command, { command: "steer" }>, "command" | "sessionId">;
+/** Attachment content resolved by the server from staged files at prompt time. Paths never cross the wire. */
+export interface ResolvedAttachmentInput {
+	id: string;
+	name: string;
+	mediaType: string;
+	path: string;
+}
+
+export interface PromptInput {
+	text: string;
+	attachmentIds?: string[];
+	attachments?: ResolvedAttachmentInput[];
+}
+
+export interface SteerInput {
+	text: string;
+	attachmentIds?: string[];
+	attachments?: ResolvedAttachmentInput[];
+}
 
 export interface CreateSessionOptions {
 	/** A collision-resistant ID assigned by PiServer. The backend must persist this exact ID. */

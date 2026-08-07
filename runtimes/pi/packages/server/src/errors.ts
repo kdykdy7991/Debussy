@@ -2,7 +2,7 @@ import type { JsonValue, ProtocolErrorCode } from "@earendil-works/pi-protocol";
 
 export type PiServerOperationErrorCode = Extract<
 	ProtocolErrorCode,
-	"busy" | "session_locked" | "not_found" | "invalid_request"
+	"busy" | "session_locked" | "not_found" | "invalid_request" | "invalid_state" | "conflict"
 >;
 
 /** A backend/runtime error that can safely cross the protocol boundary. */

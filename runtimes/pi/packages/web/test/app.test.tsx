@@ -9,6 +9,7 @@ const EMPTY_SESSIONS = {
 	sessions: [],
 	activeSessionId: undefined,
 	activeSession: undefined,
+	uploads: [],
 	loading: false,
 	submitting: false,
 	error: undefined,
@@ -31,6 +32,9 @@ function createSessions(snapshot: SessionBrowserSnapshot = EMPTY_SESSIONS): Sess
 		selectSession: async () => {},
 		send: async () => {},
 		abort: async () => {},
+		uploadFiles: async () => {},
+		removeAttachment: async () => {},
+		dismissUpload: () => {},
 	};
 }
 
@@ -43,7 +47,7 @@ describe("App", () => {
 		expect(markup).toContain("EDITORIAL INTELLIGENCE");
 		expect(markup).toContain("尚未连接");
 		expect(markup).toContain("连接后载入会话");
-		expect(markup).toContain("把问题变成一份");
+		expect(markup).toContain("为下一阶段制定实施计划");
 		expect(markup).toContain('data-theme="editorial"');
 		expect(markup).toContain("Vision Glass");
 		expect(markup).toContain('aria-label="视觉主题"');
@@ -100,6 +104,7 @@ describe("App", () => {
 					sessions: [activeSession],
 					activeSessionId: activeSession.id,
 					activeSession,
+					uploads: [],
 					loading: false,
 					submitting: false,
 					error: undefined,
@@ -116,5 +121,57 @@ describe("App", () => {
 		expect(markup).toContain("<strong>重点</strong>");
 		expect(markup).toContain('<a href="https://example.com">链接</a>');
 		expect(markup).toContain("<table>");
+	});
+});
+
+describe("App attachment UI", () => {
+	it("renders attached file chips above the composer", () => {
+		const activeSession = {
+			id: "session-1",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "idle",
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			lastSequence: 0,
+			revision: 1,
+			transcript: [],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+			attachments: [
+				{
+					id: "upload-1",
+					name: "notes.txt",
+					mediaType: "text/plain",
+					size: 3,
+					sha256: "abc",
+					status: "ready",
+					scope: "session",
+					createdAt: 1,
+				},
+			],
+		} satisfies SessionSnapshot;
+		const markup = renderToStaticMarkup(
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={createSessions({
+					sessions: [activeSession],
+					activeSessionId: activeSession.id,
+					activeSession,
+					uploads: [],
+					loading: false,
+					submitting: false,
+					error: undefined,
+				})}
+			/>,
+		);
+
+		expect(markup).toContain("composer-attachments");
+		expect(markup).toContain("notes.txt");
+		expect(markup).toContain('aria-label="移除 notes.txt"');
+		expect(markup).toContain('aria-label="上传文件附件"');
 	});
 });

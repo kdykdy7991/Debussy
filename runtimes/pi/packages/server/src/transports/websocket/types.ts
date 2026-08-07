@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import type { PiServerOptions } from "../../types.ts";
+import type { HttpRequestHandler, PiServerOptions } from "../../types.ts";
 
 export interface WebSocketListenerOptions {
 	/** Host to bind. Defaults to 127.0.0.1 (loopback only). */
@@ -26,6 +26,8 @@ export interface WebSocketListenerOptions {
 	/** Maximum framed bytes queued per connection before a slow peer is disconnected. */
 	maxPendingBytes?: number;
 	gracefulCloseTimeoutMs?: number;
+	/** Optional handler for non-upgrade HTTP requests on the shared HTTP server. */
+	httpHandler?: HttpRequestHandler;
 	onError?: (error: Error) => void;
 }
 

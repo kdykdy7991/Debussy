@@ -1,4 +1,10 @@
-import type { CommandResult, ServerEvent, ServerSnapshot, SessionSnapshot } from "@earendil-works/pi-protocol";
+import type {
+	Attachment,
+	CommandResult,
+	ServerEvent,
+	ServerSnapshot,
+	SessionSnapshot,
+} from "@earendil-works/pi-protocol";
 import { toError } from "./errors.ts";
 import type { ListenerErrorHandler, Unsubscribe } from "./types.ts";
 
@@ -111,6 +117,8 @@ export class ClientState {
 			this.#sessionSequences.delete(event.sessionId);
 			this.#attachedSessionIds.delete(event.sessionId);
 		}
+		if (event.type === "attachment_snapshot") this.#applyAttachmentSnapshot(event.attachment);
+		if (event.type === "attachment_removed") this.#applyAttachmentRemoved(event.sessionId, event.attachmentId);
 		this.#notify(this.#eventListeners, event);
 		const sessionId = getEventSessionId(event);
 		if (sessionId) this.#notify(this.#sessionEventListeners.get(sessionId), event);
@@ -135,6 +143,24 @@ export class ClientState {
 		if (snapshot.attached) this.#attachedSessionIds.add(snapshot.id);
 		else this.#attachedSessionIds.delete(snapshot.id);
 		this.#notify(this.#sessionSnapshotListeners.get(snapshot.id), snapshot);
+	}
+
+	/** Merge a single authoritative attachment into its session's snapshot. */
+	#applyAttachmentSnapshot(attachment: Attachment): void {
+		if (!attachment.sessionId) return;
+		const session = this.#sessionSnapshots.get(attachment.sessionId);
+		if (!session) return;
+		const next = [...(session.attachments ?? []).filter((candidate) => candidate.id !== attachment.id), attachment];
+		this.#applySessionSnapshot({ ...session, attachments: next });
+	}
+
+	/** Drop an attachment from its session's snapshot after removal. */
+	#applyAttachmentRemoved(sessionId: string, attachmentId: string): void {
+		const session = this.#sessionSnapshots.get(sessionId);
+		if (!session) return;
+		const next = (session.attachments ?? []).filter((candidate) => candidate.id !== attachmentId);
+		if (next.length === (session.attachments?.length ?? 0)) return;
+		this.#applySessionSnapshot({ ...session, attachments: next });
 	}
 
 	#notify<T>(listeners: Iterable<(value: T) => void> | undefined, value: T): void {
@@ -176,6 +202,9 @@ function addMappedListener<T>(
 
 function getEventSessionId(event: ServerEvent): string | undefined {
 	if (event.type === "session_snapshot") return event.snapshot.id;
-	if (event.type === "session_progress" || event.type === "session_removed") return event.sessionId;
+	if (event.type === "session_progress" || event.type === "session_removed" || event.type === "attachment_removed") {
+		return event.sessionId;
+	}
+	if (event.type === "attachment_snapshot") return event.attachment.sessionId;
 	return undefined;
 }

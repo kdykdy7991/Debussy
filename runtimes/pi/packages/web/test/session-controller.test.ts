@@ -1,7 +1,8 @@
 import type { PiSessionHandle } from "@earendil-works/pi-client";
-import type { AssistantTranscriptItem, ServerEvent, SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { AssistantTranscriptItem, Attachment, ServerEvent, SessionSnapshot } from "@earendil-works/pi-protocol";
 import { describe, expect, it, type Mock, vi } from "vitest";
 import { type PiSessionClient, SessionController } from "../src/lib/session-controller.ts";
+import type { PiUploadClient } from "../src/lib/uploader.ts";
 
 const SESSION = {
 	id: "session-1",
@@ -21,6 +22,19 @@ const SESSION = {
 	queuedSteerCount: 0,
 } satisfies SessionSnapshot;
 
+function attachment(id: string): Attachment {
+	return {
+		id,
+		name: `${id}.txt`,
+		mediaType: "text/plain",
+		size: 3,
+		sha256: "abc",
+		status: "ready",
+		scope: "session",
+		createdAt: 1,
+	};
+}
+
 function createHandle(snapshot: SessionSnapshot): PiSessionHandle {
 	return {
 		id: snapshot.id,
@@ -36,7 +50,18 @@ function createHandle(snapshot: SessionSnapshot): PiSessionHandle {
 		abort: async () => snapshot,
 		setModel: async () => snapshot,
 		setThinking: async () => snapshot,
+		attachUpload: async () => snapshot,
+		removeAttachment: async () => snapshot,
 		[Symbol.asyncDispose]: async () => {},
+	};
+}
+
+function createUploadClient(): PiUploadClient {
+	return {
+		uploadFile: vi.fn(async (_file: File, onProgress?: (fraction: number) => void) => {
+			onProgress?.(1);
+			return attachment("upload-1");
+		}),
 	};
 }
 
@@ -86,7 +111,7 @@ describe("SessionController", () => {
 	it("creates and selects a new session", async () => {
 		const client = createClient();
 		client.createSession.mockResolvedValue(createHandle(SESSION));
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 
 		await controller.createSession();
 
@@ -99,7 +124,7 @@ describe("SessionController", () => {
 		const secondSnapshot = { ...SESSION, id: "session-2", name: "第二段对话" };
 		const client = createClient();
 		client.attachSession.mockResolvedValueOnce(first).mockResolvedValueOnce(createHandle(secondSnapshot));
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 
 		await controller.selectSession(first.id);
 		await controller.selectSession(secondSnapshot.id);
@@ -111,7 +136,7 @@ describe("SessionController", () => {
 	it("reports attachment failures", async () => {
 		const client = createClient();
 		client.attachSession.mockRejectedValue(new Error("会话已锁定"));
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 
 		await expect(controller.selectSession("locked")).rejects.toThrow("会话已锁定");
 
@@ -122,7 +147,7 @@ describe("SessionController", () => {
 		const observed = createObservedHandle(SESSION);
 		const client = createClient();
 		client.attachSession.mockResolvedValue(observed.handle);
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 		await controller.selectSession(SESSION.id);
 		const streaming = {
 			...SESSION,
@@ -150,7 +175,7 @@ describe("SessionController", () => {
 		const observed = createObservedHandle(SESSION);
 		const client = createClient();
 		client.attachSession.mockResolvedValue(observed.handle);
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 		await controller.selectSession(SESSION.id);
 		const streamingItem = {
 			id: "assistant-1",
@@ -216,7 +241,7 @@ describe("SessionController", () => {
 		const handle = { ...createHandle(SESSION), prompt };
 		const client = createClient();
 		client.attachSession.mockResolvedValue(handle);
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 		await controller.selectSession(SESSION.id);
 
 		await controller.send("  第一条消息  ");
@@ -234,7 +259,7 @@ describe("SessionController", () => {
 		const handle = { ...createHandle(running), steer, abort };
 		const client = createClient();
 		client.attachSession.mockResolvedValue(handle);
-		const controller = new SessionController(client);
+		const controller = new SessionController(client, createUploadClient());
 		await controller.selectSession(running.id);
 
 		await controller.send("补充要求");
@@ -244,4 +269,49 @@ describe("SessionController", () => {
 		expect(abort).toHaveBeenCalledOnce();
 		expect(controller.getSnapshot().activeSession).toBe(aborted);
 	});
+});
+
+it("uploads files, attaches them, and removes attachments", async () => {
+	const uploadClient = createUploadClient();
+	const attachedSnapshot = { ...SESSION, attachments: [attachment("upload-1")] };
+	const handle = {
+		...createHandle(SESSION),
+		attachUpload: vi.fn(async () => attachedSnapshot),
+		removeAttachment: vi.fn(async () => SESSION),
+	};
+	const client = createClient();
+	client.attachSession.mockResolvedValue(handle);
+	const controller = new SessionController(client, uploadClient);
+	await controller.selectSession(SESSION.id);
+
+	await controller.uploadFiles([new File(["hi"], "notes.txt")]);
+
+	expect(uploadClient.uploadFile).toHaveBeenCalledOnce();
+	expect(handle.attachUpload).toHaveBeenCalledWith("upload-1", "session");
+	expect(controller.getSnapshot().activeSession?.attachments?.map((a) => a.id)).toEqual(["upload-1"]);
+	expect(controller.getSnapshot().uploads).toEqual([]);
+
+	await controller.removeAttachment("upload-1");
+	expect(handle.removeAttachment).toHaveBeenCalledWith("upload-1");
+	expect(controller.getSnapshot().activeSession).toBe(SESSION);
+});
+
+it("reports failed uploads without attaching them", async () => {
+	const uploadClient: PiUploadClient = {
+		uploadFile: vi.fn(async () => {
+			throw new Error("payload_too_large");
+		}),
+	};
+	const handle = { ...createHandle(SESSION), attachUpload: vi.fn(async () => SESSION) };
+	const client = createClient();
+	client.attachSession.mockResolvedValue(handle);
+	const controller = new SessionController(client, uploadClient);
+	await controller.selectSession(SESSION.id);
+
+	await controller.uploadFiles([new File(["x".repeat(64)], "big.txt")]);
+
+	expect(handle.attachUpload).not.toHaveBeenCalled();
+	expect(controller.getSnapshot().uploads).toEqual([
+		expect.objectContaining({ name: "big.txt", status: "failed", error: "payload_too_large" }),
+	]);
 });

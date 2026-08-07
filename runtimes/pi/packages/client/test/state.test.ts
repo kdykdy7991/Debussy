@@ -1,4 +1,4 @@
-import type { EventEnvelope, ServerEvent } from "@earendil-works/pi-protocol";
+import type { Attachment, EventEnvelope, ServerEvent } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import { attachSession, collectRequests, connectClient, MemoryByteServer, sessionSnapshot } from "./support.ts";
 
@@ -193,5 +193,113 @@ describe("PiClient", () => {
 		});
 		const reacquired = await reacquire;
 		expect(reacquired.snapshot).toMatchObject({ id: "session-1", revision: 2, lastSequence: 2 });
+	});
+});
+
+describe("attachment commands and events", () => {
+	function attachment(id: string): Attachment {
+		return {
+			id,
+			name: `${id}.txt`,
+			mediaType: "text/plain",
+			size: 4,
+			sha256: "abc",
+			status: "ready",
+			scope: "turn",
+			createdAt: 1,
+		};
+	}
+
+	async function attachedHandle() {
+		const server = new MemoryByteServer();
+		const client = await connectClient(server);
+		const handle = await attachSession(client, server, sessionSnapshot("session-1", { attached: true }));
+		return { server, client, handle };
+	}
+
+	test("attach_upload sends the command and applies the returned snapshot", async () => {
+		const { server, handle } = await attachedHandle();
+		const requests = collectRequests(server);
+		const attaching = handle.attachUpload("upload-1", "turn");
+		const request = requests.find((candidate) => candidate.request.command === "attach_upload");
+		expect(request).toBeDefined();
+		if (!request || request.request.command !== "attach_upload") throw new Error("missing attach_upload");
+		expect(request.request).toMatchObject({ sessionId: "session-1", uploadId: "upload-1", scope: "turn" });
+		server.send({
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: {
+				command: "attach_upload",
+				session: sessionSnapshot("session-1", { attached: true, attachments: [attachment("upload-1")] }),
+			},
+		});
+		const snapshot = await attaching;
+		expect(snapshot.attachments?.map((a) => a.id)).toEqual(["upload-1"]);
+		expect(handle.snapshot?.attachments?.map((a) => a.id)).toEqual(["upload-1"]);
+	});
+
+	test("remove_attachment sends the command and drops the attachment from the snapshot", async () => {
+		const { server, handle } = await attachedHandle();
+		const requests = collectRequests(server);
+		const removing = handle.removeAttachment("upload-1");
+		const request = requests.find((candidate) => candidate.request.command === "remove_attachment");
+		expect(request).toBeDefined();
+		if (!request || request.request.command !== "remove_attachment") throw new Error("missing remove_attachment");
+		expect(request.request).toMatchObject({ sessionId: "session-1", attachmentId: "upload-1" });
+		server.send({
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: {
+				command: "remove_attachment",
+				session: sessionSnapshot("session-1", { attached: true }),
+			},
+		});
+		const snapshot = await removing;
+		expect(snapshot.attachments ?? []).toEqual([]);
+	});
+
+	test("attachment_snapshot event merges an attachment into the session snapshot", async () => {
+		const { server, handle } = await attachedHandle();
+		const events: ServerEvent[] = [];
+		handle.onEvent((event) => events.push(event));
+		server.send({
+			type: "event",
+			event: { type: "attachment_snapshot", attachment: { ...attachment("upload-1"), sessionId: "session-1" } },
+		});
+		expect(handle.snapshot?.attachments?.map((a) => a.id)).toEqual(["upload-1"]);
+		expect(events.some((event) => event.type === "attachment_snapshot")).toBe(true);
+	});
+
+	test("attachment_removed event drops the attachment from the session snapshot", async () => {
+		const { server, handle } = await attachedHandle();
+		server.send({
+			type: "event",
+			event: { type: "attachment_snapshot", attachment: { ...attachment("upload-1"), sessionId: "session-1" } },
+		});
+		expect(handle.snapshot?.attachments?.map((a) => a.id)).toEqual(["upload-1"]);
+		server.send({
+			type: "event",
+			event: { type: "attachment_removed", sessionId: "session-1", attachmentId: "upload-1" },
+		});
+		expect(handle.snapshot?.attachments ?? []).toEqual([]);
+	});
+
+	test("prompt carries optional attachmentIds", async () => {
+		const { server, handle } = await attachedHandle();
+		const requests = collectRequests(server);
+		const prompting = handle.prompt("read this", { attachmentIds: ["upload-1"] });
+		const request = requests.find((candidate) => candidate.request.command === "prompt");
+		expect(request).toBeDefined();
+		if (!request || request.request.command !== "prompt") throw new Error("missing prompt");
+		expect(request.request).toMatchObject({ text: "read this", attachmentIds: ["upload-1"] });
+		server.send({
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: { command: "prompt", session: sessionSnapshot("session-1", { attached: true }) },
+		});
+		await prompting;
 	});
 });

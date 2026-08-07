@@ -518,3 +518,177 @@ describe("protocol v2 resumable progress", () => {
 		);
 	});
 });
+
+describe("protocol P1 file upload attachments", () => {
+	function attachmentForProtocol() {
+		return {
+			id: "upload-1",
+			name: "notes.txt",
+			mediaType: "text/plain",
+			size: 42,
+			sha256: "abc123",
+			status: "ready",
+			scope: "turn",
+			createdAt: 1,
+		};
+	}
+
+	test("parses an attachment_snapshot event", () => {
+		const message = { type: "event", event: { type: "attachment_snapshot", attachment: attachmentForProtocol() } };
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("parses an attachment_snapshot event for an unbound upload", () => {
+		const attachment = { ...attachmentForProtocol(), sessionId: undefined, scope: undefined } as Record<
+			string,
+			unknown
+		>;
+		delete attachment.scope;
+		delete attachment.sessionId;
+		expect(parseServerMessage({ type: "event", event: { type: "attachment_snapshot", attachment } })).toEqual({
+			type: "event",
+			event: { type: "attachment_snapshot", attachment },
+		});
+	});
+
+	test("rejects an attachment_snapshot event missing size or sha256", () => {
+		const attachment = attachmentForProtocol() as Record<string, unknown>;
+		delete attachment.size;
+		expect(() => parseServerMessage({ type: "event", event: { type: "attachment_snapshot", attachment } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("rejects an attachment_snapshot event with an unknown field", () => {
+		const attachment = attachmentForProtocol() as Record<string, unknown>;
+		attachment.extra = true;
+		expect(() => parseServerMessage({ type: "event", event: { type: "attachment_snapshot", attachment } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("parses an attachment_removed event", () => {
+		const message = {
+			type: "event",
+			event: { type: "attachment_removed", sessionId: "session-1", attachmentId: "upload-1" },
+		};
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("parses an attach_upload command", () => {
+		const request = {
+			type: "request",
+			id: "request-1",
+			request: { command: "attach_upload", sessionId: "session-1", uploadId: "upload-1", scope: "turn" },
+		};
+		expect(parseClientMessage(request)).toEqual(request);
+	});
+
+	test("rejects an attach_upload command with an unknown scope", () => {
+		expect(() =>
+			parseClientMessage({
+				type: "request",
+				id: "request-1",
+				request: { command: "attach_upload", sessionId: "session-1", uploadId: "upload-1", scope: "forever" },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("rejects an attach_upload command missing scope or uploadId", () => {
+		expect(() =>
+			parseClientMessage({
+				type: "request",
+				id: "request-1",
+				request: { command: "attach_upload", sessionId: "session-1", uploadId: "upload-1" },
+			}),
+		).toThrow(ProtocolValidationError);
+		expect(() =>
+			parseClientMessage({
+				type: "request",
+				id: "request-1",
+				request: { command: "attach_upload", sessionId: "session-1", scope: "turn" },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("parses a remove_attachment command", () => {
+		const request = {
+			type: "request",
+			id: "request-1",
+			request: { command: "remove_attachment", sessionId: "session-1", attachmentId: "upload-1" },
+		};
+		expect(parseClientMessage(request)).toEqual(request);
+	});
+
+	test("parses prompt and steer commands carrying optional attachmentIds", () => {
+		const request = {
+			type: "request",
+			id: "request-1",
+			request: { command: "prompt", sessionId: "session-1", text: "hello", attachmentIds: ["upload-1", "upload-2"] },
+		};
+		expect(parseClientMessage(request)).toEqual(request);
+		const steer = {
+			type: "request",
+			id: "request-2",
+			request: { command: "steer", sessionId: "session-1", text: "hi", attachmentIds: [] },
+		};
+		expect(parseClientMessage(steer)).toEqual(steer);
+	});
+
+	test("rejects a prompt command with non-string attachmentIds", () => {
+		expect(() =>
+			parseClientMessage({
+				type: "request",
+				id: "request-1",
+				request: { command: "prompt", sessionId: "session-1", text: "hi", attachmentIds: [1] },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("parses attach_upload and remove_attachment results", () => {
+		const attachResult = {
+			type: "response",
+			id: "request-1",
+			ok: true,
+			result: { command: "attach_upload", session: sessionSnapshotForProtocol() },
+		};
+		expect(parseServerMessage(attachResult)).toEqual(attachResult);
+		const removeResult = {
+			type: "response",
+			id: "request-2",
+			ok: true,
+			result: { command: "remove_attachment", session: sessionSnapshotForProtocol() },
+		};
+		expect(parseServerMessage(removeResult)).toEqual(removeResult);
+	});
+
+	test("parses a session snapshot carrying attachments", () => {
+		const snapshot = { ...sessionSnapshotForProtocol(), attachments: [attachmentForProtocol()] };
+		const event = { type: "event", event: { type: "session_snapshot", snapshot } };
+		expect(parseServerMessage(event)).toEqual(event);
+	});
+
+	test("rejects a session snapshot carrying a malformed attachment", () => {
+		const snapshot = {
+			...sessionSnapshotForProtocol(),
+			attachments: [{ id: "upload-1", name: "notes.txt", status: "ready" }],
+		};
+		expect(() => parseServerMessage({ type: "event", event: { type: "session_snapshot", snapshot } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("accepts the extended protocol error codes used by uploads", () => {
+		for (const code of [
+			"unauthorized",
+			"forbidden",
+			"payload_too_large",
+			"unsupported_media_type",
+			"conflict",
+			"expired",
+		]) {
+			const response = { type: "response", id: "request-1", ok: false, error: { code, message: "nope" } };
+			expect(parseServerMessage(response)).toEqual(response);
+		}
+	});
+});

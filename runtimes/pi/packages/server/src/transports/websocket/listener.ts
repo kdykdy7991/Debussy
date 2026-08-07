@@ -4,6 +4,7 @@ import { DEFAULT_MAX_FRAME_LENGTH } from "@earendil-works/pi-protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import type { ByteConnection, ByteConnectionAcceptor } from "../../connection.ts";
 import type { PiServerListener } from "../../listener.ts";
+import type { HttpRequestHandler } from "../../types.ts";
 import type { WebSocketListenerOptions } from "./types.ts";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -23,6 +24,7 @@ interface ResolvedWebSocketListenerOptions {
 	maxFrameLength: number;
 	maxPendingBytes: number;
 	gracefulCloseTimeoutMs: number;
+	httpHandler?: HttpRequestHandler;
 	onError?: (error: Error) => void;
 }
 
@@ -63,6 +65,7 @@ function resolveWebSocketListenerOptions(options: WebSocketListenerOptions): Res
 		maxFrameLength,
 		maxPendingBytes,
 		gracefulCloseTimeoutMs,
+		httpHandler: options.httpHandler,
 		onError: options.onError,
 	};
 }
@@ -75,7 +78,7 @@ function reportError(onError: ((error: Error) => void) | undefined, error: unkno
 	}
 }
 
-function requestPathname(url: string | undefined): string | undefined {
+export function requestPathname(url: string | undefined): string | undefined {
 	if (!url) return undefined;
 	try {
 		return new URL(url, "ws://localhost").pathname;
@@ -84,7 +87,7 @@ function requestPathname(url: string | undefined): string | undefined {
 	}
 }
 
-function hostHeaderHostname(hostHeader: string | undefined): string | undefined {
+export function hostHeaderHostname(hostHeader: string | undefined): string | undefined {
 	if (!hostHeader) return undefined;
 	const trimmed = hostHeader.trim();
 	if (!trimmed) return undefined;
@@ -99,7 +102,7 @@ function hostHeaderHostname(hostHeader: string | undefined): string | undefined 
 }
 
 /** Simple glob matcher: `*` matches any run of characters within the value. */
-function matchesPattern(value: string, pattern: string): boolean {
+export function matchesPattern(value: string, pattern: string): boolean {
 	if (pattern === "*") return true;
 	const parts = pattern.split("*");
 	let cursor = value;
@@ -156,8 +159,8 @@ export class WebSocketListener implements PiServerListener {
 		if (this.closing) throw new Error("WebSocket listener is closing or closed");
 		this.accept = accept;
 
-		const httpServer = createServer((_request, response) => {
-			this.respondNotFound(response);
+		const httpServer = createServer((request, response) => {
+			void this.handleHttpRequest(request, response);
 		});
 		const wss = new WebSocketServer({
 			noServer: true,
@@ -316,6 +319,24 @@ export class WebSocketListener implements PiServerListener {
 			this.connections.delete(connection);
 			handler.onClose();
 		});
+	}
+
+	private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+		const handler = this.options.httpHandler;
+		if (handler) {
+			try {
+				const handled = await handler(request, response);
+				if (handled) return;
+			} catch (error) {
+				reportError(this.options.onError, error);
+				if (!response.headersSent) {
+					response.writeHead(500, { "content-type": "text/plain" });
+					response.end("Internal server error");
+				}
+				return;
+			}
+		}
+		this.respondNotFound(response);
 	}
 
 	private respondNotFound(response: ServerResponse): void {

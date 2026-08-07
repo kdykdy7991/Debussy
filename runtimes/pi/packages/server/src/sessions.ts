@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type {
+	Attachment,
+	AttachmentScope,
 	Command,
 	EventEnvelope,
+	ServerEvent,
 	SessionSnapshot,
 	SessionSummary,
 	TranscriptProgress,
@@ -9,7 +12,14 @@ import type {
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
 import { SessionEventLog } from "./event-log.ts";
-import type { CreateSessionOptions, PiSessionBackend, PiSessionRuntime, PiSessionRuntimeEvent } from "./types.ts";
+import type {
+	CreateSessionOptions,
+	PiSessionBackend,
+	PiSessionRuntime,
+	PiSessionRuntimeEvent,
+	ResolvedAttachmentInput,
+} from "./types.ts";
+import type { AttachmentStore } from "./uploads/store.ts";
 
 interface LiveSession {
 	id: string;
@@ -38,6 +48,8 @@ interface LiveSessionManagerOptions {
 	reportError: (error: unknown) => void;
 	sessionEventLogMaxEvents: number;
 	sessionEventLogRetentionMs: number;
+	/** Upload/attachment store backing `attach_upload` / `remove_attachment`. */
+	attachments?: AttachmentStore;
 }
 
 function toSummary(snapshot: SessionSnapshot): SessionSummary {
@@ -128,15 +140,33 @@ export class LiveSessionManager {
 			}
 			case "prompt": {
 				const live = this.requireAttached(connection, command.sessionId);
+				const attachments = this.resolvePromptAttachments(command.sessionId, command.attachmentIds);
 				const session = await this.runOperation(connection, live, () =>
-					live.runtime.prompt({ text: command.text }),
+					live.runtime.prompt({ text: command.text, attachmentIds: command.attachmentIds, attachments }),
 				);
 				return { command: "prompt" as const, session };
 			}
 			case "steer": {
 				const live = this.requireAttached(connection, command.sessionId);
-				const session = await this.runOperation(connection, live, () => live.runtime.steer({ text: command.text }));
+				const attachments = this.resolvePromptAttachments(command.sessionId, command.attachmentIds);
+				const session = await this.runOperation(connection, live, () =>
+					live.runtime.steer({ text: command.text, attachmentIds: command.attachmentIds, attachments }),
+				);
 				return { command: "steer" as const, session };
+			}
+			case "attach_upload": {
+				const live = this.requireAttached(connection, command.sessionId);
+				await this.attachUpload(live, command.uploadId, command.scope);
+				const session = this.forConnection(await this.broadcastSnapshot(live), connection);
+				this.options.broadcastServerSnapshot();
+				return { command: "attach_upload" as const, session };
+			}
+			case "remove_attachment": {
+				const live = this.requireAttached(connection, command.sessionId);
+				await this.removeAttachment(live, command.attachmentId);
+				const session = this.forConnection(await this.broadcastSnapshot(live), connection);
+				this.options.broadcastServerSnapshot();
+				return { command: "remove_attachment" as const, session };
 			}
 			case "abort": {
 				const live = this.requireAttached(connection, command.sessionId);
@@ -333,12 +363,14 @@ export class LiveSessionManager {
 		if (snapshot.id !== live.id) {
 			throw new PiServerError("invalid_request", `Runtime session ID changed from ${live.id} to ${snapshot.id}`);
 		}
+		const attachments = this.options.attachments?.listBySession(live.id);
 		return {
 			...snapshot,
 			phase: live.runtime.getPhase(),
 			attached: live.connections.size > 0,
 			locked: true,
 			lastSequence: live.log.lastSequence,
+			...(attachments && attachments.length > 0 ? { attachments } : {}),
 		};
 	}
 
@@ -427,6 +459,72 @@ export class LiveSessionManager {
 			if (this.liveSessions.has(id)) continue;
 			if (log.lastActivityAtMs < cutoff) this.eventLogs.delete(id);
 		}
+	}
+
+	/** Bind a ready upload to a session; idempotent when already bound to the same session. */
+	private async attachUpload(live: LiveSession, uploadId: string, scope: AttachmentScope): Promise<Attachment> {
+		const store = this.requireAttachmentStore();
+		const record = store.get(uploadId);
+		if (!record) throw new PiServerError("not_found", `Unknown upload: ${uploadId}`);
+		const attachment = record.attachment;
+		if (attachment.status !== "ready") {
+			throw new PiServerError("invalid_state", `Upload is not ready (status: ${attachment.status})`, {
+				status: attachment.status,
+			});
+		}
+		if (attachment.sessionId !== undefined && attachment.sessionId !== live.id) {
+			throw new PiServerError("conflict", `Upload is attached to another session: ${attachment.sessionId}`);
+		}
+		const bound = await store.bind(uploadId, live.id, scope);
+		if (!bound) throw new PiServerError("not_found", `Unknown upload: ${uploadId}`);
+		this.broadcastEvent(live, { type: "attachment_snapshot", attachment: bound.attachment });
+		return bound.attachment;
+	}
+
+	/** Unbind an attachment from its session and mark it removed (metadata kept for history). */
+	private async removeAttachment(live: LiveSession, attachmentId: string): Promise<void> {
+		const store = this.requireAttachmentStore();
+		const record = store.get(attachmentId);
+		if (!record || record.attachment.sessionId !== live.id) {
+			throw new PiServerError("not_found", `Attachment is not attached to this session: ${attachmentId}`);
+		}
+		await store.markRemoved(attachmentId);
+		this.broadcastEvent(live, { type: "attachment_removed", sessionId: live.id, attachmentId });
+	}
+
+	/** Validate prompt attachment refs and resolve staged file paths for the runtime. */
+	private resolvePromptAttachments(sessionId: string, attachmentIds: string[] | undefined): ResolvedAttachmentInput[] {
+		if (!attachmentIds || attachmentIds.length === 0) return [];
+		const store = this.requireAttachmentStore();
+		const resolved: ResolvedAttachmentInput[] = [];
+		for (const id of attachmentIds) {
+			const record = store.get(id);
+			if (!record || record.attachment.sessionId !== sessionId) {
+				throw new PiServerError("invalid_request", `Attachment is not attached to this session: ${id}`);
+			}
+			if (record.attachment.status !== "ready") {
+				throw new PiServerError("invalid_state", `Attachment is not ready: ${id} (${record.attachment.status})`);
+			}
+			resolved.push({
+				id,
+				name: record.attachment.name,
+				mediaType: record.attachment.mediaType,
+				path: store.filePath(id),
+			});
+		}
+		return resolved;
+	}
+
+	private requireAttachmentStore(): AttachmentStore {
+		if (!this.options.attachments) {
+			throw new PiServerError("invalid_request", "Attachments are not configured on this server");
+		}
+		return this.options.attachments;
+	}
+
+	private broadcastEvent(live: LiveSession, event: ServerEvent): void {
+		const envelope: EventEnvelope = { type: "event", event };
+		for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
 	}
 }
 

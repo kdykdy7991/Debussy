@@ -117,7 +117,7 @@ export class TestSessionRuntime implements PiSessionRuntime {
 
 	async steer(input: PromptInput): Promise<void> {
 		if (this.getPhase() === "idle") throw new PiServerError("busy", "There is no active prompt to steer");
-		this.steers.push(input);
+		this.steers.push({ text: input.text });
 		this.update({
 			queuedSteerCount: this.stored.snapshot.queuedSteerCount + 1,
 			queuedSteer: [

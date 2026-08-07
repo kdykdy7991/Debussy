@@ -65,6 +65,7 @@ export class PiServer {
 			reportError: (error) => this.reportError(error),
 			sessionEventLogMaxEvents: resolved.sessionEventLogMaxEvents,
 			sessionEventLogRetentionMs: resolved.sessionEventLogRetentionMs,
+			attachments: options.attachments,
 		});
 		this.snapshots = new ServerSnapshotPublisher({
 			serverId: this.id,
