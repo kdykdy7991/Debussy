@@ -176,7 +176,6 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .sidebar-footer strong, .sidebar-footer small { display: block; }
 .sidebar-footer strong { font: 9px var(--font-mono); letter-spacing: 0.08em; }
 .sidebar-footer small { margin-top: 3px; color: var(--color-text-tertiary); font-size: 9px; }
-.sidebar-footer button { padding: 0; border: 0; background: transparent; color: var(--color-source); font-size: 10px; cursor: pointer; }
 .connection-dot, .connection-badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-warning); }
 .connection-dot.connected, .connection-badge.connected i { background: var(--color-success); }
 .connection-dot.connecting, .connection-badge.connecting i { background: var(--color-source); animation: pulse 1.3s infinite; }
@@ -204,7 +203,6 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .edition i { color: var(--color-editorial); font-style: normal; }
 .masthead-date { color: var(--color-text-secondary); font: 10px var(--font-serif); }
 .connection-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; background: var(--color-bg-page); font: 9px var(--font-mono); }
-.text-action { border: 0; background: transparent; font-size: 10px; cursor: pointer; }
 .mobile-nav, .rail-trigger { display: none; }
 
 .connection-error { position: absolute; z-index: 12; top: calc(var(--header-height) + 12px); left: 50%; display: flex; width: min(520px, calc(100% - 32px)); transform: translateX(-50%); align-items: center; justify-content: space-between; gap: 20px; padding: 11px 13px; border: 1px solid var(--color-editorial); background: var(--color-danger-bg); box-shadow: var(--shadow-float); font-size: 11px; }

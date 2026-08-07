@@ -44,7 +44,6 @@ export function App({ connection, sessions }: AppProps) {
 	);
 	const sessionSnapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot);
 	const connected = connectionSnapshot.state === "connected";
-	const connecting = connectionSnapshot.state === "connecting";
 	const [message, setMessage] = useState("");
 	const [sessionQuery, setSessionQuery] = useState("");
 	const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -221,9 +220,6 @@ export function App({ connection, sessions }: AppProps) {
 						<strong>LOCAL WORKSPACE</strong>
 						<small>{CONNECTION_LABELS[connectionSnapshot.state]}</small>
 					</span>
-					<button type="button" onClick={handleConnection} disabled={connecting}>
-						{connected ? "断开" : "连接"}
-					</button>
 				</footer>
 			</aside>
 
@@ -269,9 +265,6 @@ export function App({ connection, sessions }: AppProps) {
 							<i aria-hidden="true" />
 							{CONNECTION_LABELS[connectionSnapshot.state]}
 						</span>
-						<button className="text-action" type="button" onClick={handleConnection} disabled={connecting}>
-							{connected ? "断开" : "连接"}
-						</button>
 						<button
 							className="icon-button rail-trigger"
 							type="button"
