@@ -5,6 +5,7 @@ import {
 	type KeyboardEvent,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 	useSyncExternalStore,
 } from "react";
@@ -48,6 +49,8 @@ export function App({ connection, sessions }: AppProps) {
 	const [sessionQuery, setSessionQuery] = useState("");
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [railOpen, setRailOpen] = useState(false);
+	const composerRef = useRef<HTMLTextAreaElement>(null);
+	const conversationScrollRef = useRef<HTMLDivElement>(null);
 	const [theme, setTheme] = useState<VisualTheme>(() => {
 		if (typeof window === "undefined") return "editorial";
 		try {
@@ -57,6 +60,8 @@ export function App({ connection, sessions }: AppProps) {
 		}
 	});
 	const active = sessionSnapshot.activeSession;
+	const activeId = active?.id;
+	const hasActive = active !== undefined;
 	const running = active !== undefined && active.phase !== "idle";
 	const canSend = connected && active !== undefined && !sessionSnapshot.loading && !sessionSnapshot.submitting;
 	const visibleSessions = useMemo(() => {
@@ -98,6 +103,30 @@ export function App({ connection, sessions }: AppProps) {
 		event.target.style.height = `${Math.min(event.target.scrollHeight, 240)}px`;
 	};
 	const abort = () => void sessions.abort().catch(() => {});
+
+	useEffect(() => {
+		if (!connected || !hasActive || !activeId) return;
+		const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
+		return () => window.cancelAnimationFrame(frame);
+	}, [activeId, connected, hasActive]);
+
+	useEffect(() => {
+		const element = conversationScrollRef.current;
+		if (!element || !activeId) return;
+		const frame = window.requestAnimationFrame(() => {
+			element.scrollTop = element.scrollHeight;
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [activeId]);
+
+	useEffect(() => {
+		const element = conversationScrollRef.current;
+		if (!element || !active) return;
+		const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+		if (distanceFromBottom < 180) {
+			element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+		}
+	}, [active]);
 
 	useEffect(() => {
 		document.body.dataset.theme = theme;
@@ -263,7 +292,7 @@ export function App({ connection, sessions }: AppProps) {
 					</div>
 				) : null}
 
-				<div className="conversation-scroll">
+				<div className="conversation-scroll" ref={conversationScrollRef}>
 					{active ? (
 						<Conversation active={active} abort={abort} />
 					) : (
@@ -277,6 +306,7 @@ export function App({ connection, sessions }: AppProps) {
 							消息
 						</label>
 						<textarea
+							ref={composerRef}
 							id="message"
 							rows={1}
 							placeholder={
