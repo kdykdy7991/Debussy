@@ -285,6 +285,84 @@ export const AttachmentSchema = StrictObject({
 });
 export type Attachment = Static<typeof AttachmentSchema>;
 
+export const SourceStatusSchema = Type.Union([
+	Type.Literal("pending"),
+	Type.Literal("ready"),
+	Type.Literal("failed"),
+	Type.Literal("removed"),
+]);
+export type SourceStatus = Static<typeof SourceStatusSchema>;
+
+/**
+ * A retrievable index over one uploaded attachment. A Source references its
+ * P1 attachment and never copies file bytes; the staged file stays owned by
+ * the attachment store.
+ */
+export const SourceSchema = StrictObject({
+	id: IdSchema,
+	attachmentId: IdSchema,
+	sessionId: IdSchema,
+	name: Type.String({ minLength: 1 }),
+	mediaType: Type.String({ minLength: 1 }),
+	status: SourceStatusSchema,
+	/** Monotonic index revision; bumped on every successful re-index. */
+	version: Type.Integer({ minimum: 1 }),
+	createdAt: TimestampSchema,
+	updatedAt: TimestampSchema,
+	/** Set when the whole file was indexed but truncated by the size limit. */
+	truncated: Type.Optional(Type.Boolean()),
+	error: Type.Optional(
+		StrictObject({
+			code: Type.String(),
+			message: Type.String(),
+		}),
+	),
+});
+export type Source = Static<typeof SourceSchema>;
+
+/**
+ * One indexed fragment of a Source. Chunks are server-internal: they are only
+ * used for retrieval and model context, never transmitted to clients as raw
+ * text. Clients see excerpts derived from stored chunks via `Citation`.
+ */
+export const SourceChunkSchema = StrictObject({
+	id: IdSchema,
+	sourceId: IdSchema,
+	/** Stable, zero-based position within the source; survives re-index. */
+	ordinal: Type.Integer({ minimum: 0 }),
+	text: Type.String(),
+	/** 1-based inclusive line range in the original file. */
+	startLine: Type.Optional(Type.Integer({ minimum: 1 })),
+	endLine: Type.Optional(Type.Integer({ minimum: 1 })),
+	/** 0-based inclusive character range in the original file text. */
+	charStart: Type.Optional(Type.Integer({ minimum: 0 })),
+	charEnd: Type.Optional(Type.Integer({ minimum: 0 })),
+	tokenEstimate: Type.Optional(Type.Integer({ minimum: 0 })),
+});
+export type SourceChunk = Static<typeof SourceChunkSchema>;
+
+/**
+ * The set of source fragments a single agent turn actually used. A Citation is
+ * metadata over stored chunks — `excerpt` always originates server-side and
+ * clients can never submit it.
+ */
+export const CitationSchema = StrictObject({
+	id: IdSchema,
+	sessionId: IdSchema,
+	turnId: IdSchema,
+	sourceId: IdSchema,
+	chunkId: IdSchema,
+	ordinal: Type.Integer({ minimum: 0 }),
+	/** Display title (source file name), safe for client rendering. */
+	title: Type.String({ minLength: 1 }),
+	/** Excerpt copied from the stored chunk; never client-supplied. */
+	excerpt: Type.String(),
+	startLine: Type.Optional(Type.Integer({ minimum: 1 })),
+	endLine: Type.Optional(Type.Integer({ minimum: 1 })),
+	score: Type.Optional(Type.Number({ minimum: 0 })),
+});
+export type Citation = Static<typeof CitationSchema>;
+
 export const SessionSnapshotSchema = StrictObject({
 	...SessionSummaryProperties,
 	lastSequence: SequencePositionSchema,
@@ -293,6 +371,10 @@ export const SessionSnapshotSchema = StrictObject({
 	queuedSteer: Type.Array(UserTranscriptItemSchema),
 	queuedSteerCount: Type.Integer({ minimum: 0 }),
 	attachments: Type.Optional(Type.Array(AttachmentSchema)),
+	/** Active text sources for the session (pending/ready/failed, never removed). */
+	sources: Type.Optional(Type.Array(SourceSchema)),
+	/** Citations for the most recent turn; kept small, not all history. */
+	citations: Type.Optional(Type.Array(CitationSchema)),
 });
 export type SessionSummary = Static<typeof SessionSummarySchema>;
 export type SessionSnapshot = Static<typeof SessionSnapshotSchema>;
@@ -499,6 +581,21 @@ export const AttachmentRemovedEventSchema = StrictObject({
 	sessionId: IdSchema,
 	attachmentId: IdSchema,
 });
+/** A source status change; broadcast when indexing finishes, fails, or is removed. */
+export const SourceSnapshotEventSchema = StrictObject({
+	type: Type.Literal("source_snapshot"),
+	source: SourceSchema,
+});
+/**
+ * The citations a completed turn actually used. Broadcast once near the end of
+ * the turn; clients merge it into their snapshot for the current turn.
+ */
+export const CitationSnapshotEventSchema = StrictObject({
+	type: Type.Literal("citation_snapshot"),
+	sessionId: IdSchema,
+	turnId: IdSchema,
+	citations: Type.Array(CitationSchema),
+});
 export const ServerEventSchema = Type.Union([
 	StrictObject({ type: Type.Literal("server_snapshot"), snapshot: ServerSnapshotSchema }),
 	StrictObject({ type: Type.Literal("session_snapshot"), snapshot: SessionSnapshotSchema }),
@@ -506,6 +603,8 @@ export const ServerEventSchema = Type.Union([
 	StrictObject({ type: Type.Literal("session_removed"), sessionId: IdSchema }),
 	AttachmentSnapshotEventSchema,
 	AttachmentRemovedEventSchema,
+	SourceSnapshotEventSchema,
+	CitationSnapshotEventSchema,
 ]);
 export type ServerEvent = Static<typeof ServerEventSchema>;
 

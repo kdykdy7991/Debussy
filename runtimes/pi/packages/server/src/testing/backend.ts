@@ -53,6 +53,8 @@ export class TestSessionRuntime implements PiSessionRuntime {
 	readonly disposed = new Deferred<void>();
 	disposeCount = 0;
 	readonly steers: PromptInput[] = [];
+	/** Every prompt/steer input the runtime received, for assertions. */
+	readonly promptInputs: PromptInput[] = [];
 	private readonly stored: StoredSession;
 	private readonly onDispose: () => void;
 	private readonly listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
@@ -73,6 +75,7 @@ export class TestSessionRuntime implements PiSessionRuntime {
 
 	async prompt(input: PromptInput): Promise<void> {
 		if (this.getPhase() !== "idle") throw new PiServerError("busy", "A prompt is already running");
+		this.promptInputs.push(input);
 		const done = new Deferred<"complete" | "aborted">();
 		this.pendingPrompt = { input, done };
 		this.update({

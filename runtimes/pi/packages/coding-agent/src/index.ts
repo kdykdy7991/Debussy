@@ -20,6 +20,7 @@ export {
 	type AttachmentInput,
 	type ModelCycleResult,
 	type ParsedSkillBlock,
+	type PromptContextBlock,
 	type PromptOptions,
 	parseSkillBlock,
 	type SessionStats,

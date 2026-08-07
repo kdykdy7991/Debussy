@@ -12,7 +12,7 @@
  *    emits a final authoritative `SessionSnapshot` after each operation.
  *  - Dispose the AgentSession and stop progress forwarding on `dispose()`.
  */
-import type { AgentSession, AttachmentInput } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AttachmentInput, PromptContextBlock } from "@earendil-works/pi-coding-agent";
 import type {
 	ModelRef,
 	SessionPhase,
@@ -87,13 +87,22 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	async prompt(input: PromptInput): Promise<void> {
 		await this.runOperation(() => {
 			const attachments = this.attachmentOptions(input.attachments);
-			return this.agentSession.prompt(input.text, attachments ? { attachments } : undefined);
+			const contextBlocks = this.contextBlocks(input.retrieval);
+			return this.agentSession.prompt(input.text, {
+				...(attachments ? { attachments } : {}),
+				...(contextBlocks ? { contextBlocks } : {}),
+			});
 		});
 	}
 
 	async steer(input: SteerInput): Promise<void> {
 		await this.runOperation(() =>
-			this.agentSession.steer(input.text, undefined, this.attachmentOptions(input.attachments)),
+			this.agentSession.steer(
+				input.text,
+				undefined,
+				this.attachmentOptions(input.attachments),
+				this.contextBlocks(input.retrieval),
+			),
 		);
 	}
 
@@ -102,6 +111,12 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	): AttachmentInput[] | undefined {
 		if (!attachments || attachments.length === 0) return undefined;
 		return attachments.map(({ id, name, mediaType, path }) => ({ id, name, mediaType, path }));
+	}
+
+	/** Convert server-side retrieval into transcript-safe context blocks. */
+	private contextBlocks(retrieval: PromptInput["retrieval"]): PromptContextBlock[] | undefined {
+		if (!retrieval) return undefined;
+		return [{ text: retrieval.context, reference: retrieval.reference }];
 	}
 
 	async abort(): Promise<void> {

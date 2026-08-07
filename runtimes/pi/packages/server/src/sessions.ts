@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 import type {
 	Attachment,
 	AttachmentScope,
+	Citation,
 	Command,
 	EventEnvelope,
 	ServerEvent,
 	SessionSnapshot,
 	SessionSummary,
+	Source,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
+import type { CitationService } from "./citations/service.ts";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
 import { SessionEventLog } from "./event-log.ts";
@@ -18,6 +21,7 @@ import type {
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
 	ResolvedAttachmentInput,
+	RetrievalInput,
 } from "./types.ts";
 import type { AttachmentStore } from "./uploads/store.ts";
 
@@ -36,6 +40,8 @@ interface LiveSession {
 	currentTurnId?: string;
 	/** Runtime snapshot enriched with the in-flight turn for newly attached clients. */
 	transientSnapshot?: SessionSnapshot;
+	/** Citations for the most recent turn; surfaced in snapshots and restored on reopen. */
+	citations?: Citation[];
 }
 
 interface LiveSessionManagerOptions {
@@ -50,6 +56,8 @@ interface LiveSessionManagerOptions {
 	sessionEventLogRetentionMs: number;
 	/** Upload/attachment store backing `attach_upload` / `remove_attachment`. */
 	attachments?: AttachmentStore;
+	/** Citation index + retrieval service backing P2 source/citation flows. */
+	citations?: CitationService;
 }
 
 function toSummary(snapshot: SessionSnapshot): SessionSummary {
@@ -76,6 +84,11 @@ export class LiveSessionManager {
 
 	constructor(options: LiveSessionManagerOptions) {
 		this.options = options;
+		// Broadcast source status changes (pending → ready/failed/removed) to the
+		// owning session's connections as soon as the store records them.
+		if (options.citations) {
+			options.citations.onSourceChange = (source) => this.broadcastSourceChange(source);
+		}
 		// Expire event logs for sessions that were disposed long ago so an idle
 		// server does not accumulate unbounded per-session replay buffers.
 		const sweepIntervalMs = Math.max(Math.floor(options.sessionEventLogRetentionMs / 2), 1_000);
@@ -140,17 +153,47 @@ export class LiveSessionManager {
 			}
 			case "prompt": {
 				const live = this.requireAttached(connection, command.sessionId);
-				const attachments = this.resolvePromptAttachments(command.sessionId, command.attachmentIds);
-				const session = await this.runOperation(connection, live, () =>
-					live.runtime.prompt({ text: command.text, attachmentIds: command.attachmentIds, attachments }),
+				const turnId = randomUUID();
+				const { attachments, retrieval } = await this.preparePromptInputs(
+					live,
+					command.attachmentIds,
+					command.text,
+					turnId,
+				);
+				const session = await this.runOperation(
+					connection,
+					live,
+					() =>
+						live.runtime.prompt({
+							text: command.text,
+							attachmentIds: command.attachmentIds,
+							attachments,
+							retrieval,
+						}),
+					{ turnId, citations: retrieval?.citations ?? [] },
 				);
 				return { command: "prompt" as const, session };
 			}
 			case "steer": {
 				const live = this.requireAttached(connection, command.sessionId);
-				const attachments = this.resolvePromptAttachments(command.sessionId, command.attachmentIds);
-				const session = await this.runOperation(connection, live, () =>
-					live.runtime.steer({ text: command.text, attachmentIds: command.attachmentIds, attachments }),
+				const turnId = randomUUID();
+				const { attachments, retrieval } = await this.preparePromptInputs(
+					live,
+					command.attachmentIds,
+					command.text,
+					turnId,
+				);
+				const session = await this.runOperation(
+					connection,
+					live,
+					() =>
+						live.runtime.steer({
+							text: command.text,
+							attachmentIds: command.attachmentIds,
+							attachments,
+							retrieval,
+						}),
+					{ turnId, citations: retrieval?.citations ?? [] },
 				);
 				return { command: "steer" as const, session };
 			}
@@ -245,12 +288,29 @@ export class LiveSessionManager {
 		connection: ConnectionState,
 		live: LiveSession,
 		operation: () => Promise<void>,
+		options: { turnId?: string; citations?: readonly Citation[] } = {},
 	): Promise<SessionSnapshot> {
 		live.operationCount += 1;
-		live.currentTurnId = randomUUID();
+		live.currentTurnId = options.turnId ?? randomUUID();
+		// A retrieval turn replaces the previous turn's citations; other
+		// operations (abort/setModel/setThinking) leave them untouched.
+		if (options.citations !== undefined) live.citations = undefined;
 		live.transientSnapshot = live.runtime.snapshot();
 		try {
 			await operation();
+			if (options.citations !== undefined) {
+				const citations = [...options.citations];
+				live.citations = citations;
+				await this.options.citations?.persistCitations(live.id, live.currentTurnId, citations);
+				if (citations.length > 0) {
+					this.broadcastEvent(live, {
+						type: "citation_snapshot",
+						sessionId: live.id,
+						turnId: live.currentTurnId,
+						citations,
+					});
+				}
+			}
 			live.transientSnapshot = live.runtime.snapshot();
 			return this.forConnection(await this.broadcastSnapshot(live), connection);
 		} finally {
@@ -308,6 +368,8 @@ export class LiveSessionManager {
 				terminal: false,
 				log: this.eventLogFor(id),
 			};
+			// Restore the last turn's citations so reconnect/restart history shows them.
+			live.citations = (await this.options.citations?.loadLatestCitations(id)) ?? [];
 			live.unsubscribe = runtime.subscribe((event) => this.handleRuntimeEvent(live!, event));
 			this.liveSessions.set(id, live);
 			live.ready = true;
@@ -364,6 +426,8 @@ export class LiveSessionManager {
 			throw new PiServerError("invalid_request", `Runtime session ID changed from ${live.id} to ${snapshot.id}`);
 		}
 		const attachments = this.options.attachments?.listBySession(live.id);
+		const sources = this.options.citations?.listSourcesBySession(live.id);
+		const citations = live.citations && live.citations.length > 0 ? live.citations : undefined;
 		return {
 			...snapshot,
 			phase: live.runtime.getPhase(),
@@ -371,6 +435,8 @@ export class LiveSessionManager {
 			locked: true,
 			lastSequence: live.log.lastSequence,
 			...(attachments && attachments.length > 0 ? { attachments } : {}),
+			...(sources && sources.length > 0 ? { sources } : {}),
+			...(citations ? { citations } : {}),
 		};
 	}
 
@@ -478,6 +544,13 @@ export class LiveSessionManager {
 		const bound = await store.bind(uploadId, live.id, scope);
 		if (!bound) throw new PiServerError("not_found", `Unknown upload: ${uploadId}`);
 		this.broadcastEvent(live, { type: "attachment_snapshot", attachment: bound.attachment });
+		// Start indexing text attachments in the background so their Source is
+		// ready (or failed) by the time a prompt references them.
+		if (this.options.citations && isTextMediaType(bound.attachment.mediaType)) {
+			void this.options.citations.ensureSource(bound.attachment).catch((error: unknown) => {
+				this.options.reportError(error);
+			});
+		}
 		return bound.attachment;
 	}
 
@@ -489,30 +562,78 @@ export class LiveSessionManager {
 			throw new PiServerError("not_found", `Attachment is not attached to this session: ${attachmentId}`);
 		}
 		await store.markRemoved(attachmentId);
+		await this.options.citations?.markSourceRemoved(attachmentId);
 		this.broadcastEvent(live, { type: "attachment_removed", sessionId: live.id, attachmentId });
 	}
 
-	/** Validate prompt attachment refs and resolve staged file paths for the runtime. */
-	private resolvePromptAttachments(sessionId: string, attachmentIds: string[] | undefined): ResolvedAttachmentInput[] {
-		if (!attachmentIds || attachmentIds.length === 0) return [];
+	/**
+	 * Resolve prompt attachment refs and run P2 retrieval over ready text
+	 * sources. Attachments without an indexable Source stay in the P1
+	 * full-injection set; ready sources contribute retrieval context. Sources
+	 * still indexing or failed reject the prompt with `invalid_state` so the
+	 * client is never silently served an empty context.
+	 */
+	private async preparePromptInputs(
+		live: LiveSession,
+		attachmentIds: string[] | undefined,
+		query: string,
+		turnId: string,
+	): Promise<{ attachments: ResolvedAttachmentInput[]; retrieval: RetrievalInput | undefined }> {
+		if (!attachmentIds || attachmentIds.length === 0) return { attachments: [], retrieval: undefined };
 		const store = this.requireAttachmentStore();
+		const citationService = this.options.citations;
 		const resolved: ResolvedAttachmentInput[] = [];
+		const sourceIds: string[] = [];
 		for (const id of attachmentIds) {
 			const record = store.get(id);
-			if (!record || record.attachment.sessionId !== sessionId) {
+			if (!record || record.attachment.sessionId !== live.id) {
 				throw new PiServerError("invalid_request", `Attachment is not attached to this session: ${id}`);
 			}
 			if (record.attachment.status !== "ready") {
 				throw new PiServerError("invalid_state", `Attachment is not ready: ${id} (${record.attachment.status})`);
 			}
-			resolved.push({
+			const input: ResolvedAttachmentInput = {
 				id,
 				name: record.attachment.name,
 				mediaType: record.attachment.mediaType,
 				path: store.filePath(id),
-			});
+			};
+			const source = citationService ? citationService.getSourceByAttachment(id) : undefined;
+			if (!source || source.status === "removed") {
+				// Non-text attachment (no indexable source): P1 full-injection fallback.
+				resolved.push(input);
+				continue;
+			}
+			if (source.status === "pending") {
+				throw new PiServerError("invalid_state", `File is still processing: ${record.attachment.name}`, {
+					attachmentId: id,
+					sourceStatus: source.status,
+				});
+			}
+			if (source.status === "failed") {
+				throw new PiServerError(
+					"invalid_state",
+					`File failed to index: ${record.attachment.name}${source.error ? ` (${source.error.message})` : ""}`,
+					{ attachmentId: id, sourceStatus: source.status },
+				);
+			}
+			sourceIds.push(source.id);
+			resolved.push(input);
 		}
-		return resolved;
+
+		if (citationService && sourceIds.length > 0) {
+			const result = await citationService.retrieve({ sessionId: live.id, sourceIds, query, turnId });
+			if (result.citations.length > 0) {
+				const covered = new Set(result.coveredAttachmentIds);
+				// Files whose excerpts were retrieved inject context only; the rest
+				// fall back to P1 full injection.
+				return {
+					attachments: resolved.filter((input) => !covered.has(input.id)),
+					retrieval: { context: result.context, reference: result.reference, citations: result.citations },
+				};
+			}
+		}
+		return { attachments: resolved, retrieval: undefined };
 	}
 
 	private requireAttachmentStore(): AttachmentStore {
@@ -526,6 +647,24 @@ export class LiveSessionManager {
 		const envelope: EventEnvelope = { type: "event", event };
 		for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
 	}
+
+	/** Broadcast a Source status change to the session that owns it. */
+	private broadcastSourceChange(source: Source): void {
+		const live = this.liveSessions.get(source.sessionId);
+		if (!live) return;
+		this.broadcastEvent(live, { type: "source_snapshot", source });
+	}
+}
+
+/** Media types that P2 indexes as text Sources; anything else stays P1-injected. */
+function isTextMediaType(mediaType: string): boolean {
+	return (
+		mediaType.startsWith("text/") ||
+		mediaType === "application/json" ||
+		mediaType === "application/xml" ||
+		mediaType === "application/x-yaml" ||
+		mediaType === "application/yaml"
+	);
 }
 
 function mergeRuntimeSnapshot(current: SessionSnapshot | undefined, runtime: SessionSnapshot): SessionSnapshot {

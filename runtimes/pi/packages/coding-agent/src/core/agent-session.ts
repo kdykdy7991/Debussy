@@ -246,6 +246,16 @@ export interface AttachmentInput {
 	path: string;
 }
 
+/**
+ * A retrieved-context block injected after the user text. `text` is the full
+ * content sent to the model; `reference` is the transcript-only summary, so
+ * source excerpts never land in the persisted session file.
+ */
+export interface PromptContextBlock {
+	text: string;
+	reference: string;
+}
+
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
 	/** Whether to expand file-based prompt templates (default: true) */
@@ -258,6 +268,11 @@ export interface PromptOptions {
 	 * file bytes or the staging path.
 	 */
 	attachments?: AttachmentInput[];
+	/**
+	 * Retrieved-context blocks injected after the user text (P2 citations). The
+	 * persisted user entry only carries the block references, never the excerpts.
+	 */
+	contextBlocks?: PromptContextBlock[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -340,10 +355,10 @@ export class AgentSession {
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	/**
 	 * When set, the next persisted user message is replaced with this reference-only
-	 * text so attachment content never lands in the session transcript. The live LLM
-	 * message keeps the content for the running turn.
+	 * text so attachment/excerpt content never lands in the session transcript. The
+	 * live LLM message keeps the content for the running turn.
 	 */
-	private _pendingAttachmentReferenceText: string | undefined = undefined;
+	private _pendingUserReferenceText: string | undefined = undefined;
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -666,14 +681,15 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				if (event.message.role === "user" && this._pendingAttachmentReferenceText !== undefined) {
-					// Persist only the attachment reference so file content never lands in
-					// the transcript; the live LLM message keeps the content for the turn.
+				if (event.message.role === "user" && this._pendingUserReferenceText !== undefined) {
+					// Persist only the attachment/citation reference so file and excerpt
+					// content never lands in the transcript; the live LLM message keeps
+					// the content for the turn.
 					this.sessionManager.appendMessage({
 						...event.message,
-						content: [{ type: "text", text: this._pendingAttachmentReferenceText }],
+						content: [{ type: "text", text: this._pendingUserReferenceText }],
 					});
-					this._pendingAttachmentReferenceText = undefined;
+					this._pendingUserReferenceText = undefined;
 				} else {
 					this.sessionManager.appendMessage(event.message);
 				}
@@ -1126,9 +1142,22 @@ export class AgentSession {
 		return blocks;
 	}
 
-	private _buildAttachmentReferenceText(userText: string, attachments: AttachmentInput[]): string {
-		const refs = attachments.map((attachment) => `[附件: ${attachment.name}]`).join(" ");
-		return userText ? `${userText}\n${refs}` : refs;
+	/**
+	 * Build the transcript-only user reference for a turn that carried attachment
+	 * content or retrieved context. Attachment names and citation references are
+	 * kept; the actual file bytes and excerpts never reach the transcript.
+	 */
+	private _buildPendingUserReferenceText(
+		userText: string,
+		attachments: AttachmentInput[] | undefined,
+		contextBlocks: PromptContextBlock[] | undefined,
+	): string {
+		const refs = [
+			...(attachments?.map((attachment) => `[附件: ${attachment.name}]`) ?? []),
+			...(contextBlocks?.map((block) => `[${block.reference}]`) ?? []),
+		];
+		if (refs.length === 0) return userText;
+		return userText ? `${userText}\n${refs.join(" ")}` : refs.join(" ");
 	}
 
 	private async _readTextAttachment(path: string): Promise<{ text: string; truncated: boolean }> {
@@ -1293,7 +1322,17 @@ export class AgentSession {
 			const attachmentBlocks = promptAttachments ? await this._buildAttachmentContent(promptAttachments) : [];
 			if (promptAttachments && promptAttachments.length > 0) {
 				userContent.push(...attachmentBlocks);
-				this._pendingAttachmentReferenceText = this._buildAttachmentReferenceText(expandedText, promptAttachments);
+			}
+			const contextBlocks = options?.contextBlocks;
+			if (contextBlocks && contextBlocks.length > 0) {
+				for (const block of contextBlocks) userContent.push({ type: "text", text: block.text });
+			}
+			if ((promptAttachments && promptAttachments.length > 0) || (contextBlocks && contextBlocks.length > 0)) {
+				this._pendingUserReferenceText = this._buildPendingUserReferenceText(
+					expandedText,
+					promptAttachments,
+					contextBlocks,
+				);
 			}
 			messages.push({
 				role: "user",
@@ -1418,7 +1457,12 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async steer(text: string, images?: ImageContent[], attachments?: AttachmentInput[]): Promise<void> {
+	async steer(
+		text: string,
+		images?: ImageContent[],
+		attachments?: AttachmentInput[],
+		contextBlocks?: PromptContextBlock[],
+	): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1428,7 +1472,7 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueSteer(expandedText, images, attachments);
+		await this._queueSteer(expandedText, images, attachments, contextBlocks);
 	}
 
 	/**
@@ -1438,7 +1482,12 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async followUp(text: string, images?: ImageContent[], attachments?: AttachmentInput[]): Promise<void> {
+	async followUp(
+		text: string,
+		images?: ImageContent[],
+		attachments?: AttachmentInput[],
+		contextBlocks?: PromptContextBlock[],
+	): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1448,16 +1497,26 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images, attachments);
+		await this._queueFollowUp(expandedText, images, attachments, contextBlocks);
 	}
 
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], attachments?: AttachmentInput[]): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		attachments?: AttachmentInput[],
+		contextBlocks?: PromptContextBlock[],
+	): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = await this._buildQueuedContent(text, images, attachments);
+		const content: (TextContent | ImageContent)[] = await this._buildQueuedContent(
+			text,
+			images,
+			attachments,
+			contextBlocks,
+		);
 		this.agent.steer({
 			role: "user",
 			content,
@@ -1468,10 +1527,20 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], attachments?: AttachmentInput[]): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		attachments?: AttachmentInput[],
+		contextBlocks?: PromptContextBlock[],
+	): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = await this._buildQueuedContent(text, images, attachments);
+		const content: (TextContent | ImageContent)[] = await this._buildQueuedContent(
+			text,
+			images,
+			attachments,
+			contextBlocks,
+		);
 		this.agent.followUp({
 			role: "user",
 			content,
@@ -1483,6 +1552,7 @@ export class AgentSession {
 		text: string,
 		images?: ImageContent[],
 		attachments?: AttachmentInput[],
+		contextBlocks?: PromptContextBlock[],
 	): Promise<(TextContent | ImageContent)[]> {
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
@@ -1491,7 +1561,12 @@ export class AgentSession {
 		if (attachments && attachments.length > 0) {
 			const blocks = await this._buildAttachmentContent(attachments);
 			content.push(...blocks);
-			this._pendingAttachmentReferenceText = this._buildAttachmentReferenceText(text, attachments);
+		}
+		if (contextBlocks && contextBlocks.length > 0) {
+			for (const block of contextBlocks) content.push({ type: "text", text: block.text });
+		}
+		if ((attachments && attachments.length > 0) || (contextBlocks && contextBlocks.length > 0)) {
+			this._pendingUserReferenceText = this._buildPendingUserReferenceText(text, attachments, contextBlocks);
 		}
 		return content;
 	}

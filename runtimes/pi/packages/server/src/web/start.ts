@@ -19,6 +19,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { CitationService, CitationStore } from "../citations/index.ts";
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
 import { PiServerError } from "../errors.ts";
@@ -96,10 +97,17 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		allowedHosts: resolved.listener.allowedHosts,
 	});
 
+	const citations = new CitationService({
+		store: new CitationStore(join(resolved.agentDir, "citations")),
+		attachments,
+	});
+	await citations.store.init();
+
 	const server = createWebSocketServer(backend, {
 		...resolved.listener,
 		httpHandler,
 		attachments,
+		citations,
 	});
 
 	const autoStart = options.autoStart ?? true;

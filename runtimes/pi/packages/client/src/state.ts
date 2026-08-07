@@ -1,9 +1,11 @@
 import type {
 	Attachment,
+	Citation,
 	CommandResult,
 	ServerEvent,
 	ServerSnapshot,
 	SessionSnapshot,
+	Source,
 } from "@earendil-works/pi-protocol";
 import { toError } from "./errors.ts";
 import type { ListenerErrorHandler, Unsubscribe } from "./types.ts";
@@ -119,6 +121,8 @@ export class ClientState {
 		}
 		if (event.type === "attachment_snapshot") this.#applyAttachmentSnapshot(event.attachment);
 		if (event.type === "attachment_removed") this.#applyAttachmentRemoved(event.sessionId, event.attachmentId);
+		if (event.type === "source_snapshot") this.#applySourceSnapshot(event.source);
+		if (event.type === "citation_snapshot") this.#applyCitationSnapshot(event.sessionId, event.citations);
 		this.#notify(this.#eventListeners, event);
 		const sessionId = getEventSessionId(event);
 		if (sessionId) this.#notify(this.#sessionEventListeners.get(sessionId), event);
@@ -163,6 +167,21 @@ export class ClientState {
 		this.#applySessionSnapshot({ ...session, attachments: next });
 	}
 
+	/** Merge a single source status change into its session's snapshot. */
+	#applySourceSnapshot(source: Source): void {
+		const session = this.#sessionSnapshots.get(source.sessionId);
+		if (!session) return;
+		const next = [...(session.sources ?? []).filter((candidate) => candidate.id !== source.id), source];
+		this.#applySessionSnapshot({ ...session, sources: next });
+	}
+
+	/** Replace the current turn's citations; a snapshot omitting the field resets them. */
+	#applyCitationSnapshot(sessionId: string, citations: Citation[]): void {
+		const session = this.#sessionSnapshots.get(sessionId);
+		if (!session) return;
+		this.#applySessionSnapshot({ ...session, citations });
+	}
+
 	#notify<T>(listeners: Iterable<(value: T) => void> | undefined, value: T): void {
 		for (const listener of listeners ?? []) {
 			try {
@@ -202,9 +221,15 @@ function addMappedListener<T>(
 
 function getEventSessionId(event: ServerEvent): string | undefined {
 	if (event.type === "session_snapshot") return event.snapshot.id;
-	if (event.type === "session_progress" || event.type === "session_removed" || event.type === "attachment_removed") {
+	if (
+		event.type === "session_progress" ||
+		event.type === "session_removed" ||
+		event.type === "attachment_removed" ||
+		event.type === "citation_snapshot"
+	) {
 		return event.sessionId;
 	}
 	if (event.type === "attachment_snapshot") return event.attachment.sessionId;
+	if (event.type === "source_snapshot") return event.source.sessionId;
 	return undefined;
 }

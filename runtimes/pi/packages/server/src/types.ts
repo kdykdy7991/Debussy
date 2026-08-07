@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+	Citation,
 	ModelMetadata,
 	ModelRef,
 	SessionPhase,
@@ -8,6 +9,7 @@ import type {
 	ThinkingLevel,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
+import type { CitationService } from "./citations/service.ts";
 import type { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 import type { AttachmentStore } from "./uploads/store.ts";
@@ -24,6 +26,8 @@ export interface PiServerOptions {
 	sessionEventLogRetentionMs?: number;
 	/** Upload/attachment store backing `attach_upload` / `remove_attachment`. */
 	attachments?: AttachmentStore;
+	/** Citation index + retrieval service backing P2 source/citation flows. */
+	citations?: CitationService;
 }
 
 /** A handler for non-upgrade HTTP requests on the shared listener HTTP server; returns false when unhandled. */
@@ -39,16 +43,29 @@ export interface ResolvedAttachmentInput {
 	path: string;
 }
 
+/**
+ * Retrieved-context block injected into the user message for one turn.
+ * `context` carries the controlled <source> fragments; `reference` is the
+ * transcript-only summary, so source excerpts never reach the transcript.
+ */
+export interface RetrievalInput {
+	context: string;
+	reference: string;
+	citations: readonly Citation[];
+}
+
 export interface PromptInput {
 	text: string;
 	attachmentIds?: string[];
 	attachments?: ResolvedAttachmentInput[];
+	retrieval?: RetrievalInput;
 }
 
 export interface SteerInput {
 	text: string;
 	attachmentIds?: string[];
 	attachments?: ResolvedAttachmentInput[];
+	retrieval?: RetrievalInput;
 }
 
 export interface CreateSessionOptions {

@@ -1,4 +1,4 @@
-import type { Attachment, EventEnvelope, ServerEvent } from "@earendil-works/pi-protocol";
+import type { Attachment, Citation, EventEnvelope, ServerEvent, Source } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import { attachSession, collectRequests, connectClient, MemoryByteServer, sessionSnapshot } from "./support.ts";
 
@@ -301,5 +301,98 @@ describe("attachment commands and events", () => {
 			result: { command: "prompt", session: sessionSnapshot("session-1", { attached: true }) },
 		});
 		await prompting;
+	});
+});
+
+describe("P2 citation events", () => {
+	function source(id: string): Source {
+		return {
+			id,
+			attachmentId: `att-${id}`,
+			sessionId: "session-1",
+			name: `${id}.txt`,
+			mediaType: "text/plain",
+			status: "ready",
+			version: 1,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+	}
+
+	function citation(id: string): Citation {
+		return {
+			id,
+			sessionId: "session-1",
+			turnId: "turn-1",
+			sourceId: "source-1",
+			chunkId: "chunk-1",
+			ordinal: 0,
+			title: "notes.txt",
+			excerpt: "excerpt",
+			startLine: 1,
+			endLine: 2,
+			score: 1.2,
+		};
+	}
+
+	async function attachedHandle() {
+		const server = new MemoryByteServer();
+		const client = await connectClient(server);
+		const handle = await attachSession(client, server, sessionSnapshot("session-1", { attached: true }));
+		return { server, client, handle };
+	}
+
+	test("source_snapshot event merges a source into the session snapshot", async () => {
+		const { server, handle } = await attachedHandle();
+		server.send({
+			type: "event",
+			event: { type: "source_snapshot", source: source("source-1") },
+		});
+		expect(handle.snapshot?.sources?.map((s) => s.id)).toEqual(["source-1"]);
+	});
+
+	test("source_snapshot event replaces an existing source with the same id", async () => {
+		const { server, handle } = await attachedHandle();
+		server.send({ type: "event", event: { type: "source_snapshot", source: source("source-1") } });
+		server.send({
+			type: "event",
+			event: { type: "source_snapshot", source: { ...source("source-1"), status: "failed" } },
+		});
+		expect(handle.snapshot?.sources?.map((s) => s.status)).toEqual(["failed"]);
+	});
+
+	test("citation_snapshot event sets the current turn citations", async () => {
+		const { server, handle } = await attachedHandle();
+		const events: ServerEvent[] = [];
+		handle.onEvent((event) => events.push(event));
+		server.send({
+			type: "event",
+			event: {
+				type: "citation_snapshot",
+				sessionId: "session-1",
+				turnId: "turn-1",
+				citations: [citation("citation-1")],
+			},
+		});
+		expect(handle.snapshot?.citations?.map((c) => c.id)).toEqual(["citation-1"]);
+		expect(events.some((event) => event.type === "citation_snapshot")).toBe(true);
+	});
+
+	test("citation_snapshot event replaces prior citations for the turn", async () => {
+		const { server, handle } = await attachedHandle();
+		server.send({
+			type: "event",
+			event: {
+				type: "citation_snapshot",
+				sessionId: "session-1",
+				turnId: "turn-1",
+				citations: [citation("citation-1")],
+			},
+		});
+		server.send({
+			type: "event",
+			event: { type: "citation_snapshot", sessionId: "session-1", turnId: "turn-1", citations: [] },
+		});
+		expect(handle.snapshot?.citations).toEqual([]);
 	});
 });

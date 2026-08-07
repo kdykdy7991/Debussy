@@ -692,3 +692,159 @@ describe("protocol P1 file upload attachments", () => {
 		}
 	});
 });
+
+describe("protocol P2 citation sources", () => {
+	function sourceForProtocol() {
+		return {
+			id: "source-1",
+			attachmentId: "upload-1",
+			sessionId: "session-1",
+			name: "notes.txt",
+			mediaType: "text/plain",
+			status: "ready",
+			version: 1,
+			createdAt: 1,
+			updatedAt: 1,
+			truncated: false,
+		};
+	}
+
+	function chunkForProtocol() {
+		return {
+			id: "chunk-1",
+			sourceId: "source-1",
+			ordinal: 0,
+			text: "hello world",
+			startLine: 1,
+			endLine: 1,
+			charStart: 0,
+			charEnd: 10,
+			tokenEstimate: 2,
+		};
+	}
+
+	function citationForProtocol() {
+		return {
+			id: "citation-1",
+			sessionId: "session-1",
+			turnId: "turn-1",
+			sourceId: "source-1",
+			chunkId: "chunk-1",
+			ordinal: 0,
+			title: "notes.txt",
+			excerpt: "hello world",
+			startLine: 1,
+			endLine: 1,
+			score: 1.5,
+		};
+	}
+
+	test("parses a source_snapshot event", () => {
+		const message = { type: "event", event: { type: "source_snapshot", source: sourceForProtocol() } };
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("rejects a source_snapshot event with an unknown status", () => {
+		const source = { ...sourceForProtocol(), status: "banana" };
+		expect(() => parseServerMessage({ type: "event", event: { type: "source_snapshot", source } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("rejects a source_snapshot event with a missing attachmentId", () => {
+		const source = { ...sourceForProtocol() } as Record<string, unknown>;
+		delete source.attachmentId;
+		expect(() => parseServerMessage({ type: "event", event: { type: "source_snapshot", source } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("rejects a source_snapshot event with an unknown field", () => {
+		const source = { ...sourceForProtocol(), extra: true };
+		expect(() => parseServerMessage({ type: "event", event: { type: "source_snapshot", source } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("parses a citation_snapshot event with zero citations", () => {
+		const message = {
+			type: "event",
+			event: { type: "citation_snapshot", sessionId: "session-1", turnId: "turn-1", citations: [] },
+		};
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("parses a citation_snapshot event with a citation", () => {
+		const message = {
+			type: "event",
+			event: {
+				type: "citation_snapshot",
+				sessionId: "session-1",
+				turnId: "turn-1",
+				citations: [citationForProtocol()],
+			},
+		};
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("rejects a citation_snapshot event with a negative ordinal", () => {
+		const citations = [{ ...citationForProtocol(), ordinal: -1 }];
+		expect(() =>
+			parseServerMessage({
+				type: "event",
+				event: { type: "citation_snapshot", sessionId: "session-1", turnId: "turn-1", citations },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("rejects a citation whose excerpt is missing", () => {
+		const citation = { ...citationForProtocol() } as Record<string, unknown>;
+		delete citation.excerpt;
+		expect(() =>
+			parseServerMessage({
+				type: "event",
+				event: { type: "citation_snapshot", sessionId: "session-1", turnId: "turn-1", citations: [citation] },
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test("parses a session snapshot carrying sources and citations", () => {
+		const snapshot = {
+			...sessionSnapshotForProtocol(),
+			sources: [sourceForProtocol()],
+			citations: [citationForProtocol()],
+		};
+		const event = { type: "event", event: { type: "session_snapshot", snapshot } };
+		expect(parseServerMessage(event)).toEqual(event);
+	});
+
+	test("rejects a session snapshot with an unknown source status", () => {
+		const snapshot = {
+			...sessionSnapshotForProtocol(),
+			sources: [{ ...sourceForProtocol(), status: "indexing" }],
+		};
+		expect(() => parseServerMessage({ type: "event", event: { type: "session_snapshot", snapshot } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	test("rejects a session snapshot with a malformed citation", () => {
+		const snapshot = {
+			...sessionSnapshotForProtocol(),
+			citations: [{ id: "citation-1", title: "notes.txt" }],
+		};
+		expect(() => parseServerMessage({ type: "event", event: { type: "session_snapshot", snapshot } })).toThrow(
+			ProtocolValidationError,
+		);
+	});
+
+	// SourceChunk is a server-internal schema and is not transmitted on the
+	// wire, but it must still validate so store round-trips stay honest.
+	test("validates a SourceChunk via the shared schema", async () => {
+		const { SourceChunkSchema } = await import("../src/schemas.ts");
+		const { Check } = await import("typebox/value");
+		expect(Check(SourceChunkSchema, chunkForProtocol())).toBe(true);
+		expect(Check(SourceChunkSchema, { ...chunkForProtocol(), ordinal: -1 })).toBe(false);
+		expect(Check(SourceChunkSchema, { ...chunkForProtocol(), text: undefined })).toBe(false);
+	});
+});
