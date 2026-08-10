@@ -1,0 +1,70 @@
+{
+  "name": "@skdy/avatar",
+  "version": "0.1.0-alpha.0",
+  "description": "Framework-neutral web avatar controller and embedding adapters",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./web-component": {
+      "types": "./dist/web-component/index.d.ts",
+      "import": "./dist/web-component/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": [
+    "./dist/web-component/index.js"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && npm run build:types && npm run build:esm",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:esm": "vite build",
+    "test": "npm run clean && npm run build:types && node --test test/*.test.mjs",
+    "test:build": "npm run build && node --test test/vite/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "5.9.3",
+    "vite": "8.2.1"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@rive-app/canvas": "2.39.2"
+  }
+}

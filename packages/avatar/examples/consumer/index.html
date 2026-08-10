@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Avatar package consumer</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">@SKDY/AVATAR · TARBALL CONSUMER</p>
+        <h1>Production package, real character.</h1>
+        <p class="lede">An isolated Vite project using only the public <strong>createAvatar()</strong> entry.</p>
+        <p id="status" data-testid="status" data-tone="loading">Loading character…</p>
+      </header>
+      <section class="stage" aria-label="Avatar stage"><div id="avatar-mount"></div></section>
+      <section class="controls" aria-label="Avatar controls">
+        <div class="group"><span class="label">State</span><div id="state-buttons">
+          <button data-state="idle">Idle</button><button data-state="listening">Listening</button><button data-state="thinking">Thinking</button><button data-state="speaking">Speaking</button><button data-state="error">Error</button>
+        </div></div>
+        <label><span class="label">Mode</span><select id="mode"><option value="inline">Inline</option><option value="floating">Floating</option></select></label>
+        <label><span class="label">Position</span><select id="position"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label>
+        <button id="destroy-recreate">Destroy / Recreate</button>
+      </section>
+      <output id="event-log" aria-live="polite"></output>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

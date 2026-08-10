@@ -1,0 +1,14 @@
+{
+  "id": "rive-neostream-demo",
+  "version": "1.0.0",
+  "renderer": "rive",
+  "assetUrl": "https://raw.githubusercontent.com/rive-app/rive-wasm/d592fe24f7ba94679203984e98b65489f6acbc97/js/examples/_frameworks/neostream-events/neostreamv2.riv",
+  "stateMachine": "State Machine 1",
+  "inputs": {
+    "idle": "numFlame",
+    "listening": "Duck",
+    "thinking": "Jump",
+    "speaking": "Chest",
+    "error": "Back"
+  }
+}

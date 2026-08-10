@@ -3,6 +3,13 @@ runtimes/pi/debug-ws.mts
 .venv/
 **/__pycache__/
 .pytest_cache/
+**/node_modules/
+packages/avatar/dist/
 services/voice/.env.local
 services/voice/.venv/
 services/voice/src/pi_voice_service.egg-info/
+
+# Excalidraw MCP server logs and local scene dumps
+excalidraw.log
+*.excalidraw
+.excalidraw/
