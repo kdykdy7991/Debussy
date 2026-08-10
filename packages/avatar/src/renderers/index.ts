@@ -4,3 +4,4 @@ export type {
   AvatarRendererInitialization,
   AvatarViewport,
 } from "./types.js";
+export { RiveAvatarRenderer, RiveAvatarRendererFactory } from "./rive/index.js";
