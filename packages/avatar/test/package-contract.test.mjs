@@ -18,7 +18,7 @@ test("publishes stable avatar entry points", () => {
 });
 
 test("keeps framework adapters out of the base runtime dependency graph", () => {
-  assert.equal(packageJson.dependencies, undefined);
+  assert.deepEqual(packageJson.dependencies, { "@rive-app/canvas": "2.39.2" });
   assert.equal(packageJson.peerDependencies.react, ">=18.0.0");
   assert.equal(packageJson.peerDependenciesMeta.react.optional, true);
 });

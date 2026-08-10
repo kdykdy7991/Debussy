@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pi Avatar · Visual Preview</title>
+    <link rel="stylesheet" href="./preview.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="intro">
+        <p class="eyebrow">PI AVATAR / VISUAL CHECKPOINT</p>
+        <h1>先让角色<br />真正动起来。</h1>
+        <p class="lede">
+          这是 renderer-only 的 Web 数字人预览。当前不连接 Agent、不播放语音，
+          只验证真实 Rive 角色、五态与嵌入布局。
+        </p>
+        <div class="status-row">
+          <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+          <strong id="status">正在创建角色…</strong>
+          <span id="current-state">idle</span>
+        </div>
+      </section>
+
+      <section class="stage-card" aria-label="数字人预览">
+        <div class="stage-glow" aria-hidden="true"></div>
+        <div id="avatar-mount" class="avatar-mount"></div>
+      </section>
+
+      <section class="control-panel" aria-label="预览控制">
+        <div class="control-group">
+          <span class="control-label">视觉状态</span>
+          <div class="button-row" id="state-buttons">
+            <button type="button" data-state="idle">Idle</button>
+            <button type="button" data-state="listening">Listening</button>
+            <button type="button" data-state="thinking">Thinking</button>
+            <button type="button" data-state="speaking">Speaking</button>
+            <button type="button" data-state="error">Error</button>
+          </div>
+        </div>
+
+        <div class="control-group compact-controls">
+          <label>
+            <span class="control-label">布局</span>
+            <select id="mode">
+              <option value="inline">Inline</option>
+              <option value="floating">Floating</option>
+            </select>
+          </label>
+          <label>
+            <span class="control-label">位置</span>
+            <select id="position">
+              <option value="bottom-right">Bottom right</option>
+              <option value="bottom-left">Bottom left</option>
+            </select>
+          </label>
+          <button id="visibility" class="secondary" type="button">Hide</button>
+          <button id="recreate" class="secondary" type="button">Destroy / Recreate</button>
+        </div>
+
+        <div class="event-log" aria-live="polite">
+          <span class="control-label">事件日志</span>
+          <ol id="event-log"></ol>
+        </div>
+      </section>
+    </main>
+
+    <!-- Only the formal production build is consumed by this page. -->
+    <script type="module" src="./preview.js"></script>
+  </body>
+</html>
