@@ -1,6 +1,6 @@
 # B5 交接：React 薄适配器 `PiAvatar`
 
-状态：**Ready for AI-A Re-Review**（已通过自测：typecheck / 全量 test / test:build / pack / react 未打包）
+状态：**Approved（Follow-up 已在 B6 完成）**（2026-08-10）
 作者：AI-B（经济模型/实现者）
 日期：2026-08-10
 依赖：B2（Approved）、B3（Approved）、B4（Approved）、ADR-0005（冻结契约）、React 19（可选 peer）
@@ -78,4 +78,19 @@ React 外部化证据：`dist/react/pi-avatar.js` 仅有 `import * as React from
 ## 6. 遗留事项
 
 - 生产 `setControllerFactory()` 注入与真实 Visual Runtime 组合仍属 A6/A9（AI-A 侧）；B5 用 `createAvatarTestHarness` Fake 验收。
-- **B6 / React Router 之外的后续阶段未开始。** 交接状态：**Ready for AI-A Re-Review**，等待 Review 后由 AI-A 放行后续阶段。
+- AI-A Review 发现：当前属性 `useLayoutEffect` 在任意依赖变化时会重新写入全部属性，包括未变化的 `character`；而 Web Component 的 `character` 写入会重建 Controller。现有测试只验证 DOM 节点复用，尚未断言非 character prop 更新时 Controller 身份保持不变。用户决定先放行，本项必须在后续通用嵌入验收中增加回归并修正，不能作为无风险关闭。
+- **B6 未开始。** 原“Vanilla/React/Vue 三套示例”范围待调整为框架无关的通用嵌入验收，不要求维护三套框架适配实现。
+
+## 7. AI-A 放行记录
+
+2026-08-10 复核结果：
+
+- `npm run typecheck`：PASS
+- `npm test`：PASS（113/113）
+- `npm run test:build`：PASS（7/7）
+- React 未进入基础 bundle，Rive 仍为 lazy chunk。
+- 按用户决定先放行 B5，状态为 `Approved with Follow-up`；上述 Controller 重建风险转入后续通用嵌入验收，不得遗漏。
+
+## 8. Follow-up 完成记录
+
+B6 已修正相同 `character` 被重复反射的问题，并增加“非 character props 更新保持 live Controller”回归测试；真实 character 变化仍按 B2 语义重建。全量单元测试 114/114、构建契约测试 7/7 通过，本项关闭。

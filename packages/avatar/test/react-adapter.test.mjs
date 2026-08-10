@@ -168,6 +168,45 @@ test("props updates mutate attributes without recreating the element", async () 
   root.unmount();
 });
 
+test("non-character prop updates preserve the live controller", async () => {
+  const harnesses = [];
+  const factory = (container) => {
+    const harness = createAvatarTestHarness({ container });
+    harnesses.push(harness);
+    return harness.controller;
+  };
+  setControllerFactory(factory);
+
+  const { root, container } = mount(React.createElement(PiAvatar, { character: "/c.json" }));
+  const element = await flushAndFind(container);
+  await settle();
+  const active = harnesses.find((h) => !h.renderer.destroyed);
+  assert.ok(active, "a live controller should exist after mount");
+  const initialized = harnesses.reduce(
+    (count, harness) => count + harness.renderer.calls.filter((call) => call.method === "initialize").length,
+    0,
+  );
+
+  root.render(React.createElement(PiAvatar, {
+    character: "/c.json",
+    state: "thinking",
+    background: "#222",
+    mode: "floating",
+    position: "bottom-left",
+    width: 320,
+    height: 480,
+  }));
+  await settle();
+
+  assert.equal(container.querySelector("pi-avatar"), element);
+  assert.equal(harnesses.find((h) => !h.renderer.destroyed), active);
+  assert.equal(harnesses.reduce((count, harness) => count + harness.renderer.calls.filter((call) => call.method === "initialize").length, 0), initialized);
+  assert.equal(active.renderer.destroyed, false);
+  assert.equal(active.renderer.calls.some((call) => call.method === "setState" && call.state === "thinking"), true);
+
+  root.unmount();
+});
+
 test("state update forwards through the controller to the renderer", async () => {
   const harnesses = [];
   const factory = (container) => {

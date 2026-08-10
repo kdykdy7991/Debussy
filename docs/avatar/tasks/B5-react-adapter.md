@@ -1,6 +1,6 @@
 # B5 任务单：React 薄适配器
 
-状态：Ready（B4 已通过 AI-A 二次 Review）  
+状态：Approved（Controller 重建 Follow-up 已在 B6 完成）
 执行者：AI-B（经济模型/实现者）  
 前置：B4
 

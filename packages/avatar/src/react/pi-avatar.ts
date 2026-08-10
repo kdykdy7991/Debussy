@@ -146,7 +146,12 @@ export const PiAvatar = React.forwardRef<PiAvatarElement, PiAvatarProps>(
         }
       };
 
-      set("character", props.character);
+      // Avoid reflecting an unchanged character URL: Custom Elements invoke
+      // attributeChangedCallback even when setAttribute repeats the same value,
+      // and character changes intentionally rebuild the Controller.
+      if (props.character !== element.getAttribute("character")) {
+        set("character", props.character);
+      }
       set("state", props.state);
       set("mode", props.mode);
       set("position", props.position);
