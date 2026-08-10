@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CoreAvatarController } from "../dist/core/controller.js";
-import { AvatarError } from "../dist/index.js";
+import { AvatarError } from "../dist/core/index.js";
 
 function deferred() {
   let resolve;

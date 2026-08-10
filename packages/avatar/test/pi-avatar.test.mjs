@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AvatarError } from "../dist/index.js";
+import { AvatarError } from "../dist/core/index.js";
 import { createAvatarTestHarness } from "../dist/testing/index.js";
 import { flush, installDomShim } from "./helpers/dom-shim.mjs";
 
@@ -11,6 +11,7 @@ installDomShim();
 const { PiAvatarElement, setControllerFactory } = await import(
   "../dist/web-component/index.js"
 );
+const { getControllerFactory } = await import("../dist/web-component/pi-avatar.js");
 
 /** Each connect call creates a fresh harness so reconnect is observable. */
 function makeFactory() {
@@ -41,6 +42,17 @@ test("guarded registration never replaces an existing definition", async () => {
   const { registerPiAvatarElement } = await import("../dist/web-component/index.js");
   registerPiAvatarElement();
   assert.equal(customElements.get("pi-avatar"), PiAvatarElement);
+});
+
+test("controller factory can override and restore the production default", () => {
+  const override = () => createAvatarTestHarness({ container: {} }).controller;
+  setControllerFactory(override);
+  assert.equal(getControllerFactory(), override);
+
+  setControllerFactory(undefined);
+  const restored = getControllerFactory();
+  assert.notEqual(restored, override);
+  assert.equal(typeof restored, "function");
 });
 
 test("attribute mapping drives controller initialization", async () => {
@@ -93,8 +105,9 @@ test("Shadow DOM stage container is styled from serializable attributes", async 
   assert.equal(stage.getAttribute("data-avatar-stage"), "");
   assert.equal(stage.getAttribute("data-avatar-mode"), "floating");
   assert.equal(stage.getAttribute("data-avatar-position"), "bottom-right");
-  assert.equal(stage.style.width, "320px");
-  assert.equal(stage.style.height, "480px");
+  // Sizes land on the host; the stage keeps its 100%/100% CSS fill (B3).
+  assert.equal(element.style.width, "320px");
+  assert.equal(element.style.height, "480px");
   assert.equal(stage.style.background, "#101010");
 });
 
@@ -199,19 +212,19 @@ test("invalid state attribute surfaces avatar-error with INVALID_CONFIG", async 
   assert.equal(errors.at(-1).code, "INVALID_CONFIG");
 });
 
-test("commands before initialization fail with NOT_INITIALIZED", async () => {
+test("restoring the default factory creates a controller but commands still require initialization", async () => {
   setControllerFactory(undefined);
   const element = new PiAvatarElement();
   const errors = [];
   element.addEventListener("avatar-error", (e) => errors.push(e.detail));
   element.connectedCallback();
 
-  // No factory -> a clear element-level error.
-  assert.equal(errors.at(-1).code, "INTERNAL_ERROR");
+  assert.deepEqual(errors, []);
   assert.throws(
     () => element.setState("thinking"),
     (error) => error instanceof AvatarError && error.code === "NOT_INITIALIZED",
   );
+  element.destroy();
 });
 
 test("disconnect destroys the controller; reconnect creates a fresh one", async () => {
@@ -235,7 +248,7 @@ test("disconnect destroys the controller; reconnect creates a fresh one", async 
   assert.equal(second.controller.state, "idle");
 });
 
-test("explicit initialize is honored when autoplay is disabled", async () => {
+test("autoplay=false does not block initialization and flows into the config", async () => {
   const { factory, getHarness } = makeFactory();
   setControllerFactory(factory);
   const element = new PiAvatarElement();
@@ -244,14 +257,78 @@ test("explicit initialize is honored when autoplay is disabled", async () => {
   element.connectedCallback();
   await flush();
 
-  // Auto-init is suppressed by autoplay="false".
-  assert.equal(getHarness().renderer.calls.filter((c) => c.method === "initialize").length, 0);
+  // autoplay is an AvatarConfig field for the controller, not a gate on
+  // character initialization (B2 Review #3).
+  const harness = getHarness();
+  const initializeCall = harness.runtime.calls[0];
+  assert.equal(initializeCall.method, "initialize");
+  assert.equal(initializeCall.config.autoplay, false);
+  assert.equal(harness.renderer.calls.filter((c) => c.method === "initialize").length, 1);
+  assert.equal(element.state, "idle");
+});
 
-  const events = [];
-  element.addEventListener("avatar-ready", (e) => events.push(e.detail));
-  await element.initialize();
-  assert.equal(getHarness().renderer.calls.filter((c) => c.method === "initialize").length, 1);
-  assert.deepEqual(events, [{ characterId: "/characters/demo/manifest.json" }]);
+test("character change during initialize loads the latest character (B2 #1)", async () => {
+  const { factory, getHarness } = makeFactory();
+  setControllerFactory(factory);
+  const element = connectedCharacterElement();
+  // The character attribute changes while auto-initialization is still in
+  // flight; the newer character must win over the one that started first.
+  element.setAttribute("character", "/characters/demo/v2/manifest.json");
+  await flush();
+
+  const harness = getHarness();
+  assert.equal(harness.renderer.calls.filter((c) => c.method === "initialize").length, 1);
+  assert.equal(
+    harness.runtime.calls[0].config.character,
+    "/characters/demo/v2/manifest.json",
+  );
+  assert.equal(
+    harness.renderer.calls[0].input.character.id,
+    "/characters/demo/v2/manifest.json",
+  );
+  assert.equal(element.state, "idle");
+});
+
+test("setState during initialize does not throw and applies after init (B2 #2)", async () => {
+  const { factory, getHarness } = makeFactory();
+  setControllerFactory(factory);
+  const element = new PiAvatarElement();
+  element.setAttribute("character", "/characters/demo/manifest.json");
+  element.connectedCallback();
+
+  // initialize is still in flight; the request must be deferred, not rejected
+  // with NOT_INITIALIZED (B2 Review #2).
+  element.setState("thinking");
+  await flush();
+
+  assert.equal(element.state, "thinking");
+  assert.ok(
+    getHarness().renderer.calls.some((c) => c.method === "setState" && c.state === "thinking"),
+  );
+});
+
+test("removing width/height/background clears host and stage inline styles (B2 #4)", async () => {
+  const { factory, getHarness } = makeFactory();
+  setControllerFactory(factory);
+  const element = new PiAvatarElement();
+  element.setAttribute("character", "/characters/demo/manifest.json");
+  element.setAttribute("width", "320");
+  element.setAttribute("height", "480");
+  element.setAttribute("background", "#101010");
+  element.connectedCallback();
+  await flush();
+
+  const stage = getHarness().renderer.calls[0].input.container;
+  assert.equal(element.style.width, "320px");
+  assert.equal(element.style.height, "480px");
+  assert.equal(stage.style.background, "#101010");
+
+  element.removeAttribute("width");
+  element.removeAttribute("height");
+  element.removeAttribute("background");
+  assert.equal(element.style.width, "");
+  assert.equal(element.style.height, "");
+  assert.equal(stage.style.background, "");
 });
 
 test("initialize accepts an explicit parsed character manifest", async () => {

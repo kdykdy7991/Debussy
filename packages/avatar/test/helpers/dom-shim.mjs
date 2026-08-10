@@ -57,6 +57,17 @@ class ElementStub extends EventTarget {
 
   appendChild(child) {
     this._children.push(child);
+    child._setParentNode?.(this);
+    return child;
+  }
+
+  /** Live view of appended children (used by embed mount/destroy tests). */
+  get children() {
+    return this._children;
+  }
+
+  removeChild(child) {
+    this._children = this._children.filter((existing) => existing !== child);
     return child;
   }
 
@@ -64,7 +75,29 @@ class ElementStub extends EventTarget {
     if (selector === "[data-avatar-stage]") {
       return this.hasAttribute("data-avatar-stage");
     }
+    if (selector === "[data-avatar-layout]") {
+      return this.hasAttribute("data-avatar-layout");
+    }
     return false;
+  }
+
+  /** Minimal text content for the layout `<style>` node (task B3). */
+  get textContent() {
+    return this._textContent ?? "";
+  }
+
+  set textContent(value) {
+    this._textContent = String(value);
+  }
+
+  /** Remove this element from its (shadow) parent, if any (task B4 destroy). */
+  remove() {
+    const parent = this._parentNode;
+    parent?.removeChild(this);
+  }
+
+  _setParentNode(parent) {
+    this._parentNode = parent;
   }
 
   _notifyAttributeChanged(name, oldValue, newValue) {
@@ -84,6 +117,13 @@ class ShadowRootStub {
 
   appendChild(child) {
     this._children.push(child);
+    child._setParentNode?.(this);
+    return child;
+  }
+
+  removeChild(child) {
+    this._children = this._children.filter((existing) => existing !== child);
+    child._setParentNode?.(undefined);
     return child;
   }
 
@@ -91,6 +131,26 @@ class ShadowRootStub {
     return this._children.find((child) => child.matches?.(selector)) ?? null;
   }
 }
+
+/** Non-HTML element (e.g. SVG) for selector-mismatch tests. */
+class SVGElementStub extends EventTarget {
+  constructor(tag = "svg") {
+    super();
+    this.tagName = tag.toUpperCase();
+    this._attributes = new Map();
+  }
+
+  getAttribute(name) {
+    return this._attributes.has(name) ? this._attributes.get(name) : null;
+  }
+
+  setAttribute(name, value) {
+    this._attributes.set(name, String(value));
+  }
+}
+
+/** Document-wide registry so querySelector can resolve #id / tag selectors. */
+const elements = [];
 
 class CustomElementRegistryStub {
   constructor() {
@@ -115,8 +175,22 @@ export function installDomShim() {
     return;
   }
   globalThis.HTMLElement = ElementStub;
+  globalThis.SVGElement = SVGElementStub;
+  const body = new ElementStub("body");
+  elements.push(body);
   globalThis.document = {
-    createElement: (tag) => new ElementStub(tag),
+    body,
+    createElement: (tag) => {
+      const element = tag.toLowerCase() === "svg" ? new SVGElementStub() : new ElementStub(tag);
+      elements.push(element);
+      return element;
+    },
+    querySelector: (selector) => {
+      if (selector.startsWith("#")) {
+        return elements.find((el) => el.getAttribute?.("id") === selector.slice(1)) ?? null;
+      }
+      return elements.find((el) => el.tagName === selector.toUpperCase()) ?? null;
+    },
   };
   globalThis.customElements = new CustomElementRegistryStub();
 }
