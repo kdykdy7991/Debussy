@@ -5,7 +5,9 @@
 参与角色：AI-A（强模型/技术负责人）、AI-B（经济模型/实现者）、产品/技术验收人  
 阶段目标：交付一个与业务框架和 Agent runtime 解耦、能嵌入任意 Web 项目的数字人前端 MVP。
 
-执行状态（2026-08-08）：`A0～A4 已完成，B0/B1 已完成`。构建入口已经 AI-A 审定，见 [A4 Build Approval](./handoffs/A4-build-approval.md)。不要重复执行这些任务；AI-B 现在可以启动 B2。
+执行状态（2026-08-10）：`A0～A6、A6-PREVIEW、B0～B4 已完成`。真实 Rive 预览已可见，等待用户视觉确认；B5 并行收口，语音 A7/A8 延后。产品顺序见 [优先级路线](./PRIORITY-ROADMAP.md)，可派发任务见 [tasks/README.md](./tasks/README.md)。
+
+当前产品优先级：**真实数字人视觉预览 → 跨项目嵌入 → 独立 Agent Adapter 阶段 → 语音与嘴型 → 完整验收**。Agent 通信仍不进入本阶段 Core，实现前另行冻结后端 transport/message 契约。
 
 ## 1. 阶段目标
 
@@ -85,12 +87,12 @@ AI-B 可以修改：
 - `packages/avatar/test/component/**`
 - `packages/avatar/test/e2e/**`
 - 面向消费者的接入文档
-- 仅在 B1 中可修改 `packages/avatar/vite.config.ts`、相关 `tsconfig` 和 `package.json` 的 scripts/devDependencies；不得修改 A0 已冻结的 name、version、exports、sideEffects、peerDependencies 和 files。
+- 仅在 B1 中可修改 `packages/avatar/vite.config.ts`、相关 `tsconfig` 和 `package.json` 的 scripts/devDependencies；B5 另有一次性预授权，只能补充 React 测试/类型 devDependencies，不得改变 optional peer 语义。不得修改 A0 已冻结的 name、version、exports、sideEffects、peerDependencies 和 files。
 
 AI-B 禁止自行修改：
 
 - `core`、`renderers`、`audio` 和 `testing` 的实现。
-- 公共类型、事件名、错误码和 `AvatarController` 接口。
+- 公共类型、事件名、错误码和 `AvatarController` 接口；ADR-0005 已批准的 B4 Embed 类型及根入口导出除外，必须逐字按任务单实现。
 - Character Manifest schema 和 package exports。
 - Rive 输入名、音频生命周期策略和 Agent 预留协议。
 
@@ -254,12 +256,13 @@ export interface AvatarController {
 | A3 | 交付 FakeRenderer/FakeAudio 与契约测试 | A1、A2 | AI-B 无需真实 Rive/音频即可开发；附使用示例 |
 | A4 | 审定构建公共入口 | A0、B1 草案 | core/component/react 入口清晰，React 不进入基础产物 |
 | A5 | 实现 Rive renderer | A2 | 加载、状态切换、resize、销毁均可验证 |
-| A6 | 实现 Character Manifest 加载和校验 | A2 | URL/对象两种输入；错误转换为标准错误事件 |
-| A7 | 实现音频播放器 | A1 | 支持 URL、结束、停止、打断、重复播放与 CORS 错误 |
-| A8 | 实现 `AnalyserNode` 音量采样 | A7 | 输出归一化 `0..1`，停止后归零且无 RAF 泄漏 |
-| A9 | 建立 Demo 角色的 Rive 输入映射 | A5 | 五种状态和 `audioLevel` 可独立驱动 |
-| A10 | 设计高风险 E2E 场景 | A5～A9 | 输出竞态、重复挂载、销毁和错误路径的可执行场景 |
-| A11 | 完成最终技术 Review | A10、B7、B8 | DoD 全部满足，公共 API 和资源生命周期无阻断问题 |
+| A6 | [实现 Character Manifest 加载和校验](./tasks/A6-character-manifest.md) | A5 | URL/对象两种输入；错误转换为标准错误事件 |
+| A6-PREVIEW | [真实数字人视觉预览](./tasks/A6-PREVIEW-visual-runtime.md) | A5、A6 | 真实 Rive 角色可见，五状态、resize、销毁和最小预览页可用；不依赖语音 |
+| A7 | [实现音频播放器](./tasks/A7-audio-player.md) | A1 | 支持 URL、结束、停止、打断、重复播放与 CORS 错误 |
+| A8 | [实现 `AnalyserNode` 音量采样](./tasks/A8-audio-analyser.md) | A7 | 输出归一化 `0..1`，停止后归零且无 RAF 泄漏 |
+| A9 | [语音与视觉 Runtime 最终组合](./tasks/A9-demo-character-integration.md) | A6-PREVIEW、A7、A8 | 复用可见角色链路，补齐真实 speech、audioLevel 和资源生命周期 |
+| A10 | [设计高风险 E2E 场景](./tasks/A10-e2e-risk-scenarios.md) | A9 | 输出竞态、重复挂载、销毁和错误路径的可执行场景 |
+| A11 | [完成最终技术 Review](./tasks/A11-final-technical-review.md) | A10、B7、B8 | DoD 全部满足，公共 API 和资源生命周期无阻断问题 |
 
 AI-A 每项任务的固定交付格式：
 
@@ -282,12 +285,12 @@ AI-A 每项任务的固定交付格式：
 | B0 | 阅读冻结契约并建立契约使用清单 | A0 | 输出 `docs/avatar/handoffs/B0-contract-usage-checklist.md`；列出允许调用的方法/事件，不提出未确认的新 API |
 | B1 | 在现有 Avatar 包上补充 Vite library build 草案 | A0、B0 | 不重建 A0/A1/A2 产物；ESM build 成功；不得改动已冻结的 package exports |
 | B2 | 实现 `<pi-avatar>` 和 Shadow DOM 容器 | B0、A3 | 属性映射、方法代理、连接/断开生命周期有测试 |
-| B3 | 实现 inline/floating 布局 | B2 | 左右定位、尺寸、移动端和 z-index 配置有效 |
-| B4 | 实现 `createAvatar()` Embed SDK | B2 | 可挂载、获取 controller、销毁并重复创建 |
-| B5 | 实现 React 薄适配器 | B4 | props 变化正确映射；卸载时销毁；不复制 Core 状态 |
-| B6 | 建立 Vanilla/React/Vue 示例 | B3、B4、B5 | 三个示例使用相同正式构建产物 |
-| B7 | 建立 Playwright 嵌入验收 | B6、A10 | CSS 隔离、状态切换、播放/打断、重复挂载通过 |
-| B8 | 编写消费者接入文档 | B6 | 15 分钟内可完成 Vanilla 接入，包含错误处理说明 |
+| B3 | 按 [B3 任务单](./tasks/B3-inline-floating-layout.md) 实现 inline/floating 布局 | B2 | 左右定位、尺寸、移动端和 z-index 配置有效 |
+| B4 | [实现 `createAvatar()` Embed SDK](./tasks/B4-embed-sdk.md) | B3 | 可挂载、获取 controller、销毁并重复创建 |
+| B5 | [实现 React 薄适配器](./tasks/B5-react-adapter.md) | B4 | props 变化正确映射；卸载时销毁；不复制 Core 状态 |
+| B6 | [建立 Vanilla/React/Vue 示例](./tasks/B6-framework-examples.md) | B3、B4、B5、A6-PREVIEW | 三个示例先完成真实视觉，A9 后补齐语音操作 |
+| B7 | [建立 Playwright 嵌入验收](./tasks/B7-playwright-acceptance.md) | B6、A9、A10 | CSS 隔离、状态切换、播放/打断、重复挂载通过 |
+| B8 | [编写消费者接入文档](./tasks/B8-consumer-docs.md) | B6、A9 | 15 分钟内可完成 Vanilla 接入，包含错误处理说明 |
 
 AI-B 的任务执行模板：
 
@@ -356,10 +359,12 @@ AI-A：Rive + Audio   AI-B：SDK + 布局 + 示例
 | --- | --- | --- | --- |
 | P0 | A0：契约和入口设计 | 等待；可阅读文档 | A0 通过验收人 Review |
 | P1（并行） | A1、A2、A3 | B0、B1 | Fake 可用；构建草案可运行 |
-| P2（并行） | A4、A5、A6 | B2、B3 | Component 可用 Fake 渲染；真实角色可加载 |
-| P3（并行） | A7、A8、A9 | B4、B5、B6 | 音频嘴型和三种示例分别通过 |
-| P4a（并行） | A10：设计高风险场景 | B8：消费者文档 | A10 场景明确，B8 文档完成 |
-| P4b | A11：在 B7 完成后进行最终 Review | B7：按 A10 实现 E2E | DoD 全部满足 |
+| P2a（视觉优先） | A6、A6-PREVIEW | B4 | 用户可看到真实角色；Embed SDK 可挂载 |
+| P2b（嵌入） | 视觉问题 Review | B5、B6 | Vanilla/React/Vue 都能展示真实角色 |
+| P3（独立阶段） | 与 Agent runtime Owner 冻结 Adapter 契约 | 前端 Agent Adapter（另立任务） | 状态/中断通信可用，不侵入 Avatar Core |
+| P4（语音最后） | A7、A8、A9 | 更新 B6 最终语音示例 | 音频、嘴型、错误和销毁链通过 |
+| P5a（并行） | A10：设计高风险场景 | B7、B8 | 完整 E2E 与消费者文档完成 |
+| P5b | A11：最终 Review | 等待 | DoD 全部满足 |
 
 注意：P2 和 P3 中的“并行”表示两条所有权线可以同时工作，不表示同一 AI 可以跳过依赖任务。
 
