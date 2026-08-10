@@ -1,8 +1,11 @@
 import {
   AVATAR_PROTOCOL_VERSION,
   AvatarError,
+  createAvatar,
   type AvatarConfig,
   type AvatarController,
+  type AvatarEmbedHandle,
+  type AvatarEmbedOptions,
   type AvatarEventDetail,
   type AvatarState,
   type CharacterManifest,
@@ -61,3 +64,34 @@ const invalidReason: AvatarEventDetail<"avatar-speech-end"> = {
   reason: "cancelled",
 };
 void invalidReason;
+
+// --- B4: createAvatar() embed surface (ADR-0005) ---
+
+declare const mountTarget: HTMLElement;
+
+const options: AvatarEmbedOptions = {
+  target: mountTarget,
+  character: manifest,
+  mode: "floating",
+  position: "bottom-right",
+  width: 320,
+  height: 480,
+  background: "#101010",
+  autoplay: false,
+};
+const handle: AvatarEmbedHandle = createAvatar(options);
+const embedController: AvatarController = handle.controller;
+embedController.setState("listening");
+const embedReady: Promise<void> = handle.ready;
+handle.destroy();
+
+createAvatar({ target: "#host", character: "/demo.json" });
+
+// @ts-expect-error target is required on AvatarEmbedOptions.
+createAvatar({ character: manifest });
+// @ts-expect-error target only accepts string | HTMLElement.
+createAvatar({ target: 42, character: manifest });
+
+void embedController;
+void embedReady;
+void options;
