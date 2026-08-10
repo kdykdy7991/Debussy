@@ -1,8 +1,8 @@
 # Web 数字人交付优先级路线
 
-状态：P1 Complete（等待用户视觉确认）  
-更新时间：2026-08-10  
-产品优先级：先看到数字人预览，其次补 Agent 通信，最后补语音。
+状态：Visual MVP Integration Complete（P1、P2 已通过）
+更新时间：2026-08-10
+当前产品范围：可展示、可打包、可嵌入已有前端项目。Agent 与语音不在当前范围。
 
 ## P1：可见数字人预览（当前最高优先级）
 
@@ -23,25 +23,25 @@ A6-PREVIEW 视觉生产链路
 
 P1 完成标志：打开预览 URL 能看到角色；可切换 idle/listening/thinking/speaking/error；刷新、resize、销毁重建无控制台错误。此时 `speak()` 不属于验收范围。
 
-## P2：嵌入和跨框架使用
+## P2：独立项目嵌入和发布验证（已完成）
 
-目标：其他部门能方便地把可见数字人嵌入自己的页面。
+目标：证明其他部门可以安装同一个正式产物，并把可见数字人嵌入已有页面；不要求为每种框架维护实现。
 
 ```text
 B4 createAvatar() Embed SDK
   ↓
-B5 React 薄适配器
+B5 React 薄适配器（可选语法糖，已放行）
   ↓
-B6 Vanilla / React / Vue 视觉示例
+B6 独立消费者项目：npm pack → 安装 tarball → production build → 浏览器展示
 ```
 
-B4 可以与 P1 并行；B6 的真实角色预览必须等待 A6-PREVIEW。语音按钮可以暂不出现或明确标记为后续能力，不能伪装成功。
+B6 只验证一个框架无关的正式包，不再建设 Vanilla/React/Vue 三套实现。真正发布到 npm/private registry 需要用户另行确认版本、registry 和凭据；B6 先完成发布前的等价验证。
 
-## P3：Agent 通信（单独阶段）
+## Deferred：Agent 通信
 
 目标：在不侵入 Avatar Core 的前提下，由前端 Adapter 把后端 Agent 消息映射到已有 Controller 命令和 DOM 事件。
 
-P3 不在当前第一阶段任务中直接实现。启动前必须由 Agent runtime 负责人提供并共同确认：
+不在当前 Visual MVP 中实现。未来启动前必须由 Agent runtime 负责人提供并共同确认：
 
 - transport：WebSocket、SSE、postMessage 或组合方式；
 - 消息 envelope：`source/version/type/requestId/payload`；
@@ -51,7 +51,7 @@ P3 不在当前第一阶段任务中直接实现。启动前必须由 Agent runt
 
 确认后另建 Agent Adapter 任务包；Adapter 只能依赖 `AvatarController`，不能把会话协议写入 Core、Renderer 或 Web Component。
 
-## P4：语音和嘴型（最后实现）
+## Deferred：语音和嘴型
 
 ```text
 A7 浏览器音频播放器
@@ -61,16 +61,16 @@ A8 AnalyserNode 音量采样
 A9 最终生产 Runtime 集成
 ```
 
-A9 复用 A6-PREVIEW 的视觉 Runtime，只补齐真实 `startSpeech()`、音量驱动、错误映射和完整资源释放，不重新实现视觉链路。
+A7～A9 不属于当前 Visual MVP，不作为可发布视觉组件的完成条件。
 
-## P5：完整验收与发布候选
+## P3：Visual MVP 验收与发布候选
 
 ```text
-A10 高风险 E2E 场景
+B6 独立消费者安装/展示
   ↓
-B7 Playwright + B8 最终消费者文档
+视觉 E2E + 消费者接入/发布文档
   ↓
-A11 最终技术 Review
+Visual MVP 最终技术 Review
 ```
 
-完整 AC-01～AC-12 仍在 P5 验收；P1 是提前可见的产品检查点，不代表语音或发布候选已经完成。
+当前发布候选只验收视觉展示、打包安装、嵌入、布局、状态、销毁和错误路径；Agent、音频和嘴型不进入门禁。

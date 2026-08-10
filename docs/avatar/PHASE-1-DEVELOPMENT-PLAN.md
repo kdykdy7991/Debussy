@@ -5,7 +5,7 @@
 参与角色：AI-A（强模型/技术负责人）、AI-B（经济模型/实现者）、产品/技术验收人  
 阶段目标：交付一个与业务框架和 Agent runtime 解耦、能嵌入任意 Web 项目的数字人前端 MVP。
 
-执行状态（2026-08-10）：`A0～A6、A6-PREVIEW、B0～B4 已完成`。真实 Rive 预览已可见，等待用户视觉确认；B5 并行收口，语音 A7/A8 延后。产品顺序见 [优先级路线](./PRIORITY-ROADMAP.md)，可派发任务见 [tasks/README.md](./tasks/README.md)。
+执行状态（2026-08-10）：`A0～A6、A6-PREVIEW、B0～B6 已完成/放行`，真实 Rive 预览及独立消费者安装验证均已通过。当前范围为“可展示、可打包、可嵌入已有前端项目”。Agent、语音和嘴型 Deferred，不进入当前完成条件；下一步为 Visual MVP 浏览器验收和消费者文档。最新范围以 [优先级路线](./PRIORITY-ROADMAP.md) 和 [B6 任务单](./tasks/B6-framework-examples.md) 为准。
 
 当前产品优先级：**真实数字人视觉预览 → 跨项目嵌入 → 独立 Agent Adapter 阶段 → 语音与嘴型 → 完整验收**。Agent 通信仍不进入本阶段 Core，实现前另行冻结后端 transport/message 契约。
 
@@ -288,7 +288,7 @@ AI-A 每项任务的固定交付格式：
 | B3 | 按 [B3 任务单](./tasks/B3-inline-floating-layout.md) 实现 inline/floating 布局 | B2 | 左右定位、尺寸、移动端和 z-index 配置有效 |
 | B4 | [实现 `createAvatar()` Embed SDK](./tasks/B4-embed-sdk.md) | B3 | 可挂载、获取 controller、销毁并重复创建 |
 | B5 | [实现 React 薄适配器](./tasks/B5-react-adapter.md) | B4 | props 变化正确映射；卸载时销毁；不复制 Core 状态 |
-| B6 | [建立 Vanilla/React/Vue 示例](./tasks/B6-framework-examples.md) | B3、B4、B5、A6-PREVIEW | 三个示例先完成真实视觉，A9 后补齐语音操作 |
+| B6 | [独立消费者嵌入与发布验证](./tasks/B6-framework-examples.md) | B3、B4、B5、A6-PREVIEW | pack 产物可由独立前端安装、构建并展示真实角色 |
 | B7 | [建立 Playwright 嵌入验收](./tasks/B7-playwright-acceptance.md) | B6、A9、A10 | CSS 隔离、状态切换、播放/打断、重复挂载通过 |
 | B8 | [编写消费者接入文档](./tasks/B8-consumer-docs.md) | B6、A9 | 15 分钟内可完成 Vanilla 接入，包含错误处理说明 |
 
@@ -360,7 +360,7 @@ AI-A：Rive + Audio   AI-B：SDK + 布局 + 示例
 | P0 | A0：契约和入口设计 | 等待；可阅读文档 | A0 通过验收人 Review |
 | P1（并行） | A1、A2、A3 | B0、B1 | Fake 可用；构建草案可运行 |
 | P2a（视觉优先） | A6、A6-PREVIEW | B4 | 用户可看到真实角色；Embed SDK 可挂载 |
-| P2b（嵌入） | 视觉问题 Review | B5、B6 | Vanilla/React/Vue 都能展示真实角色 |
+| P2b（嵌入） | 视觉问题 Review | B5、B6 | 正式 pack 产物可被独立消费者安装并展示真实角色 |
 | P3（独立阶段） | 与 Agent runtime Owner 冻结 Adapter 契约 | 前端 Agent Adapter（另立任务） | 状态/中断通信可用，不侵入 Avatar Core |
 | P4（语音最后） | A7、A8、A9 | 更新 B6 最终语音示例 | 音频、嘴型、错误和销毁链通过 |
 | P5a（并行） | A10：设计高风险场景 | B7、B8 | 完整 E2E 与消费者文档完成 |

@@ -1,40 +1,34 @@
-# A11 任务单：最终技术 Review
+# A11 任务单：Visual MVP 最终发布候选 Review
 
-状态：Blocked until A10、B7、B8 complete  
-执行者：AI-A（强模型/技术负责人）  
-任务性质：发布候选审查；默认只读，发现缺陷先归属任务，不做无边界重构。
+状态：Blocked until B6、B7、B8 complete
+执行者：AI-A（强模型/技术负责人）
+任务性质：视觉组件发布候选审查；不审查 Agent 或语音能力。
 
-## 1. 输入
+## 1. 必须审查
 
-- A0～A10、B0～B8 全部 handoff
-- B7 Playwright 报告与证据
-- B8 接入文档和 15 分钟接入记录
-- 开发计划第 11～15 节
+1. production build、类型、公共入口和 package exports 正确。
+2. root 导入无自动注册副作用；React 不进入基础 bundle；Rive 保持 lazy chunk。
+3. `npm pack` 产物可被独立消费者 clean install 和 production build。
+4. 真实角色、五状态、布局、resize、多实例、错误和 destroy/recreate 有浏览器证据。
+5. 消费者不引用仓库 `src/**`、内部 factory 或 Testing 入口。
+6. README 能指导已有前端项目完成安装和展示。
+7. 依赖许可证、audit、包内容和体积无阻断项。
+8. 文档明确 Agent、语音、嘴型未实现且不属于本次发布范围。
 
-## 2. 必须审查
+## 2. 必须运行
 
-1. 公共 API、事件、错误码和协议版本与 ADR 一致，无意外深路径导出。
-2. root/core 导入无注册副作用；React/Rive 不进入不应进入的 chunk。
-3. 完整 dist 可 CDN 部署，资源不内联，干净页面可运行。
-4. Manifest/Rive/audio/analyser/controller/component/embed/react 的错误和销毁链闭合。
-5. 并发初始化、播放、打断、重挂载、多实例无竞态回写。
-6. AC-01～AC-12 与 Definition of Done 全有证据。
-7. README、示例、类型声明与真实 API 一致，未把 Agent runtime/TTS 写成已实现。
-8. 依赖许可证、安全审计、包内容和体积无阻断问题。
+- clean install
+- typecheck、unit test、build test
+- B6 consumer clean install/build
+- B7 Chromium Visual MVP E2E
+- pack dry-run、audit、diff-check
+- 从 tarball 手工完成一次 create/destroy/recreate
 
-## 3. 必须运行
+## 3. 输出
 
-干净安装后运行 typecheck、全部单元/构建测试、Playwright Chromium、pack dry-run、audit、diff-check；检查 tarball 和入口静态依赖图。手工执行一次 Vanilla 快速接入及 create/destroy/speak/interrupt 流程。
+创建 `docs/avatar/handoffs/A11-final-review.md`，结论只能是：
 
-## 4. 输出
+- `Approved Visual MVP Release Candidate`
+- `Changes Required`
 
-创建 `docs/avatar/handoffs/A11-final-review.md`：
-
-- 结论只能是 `Approved Release Candidate` 或 `Changes Required`。
-- AC/DoD 逐项证据表。
-- 公共 API、bundle、依赖和资源生命周期审计。
-- 测试命令、版本、浏览器和结果。
-- 阻断项的 Owner、复现、验收条件，以及非阻断限制。
-- 第二阶段建议与第一阶段完成条件分开。
-
-测试通过但缺少真实资产、浏览器证据或接入文档时不得批准。
+真正执行 npm/private registry 发布仍需要用户确认版本号、registry 和发布权限。
