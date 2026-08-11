@@ -1,6 +1,6 @@
 import Type, { type Static } from "typebox";
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 const IdSchema = Type.String({ minLength: 1 });
 const TimestampSchema = Type.Integer({ minimum: 0 });
@@ -379,12 +379,31 @@ export const SessionSnapshotSchema = StrictObject({
 export type SessionSummary = Static<typeof SessionSummarySchema>;
 export type SessionSnapshot = Static<typeof SessionSnapshotSchema>;
 
+/** Public, provider-neutral identity for a voice profile. Never carries speaker, instruct, model or paths. */
+export const VoiceProfileSummarySchema = StrictObject({
+	id: IdSchema,
+	name: Type.Optional(Type.String()),
+});
+export type VoiceProfileSummary = Static<typeof VoiceProfileSummarySchema>;
+
+/**
+ * Present only when the server has a speech proxy configured. Absence tells the
+ * client to hide speech UI entirely; the proxy details never cross the wire.
+ */
+export const VoiceCapabilitySchema = StrictObject({
+	available: Type.Literal(true),
+	defaultProfile: IdSchema,
+	profiles: Type.Optional(Type.Array(VoiceProfileSummarySchema)),
+});
+export type VoiceCapability = Static<typeof VoiceCapabilitySchema>;
+
 export const ServerSnapshotSchema = StrictObject({
 	serverId: IdSchema,
 	protocolVersion: Type.Literal(PROTOCOL_VERSION),
 	revision: Type.Integer({ minimum: 0 }),
 	sessions: Type.Array(SessionSummarySchema),
 	models: Type.Array(ModelMetadataSchema),
+	voice: Type.Optional(VoiceCapabilitySchema),
 });
 export type ServerSnapshot = Static<typeof ServerSnapshotSchema>;
 
@@ -409,6 +428,95 @@ export const ProtocolErrorSchema = StrictObject({
 });
 export type ProtocolErrorCode = Static<typeof ProtocolErrorCodeSchema>;
 export type ProtocolError = Static<typeof ProtocolErrorSchema>;
+
+/** Provider-neutral state of one speech job; PCM never travels over this protocol. */
+export const SpeechStatusSchema = Type.Union([
+	Type.Literal("queued"),
+	Type.Literal("generating"),
+	Type.Literal("streaming"),
+	Type.Literal("completed"),
+	Type.Literal("failed"),
+	Type.Literal("cancelled"),
+]);
+export type SpeechStatus = Static<typeof SpeechStatusSchema>;
+
+export const SpeechAudioFormatSchema = StrictObject({
+	encoding: Type.Literal("pcm_f32le"),
+	sampleRate: Type.Integer({ minimum: 1 }),
+	channels: Type.Literal(1),
+});
+export type SpeechAudioFormat = Static<typeof SpeechAudioFormatSchema>;
+
+export const SpeechErrorCodeSchema = Type.Union([
+	Type.Literal("voice_unavailable"),
+	Type.Literal("voice_profile_not_found"),
+	Type.Literal("message_not_speakable"),
+	Type.Literal("speech_busy"),
+	Type.Literal("speech_stream_claimed"),
+	Type.Literal("speech_stream_expired"),
+	Type.Literal("speech_generation_failed"),
+	Type.Literal("speech_cancelled"),
+]);
+export type SpeechErrorCode = Static<typeof SpeechErrorCodeSchema>;
+
+export const SpeechErrorSchema = StrictObject({
+	code: SpeechErrorCodeSchema,
+	message: Type.String(),
+});
+export type SpeechError = Static<typeof SpeechErrorSchema>;
+
+/**
+ * Describes generation + transfer, not that audio was heard. `completed` means
+ * the Voice Service was exhausted and the server finished the HTTP response.
+ */
+export const SpeechJobSchema = StrictObject({
+	id: IdSchema,
+	sessionId: IdSchema,
+	messageId: IdSchema,
+	voiceProfileId: IdSchema,
+	status: SpeechStatusSchema,
+	/** Server-generated relative path the browser streams PCM from. */
+	streamPath: Type.String({ minLength: 1 }),
+	createdAt: TimestampSchema,
+	updatedAt: TimestampSchema,
+	firstChunkAt: Type.Optional(TimestampSchema),
+	audio: Type.Optional(SpeechAudioFormatSchema),
+	error: Type.Optional(SpeechErrorSchema),
+});
+export type SpeechJob = Static<typeof SpeechJobSchema>;
+
+export const StartSpeechCommandSchema = StrictObject({
+	command: Type.Literal("start_speech"),
+	sessionId: IdSchema,
+	messageId: IdSchema,
+	voiceProfileId: Type.Optional(IdSchema),
+});
+export type StartSpeechCommand = Static<typeof StartSpeechCommandSchema>;
+
+export const CancelSpeechCommandSchema = StrictObject({
+	command: Type.Literal("cancel_speech"),
+	jobId: IdSchema,
+});
+export type CancelSpeechCommand = Static<typeof CancelSpeechCommandSchema>;
+
+export const StartSpeechResultSchema = StrictObject({
+	command: Type.Literal("start_speech"),
+	job: SpeechJobSchema,
+});
+export type StartSpeechResult = Static<typeof StartSpeechResultSchema>;
+
+export const CancelSpeechResultSchema = StrictObject({
+	command: Type.Literal("cancel_speech"),
+	job: SpeechJobSchema,
+});
+export type CancelSpeechResult = Static<typeof CancelSpeechResultSchema>;
+
+/** Job events are delivered only to the connection that created the job. */
+export const SpeechJobEventSchema = StrictObject({
+	type: Type.Literal("speech_job"),
+	job: SpeechJobSchema,
+});
+export type SpeechJobEvent = Static<typeof SpeechJobEventSchema>;
 
 const PromptPayloadProperties = {
 	sessionId: IdSchema,
@@ -468,6 +576,8 @@ export const CommandSchema = Type.Union([
 	SetThinkingCommandSchema,
 	AttachUploadCommandSchema,
 	RemoveAttachmentCommandSchema,
+	StartSpeechCommandSchema,
+	CancelSpeechCommandSchema,
 ]);
 export type Command = Static<typeof CommandSchema>;
 export type CommandName = Command["command"];
@@ -538,6 +648,8 @@ export const CommandResultSchema = Type.Union([
 	SetThinkingResultSchema,
 	AttachUploadResultSchema,
 	RemoveAttachmentResultSchema,
+	StartSpeechResultSchema,
+	CancelSpeechResultSchema,
 ]);
 export type CommandResult = Static<typeof CommandResultSchema>;
 
@@ -605,6 +717,7 @@ export const ServerEventSchema = Type.Union([
 	AttachmentRemovedEventSchema,
 	SourceSnapshotEventSchema,
 	CitationSnapshotEventSchema,
+	SpeechJobEventSchema,
 ]);
 export type ServerEvent = Static<typeof ServerEventSchema>;
 

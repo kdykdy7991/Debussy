@@ -9,6 +9,7 @@ import type {
 	SessionSnapshot,
 	SessionSummary,
 	Source,
+	TranscriptItem,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import type { CitationService } from "./citations/service.ts";
@@ -228,7 +229,31 @@ export class LiveSessionManager {
 				);
 				return { command: "set_thinking" as const, session };
 			}
+			default:
+				// Speech commands are routed by PiServer to the SpeechManager and never
+				// reach session command execution.
+				throw new PiServerError("invalid_request", `Unhandled command: ${command.command}`);
 		}
+	}
+
+	/**
+	 * Resolve the transcript item backing a speech request. The connection must
+	 * be attached to the session, the session must be live, and the message must
+	 * exist in its authoritative snapshot. Role/status/speakability validation
+	 * stays in the speech layer; this method only performs ownership + lookup.
+	 */
+	resolveMessageForSpeech(connection: ConnectionState, sessionId: string, messageId: string): TranscriptItem {
+		if (!connection.sessionIds.has(sessionId)) {
+			throw new PiServerError("invalid_request", `Connection is not attached to session ${sessionId}`);
+		}
+		const live = this.liveSessions.get(sessionId);
+		if (!live || live.terminal || live.disposing) {
+			throw new PiServerError("not_found", `Session is not live: ${sessionId}`);
+		}
+		const snapshot = live.transientSnapshot ?? live.runtime.snapshot();
+		const item = snapshot.transcript.find((candidate) => candidate.id === messageId);
+		if (!item) throw new PiServerError("not_found", `Message is not in the session transcript: ${messageId}`);
+		return item;
 	}
 
 	async disconnect(connection: ConnectionState): Promise<void> {

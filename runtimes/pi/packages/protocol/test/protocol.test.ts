@@ -93,10 +93,10 @@ function itemMessage(item: unknown, type: "item_updated" | "item_finished" = "it
 }
 
 describe("protocol validation", () => {
-	test("uses protocol version 2", () => {
-		expect(PROTOCOL_VERSION).toBe(2);
-		expect(isSupportedProtocolVersion(2)).toBe(true);
-		expect(isSupportedProtocolVersion(1)).toBe(false);
+	test("uses protocol version 3", () => {
+		expect(PROTOCOL_VERSION).toBe(3);
+		expect(isSupportedProtocolVersion(3)).toBe(true);
+		expect(isSupportedProtocolVersion(2)).toBe(false);
 		expect(isSupportedProtocolVersion(2.5)).toBe(false);
 	});
 
