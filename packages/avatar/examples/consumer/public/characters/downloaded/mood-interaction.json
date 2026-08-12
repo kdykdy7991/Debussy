@@ -1,0 +1,8 @@
+{
+  "id": "mood-interaction",
+  "version": "1.0.0",
+  "renderer": "rive",
+  "assetUrl": "/characters/downloaded/mood-interaction.riv",
+  "stateMachine": "State Machine 1",
+  "inputs": {}
+}

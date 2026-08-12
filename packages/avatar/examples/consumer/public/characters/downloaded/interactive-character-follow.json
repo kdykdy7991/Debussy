@@ -1,0 +1,8 @@
+{
+  "id": "interactive-character-follow",
+  "version": "1.0.0",
+  "renderer": "rive",
+  "assetUrl": "/characters/downloaded/interactive-character-follow.riv",
+  "stateMachine": "State Machine 1",
+  "inputs": {}
+}

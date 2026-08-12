@@ -1,11 +1,12 @@
 import { createAvatar } from "@skdy/avatar";
 import "./style.css";
 
-const manifest = "/characters/demo/manifest.json";
+let manifest = "/characters/downloaded/mood-interaction.json";
 const status = document.querySelector<HTMLElement>("#status")!;
 const logOutput = document.querySelector<HTMLOutputElement>("#event-log")!;
 const mode = document.querySelector<HTMLSelectElement>("#mode")!;
 const position = document.querySelector<HTMLSelectElement>("#position")!;
+const character = document.querySelector<HTMLSelectElement>("#character")!;
 let avatar: ReturnType<typeof createAvatar> | undefined;
 
 function log(message: string): void { logOutput.textContent = message; }
@@ -22,5 +23,6 @@ document.querySelector("#state-buttons")!.addEventListener("click", (event) => {
 mode.addEventListener("change", () => { if (avatar) avatar.element.setAttribute("mode", mode.value); });
 position.addEventListener("change", () => { if (avatar) avatar.element.setAttribute("position", position.value); });
 document.querySelector("#destroy-recreate")!.addEventListener("click", () => { avatar?.destroy(); log("destroyed; recreating"); create(); });
+character.addEventListener("change", () => { manifest = character.value; create(); });
 window.addEventListener("unhandledrejection", (event) => { event.preventDefault(); setStatus("Unhandled rejection", "error"); log(String(event.reason)); });
 create();
