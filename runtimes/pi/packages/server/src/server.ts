@@ -27,6 +27,7 @@ import type { PiServerListener } from "./listener.ts";
 import { LiveSessionManager } from "./sessions.ts";
 import { ServerSnapshotPublisher } from "./snapshots.ts";
 import type { PiServerOptions, PiSessionBackend } from "./types.ts";
+import type { LiveSpeechManager } from "./voice/live/live-speech-manager.ts";
 import type { SpeechManager } from "./voice/speech-manager.ts";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
@@ -46,6 +47,7 @@ export class PiServer {
 	private readonly sessions: LiveSessionManager;
 	private readonly snapshots: ServerSnapshotPublisher;
 	private readonly speech: SpeechManager | undefined;
+	private readonly liveSpeech: LiveSpeechManager | undefined;
 	private closing = false;
 	private closePromise?: Promise<void>;
 	private startPromise?: Promise<this>;
@@ -70,6 +72,7 @@ export class PiServer {
 			sessionEventLogRetentionMs: resolved.sessionEventLogRetentionMs,
 			attachments: options.attachments,
 			citations: options.citations,
+			liveSpeech: options.liveSpeech,
 		});
 		this.speech = options.speech;
 		if (this.speech) {
@@ -78,6 +81,17 @@ export class PiServer {
 					this.sessions.resolveMessageForSpeech(connection, sessionId, messageId),
 				sendJobEvent: (connection, job) => {
 					void this.sendMessage(connection, { type: "event", event: { type: "speech_job", job } }).catch(
+						(error: unknown) => this.reportError(error),
+					);
+				},
+				reportError: (error) => this.reportError(error),
+			});
+		}
+		this.liveSpeech = options.liveSpeech;
+		if (this.liveSpeech) {
+			this.liveSpeech.bind({
+				sendJobEvent: (connection, job) => {
+					void this.sendMessage(connection, { type: "event", event: { type: "live_speech_job", job } }).catch(
 						(error: unknown) => this.reportError(error),
 					);
 				},
@@ -320,6 +334,7 @@ export class PiServer {
 		this.connections.delete(connection);
 		await this.sessions.disconnect(connection);
 		this.speech?.abortConnectionJobs(connection);
+		this.liveSpeech?.abortConnectionJobs(connection);
 		if (!this.closing && handshakeComplete) void this.snapshots.broadcast();
 	}
 
@@ -372,6 +387,9 @@ export class PiServer {
 		await Promise.all(connections.map((connection) => this.closeConnection(connection.connection)));
 		await Promise.all(connections.map((connection) => this.disconnect(connection)));
 
+		// Live runs must unsubscribe from their runtimes before the sessions are
+		// disposed, and their upstream streams aborted before shutdown completes.
+		await this.liveSpeech?.close();
 		await this.sessions.close();
 		this.speech?.close();
 		this.connections.clear();

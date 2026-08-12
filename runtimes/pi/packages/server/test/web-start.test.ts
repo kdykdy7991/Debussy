@@ -38,19 +38,21 @@ describe("voice proxy configuration", () => {
 	test("builds no voice layer when voice is not configured", () => {
 		const layer = buildVoiceLayer(undefined, {});
 		expect(layer.speech).toBeUndefined();
+		expect(layer.liveSpeech).toBeUndefined();
 		expect(layer.handlers).toHaveLength(0);
 	});
 
-	test("builds a speech manager from the built-in default profile", () => {
+	test("builds speech + live speech managers from the built-in default profile", () => {
 		const layer = buildVoiceLayer(
 			{ baseUrl: "http://127.0.0.1:18876", token: "service-secret", defaultProfile: "default" },
 			{ webToken: "web-secret" },
 		);
 		expect(layer.speech).toBeDefined();
-		expect(layer.handlers).toHaveLength(1);
+		expect(layer.liveSpeech).toBeDefined();
+		expect(layer.handlers).toHaveLength(2);
 		expect(layer.speech?.getCapability()).toEqual({
 			available: true,
-			live: false,
+			live: true,
 			defaultProfile: "default",
 			profiles: [{ id: "default", name: "Default" }],
 		});

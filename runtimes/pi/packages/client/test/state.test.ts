@@ -62,7 +62,7 @@ describe("PiClient", () => {
 			ok: true,
 			result: { command: "prompt", session: updated },
 		});
-		await expect(prompting).resolves.toEqual(updated);
+		await expect(prompting).resolves.toEqual({ command: "prompt", session: updated });
 		expect(handle.snapshot).toEqual(updated);
 		expect(observed).toEqual([2]);
 

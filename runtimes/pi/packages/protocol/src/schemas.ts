@@ -711,10 +711,12 @@ export const PromptResultSchema = StrictObject({
 	/** Phase 2 live朗读 job. Only present when the prompt carried `speech`. */
 	liveSpeech: Type.Optional(LiveSpeechJobSchema),
 });
+export type PromptResult = Static<typeof PromptResultSchema>;
 export const SteerResultSchema = StrictObject({
 	command: Type.Literal("steer"),
 	session: SessionSnapshotSchema,
 });
+export type SteerResult = Static<typeof SteerResultSchema>;
 export const AbortResultSchema = StrictObject({
 	command: Type.Literal("abort"),
 	session: SessionSnapshotSchema,

@@ -1,10 +1,14 @@
 import type {
 	AttachmentScope,
 	Command,
+	LiveSpeechJob,
+	LiveSpeechRequest,
 	ModelRef,
+	PromptResult,
 	ResultForCommand,
 	ServerEvent,
 	SessionSnapshot,
+	SteerResult,
 	ThinkingLevel,
 } from "@earendil-works/pi-protocol";
 import type { Unsubscribe } from "./types.ts";
@@ -20,6 +24,13 @@ export interface AcquireSessionOptions {
 /** Optional payload for prompt/steer, e.g. ready attachments bound to the session. */
 export interface SessionPromptOptions {
 	attachmentIds?: string[];
+	/**
+	 * Phase 2 live朗读 opt-in. Only carried by `prompt`; `steer` deliberately
+	 * ignores this field (V5 task §5.4 / Spec §7.6). The server is the only
+	 * legitimate creator of the returned {@link LiveSpeechJob}; the client
+	 * auto-registers any non-terminal job into the connection-scoped handle map.
+	 */
+	speech?: LiveSpeechRequest;
 }
 
 export interface SessionLease extends AsyncDisposable {
@@ -31,8 +42,13 @@ export interface SessionLease extends AsyncDisposable {
 	onEvent(listener: (event: ServerEvent) => void): Unsubscribe;
 	detach(): Promise<void>;
 	dispose(): Promise<void>;
-	prompt(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot>;
-	steer(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot>;
+	/**
+	 * Send a prompt and (when `options.speech` is set) request a Phase 2
+	 * live朗读 job. The returned `PromptResult.session` is always present;
+	 * `liveSpeech` is only present when the server actually issued a job.
+	 */
+	prompt(text: string, options?: SessionPromptOptions): Promise<PromptResult>;
+	steer(text: string, options?: SessionPromptOptions): Promise<SteerResult>;
 	abort(): Promise<SessionSnapshot>;
 	setModel(model: ModelRef): Promise<SessionSnapshot>;
 	setThinking(thinkingLevel: ThinkingLevel): Promise<SessionSnapshot>;
@@ -41,6 +57,9 @@ export interface SessionLease extends AsyncDisposable {
 }
 
 export type PiSessionHandle = SessionLease;
+
+/** Re-exported for callers that only want the prompt result shape. */
+export type { PromptResult, LiveSpeechJob };
 
 export interface SessionHandleCallbacks {
 	isAttached(): boolean;
@@ -93,26 +112,28 @@ export class SessionHandle implements SessionLease {
 		return this.dispose();
 	}
 
-	async prompt(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot> {
-		return (
-			await this.#request({
-				command: "prompt",
-				sessionId: this.id,
-				text,
-				...(options?.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
-			})
-		).session;
+	async prompt(text: string, options?: SessionPromptOptions): Promise<PromptResult> {
+		const command: Command = {
+			command: "prompt",
+			sessionId: this.id,
+			text,
+			...(options?.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
+			// Phase 2 live朗读 opt-in is intentionally attached even when its
+			// value is undefined so future spec changes remain explicit; the
+			// protocol layer drops the key via `Type.Optional`.
+			...(options?.speech ? { speech: options.speech } : {}),
+		};
+		return this.#request(command);
 	}
 
-	async steer(text: string, options?: SessionPromptOptions): Promise<SessionSnapshot> {
-		return (
-			await this.#request({
-				command: "steer",
-				sessionId: this.id,
-				text,
-				...(options?.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
-			})
-		).session;
+	async steer(text: string, options?: SessionPromptOptions): Promise<SteerResult> {
+		const command: Command = {
+			command: "steer",
+			sessionId: this.id,
+			text,
+			...(options?.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
+		};
+		return this.#request(command);
 	}
 
 	async abort(): Promise<SessionSnapshot> {

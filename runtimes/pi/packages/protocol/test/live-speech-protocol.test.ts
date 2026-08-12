@@ -29,14 +29,17 @@ function liveJobForProtocol(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function promptWithSpeech(overrides: Record<string, unknown> = {}) {
+function promptWithSpeech(overrides: Record<string, unknown> = {}): Command {
 	return {
-		command: "prompt" as const,
+		command: "prompt",
 		sessionId: "session-1",
 		text: "hi",
-		speech: { mode: "live" as const, ...(overrides.voiceProfileId === undefined ? {} : { voiceProfileId: overrides.voiceProfileId }) },
+		speech: {
+			mode: "live",
+			...(overrides.voiceProfileId === undefined ? {} : { voiceProfileId: overrides.voiceProfileId as string }),
+		},
 		...overrides,
-	};
+	} as Command;
 }
 
 describe("LiveSpeechRequest schema", () => {
@@ -53,7 +56,12 @@ describe("LiveSpeechRequest schema", () => {
 		const envelope = {
 			type: "request",
 			id: "request-1",
-			request: { command: "prompt", sessionId: "session-1", text: "hi", speech: { mode: "live", voiceProfileId: "vivid" } },
+			request: {
+				command: "prompt",
+				sessionId: "session-1",
+				text: "hi",
+				speech: { mode: "live", voiceProfileId: "vivid" },
+			},
 		};
 		expect(parseClientMessage(envelope)).toEqual(envelope);
 	});
@@ -129,7 +137,9 @@ describe("LiveSpeechJob schema", () => {
 	});
 
 	test("rejects a live job with non-finite progress counters", () => {
-		const job = liveJobForProtocol({ progress: { committedUtterances: -1, completedUtterances: 0, pendingCharacters: 0 } });
+		const job = liveJobForProtocol({
+			progress: { committedUtterances: -1, completedUtterances: 0, pendingCharacters: 0 },
+		});
 		expect(() => parseServerMessage(liveSpeechEvent(job))).toThrow(ProtocolValidationError);
 	});
 
@@ -296,7 +306,7 @@ describe("protocol v4 versioning and wire round-trip", () => {
 			type: "request",
 			id: "request-1",
 			request: { command: "prompt", sessionId: "session-1", text: "hi", speech: { mode: "live" } },
-		};
+		} as const;
 		const [frame] = new FrameDecoder().push(encodeClientMessage(envelope));
 		expect(parseClientMessage(decodeCbor(frame!))).toEqual(envelope);
 	});
@@ -326,7 +336,10 @@ describe("ResultForCommand static typing for live speech", () => {
 
 		const cancelCommand = { command: "cancel_live_speech", jobId: "live-job-1" } as const satisfies Command;
 		type CancelResult = ResultForCommand<typeof cancelCommand>;
-		const cancelResult: CancelResult = { command: "cancel_live_speech", job: liveJobForProtocol({ status: "cancelled" }) };
+		const cancelResult: CancelResult = {
+			command: "cancel_live_speech",
+			job: liveJobForProtocol({ status: "cancelled" }),
+		};
 		expect(cancelResult.job.id).toBe("live-job-1");
 	});
 });
@@ -350,8 +363,10 @@ function makeSessionSnapshot(id: string) {
 	};
 }
 
-function liveSpeechEvent(job: Parameters<typeof import("../src/index.ts").parseServerMessage>[0] extends never
-	? never
-	: ReturnType<typeof liveJobForProtocol>): ServerMessage {
+function liveSpeechEvent(
+	job: Parameters<typeof import("../src/index.ts").parseServerMessage>[0] extends never
+		? never
+		: ReturnType<typeof liveJobForProtocol>,
+): ServerMessage {
 	return { type: "event", event: { type: "live_speech_job", job } };
 }

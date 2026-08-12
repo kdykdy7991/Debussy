@@ -23,5 +23,6 @@ export function createUnixServer(backend: PiSessionBackend, options: UnixServerO
 		sessionEventLogRetentionMs: options.sessionEventLogRetentionMs,
 		attachments: options.attachments,
 		citations: options.citations,
+		liveSpeech: options.liveSpeech,
 	});
 }

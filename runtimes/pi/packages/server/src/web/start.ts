@@ -29,9 +29,11 @@ import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { AttachmentStore } from "../uploads/store.ts";
 import { VoiceServiceHttpClient } from "../voice/client.ts";
+import { LiveSpeechManager } from "../voice/live/live-speech-manager.ts";
 import { normalizeVoiceProfiles } from "../voice/profiles.ts";
 import { SpeechManager } from "../voice/speech-manager.ts";
 import type { VoiceProfile } from "../voice/types.ts";
+import { createLiveSpeechHttpHandler } from "./live-speech.ts";
 import { createSpeechHttpHandler } from "./speech.ts";
 import { createUploadHttpHandler } from "./uploads.ts";
 
@@ -126,7 +128,11 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		}),
 	];
 
-	const { speech, handlers: voiceHandlers } = buildVoiceLayer(options.voice, {
+	const {
+		speech,
+		liveSpeech,
+		handlers: voiceHandlers,
+	} = buildVoiceLayer(options.voice, {
 		webToken: options.webToken,
 		allowedOrigins: resolved.listener.allowedOrigins,
 		allowedHosts: resolved.listener.allowedHosts,
@@ -146,6 +152,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		attachments,
 		citations,
 		speech,
+		liveSpeech,
 	});
 
 	const autoStart = options.autoStart ?? true;
@@ -290,15 +297,22 @@ function composeHttpHandlers(handlers: readonly HttpRequestHandler[]): HttpReque
 }
 
 /**
- * Build the speech proxy layer from web options. Returns an empty handler list
- * when voice is not configured so no voice store/timer/fetch is ever created.
+ * Build the speech + live speech layers from web options. Returns an empty
+ * handler list when voice is not configured so no voice store/timer/fetch is
+ * ever created. When voice is configured, both the Phase 1 SpeechManager and
+ * the Phase 2 LiveSpeechManager are built, `voice.live` is advertised as true,
+ * and the two are made mutually exclusive per connection.
  * @internal Exported for configuration tests.
  */
 export function buildVoiceLayer(
 	voice: WebVoiceOptions | undefined,
 	http: { webToken?: string; allowedOrigins?: readonly string[]; allowedHosts?: readonly string[] },
-): { speech: SpeechManager | undefined; handlers: HttpRequestHandler[] } {
-	if (!voice) return { speech: undefined, handlers: [] };
+): {
+	speech: SpeechManager | undefined;
+	liveSpeech: LiveSpeechManager | undefined;
+	handlers: HttpRequestHandler[];
+} {
+	if (!voice) return { speech: undefined, liveSpeech: undefined, handlers: [] };
 	const profiles = normalizeVoiceProfiles(voice.profiles);
 	if (!profiles.some((profile) => profile.id === voice.defaultProfile)) {
 		throw new PiServerError(
@@ -314,10 +328,22 @@ export function buildVoiceLayer(
 		totalTimeoutMs: voice.totalTimeoutMs,
 		maxBytes: voice.maxBytes,
 	});
-	const speech = new SpeechManager({
+	// Mutual exclusion is wired lazily: the checks are closures evaluated at
+	// request time, after both managers have been constructed.
+	let speech: SpeechManager;
+	let liveSpeech: LiveSpeechManager;
+	speech = new SpeechManager({
 		voiceClient,
 		profiles,
 		defaultProfileId: voice.defaultProfile,
+		live: true,
+		liveBusyCheck: (connection) => liveSpeech.hasActiveLiveJob(connection),
+	});
+	liveSpeech = new LiveSpeechManager({
+		voiceClient,
+		profiles,
+		defaultProfileId: voice.defaultProfile,
+		speechBusyCheck: (connection) => speech.hasActiveJob(connection),
 	});
 	const handlers: HttpRequestHandler[] = [
 		createSpeechHttpHandler({
@@ -326,8 +352,14 @@ export function buildVoiceLayer(
 			allowedOrigins: http.allowedOrigins,
 			allowedHosts: http.allowedHosts,
 		}),
+		createLiveSpeechHttpHandler({
+			getLiveSpeechManager: () => liveSpeech,
+			webToken: http.webToken,
+			allowedOrigins: http.allowedOrigins,
+			allowedHosts: http.allowedHosts,
+		}),
 	];
-	return { speech, handlers };
+	return { speech, liveSpeech, handlers };
 }
 
 function resolveAbsolute(path: string): string {

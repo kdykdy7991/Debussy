@@ -1,9 +1,4 @@
-import type {
-	LiveSpeechJob,
-	ModelRef,
-	SpeechJob,
-	ThinkingLevel,
-} from "@earendil-works/pi-protocol";
+import type { LiveSpeechJob, ModelRef, SpeechJob, ThinkingLevel } from "@earendil-works/pi-protocol";
 import type { ByteTransportFactory } from "./transport.ts";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected";

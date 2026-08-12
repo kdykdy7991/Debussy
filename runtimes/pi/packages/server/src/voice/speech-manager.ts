@@ -41,6 +41,10 @@ export interface SpeechManagerOptions {
 	voiceClient: VoiceServiceClient;
 	profiles: readonly VoiceProfile[];
 	defaultProfileId: string;
+	/** Advertise `voice.live` capability. `false` until the V8 coordinator ships. */
+	live?: boolean;
+	/** When set, reject a Phase 1 job while a live speech job is active on the connection. */
+	liveBusyCheck?: (connection: ConnectionState) => boolean;
 	maxTextLength?: number;
 	unclaimedTtlMs?: number;
 	terminalRetentionMs?: number;
@@ -62,6 +66,20 @@ interface SpeechJobEntry {
 	terminal: boolean;
 	unclaimedTimer?: ReturnType<typeof setTimeout>;
 	retentionTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface ResolvedSpeechManagerOptions {
+	voiceClient: VoiceServiceClient;
+	profiles: readonly VoiceProfile[];
+	defaultProfileId: string;
+	live: boolean;
+	liveBusyCheck: ((connection: ConnectionState) => boolean) | undefined;
+	maxTextLength: number;
+	unclaimedTtlMs: number;
+	terminalRetentionMs: number;
+	streamPathPrefix: string;
+	clock: () => number;
+	uuid: () => string;
 }
 
 export interface SpeechClaim {
@@ -112,7 +130,7 @@ export function extractSpeakableText(item: TranscriptItem): string {
  * WebSocket connection that created them and never enter session persistence.
  */
 export class SpeechManager {
-	private readonly options: Required<SpeechManagerOptions>;
+	private readonly options: ResolvedSpeechManagerOptions;
 	private readonly jobs = new Map<string, SpeechJobEntry>();
 	private host?: SpeechManagerHost;
 
@@ -124,6 +142,8 @@ export class SpeechManager {
 			streamPathPrefix: options.streamPathPrefix ?? SPEECH_STREAM_PATH_PREFIX,
 			clock: options.clock ?? (() => Date.now()),
 			uuid: options.uuid ?? (() => randomUUID()),
+			live: options.live ?? false,
+			liveBusyCheck: options.liveBusyCheck,
 			voiceClient: options.voiceClient,
 			profiles: options.profiles,
 			defaultProfileId: options.defaultProfileId,
@@ -138,14 +158,21 @@ export class SpeechManager {
 	getCapability(): VoiceCapability {
 		return {
 			available: true,
-			/** V5 freeze ships with `live: false`; V8/V9 flip this to `true`. */
-			live: false,
+			live: this.options.live,
 			defaultProfile: this.options.defaultProfileId,
 			profiles: this.options.profiles.map((profile) => ({
 				id: profile.id,
 				...(profile.name ? { name: profile.name } : {}),
 			})),
 		};
+	}
+
+	/** Whether this connection owns a non-terminal Phase 1 manual speech job. */
+	hasActiveJob(connection: ConnectionState): boolean {
+		for (const entry of this.jobs.values()) {
+			if (entry.owner === connection && !entry.terminal) return true;
+		}
+		return false;
 	}
 
 	async executeCommand(connection: ConnectionState, command: Command): Promise<CommandResult> {
@@ -244,6 +271,9 @@ export class SpeechManager {
 			if (entry.owner === connection && !entry.terminal) {
 				throw new PiServerError("busy", "This connection already has an active speech job");
 			}
+		}
+		if (this.options.liveBusyCheck?.(connection)) {
+			throw new PiServerError("busy", "A live speech job is active on this connection");
 		}
 		const profile = resolveProfile(this.options.profiles, command.voiceProfileId, this.options.defaultProfileId);
 		const item = this.requireHost().resolveMessage(connection, command.sessionId, command.messageId);

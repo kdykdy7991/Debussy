@@ -13,6 +13,7 @@ import type { CitationService } from "./citations/service.ts";
 import type { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 import type { AttachmentStore } from "./uploads/store.ts";
+import type { LiveSpeechManager } from "./voice/live/live-speech-manager.ts";
 import type { SpeechManager } from "./voice/speech-manager.ts";
 
 export interface PiServerOptions {
@@ -31,6 +32,8 @@ export interface PiServerOptions {
 	citations?: CitationService;
 	/** Speech proxy; when omitted, speech commands and PCM routes are unavailable. */
 	speech?: SpeechManager;
+	/** Phase 2 live speech coordinator; when omitted, live jobs and routes are unavailable. */
+	liveSpeech?: LiveSpeechManager;
 }
 
 /** A handler for non-upgrade HTTP requests on the shared listener HTTP server; returns false when unhandled. */

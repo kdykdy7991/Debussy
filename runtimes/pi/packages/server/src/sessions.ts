@@ -25,6 +25,7 @@ import type {
 	RetrievalInput,
 } from "./types.ts";
 import type { AttachmentStore } from "./uploads/store.ts";
+import type { LiveSpeechManager, LiveSpeechPrepareResult } from "./voice/live/live-speech-manager.ts";
 
 interface LiveSession {
 	id: string;
@@ -59,6 +60,8 @@ interface LiveSessionManagerOptions {
 	attachments?: AttachmentStore;
 	/** Citation index + retrieval service backing P2 source/citation flows. */
 	citations?: CitationService;
+	/** Phase 2 live speech coordinator; when absent, live jobs are unavailable. */
+	liveSpeech?: LiveSpeechManager;
 }
 
 function toSummary(snapshot: SessionSnapshot): SessionSummary {
@@ -129,6 +132,8 @@ export class LiveSessionManager {
 				const live = this.liveSessions.get(command.sessionId);
 				if (connection.sessionIds.has(command.sessionId)) {
 					connection.sessionIds.delete(command.sessionId);
+					// Detaching the owning connection cancels its live speech.
+					this.options.liveSpeech?.abortConnectionSessionJobs(connection, command.sessionId);
 					if (live) {
 						live.connections.delete(connection);
 						if (live.connections.size > 0 && !live.terminal && !live.disposing) {
@@ -161,19 +166,42 @@ export class LiveSessionManager {
 					command.text,
 					turnId,
 				);
-				const session = await this.runOperation(
-					connection,
-					live,
-					() =>
-						live.runtime.prompt({
-							text: command.text,
-							attachmentIds: command.attachmentIds,
-							attachments,
-							retrieval,
-						}),
-					{ turnId, citations: retrieval?.citations ?? [] },
-				);
-				return { command: "prompt" as const, session };
+				// Phase 2 live朗读: create the job and register the runtime
+				// listener BEFORE `runtime.prompt()` so no first delta is lost.
+				// `prepare` is synchronous; prompt failure rolls the job back
+				// atomically (the client never receives a job handle).
+				let prepared: LiveSpeechPrepareResult | undefined;
+				if (command.speech) {
+					prepared = this.options.liveSpeech?.prepare({
+						connection,
+						runtime: live.runtime,
+						sessionId: live.id,
+						speech: command.speech,
+						turnId,
+					});
+				}
+				try {
+					const session = await this.runOperation(
+						connection,
+						live,
+						() =>
+							live.runtime.prompt({
+								text: command.text,
+								attachmentIds: command.attachmentIds,
+								attachments,
+								retrieval,
+							}),
+						{ turnId, citations: retrieval?.citations ?? [] },
+					);
+					return {
+						command: "prompt" as const,
+						session,
+						...(prepared ? { liveSpeech: prepared.job } : {}),
+					};
+				} catch (error) {
+					prepared?.rollback();
+					throw error;
+				}
 			}
 			case "steer": {
 				const live = this.requireAttached(connection, command.sessionId);
@@ -184,6 +212,8 @@ export class LiveSessionManager {
 					command.text,
 					turnId,
 				);
+				// Steer cancels the old turn's live speech; v1 does not auto-restart.
+				this.options.liveSpeech?.abortSessionJobs(live.id, "agent_steer", "Agent turn was steered");
 				const session = await this.runOperation(
 					connection,
 					live,
@@ -214,6 +244,8 @@ export class LiveSessionManager {
 			}
 			case "abort": {
 				const live = this.requireAttached(connection, command.sessionId);
+				// Aborting the Agent also cancels the turn's live speech.
+				this.options.liveSpeech?.abortSessionJobs(live.id, "agent_abort", "Agent turn was aborted");
 				const session = await this.runOperation(connection, live, () => live.runtime.abort());
 				return { command: "abort" as const, session };
 			}
@@ -229,14 +261,13 @@ export class LiveSessionManager {
 				);
 				return { command: "set_thinking" as const, session };
 			}
-			case "cancel_live_speech":
-				// V5 contract: live朗读 coordinator (V8) is not wired yet. Reject
-				// with `invalid_state` so clients can surface a stable, capability
-				// downgrade error instead of a generic protocol failure.
-				throw new PiServerError(
-					"invalid_state",
-					"Live speech is not available on this server build",
-				);
+			case "cancel_live_speech": {
+				const manager = this.options.liveSpeech;
+				if (!manager) {
+					throw new PiServerError("invalid_state", "Live speech is not available on this server build");
+				}
+				return manager.executeCancel(connection, command);
+			}
 			default:
 				// Phase 1 SpeechManager commands are routed by PiServer and never
 				// reach session command execution.
@@ -446,6 +477,7 @@ export class LiveSessionManager {
 		if (live.terminal) return;
 		live.terminal = true;
 		this.options.reportError(error);
+		this.options.liveSpeech?.abortSessionJobs(live.id, "agent_abort", "Session terminated");
 		live.unsubscribe();
 		const connections = [...live.connections];
 		await Promise.all(connections.map((connection) => this.options.closeConnection(connection.connection)));
@@ -519,6 +551,8 @@ export class LiveSessionManager {
 		) {
 			return live.disposing;
 		}
+		// Session disposal removes any live speech it still owns.
+		this.options.liveSpeech?.abortSessionJobs(live.id, "session_removed", "Session disposed");
 		live.unsubscribe();
 		live.disposing = (async () => {
 			try {

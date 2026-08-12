@@ -3,6 +3,7 @@ import {
 	type CommandResult,
 	type EventEnvelope,
 	encodeClientMessage,
+	type LiveSpeechJob,
 	ProtocolValidationError,
 	type ResponseEnvelope,
 	type ResultForCommand,
@@ -28,7 +29,12 @@ import {
 	type SessionHandleCallbacks,
 	type SessionLeaseMode,
 } from "./session-handle.ts";
-import { isLiveSpeechTerminal, isSpeechTerminal, LiveSpeechJobHandleImpl, SpeechJobHandleImpl } from "./speech-handle.ts";
+import {
+	isLiveSpeechTerminal,
+	isSpeechTerminal,
+	LiveSpeechJobHandleImpl,
+	SpeechJobHandleImpl,
+} from "./speech-handle.ts";
 import { ClientState } from "./state.ts";
 import type {
 	ConnectionState,
@@ -183,7 +189,7 @@ export class PiClient {
 	 * the handle into the connection-scoped event router without changing the
 	 * client API.
 	 */
-	registerLiveSpeechHandle(job: import("@earendil-works/pi-protocol").LiveSpeechJob): LiveSpeechJobHandle {
+	registerLiveSpeechHandle(job: LiveSpeechJob): LiveSpeechJobHandle {
 		this.#assertNotDisposed();
 		const handle = new LiveSpeechJobHandleImpl(job, {
 			cancel: (command) => this.#request(command),
@@ -191,6 +197,17 @@ export class PiClient {
 		});
 		this.#liveSpeechHandles.set(job.id, handle);
 		return handle;
+	}
+
+	/**
+	 * Look up a previously-registered live job handle by id. Returns `undefined`
+	 * when the job is unknown, already terminal (terminal handles are evicted
+	 * from the map) or this connection never observed it. V9 web callers use
+	 * this to subscribe to a job issued by a `prompt` result before they ever
+	 * touch the handle object returned via the protocol layer.
+	 */
+	getLiveSpeechHandle(jobId: string): LiveSpeechJobHandle | undefined {
+		return this.#liveSpeechHandles.get(jobId);
 	}
 
 	async createSession(options: CreateSessionOptions = {}): Promise<PiSessionHandle> {
@@ -387,6 +404,13 @@ export class PiClient {
 			return;
 		}
 		this.#state.applyResult(message.result);
+		// Phase 2: a successful prompt that opted into live speech carries a
+		// fresh LiveSpeechJob in the result. Auto-register a handle so the
+		// V9 web layer can subscribe immediately and so subsequent
+		// `live_speech_job` events route correctly.
+		if (message.result.command === "prompt" && message.result.liveSpeech) {
+			this.registerLiveSpeechHandle(message.result.liveSpeech);
+		}
 		pending.resolve(message.result);
 	}
 

@@ -1,6 +1,7 @@
 import { Check } from "typebox/value";
 import { describe, expect, test } from "vitest";
 import {
+	type ClientMessage,
 	type Command,
 	decodeCbor,
 	encodeClientMessage,
@@ -33,12 +34,12 @@ function speechJobForProtocol(overrides: Record<string, unknown> = {}): SpeechJo
 	};
 }
 
-function startSpeechRequest(overrides: Record<string, unknown> = {}) {
+function startSpeechRequest(overrides: Record<string, unknown> = {}): Extract<ClientMessage, { type: "request" }> {
 	return {
 		type: "request",
 		id: "request-1",
 		request: { command: "start_speech", sessionId: "session-1", messageId: "assistant-1", ...overrides },
-	};
+	} as unknown as Extract<ClientMessage, { type: "request" }>;
 }
 
 function cancelSpeechRequest(overrides: Record<string, unknown> = {}) {
@@ -85,7 +86,7 @@ describe("SpeechJob schema", () => {
 	test("rejects a job without a streamPath", () => {
 		const job = speechJobForProtocol() as Record<string, unknown>;
 		delete job.streamPath;
-		expect(() => parseServerMessage(speechEvent(job))).toThrow(ProtocolValidationError);
+		expect(() => parseServerMessage(speechEvent(job as unknown as SpeechJob))).toThrow(ProtocolValidationError);
 	});
 
 	test("accepts an audio format with channels 1 and pcm_f32le only", () => {
@@ -146,7 +147,7 @@ describe("start_speech / cancel_speech commands", () => {
 
 	test("parses a start_speech request omitting the profile", () => {
 		const message = startSpeechRequest();
-		delete message.request.voiceProfileId;
+		delete (message.request as Record<string, unknown>).voiceProfileId;
 		expect(parseClientMessage(message)).toEqual(message);
 		expect((message.request as Record<string, unknown>).voiceProfileId).toBeUndefined();
 	});
@@ -305,9 +306,9 @@ describe("protocol v4 versioning and wire round-trip", () => {
 				profiles: [{ id: "default", name: "Default" }],
 			},
 		};
-		expect(parseServerMessage({ type: "hello", version: PROTOCOL_VERSION, connectionId: "connection-1", snapshot })).toEqual(
-			{ type: "hello", version: PROTOCOL_VERSION, connectionId: "connection-1", snapshot },
-		);
+		expect(
+			parseServerMessage({ type: "hello", version: PROTOCOL_VERSION, connectionId: "connection-1", snapshot }),
+		).toEqual({ type: "hello", version: PROTOCOL_VERSION, connectionId: "connection-1", snapshot });
 	});
 
 	test("rejects a voice capability with provider internals", () => {
