@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { normalizeVoiceProfiles } from "../voice/profiles.ts";
 /**
  * Dev entry point: starts the Pi web server with sensible defaults and binds
  * SIGINT/SIGTERM to a graceful shutdown that drains live session runtimes.
@@ -9,7 +10,8 @@
  *          [--allow-cwd <path>]... [--allow-origin <origin>]...
  *          [--max-frame-length <bytes>] [--max-pending-bytes <bytes>]
  */
-import { type StartWebServerOptions, startWebServer } from "./start.ts";
+import type { VoiceProfile } from "../voice/types.ts";
+import { type StartWebServerOptions, startWebServer, type WebVoiceOptions } from "./start.ts";
 
 interface CliFlags {
 	host?: string;
@@ -66,6 +68,38 @@ function parseArgs(argv: readonly string[]): CliFlags {
 	return flags;
 }
 
+/**
+ * Voice proxy is configured entirely through environment variables so the
+ * server-to-service secret never appears on the command line.
+ *
+ *   PI_VOICE_URL               base URL of the Voice Service (required to enable speech)
+ *   PI_VOICE_TOKEN             server-to-service bearer secret (required when URL is set)
+ *   PI_VOICE_DEFAULT_PROFILE   profile id used when the client omits it (default "default")
+ *   PI_VOICE_PROFILES          optional JSON array of { id, name, language, speaker, instruct }
+ */
+function buildVoiceOptionsFromEnv(): WebVoiceOptions | undefined {
+	const baseUrl = process.env.PI_VOICE_URL;
+	if (!baseUrl) return undefined;
+	const token = process.env.PI_VOICE_TOKEN;
+	if (!token) throw new Error("PI_VOICE_URL is set but PI_VOICE_TOKEN is missing");
+	const defaultProfile = process.env.PI_VOICE_DEFAULT_PROFILE ?? "default";
+	const profiles = parseProfilesEnv();
+	return { baseUrl, token, defaultProfile, ...(profiles ? { profiles } : {}) };
+}
+
+function parseProfilesEnv(): VoiceProfile[] | undefined {
+	const raw = process.env.PI_VOICE_PROFILES;
+	if (raw === undefined) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		throw new Error("PI_VOICE_PROFILES must be valid JSON");
+	}
+	if (!Array.isArray(parsed)) throw new Error("PI_VOICE_PROFILES must be a JSON array");
+	return normalizeVoiceProfiles(parsed as VoiceProfile[]);
+}
+
 function printHelp(): void {
 	console.log(`pi-web — dev server for the Pi web UI
 
@@ -116,6 +150,7 @@ async function main(): Promise<number> {
 		maxFrameLength: flags.maxFrameLength,
 		maxPendingBytes: flags.maxPendingBytes,
 		webToken: process.env.PI_WEB_TOKEN,
+		voice: buildVoiceOptionsFromEnv(),
 	};
 
 	const handle = await startWebServer(options);

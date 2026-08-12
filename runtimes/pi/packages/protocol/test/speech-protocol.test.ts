@@ -2,18 +2,18 @@ import { Check } from "typebox/value";
 import { describe, expect, test } from "vitest";
 import {
 	type Command,
-	type ServerMessage,
-	type ServerSnapshot,
 	decodeCbor,
 	encodeClientMessage,
 	encodeServerMessage,
 	FrameDecoder,
 	isSupportedProtocolVersion,
-	parseClientMessage,
-	parseServerMessage,
 	PROTOCOL_VERSION,
 	ProtocolValidationError,
+	parseClientMessage,
+	parseServerMessage,
 	type ResultForCommand,
+	type ServerMessage,
+	type ServerSnapshot,
 	type SpeechErrorCode,
 	type SpeechJob,
 	SpeechStatusSchema,
@@ -125,7 +125,9 @@ describe("SpeechJob schema", () => {
 
 	test("rejects an unknown speech error code", () => {
 		expect(() =>
-			parseServerMessage(speechEvent(speechJobForProtocol({ status: "failed", error: { code: "boom", message: "x" } }))),
+			parseServerMessage(
+				speechEvent(speechJobForProtocol({ status: "failed", error: { code: "boom", message: "x" } })),
+			),
 		).toThrow(ProtocolValidationError);
 	});
 
@@ -247,7 +249,10 @@ describe("protocol v3 versioning and wire round-trip", () => {
 
 	test("encodes and decodes a speech_job event", () => {
 		const event = speechEvent(
-			speechJobForProtocol({ status: "completed", audio: { encoding: "pcm_f32le", sampleRate: 24000, channels: 1 } }),
+			speechJobForProtocol({
+				status: "completed",
+				audio: { encoding: "pcm_f32le", sampleRate: 24000, channels: 1 },
+			}),
 		);
 		const [frame] = new FrameDecoder().push(encodeServerMessage(event));
 		expect(parseServerMessage(decodeCbor(frame!))).toEqual(event);

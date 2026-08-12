@@ -7,5 +7,5 @@
  *     `pi-web`; it parses flags and installs SIGINT/SIGTERM handlers.
  */
 
-export type { StartWebServerOptions, WebServerHandle } from "./start.ts";
+export type { StartWebServerOptions, WebServerHandle, WebVoiceOptions } from "./start.ts";
 export { startWebServer } from "./start.ts";

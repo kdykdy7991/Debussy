@@ -4,6 +4,7 @@ import {
 	PROTOCOL_VERSION,
 	type ServerSnapshot,
 	type SessionSummary,
+	type VoiceCapability,
 } from "@earendil-works/pi-protocol";
 import type { ConnectionState } from "./connection.ts";
 import type { PiSessionBackend } from "./types.ts";
@@ -16,6 +17,8 @@ interface ServerSnapshotPublisherOptions {
 	listSessions: (connection?: ConnectionState) => Promise<SessionSummary[]>;
 	sendMessage: (connection: ConnectionState, message: EventEnvelope) => Promise<boolean>;
 	reportError: (error: unknown) => void;
+	/** Present only when the server has a speech proxy configured. */
+	voice?: () => VoiceCapability | undefined;
 }
 
 export class ServerSnapshotPublisher {
@@ -32,12 +35,14 @@ export class ServerSnapshotPublisher {
 	}
 
 	async get(models?: ModelMetadata[], connection?: ConnectionState): Promise<ServerSnapshot> {
+		const voice = this.options.voice?.();
 		return {
 			serverId: this.options.serverId,
 			protocolVersion: PROTOCOL_VERSION,
 			revision: this.revision,
 			sessions: await this.options.listSessions(connection),
 			models: models ?? (await this.options.backend.listModels()),
+			...(voice ? { voice } : {}),
 		};
 	}
 

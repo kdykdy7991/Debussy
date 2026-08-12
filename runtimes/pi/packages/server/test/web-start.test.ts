@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { resolveOptions } from "../src/web/start.ts";
+import { buildVoiceLayer, resolveOptions } from "../src/web/start.ts";
 
 describe("web server configuration", () => {
 	test("preserves the all-cwd marker", () => {
@@ -31,6 +31,42 @@ describe("web server configuration", () => {
 
 	test("rejects tokens that cannot be used as WebSocket subprotocols", () => {
 		expect(() => resolveOptions({ webToken: "invalid token" })).toThrow(/Web token/);
+	});
+});
+
+describe("voice proxy configuration", () => {
+	test("builds no voice layer when voice is not configured", () => {
+		const layer = buildVoiceLayer(undefined, {});
+		expect(layer.speech).toBeUndefined();
+		expect(layer.handlers).toHaveLength(0);
+	});
+
+	test("builds a speech manager from the built-in default profile", () => {
+		const layer = buildVoiceLayer(
+			{ baseUrl: "http://127.0.0.1:18876", token: "service-secret", defaultProfile: "default" },
+			{ webToken: "web-secret" },
+		);
+		expect(layer.speech).toBeDefined();
+		expect(layer.handlers).toHaveLength(1);
+		expect(layer.speech?.getCapability()).toEqual({
+			available: true,
+			defaultProfile: "default",
+			profiles: [{ id: "default", name: "Default" }],
+		});
+	});
+
+	test("rejects a default profile that is not among the configured profiles", () => {
+		expect(() =>
+			buildVoiceLayer(
+				{
+					baseUrl: "http://127.0.0.1:18876",
+					token: "service-secret",
+					defaultProfile: "missing",
+					profiles: [{ id: "default", provider: "qwen3-tts", language: "Chinese", speaker: "Vivian" }],
+				},
+				{},
+			),
+		).toThrow(/default profile/);
 	});
 });
 

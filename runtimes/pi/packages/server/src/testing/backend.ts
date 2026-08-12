@@ -5,6 +5,7 @@ import type {
 	SessionSnapshot,
 	SessionSummary,
 	ThinkingLevel,
+	TranscriptItem,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
@@ -269,6 +270,18 @@ export class TestSessionBackend implements PiSessionBackend {
 				queuedSteerCount: 0,
 			},
 		});
+	}
+
+	/** Seed a stored session's transcript (used by speech tests to craft a completed assistant message). */
+	seedTranscript(id: string, items: TranscriptItem[], overrides: Partial<SessionSnapshot> = {}): void {
+		const stored = this.sessions.get(id);
+		if (!stored) throw new Error(`Unknown session: ${id}`);
+		stored.snapshot = {
+			...stored.snapshot,
+			transcript: items,
+			revision: Math.max(stored.snapshot.revision, items.length),
+			...overrides,
+		};
 	}
 
 	delayNextList(): ListDelay {

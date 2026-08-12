@@ -28,5 +28,6 @@ export function createWebSocketServer(backend: PiSessionBackend, options: WebSoc
 		sessionEventLogRetentionMs: options.sessionEventLogRetentionMs,
 		attachments: options.attachments,
 		citations: options.citations,
+		speech: options.speech,
 	});
 }

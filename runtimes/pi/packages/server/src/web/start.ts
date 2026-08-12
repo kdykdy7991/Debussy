@@ -28,6 +28,11 @@ import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { AttachmentStore } from "../uploads/store.ts";
+import { VoiceServiceHttpClient } from "../voice/client.ts";
+import { normalizeVoiceProfiles } from "../voice/profiles.ts";
+import { SpeechManager } from "../voice/speech-manager.ts";
+import type { VoiceProfile } from "../voice/types.ts";
+import { createSpeechHttpHandler } from "./speech.ts";
 import { createUploadHttpHandler } from "./uploads.ts";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -36,6 +41,26 @@ const DEFAULT_PATH = "/api/pi/v1/ws";
 const DEFAULT_AGENT_DIR_NAME = ".pi/agent";
 const AUTH_PROTOCOL_PREFIX = "pi-auth.";
 const WEB_TOKEN_REGEX = /^[A-Za-z0-9._~-]+$/;
+
+/** Speech proxy configuration for the web server. */
+export interface WebVoiceOptions {
+	/** Voice Service base URL, e.g. `http://127.0.0.1:18876`. */
+	baseUrl: string;
+	/** Server-to-service bearer secret; never exposed to the browser. */
+	token: string;
+	/** Profile id used when clients omit `voiceProfileId`. */
+	defaultProfile: string;
+	/** Voice profile definitions; defaults to the built-in default profile. */
+	profiles?: readonly VoiceProfile[];
+	/** Max wait for the first PCM chunk. Default 60s. */
+	firstChunkTimeoutMs?: number;
+	/** Max idle time between chunks. Default 30s. */
+	idleTimeoutMs?: number;
+	/** Max wall-clock time for one stream. Default 5m. */
+	totalTimeoutMs?: number;
+	/** Max bytes forwarded per stream. Default 100 MiB. */
+	maxBytes?: number;
+}
 
 /** Options accepted by `startWebServer`. */
 export interface StartWebServerOptions {
@@ -71,6 +96,8 @@ export interface StartWebServerOptions {
 	log?: (message: string) => void;
 	/** When true, the returned handle has already been started. */
 	autoStart?: boolean;
+	/** Speech proxy; when omitted, speech commands and PCM routes are unavailable. */
+	voice?: WebVoiceOptions;
 }
 
 export interface WebServerHandle {
@@ -90,12 +117,22 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	const attachments = new AttachmentStore(join(resolved.agentDir, "uploads"));
 	await attachments.init();
 	await attachments.sweepExpired();
-	const httpHandler: HttpRequestHandler = createUploadHttpHandler({
-		store: attachments,
+	const httpHandlers: HttpRequestHandler[] = [
+		createUploadHttpHandler({
+			store: attachments,
+			webToken: options.webToken,
+			allowedOrigins: resolved.listener.allowedOrigins,
+			allowedHosts: resolved.listener.allowedHosts,
+		}),
+	];
+
+	const { speech, handlers: voiceHandlers } = buildVoiceLayer(options.voice, {
 		webToken: options.webToken,
 		allowedOrigins: resolved.listener.allowedOrigins,
 		allowedHosts: resolved.listener.allowedHosts,
 	});
+	httpHandlers.push(...voiceHandlers);
+	const httpHandler = composeHttpHandlers(httpHandlers);
 
 	const citations = new CitationService({
 		store: new CitationStore(join(resolved.agentDir, "citations")),
@@ -108,6 +145,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		httpHandler,
 		attachments,
 		citations,
+		speech,
 	});
 
 	const autoStart = options.autoStart ?? true;
@@ -126,6 +164,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	log(`agent dir: ${resolved.agentDir}`);
 	log(`session dir: ${resolved.sessionDir}`);
 	log(`allowed cwds: ${resolved.allowedCwds.join(", ")}`);
+	if (speech) log(`voice proxy enabled (default profile: ${options.voice?.defaultProfile})`);
 
 	let closing: Promise<void> | undefined;
 	const close = async (): Promise<void> => {
@@ -238,6 +277,57 @@ function createUpgradeAuthorization(
 		if (!protocols?.includes(`${AUTH_PROTOCOL_PREFIX}${webToken}`)) return false;
 		return additionalAuthorization?.(request) ?? true;
 	};
+}
+
+/** Run each handler until one claims the request; unknown routes fall through to the listener. */
+function composeHttpHandlers(handlers: readonly HttpRequestHandler[]): HttpRequestHandler {
+	return async (request, response) => {
+		for (const handler of handlers) {
+			if (await handler(request, response)) return true;
+		}
+		return false;
+	};
+}
+
+/**
+ * Build the speech proxy layer from web options. Returns an empty handler list
+ * when voice is not configured so no voice store/timer/fetch is ever created.
+ * @internal Exported for configuration tests.
+ */
+export function buildVoiceLayer(
+	voice: WebVoiceOptions | undefined,
+	http: { webToken?: string; allowedOrigins?: readonly string[]; allowedHosts?: readonly string[] },
+): { speech: SpeechManager | undefined; handlers: HttpRequestHandler[] } {
+	if (!voice) return { speech: undefined, handlers: [] };
+	const profiles = normalizeVoiceProfiles(voice.profiles);
+	if (!profiles.some((profile) => profile.id === voice.defaultProfile)) {
+		throw new PiServerError(
+			"invalid_request",
+			`Voice default profile "${voice.defaultProfile}" is not among the configured profiles`,
+		);
+	}
+	const voiceClient = new VoiceServiceHttpClient({
+		baseUrl: voice.baseUrl,
+		token: voice.token,
+		firstChunkTimeoutMs: voice.firstChunkTimeoutMs,
+		idleTimeoutMs: voice.idleTimeoutMs,
+		totalTimeoutMs: voice.totalTimeoutMs,
+		maxBytes: voice.maxBytes,
+	});
+	const speech = new SpeechManager({
+		voiceClient,
+		profiles,
+		defaultProfileId: voice.defaultProfile,
+	});
+	const handlers: HttpRequestHandler[] = [
+		createSpeechHttpHandler({
+			getSpeechManager: () => speech,
+			webToken: http.webToken,
+			allowedOrigins: http.allowedOrigins,
+			allowedHosts: http.allowedHosts,
+		}),
+	];
+	return { speech, handlers };
 }
 
 function resolveAbsolute(path: string): string {

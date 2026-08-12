@@ -23,6 +23,7 @@ export function createTestServer(options: TestServerOptions): TestServer {
 			onError: options.onError,
 			sessionEventLogMaxEvents: options.sessionEventLogMaxEvents,
 			sessionEventLogRetentionMs: options.sessionEventLogRetentionMs,
+			speech: options.speech,
 		}),
 		backend,
 	};

@@ -13,6 +13,7 @@ import type { CitationService } from "./citations/service.ts";
 import type { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 import type { AttachmentStore } from "./uploads/store.ts";
+import type { SpeechManager } from "./voice/speech-manager.ts";
 
 export interface PiServerOptions {
 	listeners: readonly PiServerListener[];
@@ -28,6 +29,8 @@ export interface PiServerOptions {
 	attachments?: AttachmentStore;
 	/** Citation index + retrieval service backing P2 source/citation flows. */
 	citations?: CitationService;
+	/** Speech proxy; when omitted, speech commands and PCM routes are unavailable. */
+	speech?: SpeechManager;
 }
 
 /** A handler for non-upgrade HTTP requests on the shared listener HTTP server; returns false when unhandled. */

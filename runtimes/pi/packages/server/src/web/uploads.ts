@@ -6,11 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attachment } from "@earendil-works/pi-protocol";
 import busboy from "busboy";
-import { hostHeaderHostname, matchesPattern, requestPathname } from "../transports/websocket/listener.ts";
+import { requestPathname } from "../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { createDefaultUploadPipeline, processUploadFile } from "../uploads/pipeline.ts";
 import type { AttachmentStore } from "../uploads/store.ts";
 import { DEFAULT_UPLOAD_LIMITS, type UploadPipeline } from "../uploads/types.ts";
+import { createHttpAuthorizer, errorBody, type HttpError, jsonBody } from "./http-shared.ts";
 
 /** Base path for the HTTP upload API (same HTTP server as the WebSocket listener). */
 export const UPLOADS_PATH = "/api/pi/v2/uploads";
@@ -29,25 +30,6 @@ export interface UploadHttpHandlerOptions {
 	onError?: (error: unknown) => void;
 }
 
-interface HttpError {
-	status: number;
-	code: string;
-	message: string;
-}
-
-function jsonBody(response: ServerResponse, status: number, body: unknown): void {
-	const encoded = JSON.stringify(body);
-	response.writeHead(status, {
-		"content-type": "application/json",
-		"content-length": Buffer.byteLength(encoded),
-	});
-	response.end(encoded);
-}
-
-function errorBody(response: ServerResponse, error: HttpError): void {
-	jsonBody(response, error.status, { error: { code: error.code, message: error.message } });
-}
-
 function uploadIdFrom(pathname: string): string | undefined {
 	if (!pathname.startsWith(`${UPLOADS_PATH}/`)) return undefined;
 	const id = pathname.slice(UPLOADS_PATH.length + 1);
@@ -61,40 +43,11 @@ export function createUploadHttpHandler(options: UploadHttpHandlerOptions): Http
 	const pipeline = options.pipeline ?? createDefaultUploadPipeline();
 	const maxFileBytes = options.maxFileBytes ?? DEFAULT_UPLOAD_LIMITS.maxFileBytes;
 	const maxFiles = options.maxFiles ?? DEFAULT_UPLOAD_LIMITS.maxFiles;
-	const webToken = options.webToken;
-	const allowedOrigins = options.allowedOrigins;
-	const allowedHosts = options.allowedHosts ?? ["127.0.0.1", "localhost", "::1"];
-
-	const originAllowed = (origin: string | undefined): boolean => {
-		if (allowedOrigins === undefined) return true;
-		return origin !== undefined && allowedOrigins.some((allowed) => matchesPattern(origin, allowed));
-	};
-
-	const setCorsHeaders = (response: ServerResponse, origin: string | undefined): void => {
-		if (origin !== undefined && originAllowed(origin)) {
-			response.setHeader("Access-Control-Allow-Origin", origin);
-		}
-		response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-		response.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-	};
-
-	const authorize = (request: IncomingMessage): HttpError | undefined => {
-		const hostname = hostHeaderHostname(request.headers.host);
-		if (hostname === undefined || !allowedHosts.some((allowed) => matchesPattern(hostname, allowed))) {
-			return { status: 403, code: "forbidden", message: "Host is not allowed" };
-		}
-		if (!originAllowed(request.headers.origin)) {
-			return { status: 403, code: "forbidden", message: "Origin is not allowed" };
-		}
-		if (webToken !== undefined) {
-			const authorization = request.headers.authorization ?? "";
-			const match = authorization.match(/^Bearer\s+(.+)$/);
-			if (!match || match[1]!.trim() !== webToken) {
-				return { status: 401, code: "unauthorized", message: "Missing or invalid bearer token" };
-			}
-		}
-		return undefined;
-	};
+	const { originAllowed, setCorsHeaders, authorize } = createHttpAuthorizer({
+		webToken: options.webToken,
+		allowedOrigins: options.allowedOrigins,
+		allowedHosts: options.allowedHosts,
+	});
 
 	return async (request, response): Promise<boolean> => {
 		const pathname = requestPathname(request.url);

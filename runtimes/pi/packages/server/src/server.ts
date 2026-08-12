@@ -3,6 +3,7 @@ import {
 	type ClientHello,
 	type ClientMessage,
 	ClientMessageDecoder,
+	type Command,
 	DEFAULT_MAX_FRAME_LENGTH,
 	encodeServerMessage,
 	isSupportedProtocolVersion,
@@ -26,6 +27,7 @@ import type { PiServerListener } from "./listener.ts";
 import { LiveSessionManager } from "./sessions.ts";
 import { ServerSnapshotPublisher } from "./snapshots.ts";
 import type { PiServerOptions, PiSessionBackend } from "./types.ts";
+import type { SpeechManager } from "./voice/speech-manager.ts";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_SESSION_EVENT_LOG_MAX_EVENTS = 2_000;
@@ -43,6 +45,7 @@ export class PiServer {
 	private readonly connections = new Set<ConnectionState>();
 	private readonly sessions: LiveSessionManager;
 	private readonly snapshots: ServerSnapshotPublisher;
+	private readonly speech: SpeechManager | undefined;
 	private closing = false;
 	private closePromise?: Promise<void>;
 	private startPromise?: Promise<this>;
@@ -68,6 +71,19 @@ export class PiServer {
 			attachments: options.attachments,
 			citations: options.citations,
 		});
+		this.speech = options.speech;
+		if (this.speech) {
+			this.speech.bind({
+				resolveMessage: (connection, sessionId, messageId) =>
+					this.sessions.resolveMessageForSpeech(connection, sessionId, messageId),
+				sendJobEvent: (connection, job) => {
+					void this.sendMessage(connection, { type: "event", event: { type: "speech_job", job } }).catch(
+						(error: unknown) => this.reportError(error),
+					);
+				},
+				reportError: (error) => this.reportError(error),
+			});
+		}
 		this.snapshots = new ServerSnapshotPublisher({
 			serverId: this.id,
 			backend,
@@ -76,6 +92,7 @@ export class PiServer {
 			listSessions: (connection) => this.sessions.listSummaries(connection),
 			sendMessage: (connection, message) => this.sendMessage(connection, message),
 			reportError: (error) => this.reportError(error),
+			voice: () => this.speech?.getCapability(),
 		});
 	}
 
@@ -252,7 +269,10 @@ export class PiServer {
 
 	private async handleRequest(state: ConnectionState, envelope: RequestEnvelope): Promise<void> {
 		try {
-			const result = await this.sessions.executeCommand(state, envelope.request);
+			const command = envelope.request;
+			const result = this.isSpeechCommand(command)
+				? await this.requireSpeech().executeCommand(state, command)
+				: await this.sessions.executeCommand(state, command);
 			await this.sendMessage(state, {
 				type: "response",
 				id: envelope.id,
@@ -267,6 +287,17 @@ export class PiServer {
 				error: this.toProtocolError(error),
 			} satisfies ResponseEnvelope);
 		}
+	}
+
+	private isSpeechCommand(command: Command): boolean {
+		return command.command === "start_speech" || command.command === "cancel_speech";
+	}
+
+	private requireSpeech(): SpeechManager {
+		if (!this.speech) {
+			throw new PiServerError("invalid_state", "Speech is not configured on this server");
+		}
+		return this.speech;
 	}
 
 	private transportClosed(connection: ConnectionState): void {
@@ -288,6 +319,7 @@ export class PiServer {
 		clearTimeout(connection.handshakeTimeout);
 		this.connections.delete(connection);
 		await this.sessions.disconnect(connection);
+		this.speech?.abortConnectionJobs(connection);
 		if (!this.closing && handshakeComplete) void this.snapshots.broadcast();
 	}
 
@@ -341,6 +373,7 @@ export class PiServer {
 		await Promise.all(connections.map((connection) => this.disconnect(connection)));
 
 		await this.sessions.close();
+		this.speech?.close();
 		this.connections.clear();
 	}
 
