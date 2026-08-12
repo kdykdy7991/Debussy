@@ -138,6 +138,8 @@ export class SpeechManager {
 	getCapability(): VoiceCapability {
 		return {
 			available: true,
+			/** V5 freeze ships with `live: false`; V8/V9 flip this to `true`. */
+			live: false,
 			defaultProfile: this.options.defaultProfileId,
 			profiles: this.options.profiles.map((profile) => ({
 				id: profile.id,

@@ -9,6 +9,7 @@ import {
 	type ServerEvent,
 	type ServerSnapshot,
 	type SessionSummary,
+	type SpeechJob,
 } from "@earendil-works/pi-protocol";
 import { Connection } from "./connection.ts";
 import {
@@ -27,12 +28,16 @@ import {
 	type SessionHandleCallbacks,
 	type SessionLeaseMode,
 } from "./session-handle.ts";
+import { isLiveSpeechTerminal, isSpeechTerminal, LiveSpeechJobHandleImpl, SpeechJobHandleImpl } from "./speech-handle.ts";
 import { ClientState } from "./state.ts";
 import type {
 	ConnectionState,
 	ConnectionStateChange,
 	CreateSessionOptions,
+	LiveSpeechJobHandle,
 	PiClientOptions,
+	SpeechJobHandle,
+	StartSpeechOptions,
 	Unsubscribe,
 } from "./types.ts";
 
@@ -61,6 +66,8 @@ export class PiClient {
 	readonly #sessionCleanupRequired = new Set<string>();
 	readonly #sessionReconciliations = new Map<string, Promise<void>>();
 	readonly #connectionStateListeners = new Set<(change: ConnectionStateChange) => void>();
+	readonly #speechHandles = new Map<string, SpeechJobHandleImpl>();
+	readonly #liveSpeechHandles = new Map<string, LiveSpeechJobHandleImpl>();
 	#requestSequence = 0;
 	#disposed = false;
 	#disposePromise: Promise<void> | undefined;
@@ -136,6 +143,54 @@ export class PiClient {
 
 	async listSessions(): Promise<readonly SessionSummary[]> {
 		return (await this.#request({ command: "list" })).sessions;
+	}
+
+	/**
+	 * Starts speech generation for a completed assistant message. The returned
+	 * handle receives `speech_job` events for this connection only; the audio
+	 * bytes travel over a separate HTTP stream (see {@link openSpeechStream}).
+	 */
+	async startSpeech(options: StartSpeechOptions): Promise<SpeechJobHandle> {
+		this.#assertNotDisposed();
+		const result = await this.#request({
+			command: "start_speech",
+			sessionId: options.sessionId,
+			messageId: options.messageId,
+			...(options.voiceProfileId !== undefined ? { voiceProfileId: options.voiceProfileId } : {}),
+		});
+		const handle = new SpeechJobHandleImpl(result.job, {
+			cancel: (command) => this.#request(command),
+			onListenerError: this.#options.onListenerError,
+		});
+		this.#speechHandles.set(result.job.id, handle);
+		return handle;
+	}
+
+	/**
+	 * Cancel a Phase 2 live朗读 job. The V5 contract freezes the command; the
+	 * V8 server coordinator is the only legitimate emitter. Callers that never
+	 * receive a `LiveSpeechJob` should have nothing to cancel.
+	 */
+	async cancelLiveSpeech(jobId: string): Promise<void> {
+		this.#assertNotDisposed();
+		await this.#request({ command: "cancel_live_speech", jobId });
+	}
+
+	/**
+	 * Register a live朗读 job handle. The V5 contract freezes the type but does
+	 * not yet ship a creator — V8 will be the first server-issued source. This
+	 * helper exists so that future creators (V8 / V9 / test fixtures) can wire
+	 * the handle into the connection-scoped event router without changing the
+	 * client API.
+	 */
+	registerLiveSpeechHandle(job: import("@earendil-works/pi-protocol").LiveSpeechJob): LiveSpeechJobHandle {
+		this.#assertNotDisposed();
+		const handle = new LiveSpeechJobHandleImpl(job, {
+			cancel: (command) => this.#request(command),
+			onListenerError: this.#options.onListenerError,
+		});
+		this.#liveSpeechHandles.set(job.id, handle);
+		return handle;
 	}
 
 	async createSession(options: CreateSessionOptions = {}): Promise<PiSessionHandle> {
@@ -298,6 +353,18 @@ export class PiClient {
 
 	#handleMessage(message: ResponseEnvelope | EventEnvelope): void {
 		if (message.type === "event") {
+			if (message.event.type === "speech_job") {
+				// Job events are connection-scoped and never touch session state.
+				this.#dispatchSpeechJob(message.event.job);
+				return;
+			}
+			if (message.event.type === "live_speech_job") {
+				// Phase 2: live朗读 events are also connection-scoped; the V5
+				// freeze never emits them but the route is wired so V8/V9 don't
+				// need to touch client dispatch.
+				this.#dispatchLiveSpeechJob(message.event.job);
+				return;
+			}
 			if (message.event.type === "session_removed") this.#invalidateSessionLeases(message.event.sessionId);
 			this.#state.applyEvent(message.event);
 			return;
@@ -325,6 +392,8 @@ export class PiClient {
 
 	#handleConnectionStateChange(change: ConnectionStateChange): void {
 		if (change.state === "disconnected") {
+			this.#speechHandles.clear();
+			this.#liveSpeechHandles.clear();
 			this.#state.clearAttachments();
 			this.#invalidateAllSessionLeases();
 			this.#rejectPendingRequests(change.error ?? new PiDisconnectedError());
@@ -336,6 +405,20 @@ export class PiClient {
 		const request = this.#pendingRequests.get(id);
 		if (request) this.#pendingRequests.delete(id);
 		return request;
+	}
+
+	#dispatchSpeechJob(job: SpeechJob): void {
+		const handle = this.#speechHandles.get(job.id);
+		if (!handle) return;
+		handle.apply(job);
+		if (isSpeechTerminal(job.status)) this.#speechHandles.delete(job.id);
+	}
+
+	#dispatchLiveSpeechJob(job: import("@earendil-works/pi-protocol").LiveSpeechJob): void {
+		const handle = this.#liveSpeechHandles.get(job.id);
+		if (!handle) return;
+		handle.apply(job);
+		if (isLiveSpeechTerminal(job.status)) this.#liveSpeechHandles.delete(job.id);
 	}
 
 	#rejectPendingRequests(error: Error): void {
@@ -350,6 +433,8 @@ export class PiClient {
 		this.#disposePromise = Promise.resolve();
 		const error = new PiClientDisposedError();
 		this.#rejectPendingRequests(error);
+		this.#speechHandles.clear();
+		this.#liveSpeechHandles.clear();
 		this.#connection.disconnect(error);
 		this.#state.dispose();
 		this.#invalidateAllSessionLeases();

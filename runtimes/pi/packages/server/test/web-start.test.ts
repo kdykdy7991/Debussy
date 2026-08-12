@@ -50,6 +50,7 @@ describe("voice proxy configuration", () => {
 		expect(layer.handlers).toHaveLength(1);
 		expect(layer.speech?.getCapability()).toEqual({
 			available: true,
+			live: false,
 			defaultProfile: "default",
 			profiles: [{ id: "default", name: "Default" }],
 		});

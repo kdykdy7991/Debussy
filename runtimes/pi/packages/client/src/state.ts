@@ -103,8 +103,15 @@ export class ClientState {
 			return;
 		}
 		// Speech results carry a job handle, not a session snapshot; job lifecycle
-		// is delivered through `speech_job` events and never touches session state.
-		if (result.command === "start_speech" || result.command === "cancel_speech") return;
+		// is delivered through `speech_job` / `live_speech_job` events and never
+		// touches session state.
+		if (
+			result.command === "start_speech" ||
+			result.command === "cancel_speech" ||
+			result.command === "cancel_live_speech"
+		) {
+			return;
+		}
 		this.#applySessionSnapshot(result.session);
 	}
 

@@ -229,8 +229,16 @@ export class LiveSessionManager {
 				);
 				return { command: "set_thinking" as const, session };
 			}
+			case "cancel_live_speech":
+				// V5 contract: live朗读 coordinator (V8) is not wired yet. Reject
+				// with `invalid_state` so clients can surface a stable, capability
+				// downgrade error instead of a generic protocol failure.
+				throw new PiServerError(
+					"invalid_state",
+					"Live speech is not available on this server build",
+				);
 			default:
-				// Speech commands are routed by PiServer to the SpeechManager and never
+				// Phase 1 SpeechManager commands are routed by PiServer and never
 				// reach session command execution.
 				throw new PiServerError("invalid_request", `Unhandled command: ${command.command}`);
 		}

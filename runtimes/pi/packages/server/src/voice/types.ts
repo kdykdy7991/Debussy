@@ -19,6 +19,8 @@ export interface VoiceProfileSummary {
 /** Snapshot capability advertised only when the server has a speech proxy. */
 export interface VoiceCapability {
 	available: true;
+	/** Phase 2 live朗读 capability; `false` until the V8 coordinator ships. */
+	live: boolean;
 	defaultProfile: string;
 	profiles?: VoiceProfileSummary[];
 }

@@ -297,6 +297,7 @@ describe("speech end-to-end over WebSocket + HTTP", () => {
 		if (hello?.type !== "hello") return;
 		expect(hello.snapshot.voice).toEqual({
 			available: true,
+			live: false,
 			defaultProfile: "default",
 			profiles: [{ id: "default" }],
 		});

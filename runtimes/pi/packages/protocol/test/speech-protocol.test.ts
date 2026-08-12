@@ -234,11 +234,11 @@ describe("speech_job event", () => {
 	});
 });
 
-describe("protocol v3 versioning and wire round-trip", () => {
-	test("requires version 3 for a compatible handshake", () => {
-		expect(isSupportedProtocolVersion(3)).toBe(true);
+describe("protocol v4 versioning and wire round-trip", () => {
+	test("requires version 4 for a compatible handshake", () => {
+		expect(isSupportedProtocolVersion(4)).toBe(true);
+		expect(isSupportedProtocolVersion(3)).toBe(false);
 		expect(isSupportedProtocolVersion(2)).toBe(false);
-		expect(isSupportedProtocolVersion(1)).toBe(false);
 	});
 
 	test("encodes and decodes a start_speech request", () => {
@@ -258,14 +258,14 @@ describe("protocol v3 versioning and wire round-trip", () => {
 		expect(parseServerMessage(decodeCbor(frame!))).toEqual(event);
 	});
 
-	test("a v2 handshake is rejected by a v3 server parser", () => {
+	test("a v3 handshake is rejected by a v4 server parser", () => {
 		expect(() =>
 			parseClientMessage({
 				type: "hello",
-				version: 2,
+				version: 3,
 			}),
 		).not.toThrow(ProtocolValidationError);
-		expect(isSupportedProtocolVersion(2)).toBe(false);
+		expect(isSupportedProtocolVersion(3)).toBe(false);
 	});
 
 	test("server snapshot exposes voice capability when present", () => {
@@ -275,7 +275,12 @@ describe("protocol v3 versioning and wire round-trip", () => {
 			revision: 0,
 			sessions: [],
 			models: [],
-			voice: { available: true, defaultProfile: "default", profiles: [{ id: "default", name: "Default" }] },
+			voice: {
+				available: true,
+				live: false,
+				defaultProfile: "default",
+				profiles: [{ id: "default", name: "Default" }],
+			},
 		};
 		const hello: ServerMessage = {
 			type: "hello",
@@ -284,6 +289,25 @@ describe("protocol v3 versioning and wire round-trip", () => {
 			snapshot,
 		};
 		expect(parseServerMessage(hello)).toEqual(hello);
+	});
+
+	test("server snapshot accepts voice capability with live=true once V8 ships", () => {
+		const snapshot: ServerSnapshot = {
+			serverId: "server-1",
+			protocolVersion: PROTOCOL_VERSION,
+			revision: 0,
+			sessions: [],
+			models: [],
+			voice: {
+				available: true,
+				live: true,
+				defaultProfile: "default",
+				profiles: [{ id: "default", name: "Default" }],
+			},
+		};
+		expect(parseServerMessage({ type: "hello", version: PROTOCOL_VERSION, connectionId: "connection-1", snapshot })).toEqual(
+			{ type: "hello", version: PROTOCOL_VERSION, connectionId: "connection-1", snapshot },
+		);
 	});
 
 	test("rejects a voice capability with provider internals", () => {
@@ -300,6 +324,7 @@ describe("protocol v3 versioning and wire round-trip", () => {
 					models: [],
 					voice: {
 						available: true,
+						live: false,
 						defaultProfile: "default",
 						profiles: [{ id: "default", speaker: "Vivian" }],
 					},

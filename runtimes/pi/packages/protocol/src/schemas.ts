@@ -1,6 +1,6 @@
 import Type, { type Static } from "typebox";
 
-export const PROTOCOL_VERSION = 3 as const;
+export const PROTOCOL_VERSION = 4 as const;
 
 const IdSchema = Type.String({ minLength: 1 });
 const TimestampSchema = Type.Integer({ minimum: 0 });
@@ -389,9 +389,17 @@ export type VoiceProfileSummary = Static<typeof VoiceProfileSummarySchema>;
 /**
  * Present only when the server has a speech proxy configured. Absence tells the
  * client to hide speech UI entirely; the proxy details never cross the wire.
+ *
+ * `live` advertises whether live (in-progress)朗读 is available in the current
+ * server build. The value is independent from `available`: a v3 server can ship
+ * `live: false` while still hosting manual jobs, and a v4 server ships `live:
+ * false` until the V8 coordinator lands, then `live: true` once the V9 path is
+ * exercised. Clients must treat `live: false` as a legitimate capability
+ * downgrade that simply omits the live朗读 UI.
  */
 export const VoiceCapabilitySchema = StrictObject({
 	available: Type.Literal(true),
+	live: Type.Boolean(),
 	defaultProfile: IdSchema,
 	profiles: Type.Optional(Type.Array(VoiceProfileSummarySchema)),
 });
@@ -518,6 +526,105 @@ export const SpeechJobEventSchema = StrictObject({
 });
 export type SpeechJobEvent = Static<typeof SpeechJobEventSchema>;
 
+/**
+ * Phase 2 live朗读 (V5-V9) — opt-in incremental朗读 for assistant messages that
+ * are still being generated. Lives next to the Phase 1 manual `SpeechJob` but
+ * never collides with it: different `command` names, different `Job` shape, and
+ * a separate HTTP route (`/api/pi/v4/live-speech/{jobId}/stream`).
+ */
+export const LiveSpeechRequestSchema = StrictObject({
+	mode: Type.Literal("live"),
+	voiceProfileId: Type.Optional(IdSchema),
+});
+export type LiveSpeechRequest = Static<typeof LiveSpeechRequestSchema>;
+
+/**
+ * Live job lifecycle. `completed` means the Agent turn has ended, the segmenter
+ * has flushed, the queue has drained, and the Server PCM response has closed;
+ * the browser may still be draining. All terminal statuses are irreversible.
+ */
+export const LiveSpeechStatusSchema = Type.Union([
+	Type.Literal("waiting_for_text"),
+	Type.Literal("generating"),
+	Type.Literal("streaming"),
+	Type.Literal("completed"),
+	Type.Literal("cancelled"),
+	Type.Literal("failed"),
+]);
+export type LiveSpeechStatus = Static<typeof LiveSpeechStatusSchema>;
+
+export const LiveSpeechProgressSchema = StrictObject({
+	committedUtterances: Type.Integer({ minimum: 0 }),
+	completedUtterances: Type.Integer({ minimum: 0 }),
+	pendingCharacters: Type.Integer({ minimum: 0 }),
+});
+export type LiveSpeechProgress = Static<typeof LiveSpeechProgressSchema>;
+
+export const LiveSpeechErrorCodeSchema = Type.Union([
+	Type.Literal("voice_unavailable"),
+	Type.Literal("voice_profile_not_found"),
+	Type.Literal("live_speech_busy"),
+	Type.Literal("live_speech_expired"),
+	Type.Literal("turn_not_started"),
+	Type.Literal("unsupported_content"),
+	Type.Literal("speech_backlog_exceeded"),
+	Type.Literal("speech_generation_failed"),
+	Type.Literal("speech_cancelled"),
+]);
+export type LiveSpeechErrorCode = Static<typeof LiveSpeechErrorCodeSchema>;
+
+export const LiveSpeechErrorSchema = StrictObject({
+	code: LiveSpeechErrorCodeSchema,
+	message: Type.String(),
+});
+export type LiveSpeechError = Static<typeof LiveSpeechErrorSchema>;
+
+/**
+ * Describes generation + transfer for one in-progress朗读 session. PCM never
+ * travels over this protocol. `turnId`/`messageId` are populated after the
+ * matching `item_started` arrives; `firstChunkAt` once the first PCM byte
+ * reaches the server response.
+ */
+export const LiveSpeechJobSchema = StrictObject({
+	id: IdSchema,
+	sessionId: IdSchema,
+	voiceProfileId: IdSchema,
+	status: LiveSpeechStatusSchema,
+	/** Server-generated relative path the browser streams PCM from. */
+	streamPath: Type.String({ minLength: 1 }),
+	createdAt: TimestampSchema,
+	updatedAt: TimestampSchema,
+	turnId: Type.Optional(IdSchema),
+	messageId: Type.Optional(IdSchema),
+	firstChunkAt: Type.Optional(TimestampSchema),
+	audio: Type.Optional(SpeechAudioFormatSchema),
+	progress: LiveSpeechProgressSchema,
+	error: Type.Optional(LiveSpeechErrorSchema),
+});
+export type LiveSpeechJob = Static<typeof LiveSpeechJobSchema>;
+
+export const CancelLiveSpeechCommandSchema = StrictObject({
+	command: Type.Literal("cancel_live_speech"),
+	jobId: IdSchema,
+});
+export type CancelLiveSpeechCommand = Static<typeof CancelLiveSpeechCommandSchema>;
+
+export const CancelLiveSpeechResultSchema = StrictObject({
+	command: Type.Literal("cancel_live_speech"),
+	job: LiveSpeechJobSchema,
+});
+export type CancelLiveSpeechResult = Static<typeof CancelLiveSpeechResultSchema>;
+
+/**
+ * Live job events are delivered only to the connection that created the job.
+ * They never enter session replay or session snapshots.
+ */
+export const LiveSpeechJobEventSchema = StrictObject({
+	type: Type.Literal("live_speech_job"),
+	job: LiveSpeechJobSchema,
+});
+export type LiveSpeechJobEvent = Static<typeof LiveSpeechJobEventSchema>;
+
 const PromptPayloadProperties = {
 	sessionId: IdSchema,
 	text: Type.String(),
@@ -539,7 +646,12 @@ export const ResumeCommandSchema = StrictObject({
 	sessionId: IdSchema,
 	afterSequence: SequencePositionSchema,
 });
-export const PromptCommandSchema = StrictObject({ command: Type.Literal("prompt"), ...PromptPayloadProperties });
+export const PromptCommandSchema = StrictObject({
+	command: Type.Literal("prompt"),
+	...PromptPayloadProperties,
+	/** Phase 2 live朗读 opt-in. Omitted/legacy clients fall back to Phase 1 manual朗读. */
+	speech: Type.Optional(LiveSpeechRequestSchema),
+});
 export const SteerCommandSchema = StrictObject({ command: Type.Literal("steer"), ...PromptPayloadProperties });
 export const AbortCommandSchema = StrictObject({ command: Type.Literal("abort"), sessionId: IdSchema });
 export const SetModelCommandSchema = StrictObject({
@@ -578,6 +690,7 @@ export const CommandSchema = Type.Union([
 	RemoveAttachmentCommandSchema,
 	StartSpeechCommandSchema,
 	CancelSpeechCommandSchema,
+	CancelLiveSpeechCommandSchema,
 ]);
 export type Command = Static<typeof CommandSchema>;
 export type CommandName = Command["command"];
@@ -595,6 +708,8 @@ export const AttachResultSchema = StrictObject({
 export const PromptResultSchema = StrictObject({
 	command: Type.Literal("prompt"),
 	session: SessionSnapshotSchema,
+	/** Phase 2 live朗读 job. Only present when the prompt carried `speech`. */
+	liveSpeech: Type.Optional(LiveSpeechJobSchema),
 });
 export const SteerResultSchema = StrictObject({
 	command: Type.Literal("steer"),
@@ -650,6 +765,7 @@ export const CommandResultSchema = Type.Union([
 	RemoveAttachmentResultSchema,
 	StartSpeechResultSchema,
 	CancelSpeechResultSchema,
+	CancelLiveSpeechResultSchema,
 ]);
 export type CommandResult = Static<typeof CommandResultSchema>;
 
@@ -718,6 +834,7 @@ export const ServerEventSchema = Type.Union([
 	SourceSnapshotEventSchema,
 	CitationSnapshotEventSchema,
 	SpeechJobEventSchema,
+	LiveSpeechJobEventSchema,
 ]);
 export type ServerEvent = Static<typeof ServerEventSchema>;
 
