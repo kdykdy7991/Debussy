@@ -258,9 +258,16 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .prose-block h3 { margin: 30px 0 12px; font: 700 18px/1.4 var(--font-serif); }
 .prose-block blockquote { width: 88%; margin: 28px auto; padding: 17px 20px; border-left: 2px solid var(--color-editorial); background: var(--color-bg-subtle); font: 500 17px/1.72 var(--font-serif); }
 .paragraph-space { display: block; height: 7px; }
-.thinking-note { margin: 18px 0; padding: 10px 13px; border-top: 1px solid var(--color-border-default); border-bottom: 1px solid var(--color-border-default); color: var(--color-text-secondary); font-size: 11px; }
-.thinking-note summary { cursor: pointer; font-weight: 650; }
-.thinking-note p { margin: 10px 0 2px; font: 13px/1.7 var(--font-serif); white-space: pre-wrap; }
+.final-answer { margin-top: 20px; }
+.thinking-note { margin: 14px 0; border: 1px solid var(--color-border-default); border-radius: 6px; background: var(--color-bg-subtle); color: var(--color-text-secondary); font: 10px/1.4 var(--font-mono); letter-spacing: 0.04em; }
+.thinking-note summary { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 11px; cursor: pointer; font-weight: 650; list-style: none; }
+.thinking-note summary::-webkit-details-marker { display: none; }
+.thinking-note summary::before { margin-right: 7px; content: "◌"; color: var(--color-editorial); }
+.thinking-note[open] summary::before { content: "◒"; }
+.thinking-note[open] .thinking-toggle { font-size: 0; }
+.thinking-note[open] .thinking-toggle::after { content: "收起"; font-size: 10px; }
+.thinking-toggle { margin-left: auto; color: var(--color-text-tertiary); font-weight: 500; }
+.thinking-body { padding: 0 11px 11px; border-top: 1px solid var(--color-border-default); font: 12px/1.7 var(--font-sans); letter-spacing: 0; white-space: pre-wrap; }
 .inline-tool-call { display: flex; align-items: center; gap: 10px; margin: 16px 0; padding: 10px 12px; border: 1px solid var(--color-border-default); background: var(--color-bg-subtle); font-size: 10px; }
 .inline-tool-call span { color: var(--color-text-tertiary); }
 .streaming-indicator { display: inline-block; width: 1px; height: 1em; margin-left: 3px; background: var(--color-editorial); vertical-align: -0.1em; animation: blink 0.75s steps(1) infinite; }

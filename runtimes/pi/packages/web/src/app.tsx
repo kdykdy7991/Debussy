@@ -742,12 +742,12 @@ function TranscriptItemView({
 			<div className="answer-content">
 				{item.content.map((content, contentIndex) => {
 					if (content.type === "text")
-						return <MarkdownText text={content.text} key={`${item.id}-${contentIndex}`} />;
+						return <div className="final-answer" key={`${item.id}-${contentIndex}`}><MarkdownText text={content.text} /></div>;
 					if (content.type === "thinking")
 						return (
 							<details className="thinking-note" key={`${item.id}-${contentIndex}`}>
-								<summary>执行思路摘要</summary>
-								<p>{content.redacted ? "推理内容已隐藏" : content.thinking}</p>
+								<summary><span>思考过程</span><span className="thinking-toggle">展开查看</span></summary>
+								<div className="thinking-body">{content.redacted ? "推理内容已隐藏" : content.thinking}</div>
 							</details>
 						);
 					return (
