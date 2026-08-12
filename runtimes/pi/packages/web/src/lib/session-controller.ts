@@ -1,5 +1,7 @@
 import type { PiSessionHandle } from "@earendil-works/pi-client";
 import type {
+	LiveSpeechJob,
+	LiveSpeechRequest,
 	ServerEvent,
 	ServerSnapshot,
 	SessionSnapshot,
@@ -38,6 +40,20 @@ export interface SessionBrowserSnapshot {
 
 export interface SessionPromptPayload {
 	attachmentIds?: string[];
+	/**
+	 * Phase 2 live朗读 opt-in. Only carried on idle-session prompts (`prompt`);
+	 * `steer` deliberately ignores it per the V5 frozen contract. The server is
+	 * the only legitimate source of any {@link LiveSpeechJob} echoed back; the
+	 * controller simply threads the option through and surfaces the returned
+	 * job via {@link SessionBrowserStore.send}'s promise resolution.
+	 */
+	speech?: LiveSpeechRequest;
+}
+
+export interface SessionSendResult {
+	session: SessionSnapshot;
+	/** Present only when the prompt carried `speech` and the server issued a job. */
+	liveSpeech?: LiveSpeechJob;
 }
 
 export interface SessionBrowserStore {
@@ -45,7 +61,7 @@ export interface SessionBrowserStore {
 	subscribe(listener: () => void): () => void;
 	createSession(): Promise<void>;
 	selectSession(sessionId: string): Promise<void>;
-	send(text: string, options?: SessionPromptPayload): Promise<void>;
+	send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult>;
 	abort(): Promise<void>;
 	uploadFiles(files: File[]): Promise<void>;
 	removeAttachment(attachmentId: string): Promise<void>;
@@ -101,28 +117,41 @@ export class SessionController implements SessionBrowserStore {
 		await this.#activate(() => this.#client.attachSession(sessionId));
 	}
 
-	async send(text: string, options?: SessionPromptPayload): Promise<void> {
+	async send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult> {
 		const message = text.trim();
 		if (!message) throw new Error("消息不能为空");
 		const handle = this.#requireActiveHandle();
 		if (this.#snapshot.submitting) throw new Error("正在提交上一项操作");
 		const attachmentIds = options?.attachmentIds;
-		const promptOptions = attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined;
-		await this.#runSessionAction(handle, () =>
+		const speech = options?.speech;
+		const promptOptions = {
+			...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+			...(speech ? { speech } : {}),
+		};
+		const hasPromptOptions = Object.keys(promptOptions).length > 0;
+		const promptResult = await this.#runSessionAction(handle, () =>
 			this.#snapshot.activeSession?.phase === "idle"
-				? promptOptions
+				? hasPromptOptions
 					? handle.prompt(message, promptOptions)
 					: handle.prompt(message)
-				: promptOptions
+				: hasPromptOptions
 					? handle.steer(message, promptOptions)
 					: handle.steer(message),
 		);
+		// Surface any live朗读 job the server issued so the V9 web layer can
+		// subscribe via the connection-scoped handle map.
+		return {
+			session: promptResult.session,
+			...(promptResult.command === "prompt" && promptResult.liveSpeech
+				? { liveSpeech: promptResult.liveSpeech }
+				: {}),
+		};
 	}
 
 	async abort(): Promise<void> {
 		const handle = this.#requireActiveHandle();
 		if (this.#snapshot.activeSession?.phase === "idle") return;
-		await this.#runSessionAction(handle, () => handle.abort());
+		await this.#runSessionAction(handle, async () => ({ session: await handle.abort() }));
 	}
 
 	async uploadFiles(files: File[]): Promise<void> {
@@ -254,17 +283,23 @@ export class SessionController implements SessionBrowserStore {
 		}
 	}
 
-	async #runSessionAction(handle: PiSessionHandle, action: () => Promise<SessionSnapshot>): Promise<void> {
+	async #runSessionAction(
+		handle: PiSessionHandle,
+		action: () => Promise<{ session: SessionSnapshot; [key: string]: unknown }>,
+	): Promise<{ session: SessionSnapshot; command?: string; liveSpeech?: LiveSpeechJob }> {
 		this.#setSnapshot({ ...this.#snapshot, submitting: true, error: undefined });
 		try {
-			const session = await action();
-			if (this.#activeHandle !== handle) return;
+			const result = await action();
+			if (this.#activeHandle !== handle) {
+				return { session: result.session };
+			}
 			this.#setSnapshot({
 				...this.#snapshot,
-				sessions: upsertSession(this.#snapshot.sessions, session),
-				activeSession: session,
+				sessions: upsertSession(this.#snapshot.sessions, result.session),
+				activeSession: result.session,
 				submitting: false,
 			});
+			return result;
 		} catch (error) {
 			if (this.#activeHandle === handle) {
 				this.#setSnapshot({

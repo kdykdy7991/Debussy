@@ -3,6 +3,7 @@ import {
 	type ChangeEvent,
 	type FormEvent,
 	type KeyboardEvent,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
@@ -11,6 +12,15 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { LiveSpeechToggle } from "./features/voice/live-speech-toggle.tsx";
+import { LiveStatusRow } from "./features/voice/live-status-row.tsx";
+import type { LivePlaybackState } from "./features/voice/live-types.ts";
+import { PlaybackArbiter } from "./features/voice/playback-arbiter.ts";
+import { SpeechButton } from "./features/voice/speech-button.tsx";
+import { SpeechController } from "./features/voice/speech-controller.ts";
+import type { SpeechControllerSource } from "./features/voice/types.ts";
+import { useLiveSpeech } from "./features/voice/use-live-speech.ts";
+import { VoiceSettings } from "./features/voice/voice-settings.tsx";
 import type { PiConnectionStore } from "./lib/connection-controller.ts";
 import type { SessionBrowserStore } from "./lib/session-controller.ts";
 
@@ -44,6 +54,40 @@ export function App({ connection, sessions }: AppProps) {
 	);
 	const sessionSnapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot);
 	const connected = connectionSnapshot.state === "connected";
+	const client = (
+		connection as unknown as {
+			client?: SpeechControllerSource & {
+				getLiveSpeechHandle?: (id: string) => import("@earendil-works/pi-client").LiveSpeechJobHandle | undefined;
+			};
+		}
+	).client;
+	const baseUrl = useMemo(() => deriveSpeechHttpBaseUrl(), []);
+	const webToken = useMemo(() => deriveSpeechWebToken(), []);
+	const arbiterRef = useRef<PlaybackArbiter | undefined>(undefined);
+	const arbiterDisposeGenerationRef = useRef(0);
+	if (!arbiterRef.current && client) {
+		arbiterRef.current = new PlaybackArbiter({
+			source: client,
+			baseUrl,
+			token: webToken,
+		});
+	}
+	const arbiter = arbiterRef.current;
+	const speech = arbiter?.manual;
+	const [liveHint, setLiveHint] = useState<string | undefined>(undefined);
+	const live = useLiveSpeech({
+		snapshot: client?.snapshot,
+		sessionId: sessionSnapshot.activeSessionId,
+		connectionState: connectionSnapshot.state,
+		arbiter,
+		onUnlockFailed: (reason) => {
+			setLiveHint(
+				reason === "resume_rejected" || reason === "create_failed"
+					? "浏览器阻止了自动播放，已改用文字模式；可在地址栏授权音频后再次发送。"
+					: "本次未在用户手势内发起语音请求；已发送文字消息。",
+			);
+		},
+	});
 	const [message, setMessage] = useState("");
 	const [sessionQuery, setSessionQuery] = useState("");
 	const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -88,11 +132,28 @@ export function App({ connection, sessions }: AppProps) {
 		event.preventDefault();
 		if (!message.trim() || running) return;
 		const attachmentIds = active?.attachments?.map((attachment) => attachment.id);
-		void sessions
-			.send(message, attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined)
-			.then(() => setMessage(""))
-			.catch(() => {});
+		// Phase 2 live朗读: ask the hook whether to attach `speech` before the
+		// prompt leaves the page. The hook owns the AudioContext unlock and the
+		// persisted toggle; this layer only wires it through.
+		void (async () => {
+			const prep = await live.preparePrompt();
+			const baseOptions = attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined;
+			const options =
+				prep.attachSpeech && baseOptions
+					? { ...baseOptions, speech: { mode: "live" as const } }
+					: prep.attachSpeech
+						? { speech: { mode: "live" as const } }
+						: baseOptions;
+			const result = await sessions.send(message, options);
+			setMessage("");
+			if (result.liveSpeech && client?.getLiveSpeechHandle) {
+				const handle = client.getLiveSpeechHandle(result.liveSpeech.id);
+				if (handle) live.bindHandle(handle);
+			}
+		})().catch(() => {});
 	};
+
+	const dismissLiveHint = useCallback(() => setLiveHint(undefined), []);
 	const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
 		const files = event.target.files ? [...event.target.files] : [];
 		event.target.value = "";
@@ -147,6 +208,42 @@ export function App({ connection, sessions }: AppProps) {
 			delete document.body.dataset.theme;
 		};
 	}, [theme]);
+
+	// Stop playback (manual + live) when the active session changes, the
+	// connection drops, the page hides, or the component unmounts. The arbiter
+	// routes every path through both controllers so timers / readers / Audio
+	// nodes / listeners are released regardless of which was active.
+	const previousSessionIdRef = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		if (previousSessionIdRef.current === activeId) return;
+		previousSessionIdRef.current = activeId;
+		arbiter?.handleSessionChanged();
+	}, [activeId, arbiter]);
+
+	useEffect(() => {
+		if (!connected) arbiter?.handleDisconnected();
+	}, [connected, arbiter]);
+
+	// pagehide is already handled inside useLiveSpeech via the arbiter; the
+	// additional handler here also covers the SpeechController surface for
+	// manual playback so both paths clean up identically.
+	useEffect(() => {
+		if (typeof window === "undefined" || !arbiter) return;
+		const onPageHide = () => arbiter.handlePageHide();
+		window.addEventListener("pagehide", onPageHide);
+		return () => window.removeEventListener("pagehide", onPageHide);
+	}, [arbiter]);
+
+	useEffect(() => {
+		const generation = ++arbiterDisposeGenerationRef.current;
+		return () => {
+			// React StrictMode runs a development-only cleanup/setup probe. Delay
+			// destructive teardown so that probe cannot dispose the live arbiter.
+			window.setTimeout(() => {
+				if (arbiterDisposeGenerationRef.current === generation) arbiter?.dispose();
+			}, 0);
+		};
+	}, [arbiter]);
 
 	return (
 		<div className="editorial-shell" data-theme={theme}>
@@ -294,9 +391,25 @@ export function App({ connection, sessions }: AppProps) {
 					</div>
 				) : null}
 
+				{liveHint ? (
+					<output className="live-hint" aria-live="polite">
+						<span>{liveHint}</span>
+						<button type="button" onClick={dismissLiveHint} aria-label="关闭语音提示">
+							×
+						</button>
+					</output>
+				) : null}
+
 				<div className="conversation-scroll" ref={conversationScrollRef}>
 					{active ? (
-						<Conversation active={active} abort={abort} />
+						<Conversation
+							active={active}
+							abort={abort}
+							speech={speech}
+							arbiter={arbiter}
+							livePlaybackState={live.playbackState}
+							onStopLive={live.stop}
+						/>
 					) : (
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
@@ -403,7 +516,15 @@ export function App({ connection, sessions }: AppProps) {
 				</div>
 			</main>
 
-			<SessionRail active={active} open={railOpen} close={() => setRailOpen(false)} />
+			<SessionRail
+				active={active}
+				open={railOpen}
+				close={() => setRailOpen(false)}
+				speech={speech}
+				liveEnabled={live.enabled}
+				liveAvailable={live.available}
+				onLiveEnabledChange={live.setEnabled}
+			/>
 			<button
 				className={`scrim ${sidebarOpen || railOpen ? "show" : ""}`}
 				type="button"
@@ -417,8 +538,37 @@ export function App({ connection, sessions }: AppProps) {
 	);
 }
 
-function Conversation({ active, abort }: { active: SessionSnapshot; abort: () => void }) {
+function Conversation({
+	active,
+	abort,
+	speech,
+	arbiter,
+	livePlaybackState,
+	onStopLive,
+}: {
+	active: SessionSnapshot;
+	abort: () => void;
+	speech: SpeechController | undefined;
+	arbiter: PlaybackArbiter | undefined;
+	livePlaybackState: LivePlaybackState;
+	onStopLive: () => void;
+}) {
 	const running = active.phase !== "idle";
+	const liveActive = livePlaybackState !== "idle" && livePlaybackState !== "ended";
+	// Identify the assistant item the live job is bound to: the first streaming
+	// item from the current turn, or the last assistant item while the turn is
+	// still running. The status row is anchored on this item so the user
+	// always sees the live pill next to the message that's being spoken.
+	const liveTargetId = useMemo(() => {
+		if (!liveActive) return undefined;
+		const streaming = active.transcript.find((item) => item.role === "assistant" && item.status === "streaming");
+		if (streaming) return streaming.id;
+		for (let index = active.transcript.length - 1; index >= 0; index -= 1) {
+			const item = active.transcript[index];
+			if (item && item.role === "assistant") return item.id;
+		}
+		return undefined;
+	}, [active.transcript, liveActive]);
 	return (
 		<article className="conversation-article">
 			<header className="conversation-title">
@@ -468,7 +618,18 @@ function Conversation({ active, abort }: { active: SessionSnapshot; abort: () =>
 
 			<section className="message-flow" aria-live="polite">
 				{active.transcript.length > 0 ? (
-					active.transcript.map((item, index) => <TranscriptItemView item={item} index={index} key={item.id} />)
+					active.transcript.map((item, index) => (
+						<TranscriptItemView
+							item={item}
+							index={index}
+							key={item.id}
+							speech={speech}
+							arbiter={arbiter}
+							sessionId={active.id}
+							liveState={item.id === liveTargetId ? livePlaybackState : "idle"}
+							onStopLive={onStopLive}
+						/>
+					))
 				) : (
 					<EmptyTranscript />
 				)}
@@ -477,7 +638,23 @@ function Conversation({ active, abort }: { active: SessionSnapshot; abort: () =>
 	);
 }
 
-function TranscriptItemView({ item, index }: { item: TranscriptItem; index: number }) {
+function TranscriptItemView({
+	item,
+	index,
+	speech,
+	arbiter,
+	sessionId,
+	liveState,
+	onStopLive,
+}: {
+	item: TranscriptItem;
+	index: number;
+	speech: SpeechController | undefined;
+	arbiter: PlaybackArbiter | undefined;
+	sessionId: string;
+	liveState: LivePlaybackState;
+	onStopLive: () => void;
+}) {
 	if (item.role === "tool") {
 		const status = item.status === "running" ? "正在执行" : item.status === "error" ? "执行失败" : "执行完成";
 		return (
@@ -584,7 +761,19 @@ function TranscriptItemView({ item, index }: { item: TranscriptItem; index: numb
 			</div>
 			<footer className="answer-actions">
 				<span>ANSWER {String(index + 1).padStart(2, "0")}</span>
-				<div>
+				<div className="answer-actions-controls">
+					{liveState !== "idle" ? <LiveStatusRow state={liveState} onStop={onStopLive} /> : null}
+					{speech?.voiceAvailable && item.status === "complete" ? (
+						<SpeechButton
+							speech={
+								speech && arbiter
+									? wrapSpeechButtonApi(speech, arbiter)
+									: speech
+							}
+							sessionId={sessionId}
+							messageId={item.id}
+						/>
+					) : null}
 					<button type="button">复制</button>
 					<button type="button" disabled title="当前协议暂不支持重新生成">
 						重新生成
@@ -647,10 +836,18 @@ function SessionRail({
 	active,
 	open,
 	close,
+	speech,
+	liveEnabled,
+	liveAvailable,
+	onLiveEnabledChange,
 }: {
 	active: SessionSnapshot | undefined;
 	open: boolean;
 	close: () => void;
+	speech: SpeechController | undefined;
+	liveEnabled: boolean;
+	liveAvailable: boolean;
+	onLiveEnabledChange: (next: boolean) => void;
 }) {
 	return (
 		<aside className={`session-rail ${open ? "open" : ""}`} aria-label="会话信息">
@@ -698,6 +895,17 @@ function SessionRail({
 						<strong>当前协议未提供来源数据</strong>
 						<p>接入 Citation 与 RAG schema 后，这里将展示可追溯来源，不会使用模拟数据。</p>
 					</section>
+					{speech?.voice ? (
+						<section className="rail-section">
+							<p className="rail-label">朗读语音</p>
+							<VoiceSettings voice={speech.voice} speech={speech} />
+							<LiveSpeechToggle
+								voice={speech.voice}
+								enabled={liveEnabled && liveAvailable}
+								onChange={onLiveEnabledChange}
+							/>
+						</section>
+					) : null}
 				</>
 			) : (
 				<section className="rail-placeholder">
@@ -732,4 +940,42 @@ function assistantStatus(status: Extract<TranscriptItem, { role: "assistant" }>[
 	if (status === "error") return "FAILED";
 	if (status === "aborted") return "STOPPED";
 	return "COMPLETE";
+}
+
+function deriveSpeechHttpBaseUrl(): string {
+	if (typeof window === "undefined") return "";
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	const webSocketUrl = import.meta.env.VITE_PI_WS_URL ?? `${protocol}//${window.location.host}/api/pi/v1/ws`;
+	return new URL(webSocketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+}
+
+function deriveSpeechWebToken(): string | undefined {
+	if (typeof window === "undefined") return undefined;
+	return import.meta.env.VITE_PI_WEB_TOKEN;
+}
+
+/**
+ * Wrap a {@link SpeechController} so its `speak()` call routes through the
+ * page-level {@link PlaybackArbiter}. The arbiter stops any active live
+ * playback before the new manual job opens (manual↔live mutex). Stop is a
+ * thin pass-through because the controller already routes its own job.
+ */
+function wrapSpeechButtonApi(
+	controller: SpeechController,
+	arbiter: PlaybackArbiter,
+): import("./features/voice/speech-button.tsx").SpeechButtonApi {
+	return {
+		get activeMessageId() {
+			return controller.activeMessageId;
+		},
+		subscribe: (listener) => controller.subscribe(listener),
+		getState: () => controller.getState(),
+		speak: (sessionId, messageId, voiceProfileId) =>
+			arbiter.startManual(sessionId, messageId, voiceProfileId).catch((error: unknown) => {
+				const detail = error instanceof Error ? error.message : String(error);
+				console.error("无法开始手动朗读", detail);
+				throw error;
+			}),
+		stop: () => controller.stop(),
+	};
 }

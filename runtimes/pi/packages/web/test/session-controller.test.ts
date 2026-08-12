@@ -45,8 +45,8 @@ function createHandle(snapshot: SessionSnapshot): PiSessionHandle {
 		onEvent: () => () => {},
 		detach: async () => {},
 		dispose: vi.fn(async () => {}),
-		prompt: async () => snapshot,
-		steer: async () => snapshot,
+		prompt: async () => ({ command: "prompt", session: snapshot }),
+		steer: async () => ({ command: "steer", session: snapshot }),
 		abort: async () => snapshot,
 		setModel: async () => snapshot,
 		setThinking: async () => snapshot,
@@ -237,7 +237,12 @@ describe("SessionController", () => {
 
 	it("sends an idle session message as a prompt", async () => {
 		const prompted = { ...SESSION, phase: "turn", revision: 2 } satisfies SessionSnapshot;
-		const prompt = vi.fn<(text: string) => Promise<SessionSnapshot>>().mockResolvedValue(prompted);
+		const prompt = vi
+			.fn<(text: string) => Promise<{ command: "prompt"; session: SessionSnapshot }>>()
+			.mockResolvedValue({
+				command: "prompt",
+				session: prompted,
+			});
 		const handle = { ...createHandle(SESSION), prompt };
 		const client = createClient();
 		client.attachSession.mockResolvedValue(handle);
@@ -254,7 +259,9 @@ describe("SessionController", () => {
 		const running = { ...SESSION, phase: "turn", revision: 2 } satisfies SessionSnapshot;
 		const steered = { ...running, revision: 3 } satisfies SessionSnapshot;
 		const aborted = { ...running, phase: "idle", revision: 4 } satisfies SessionSnapshot;
-		const steer = vi.fn<(text: string) => Promise<SessionSnapshot>>().mockResolvedValue(steered);
+		const steer = vi
+			.fn<(text: string) => Promise<{ command: "steer"; session: SessionSnapshot }>>()
+			.mockResolvedValue({ command: "steer", session: steered });
 		const abort = vi.fn<() => Promise<SessionSnapshot>>().mockResolvedValue(aborted);
 		const handle = { ...createHandle(running), steer, abort };
 		const client = createClient();

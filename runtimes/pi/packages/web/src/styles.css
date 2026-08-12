@@ -266,6 +266,13 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .streaming-indicator { display: inline-block; width: 1px; height: 1em; margin-left: 3px; background: var(--color-editorial); vertical-align: -0.1em; animation: blink 0.75s steps(1) infinite; }
 .answer-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; color: var(--color-text-tertiary); font: 9px var(--font-mono); letter-spacing: 0.08em; }
 .answer-actions div { display: flex; gap: 12px; }
+.speech-button { display: inline-flex; align-items: center; gap: 5px; }
+.speech-button.speaking { color: var(--color-editorial); }
+.speech-button.loading { color: var(--color-text-tertiary); }
+.speech-button-icon { display: inline-grid; width: 12px; height: 12px; place-items: center; font-size: 8px; }
+.voice-settings { display: flex; flex-direction: column; gap: 6px; font-size: 10px; }
+.voice-settings select { padding: 5px 7px; border: 1px solid var(--color-border-default); background: var(--color-bg-subtle); color: var(--color-text-primary); font-size: 10px; }
+.voice-settings.muted strong { font-weight: 600; color: var(--color-text-secondary); }
 
 .code-exhibit { margin: 28px 0; overflow: hidden; border: 1px solid var(--color-text-primary); background: var(--color-text-primary); color: var(--color-bg-content); }
 .code-exhibit figcaption { display: flex; min-height: 36px; align-items: center; padding: 0 13px; border-bottom: 1px solid var(--color-text-secondary); color: var(--color-border-strong); font: 9px var(--font-mono); letter-spacing: 0.08em; }
