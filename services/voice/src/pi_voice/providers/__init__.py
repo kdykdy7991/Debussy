@@ -1,6 +1,6 @@
 """Speech synthesis provider implementations."""
 
-from .base import AudioArtifact, SynthesisRequest, TTSProvider
+from .base import AudioArtifact, AudioChunk, StreamingTTSProvider, SynthesisRequest, TTSProvider
 
-__all__ = ["AudioArtifact", "SynthesisRequest", "TTSProvider"]
+__all__ = ["AudioArtifact", "AudioChunk", "StreamingTTSProvider", "SynthesisRequest", "TTSProvider"]
 

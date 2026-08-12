@@ -17,14 +17,19 @@ class VoiceConfig:
     max_concurrency: int
     max_text_length: int
     artifact_dir: Path
+    stream_chunk_size: int
+    stream_max_chunk_size: int
 
     @classmethod
     def from_environment(cls) -> "VoiceConfig":
         token = environ.get("PI_VOICE_TOKEN", "").strip()
         if not token:
             raise ValueError("PI_VOICE_TOKEN must be configured")
+        host = environ.get("PI_VOICE_HOST", "127.0.0.1")
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            raise ValueError("PI_VOICE_HOST must be a loopback address; the voice service only binds locally")
         return cls(
-            host=environ.get("PI_VOICE_HOST", "127.0.0.1"),
+            host=host,
             port=int(environ.get("PI_VOICE_PORT", "18876")),
             token=token,
             model=environ.get("PI_VOICE_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"),
@@ -34,5 +39,7 @@ class VoiceConfig:
             max_concurrency=max(1, int(environ.get("PI_VOICE_MAX_CONCURRENCY", "1"))),
             max_text_length=max(1, int(environ.get("PI_VOICE_MAX_TEXT_LENGTH", "4000"))),
             artifact_dir=Path(environ.get("PI_VOICE_ARTIFACT_DIR", "~/.pi/agent/audio/artifacts")).expanduser(),
+            stream_chunk_size=max(1, int(environ.get("PI_VOICE_STREAM_CHUNK_SIZE", "8"))),
+            stream_max_chunk_size=max(1, int(environ.get("PI_VOICE_STREAM_MAX_CHUNK_SIZE", "64"))),
         )
 

@@ -28,9 +28,11 @@ services/voice/
 │   └── providers/
 │       ├── __init__.py
 │       ├── base.py
+│       ├── faster_qwen3_tts.py
 │       └── qwen3_tts.py
 └── tests/
-    └── test_service.py
+    ├── test_service.py
+    └── test_streaming.py
 ```
 
 ## 3. 系统边界
@@ -45,29 +47,37 @@ runtimes/pi/packages/server
 services/voice
     │ CUDA inference
     ▼
-Qwen3-TTS → ~/.pi/agent/audio/artifacts/*.wav
+Qwen3-TTS → 流式 PCM 直接到 server；/v1/synthesize 写 ~/.pi/agent/audio/artifacts/*.wav
 ```
 
-浏览器不得直接调用本服务。未来由 `runtimes/pi/packages/server/src/voice` 调用 `/v1/synthesize`，再通过经过认证的 Pi 音频路由向浏览器提供 artifact。Python 返回的本地 `path` 只供 server 使用，不能进入公开 protocol 或前端响应。
+浏览器不得直接调用本服务。未来由 `runtimes/pi/packages/server/src/voice` 调用
+`/v1/synthesize/stream`（或 `/v1/synthesize`），再通过经过认证的 Pi 音频路由向
+浏览器转发 PCM / artifact。Python 返回的本地 `path` 只供 server 使用，不能进入公开
+protocol 或前端响应。
 
 ## 4. 当前能力
 
 - `GET /health`：检查服务状态；不会触发模型加载。
-- `POST /v1/synthesize`：使用 CustomVoice 生成 WAV。
-- Bearer token 鉴权。
-- 文本长度限制。
-- 可配置的推理并发限制。
-- 模型首次请求时延迟加载，后续请求复用同一实例。
+- `POST /v1/synthesize`：使用 CustomVoice 生成 WAV artifact（保留以作回退/对比）。
+- `POST /v1/synthesize/stream`：使用 faster-qwen3-tts 流式返回连续 `pcm_f32le`，
+  首个模型 chunk 可用后立即开始传输。
+- 流式与非流式共享同一个 GPU 并发 semaphore（默认 concurrency=1）。
+- 流式支持取消：客户端断开/请求取消会停止迭代并 close generator，尽快释放 GPU。
+- Bearer token 鉴权、文本长度限制。
+- 模型首次请求时延迟加载，流式模型进程级单例。
 - 随机 artifact ID 和仓库外音频目录。
 
 当前未实现：
 
-- TypeScript server 集成。
-- Web 播放器。
-- SpeechJob 持久化和取消。
-- 音频分块流式播放。
+- TypeScript server 集成（V2）。
+- Web 播放器（V3）。
+- SpeechJob 持久化。
 - VoiceDesign、Voice Clone。
 - ASR 和麦克风输入。
+
+注意：流式端点由 `faster_qwen3_tts`（CUDA graph）驱动，与 `/v1/synthesize` 使用的
+`qwen-tts` CustomVoice 是各自独立的懒加载模型实例。只使用其中一个端点时进程内只会
+加载对应模型；同时使用两个端点会各自加载一个模型。
 
 ## 5. 环境准备
 
@@ -106,9 +116,11 @@ openssl rand -hex 32
 | `PI_VOICE_DEVICE` | `cuda:0` | 推理设备 |
 | `PI_VOICE_DTYPE` | `bfloat16` | `bfloat16`、`float16` 或 `float32` |
 | `PI_VOICE_ATTENTION` | `flash_attention_2` | 可回退为 `sdpa` |
-| `PI_VOICE_MAX_CONCURRENCY` | `1` | 同时占用 GPU 的生成数量 |
+| `PI_VOICE_MAX_CONCURRENCY` | `1` | 同时占用 GPU 的生成数量（流式与非流式共享） |
 | `PI_VOICE_MAX_TEXT_LENGTH` | `4000` | 单次字符上限 |
 | `PI_VOICE_ARTIFACT_DIR` | `~/.pi/agent/audio/artifacts` | WAV 输出目录 |
+| `PI_VOICE_STREAM_CHUNK_SIZE` | `8` | 流式请求缺省 chunkSize（codec steps per chunk） |
+| `PI_VOICE_STREAM_MAX_CHUNK_SIZE` | `64` | 流式 chunkSize 服务端上限 |
 
 不要把 token、模型访问凭据或用户文本写入日志。
 
@@ -138,6 +150,57 @@ curl -X POST \
   --data '{"text":"其实我真的有发现，我是一个特别善于观察别人情绪的人。","language":"Chinese","speaker":"Vivian","instruct":"用特别愤怒的语气说"}' \
   http://127.0.0.1:18876/v1/synthesize
 ```
+
+流式端点（第一个 PCM chunk 就绪后立即开始传输，不需要等到完整生成结束）：
+
+```bash
+curl -N -X POST \
+  -H "Authorization: Bearer $PI_VOICE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"其实我真的有发现，我是一个特别善于观察别人情绪的人。","language":"Chinese","speaker":"Vivian","chunkSize":8,"encoding":"pcm_f32le"}' \
+  -o /tmp/stream.pcm \
+  -D - http://127.0.0.1:18876/v1/synthesize/stream
+```
+
+响应头：`Content-Type: application/vnd.pi.pcm`、`Cache-Control: no-store`、
+`X-Content-Type-Options: nosniff`、`X-Pi-Audio-Encoding: pcm_f32le`、
+`X-Pi-Audio-Sample-Rate`、`X-Pi-Audio-Channels: 1`。响应体是连续 mono
+little-endian float32 PCM，可用 Python 还原为音频：
+
+```bash
+uv run --package pi-voice-service python - <<'PY'
+import numpy as np
+import soundfile as sf
+pcm = np.fromfile("/tmp/stream.pcm", dtype="<f4")
+sf.write("/tmp/stream.wav", pcm, 24000)  # sample rate 以响应头 X-Pi-Audio-Sample-Rate 为准
+PY
+```
+
+请求约束：
+
+- `text`、`language`、`speaker` 非空；`chunkSize` 为正整数且不超过
+  `PI_VOICE_STREAM_MAX_CHUNK_SIZE`；第一阶段 `encoding` 只接受 `pcm_f32le`。
+- 额外字段会被 422 拒绝。
+- 首包前错误返回 `{"error": {"code": ..., "message": ...}}`；首包后的失败只关闭流，
+  不把内部细节写进响应。
+
+手动回归工具：`faster_qwen3_tts_stream_smoke.py` 直接驱动正式 provider 测首包延迟和
+RTF；`faster_qwen3_tts_stream_player.py` 在浏览器里边收边播（二者都不依赖 GPU 之外
+的 Python 环境，但需要本机模型与 CUDA）。
+
+### 故障排查
+
+| 现象 | 处理 |
+| --- | --- |
+| `401 Unauthorized` | `PI_VOICE_TOKEN` 与请求 `Authorization: Bearer` 不一致；服务端 token 为空时直接拒绝 |
+| `422` | 请求体多出额外字段、`chunkSize` 超上限（`PI_VOICE_STREAM_MAX_CHUNK_SIZE`）、或文本为空/超长 |
+| `502` 首包前失败 | 模型加载或推理失败；查看服务日志确认模型路径和 CUDA 状态 |
+| 模型加载报 FlashAttention 相关错误 | 硬件/驱动不支持时设 `PI_VOICE_ATTENTION=sdpa` |
+| `torch`/CUDA wheel 与驱动不兼容 | 确认 uv.lock 锁定的 PyTorch wheel 与本机 CUDA 版本匹配 |
+| 返回空流（`empty_output`） | 本地模型目录需指向含 `config.json` 的 `snapshots/master`，不能是 Modelscope 缓存根目录 |
+| 首包明显偏慢 | 冷启动需加载模型，属预期；warm 后首包应明显缩短 |
+
+服务端日志只记录安全错误码和耗时，不记录 token、朗读文本或模型缓存绝对路径。
 
 ## 8. 开发规则
 
@@ -171,11 +234,11 @@ uv run --package pi-voice-service pytest
 
 ## 9. 下一阶段
 
-1. 在 `runtimes/pi/packages/server/src/voice` 增加内部 client、SpeechJob 和 artifact route。
-2. 在 `runtimes/pi/packages/protocol` 定义 SpeechJob 状态，不传递 WAV base64 或服务端路径。
-3. 在 `runtimes/pi/packages/web/src/features/voice` 增加朗读、播放、暂停、停止和设置组件。
-4. 完成非流式 WAV 闭环后，再设计 PCM/Opus 流式音频。
-5. 麦克风输入属于 ASR，另行设计和实施。
+1. V2：在 `runtimes/pi/packages/server/src/voice` 增加内部 client、SpeechManager 和
+   browser-facing 音频路由，把本服务的 `/v1/synthesize/stream` 升级为受保护流式链路。
+2. V2：在 `runtimes/pi/packages/protocol` 定义 SpeechJob 状态，不传递 PCM 或服务端路径。
+3. V3：在 `runtimes/pi/packages/web/src/features/voice` 增加朗读、播放、停止和设置组件。
+4. 麦克风输入属于 ASR，另行设计和实施。
 
 ## 10. 上游依据
 
