@@ -123,11 +123,14 @@ export function useLiveSpeech(options: UseLiveSpeechOptions): UseLiveSpeechResul
 	useEffect(() => {
 		if (!arbiter) {
 			setPlaybackState("idle");
+			setError(undefined);
 			return undefined;
 		}
 		setPlaybackState(arbiter.live.state);
+		setError(arbiter.live.error);
 		return arbiter.live.subscribe(() => {
 			setPlaybackState(arbiter.live.state);
+			setError(arbiter.live.error);
 		});
 	}, [arbiter]);
 

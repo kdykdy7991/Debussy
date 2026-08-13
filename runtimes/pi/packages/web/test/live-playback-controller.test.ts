@@ -6,11 +6,18 @@ import type {
 import type { LiveSpeechJob } from "@earendil-works/pi-protocol";
 import { describe, expect, it, vi } from "vitest";
 import { AudioContextUnlocker } from "../src/features/voice/audio-context-unlocker.ts";
-import type { AudioBufferLike, AudioContextLike, AudioSourceNodeLike } from "../src/features/voice/audio-player.ts";
 import { LivePlaybackController } from "../src/features/voice/live-playback-controller.ts";
 import type { LivePlaybackHooks, LivePlaybackState } from "../src/features/voice/live-types.ts";
 import { PlaybackArbiter } from "../src/features/voice/playback-arbiter.ts";
-import { encodeSamples, FakeAudioContext, FakeJobHandle, FakeSpeechSource, makeSpeechJob, streamFromChunks, TEST_FORMAT } from "./voice-test-support.ts";
+import {
+	encodeSamples,
+	FakeAudioContext,
+	FakeJobHandle,
+	FakeSpeechSource,
+	makeSpeechJob,
+	streamFromChunks,
+	TEST_FORMAT,
+} from "./voice-test-support.ts";
 
 type OpenMock = ReturnType<typeof vi.fn<(options: OpenLiveSpeechStreamOptions) => Promise<LiveSpeechStreamResult>>>;
 
@@ -26,15 +33,6 @@ function makeJob(overrides: Partial<LiveSpeechJob> = {}): LiveSpeechJob {
 		progress: { committedUtterances: 0, completedUtterances: 0, pendingCharacters: 0 },
 		...overrides,
 	};
-}
-
-class FakeSourceNode implements AudioSourceNodeLike {
-	buffer: AudioBufferLike | null = null;
-	onended: ((ev: Event) => void) | null = null;
-	connect(): void {}
-	disconnect(): void {}
-	start(): void {}
-	stop(): void {}
 }
 
 class FakeHandle implements LiveSpeechJobHandle {
@@ -142,6 +140,34 @@ describe("LivePlaybackController lifecycle", () => {
 		expect(controller.state).toBe<LivePlaybackState>("ended");
 		expect(hooks.onPlaybackEnd).toHaveBeenCalledWith("completed");
 		expect(hooks.onError).not.toHaveBeenCalled();
+	});
+
+	it("keeps a cold stream alive when the job completes before the first PCM chunk", async () => {
+		let resolveStream: ((stream: LiveSpeechStreamResult) => void) | undefined;
+		const openStream = vi.fn<() => Promise<LiveSpeechStreamResult>>().mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveStream = resolve;
+				}),
+		);
+		const handle = new FakeHandle(makeJob({ status: "generating", updatedAt: 1 }));
+		const { controller, context, hooks } = makeController({ openStream });
+
+		controller.attach(handle);
+		handle.emit(makeJob({ status: "completed", updatedAt: 2 }));
+		expect(controller.state).toBe<LivePlaybackState>("generating");
+
+		resolveStream?.({
+			format: TEST_FORMAT,
+			body: streamFromChunks([encodeSamples([0.1, 0.2, 0.3, 0.4])]),
+		});
+		await flush();
+		expect(hooks.onPlaybackStart).toHaveBeenCalledOnce();
+
+		context.elapse(2);
+		await flush();
+		expect(controller.state).toBe<LivePlaybackState>("ended");
+		expect(hooks.onPlaybackEnd).toHaveBeenCalledWith("completed");
 	});
 
 	it("fails when the server returns an HTTP error", async () => {

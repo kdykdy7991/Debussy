@@ -61,7 +61,7 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 
 .editorial-shell {
 	display: grid;
-	grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
+	grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 	height: 100vh;
 	overflow: hidden;
 }
@@ -338,6 +338,13 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .context-chip { display: inline-flex; max-width: 220px; height: 28px; align-items: center; gap: 5px; padding: 0 9px 0 5px; overflow: hidden; border: 1px solid var(--color-border-default); border-radius: 14px; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .context-chip i { display: grid; width: 18px; height: 18px; place-items: center; border-radius: 50%; background: var(--color-editorial); color: var(--color-bg-content); font: normal 9px var(--font-serif); }
 .context-chip.muted { color: var(--color-text-secondary); }
+.composer-voice { margin-left: auto; }
+.composer-voice .live-speech-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 10px; }
+.composer-voice .live-speech-toggle > span { display: flex; align-items: baseline; gap: 5px; }
+.composer-voice .live-speech-toggle strong { font-weight: 600; }
+.composer-voice .live-speech-toggle small { color: var(--color-text-tertiary); font-size: 8px; }
+.composer-voice .live-speech-toggle input { width: 28px; height: 16px; margin: 0; accent-color: var(--color-editorial); cursor: pointer; }
+.composer-voice .live-speech-toggle input:disabled { cursor: not-allowed; }
 .composer-hint { color: var(--color-text-tertiary); font-size: 8px; }
 .send-button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: var(--color-text-primary); color: var(--color-bg-content); cursor: pointer; }
 .stop-button { display: inline-flex; height: 30px; align-items: center; gap: 7px; padding: 0 11px; border: 1px solid var(--color-editorial); border-radius: 15px; background: transparent; color: var(--color-editorial); font-size: 9px; cursor: pointer; }

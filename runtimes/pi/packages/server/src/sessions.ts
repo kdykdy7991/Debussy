@@ -184,13 +184,16 @@ export class LiveSessionManager {
 					const session = await this.runOperation(
 						connection,
 						live,
-						() =>
-							live.runtime.prompt({
+						() => {
+							const prompt = live.runtime.prompt({
 								text: command.text,
 								attachmentIds: command.attachmentIds,
 								attachments,
 								retrieval,
-							}),
+							});
+							prepared?.announce();
+							return prompt;
+						},
 						{ turnId, citations: retrieval?.citations ?? [] },
 					);
 					return {

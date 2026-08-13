@@ -74,6 +74,7 @@ export class PiClient {
 	readonly #connectionStateListeners = new Set<(change: ConnectionStateChange) => void>();
 	readonly #speechHandles = new Map<string, SpeechJobHandleImpl>();
 	readonly #liveSpeechHandles = new Map<string, LiveSpeechJobHandleImpl>();
+	readonly #liveSpeechJobListeners = new Set<(handle: LiveSpeechJobHandle) => void>();
 	#requestSequence = 0;
 	#disposed = false;
 	#disposePromise: Promise<void> | undefined;
@@ -208,6 +209,13 @@ export class PiClient {
 	 */
 	getLiveSpeechHandle(jobId: string): LiveSpeechJobHandle | undefined {
 		return this.#liveSpeechHandles.get(jobId);
+	}
+
+	/** Subscribe to live jobs as soon as they are announced by the server. */
+	onLiveSpeechJob(listener: (handle: LiveSpeechJobHandle) => void): Unsubscribe {
+		this.#assertNotDisposed();
+		this.#liveSpeechJobListeners.add(listener);
+		return () => this.#liveSpeechJobListeners.delete(listener);
 	}
 
 	async createSession(options: CreateSessionOptions = {}): Promise<PiSessionHandle> {
@@ -438,10 +446,21 @@ export class PiClient {
 		if (isSpeechTerminal(job.status)) this.#speechHandles.delete(job.id);
 	}
 
-	#dispatchLiveSpeechJob(job: import("@earendil-works/pi-protocol").LiveSpeechJob): void {
-		const handle = this.#liveSpeechHandles.get(job.id);
+	#dispatchLiveSpeechJob(job: LiveSpeechJob): void {
+		let handle = this.#liveSpeechHandles.get(job.id);
+		if (!handle) {
+			this.registerLiveSpeechHandle(job);
+			handle = this.#liveSpeechHandles.get(job.id);
+		}
 		if (!handle) return;
 		handle.apply(job);
+		for (const listener of this.#liveSpeechJobListeners) {
+			try {
+				listener(handle);
+			} catch (error) {
+				this.#reportListenerError(error);
+			}
+		}
 		if (isLiveSpeechTerminal(job.status)) this.#liveSpeechHandles.delete(job.id);
 	}
 
@@ -459,6 +478,7 @@ export class PiClient {
 		this.#rejectPendingRequests(error);
 		this.#speechHandles.clear();
 		this.#liveSpeechHandles.clear();
+		this.#liveSpeechJobListeners.clear();
 		this.#connection.disconnect(error);
 		this.#state.dispose();
 		this.#invalidateAllSessionLeases();

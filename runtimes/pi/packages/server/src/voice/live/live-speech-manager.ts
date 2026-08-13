@@ -113,6 +113,8 @@ export interface LiveSpeechPrepareOptions {
 
 export type LiveSpeechPrepareResult = {
 	job: LiveSpeechJob;
+	/** Publish once the Agent prompt has been successfully started. */
+	announce(): void;
 	/** Prompt-failure cleanup; cancels the run and drops it with no event. */
 	rollback: () => void;
 };
@@ -224,7 +226,16 @@ export class LiveSpeechManager {
 		});
 		this.jobs.set(id, run);
 		run.start();
-		return { job, rollback: () => run.rollback() };
+		let announced = false;
+		return {
+			job,
+			announce: () => {
+				if (announced) return;
+				announced = true;
+				this.host?.sendJobEvent(input.connection, job);
+			},
+			rollback: () => run.rollback(),
+		};
 	}
 
 	/** `cancel_live_speech`: owner-only, never aborts the Agent. */

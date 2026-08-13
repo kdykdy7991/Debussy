@@ -108,6 +108,32 @@ function createClient(): FakeClient {
 }
 
 describe("SessionController", () => {
+	it("opens the most recently updated persisted session by default", async () => {
+		const older = { ...SESSION, id: "session-older", updatedAt: 1 };
+		const newer = { ...SESSION, id: "session-newer", updatedAt: 3 };
+		const client = createClient();
+		Object.defineProperty(client, "snapshot", { value: { sessions: [older, newer] }, configurable: true });
+		client.attachSession.mockResolvedValue(createHandle(newer));
+		const controller = new SessionController(client, createUploadClient());
+
+		await controller.openDefaultSession();
+
+		expect(client.attachSession).toHaveBeenCalledWith(newer.id);
+		expect(client.createSession).not.toHaveBeenCalled();
+		expect(controller.getSnapshot().activeSessionId).toBe(newer.id);
+	});
+
+	it("creates a session by default only when no persisted sessions exist", async () => {
+		const client = createClient();
+		client.createSession.mockResolvedValue(createHandle(SESSION));
+		const controller = new SessionController(client, createUploadClient());
+
+		await controller.openDefaultSession();
+
+		expect(client.createSession).toHaveBeenCalledOnce();
+		expect(client.attachSession).not.toHaveBeenCalled();
+	});
+
 	it("creates and selects a new session", async () => {
 		const client = createClient();
 		client.createSession.mockResolvedValue(createHandle(SESSION));
@@ -233,6 +259,29 @@ describe("SessionController", () => {
 		} satisfies SessionSnapshot;
 		observed.emit(authoritative);
 		expect(controller.getSnapshot().activeSession).toBe(authoritative);
+	});
+
+	it("shows a user message before the server responds", async () => {
+		let resolvePrompt: ((result: { command: "prompt"; session: SessionSnapshot }) => void) | undefined;
+		const prompt = vi.fn<(text: string) => Promise<{ command: "prompt"; session: SessionSnapshot }>>(
+			() =>
+				new Promise((resolve) => {
+					resolvePrompt = resolve;
+				}),
+		);
+		const handle = { ...createHandle(SESSION), prompt };
+		const client = createClient();
+		client.attachSession.mockResolvedValue(handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+
+		const sending = controller.send("立即显示");
+
+		expect(controller.getSnapshot().activeSession?.transcript).toEqual([
+			expect.objectContaining({ role: "user", content: [{ type: "text", text: "立即显示" }] }),
+		]);
+		resolvePrompt?.({ command: "prompt", session: { ...SESSION, phase: "turn", revision: 2 } });
+		await sending;
 	});
 
 	it("sends an idle session message as a prompt", async () => {

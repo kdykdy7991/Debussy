@@ -34,8 +34,8 @@ describe("live-settings", () => {
 		memory.clear();
 	});
 
-	it("defaults to off when nothing is persisted", () => {
-		expect(readLiveSpeechEnabled()).toBe(false);
+	it("defaults to on when nothing is persisted", () => {
+		expect(readLiveSpeechEnabled()).toBe(true);
 	});
 
 	it("persists the explicit opt-in", () => {
@@ -44,10 +44,10 @@ describe("live-settings", () => {
 		expect(readLiveSpeechEnabled()).toBe(true);
 	});
 
-	it("clears the persisted value when opted out", () => {
+	it("persists an explicit opt-out", () => {
 		writeLiveSpeechEnabled(true);
 		writeLiveSpeechEnabled(false);
-		expect(memory.has(LIVE_SPEECH_STORAGE_KEY)).toBe(false);
+		expect(memory.get(LIVE_SPEECH_STORAGE_KEY)).toBe("0");
 		expect(readLiveSpeechEnabled()).toBe(false);
 	});
 

@@ -23,8 +23,8 @@
  */
 
 import type { LiveSpeechJobHandle } from "@earendil-works/pi-client";
-import type { AudioContextLike } from "./audio-player.ts";
 import { AudioContextUnlocker } from "./audio-context-unlocker.ts";
+import type { AudioContextLike } from "./audio-player.ts";
 import { LivePlaybackController } from "./live-playback-controller.ts";
 import { SpeechController } from "./speech-controller.ts";
 import type { SpeechControllerSource } from "./types.ts";

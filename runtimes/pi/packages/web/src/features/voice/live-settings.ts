@@ -1,7 +1,7 @@
 /**
  * Phase 2 live朗读 setting.
  *
- * The toggle is default-off and lives entirely in `localStorage`. The web
+ * The toggle is default-on and lives entirely in `localStorage`. The web
  * layer never connects to the avatar bridge, never persists per-session state,
  * and never reflects server capability loss into the toggle itself — instead
  * the prompt path consults `isLiveEnabled(snapshot)` and silently drops the
@@ -12,31 +12,30 @@
 export const LIVE_SPEECH_STORAGE_KEY = "pi-web-live-speech-enabled";
 
 export interface LiveSpeechSettingSnapshot {
-	/** Default false; user must opt in explicitly. */
+	/** Default true; an explicit user opt-out is persisted. */
 	enabled: boolean;
 	/** True when the server currently advertises `voice.live === true`. */
 	available: boolean;
 }
 
 /**
- * Reads the persisted user choice. Falls back to `false` when storage is
+ * Reads the persisted user choice. Falls back to `true` when storage is
  * unavailable (private mode, sandboxed iframe, etc.) so callers can treat the
  * returned value as authoritative without an `undefined` branch.
  */
 export function readLiveSpeechEnabled(): boolean {
-	if (typeof window === "undefined") return false;
+	if (typeof window === "undefined") return true;
 	try {
-		return window.localStorage.getItem(LIVE_SPEECH_STORAGE_KEY) === "1";
+		return window.localStorage.getItem(LIVE_SPEECH_STORAGE_KEY) !== "0";
 	} catch {
-		return false;
+		return true;
 	}
 }
 
 export function writeLiveSpeechEnabled(enabled: boolean): void {
 	if (typeof window === "undefined") return;
 	try {
-		if (enabled) window.localStorage.setItem(LIVE_SPEECH_STORAGE_KEY, "1");
-		else window.localStorage.removeItem(LIVE_SPEECH_STORAGE_KEY);
+		window.localStorage.setItem(LIVE_SPEECH_STORAGE_KEY, enabled ? "1" : "0");
 	} catch {
 		// Persistence is best-effort; the in-memory toggle still applies this session.
 	}

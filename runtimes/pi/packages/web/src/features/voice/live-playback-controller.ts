@@ -186,12 +186,7 @@ export class LivePlaybackController {
 	}
 
 	#isTerminal(): boolean {
-		return (
-			this.#state === "idle" ||
-			this.#state === "ended" ||
-			this.#state === "stopped" ||
-			this.#state === "error"
-		);
+		return this.#state === "idle" || this.#state === "ended" || this.#state === "stopped" || this.#state === "error";
 	}
 
 	#handleJob(job: LiveSpeechJob): void {
@@ -208,8 +203,11 @@ export class LivePlaybackController {
 		}
 		if (job.status === "completed") {
 			if (this.#state === "streaming") this.#setState("draining");
-			// If we never opened the stream (empty/no speakable text), close out cleanly.
-			if (this.#state === "waiting_for_text" || this.#state === "generating") {
+			// A cold voice provider can complete the job before the stream opener
+			// resolves with its first PCM chunk. Keep an opening/open reader alive so
+			// that audio is still decoded and drained instead of aborting it here.
+			const hasPendingAudioStream = this.#streamOpening || this.#reader !== undefined;
+			if ((this.#state === "waiting_for_text" || this.#state === "generating") && !hasPendingAudioStream) {
 				++this.#operation;
 				this.#teardownPlayback();
 				this.#setState("ended");

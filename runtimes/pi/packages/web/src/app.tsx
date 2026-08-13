@@ -1,3 +1,4 @@
+import type { LiveSpeechJobHandle } from "@earendil-works/pi-client";
 import type { SessionSnapshot, TranscriptItem } from "@earendil-works/pi-protocol";
 import {
 	type ChangeEvent,
@@ -17,10 +18,9 @@ import { LiveStatusRow } from "./features/voice/live-status-row.tsx";
 import type { LivePlaybackState } from "./features/voice/live-types.ts";
 import { PlaybackArbiter } from "./features/voice/playback-arbiter.ts";
 import { SpeechButton } from "./features/voice/speech-button.tsx";
-import { SpeechController } from "./features/voice/speech-controller.ts";
+import type { SpeechController } from "./features/voice/speech-controller.ts";
 import type { SpeechControllerSource } from "./features/voice/types.ts";
 import { useLiveSpeech } from "./features/voice/use-live-speech.ts";
-import { VoiceSettings } from "./features/voice/voice-settings.tsx";
 import type { PiConnectionStore } from "./lib/connection-controller.ts";
 import type { SessionBrowserStore } from "./lib/session-controller.ts";
 
@@ -57,7 +57,8 @@ export function App({ connection, sessions }: AppProps) {
 	const client = (
 		connection as unknown as {
 			client?: SpeechControllerSource & {
-				getLiveSpeechHandle?: (id: string) => import("@earendil-works/pi-client").LiveSpeechJobHandle | undefined;
+				getLiveSpeechHandle?: (id: string) => LiveSpeechJobHandle | undefined;
+				onLiveSpeechJob?: (listener: (handle: LiveSpeechJobHandle) => void) => () => void;
 			};
 		}
 	).client;
@@ -88,10 +89,17 @@ export function App({ connection, sessions }: AppProps) {
 			);
 		},
 	});
+	useEffect(() => {
+		if (!client?.onLiveSpeechJob) return undefined;
+		return client.onLiveSpeechJob((handle) => {
+			const matchesActiveSession = handle.job.sessionId === sessionSnapshot.activeSessionId;
+			if (matchesActiveSession) live.bindHandle(handle);
+		});
+	}, [client, live.bindHandle, sessionSnapshot.activeSessionId]);
+
 	const [message, setMessage] = useState("");
 	const [sessionQuery, setSessionQuery] = useState("");
 	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const [railOpen, setRailOpen] = useState(false);
 	const composerRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const conversationScrollRef = useRef<HTMLDivElement>(null);
@@ -108,6 +116,7 @@ export function App({ connection, sessions }: AppProps) {
 	const hasActive = active !== undefined;
 	const running = active !== undefined && active.phase !== "idle";
 	const canSend = connected && active !== undefined && !sessionSnapshot.loading && !sessionSnapshot.submitting;
+	const bootstrapping = !active && sessionSnapshot.loading && !connectionSnapshot.error;
 	const visibleSessions = useMemo(() => {
 		const query = sessionQuery.trim().toLocaleLowerCase();
 		if (!query) return sessionSnapshot.sessions;
@@ -266,16 +275,18 @@ export function App({ connection, sessions }: AppProps) {
 					</button>
 				</header>
 
-				<button
-					className="new-chat-button"
-					type="button"
-					disabled={!connected || sessionSnapshot.loading}
-					onClick={createSession}
-				>
-					<span aria-hidden="true">＋</span>
-					<span>新建对话</span>
-					<kbd>NEW</kbd>
-				</button>
+				{!bootstrapping ? (
+					<button
+						className="new-chat-button"
+						type="button"
+						disabled={!connected || sessionSnapshot.loading}
+						onClick={createSession}
+					>
+						<span aria-hidden="true">＋</span>
+						<span>新建对话</span>
+						<kbd>NEW</kbd>
+					</button>
+				) : null}
 
 				<label className="conversation-search">
 					<span aria-hidden="true">⌕</span>
@@ -313,6 +324,11 @@ export function App({ connection, sessions }: AppProps) {
 							</button>
 						))}
 					</nav>
+				) : bootstrapping ? (
+					<div className="sidebar-empty">
+						<span>—</span>
+						<p>正在恢复最近会话…</p>
+					</div>
 				) : (
 					<div className="sidebar-empty">
 						<span>—</span>
@@ -371,14 +387,6 @@ export function App({ connection, sessions }: AppProps) {
 							<i aria-hidden="true" />
 							{CONNECTION_LABELS[connectionSnapshot.state]}
 						</span>
-						<button
-							className="icon-button rail-trigger"
-							type="button"
-							onClick={() => setRailOpen(true)}
-							aria-label="打开会话信息"
-						>
-							☷
-						</button>
 					</div>
 				</header>
 
@@ -410,6 +418,8 @@ export function App({ connection, sessions }: AppProps) {
 							livePlaybackState={live.playbackState}
 							onStopLive={live.stop}
 						/>
+					) : bootstrapping ? (
+						<StartupConversation />
 					) : (
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
@@ -493,6 +503,15 @@ export function App({ connection, sessions }: AppProps) {
 									</span>
 								) : null}
 							</div>
+							{speech?.voice ? (
+								<div className="composer-voice">
+									<LiveSpeechToggle
+										voice={speech.voice}
+										enabled={live.enabled && live.available}
+										onChange={live.setEnabled}
+									/>
+								</div>
+							) : null}
 							<div className="composer-submit">
 								<span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
 								{running ? (
@@ -516,21 +535,11 @@ export function App({ connection, sessions }: AppProps) {
 				</div>
 			</main>
 
-			<SessionRail
-				active={active}
-				open={railOpen}
-				close={() => setRailOpen(false)}
-				speech={speech}
-				liveEnabled={live.enabled}
-				liveAvailable={live.available}
-				onLiveEnabledChange={live.setEnabled}
-			/>
 			<button
-				className={`scrim ${sidebarOpen || railOpen ? "show" : ""}`}
+				className={`scrim ${sidebarOpen ? "show" : ""}`}
 				type="button"
 				onClick={() => {
 					setSidebarOpen(false);
-					setRailOpen(false);
 				}}
 				aria-label="关闭面板"
 			/>
@@ -742,11 +751,18 @@ function TranscriptItemView({
 			<div className="answer-content">
 				{item.content.map((content, contentIndex) => {
 					if (content.type === "text")
-						return <div className="final-answer" key={`${item.id}-${contentIndex}`}><MarkdownText text={content.text} /></div>;
+						return (
+							<div className="final-answer" key={`${item.id}-${contentIndex}`}>
+								<MarkdownText text={content.text} />
+							</div>
+						);
 					if (content.type === "thinking")
 						return (
 							<details className="thinking-note" key={`${item.id}-${contentIndex}`}>
-								<summary><span>思考过程</span><span className="thinking-toggle">展开查看</span></summary>
+								<summary>
+									<span>思考过程</span>
+									<span className="thinking-toggle">展开查看</span>
+								</summary>
 								<div className="thinking-body">{content.redacted ? "推理内容已隐藏" : content.thinking}</div>
 							</details>
 						);
@@ -765,11 +781,7 @@ function TranscriptItemView({
 					{liveState !== "idle" ? <LiveStatusRow state={liveState} onStop={onStopLive} /> : null}
 					{speech?.voiceAvailable && item.status === "complete" ? (
 						<SpeechButton
-							speech={
-								speech && arbiter
-									? wrapSpeechButtonApi(speech, arbiter)
-									: speech
-							}
+							speech={speech && arbiter ? wrapSpeechButtonApi(speech, arbiter) : speech}
 							sessionId={sessionId}
 							messageId={item.id}
 						/>
@@ -780,6 +792,14 @@ function TranscriptItemView({
 					</button>
 				</div>
 			</footer>
+		</section>
+	);
+}
+
+function StartupConversation() {
+	return (
+		<section className="empty-conversation" aria-live="polite">
+			<p>正在连接并恢复最近对话…</p>
 		</section>
 	);
 }
@@ -829,91 +849,6 @@ function EmptyTranscript() {
 			<h2>这个会话还没有内容</h2>
 			<p>在下方输入你的问题。回答会以适合长文阅读的分析稿形式呈现。</p>
 		</section>
-	);
-}
-
-function SessionRail({
-	active,
-	open,
-	close,
-	speech,
-	liveEnabled,
-	liveAvailable,
-	onLiveEnabledChange,
-}: {
-	active: SessionSnapshot | undefined;
-	open: boolean;
-	close: () => void;
-	speech: SpeechController | undefined;
-	liveEnabled: boolean;
-	liveAvailable: boolean;
-	onLiveEnabledChange: (next: boolean) => void;
-}) {
-	return (
-		<aside className={`session-rail ${open ? "open" : ""}`} aria-label="会话信息">
-			<header>
-				<span>会话信息</span>
-				<button className="icon-button rail-close" type="button" onClick={close} aria-label="关闭会话信息">
-					×
-				</button>
-			</header>
-			{active ? (
-				<>
-					<section className="rail-summary">
-						<p>ACTIVE SESSION</p>
-						<h2>{active.name || "未命名对话"}</h2>
-						<span>{active.phase === "idle" ? "可继续对话" : phaseLabel(active.phase)}</span>
-					</section>
-					<dl className="session-facts">
-						<div>
-							<dt>模型</dt>
-							<dd>
-								{active.model.provider}
-								<br />
-								{active.model.id}
-							</dd>
-						</div>
-						<div>
-							<dt>Thinking</dt>
-							<dd>{active.thinkingLevel}</dd>
-						</div>
-						<div>
-							<dt>消息</dt>
-							<dd>{active.transcript.length}</dd>
-						</div>
-						<div>
-							<dt>Revision</dt>
-							<dd>{active.revision}</dd>
-						</div>
-					</dl>
-					<section className="rail-section">
-						<p className="rail-label">工作目录</p>
-						<code>{active.cwd}</code>
-					</section>
-					<section className="rail-section unavailable">
-						<p className="rail-label">来源与引用</p>
-						<strong>当前协议未提供来源数据</strong>
-						<p>接入 Citation 与 RAG schema 后，这里将展示可追溯来源，不会使用模拟数据。</p>
-					</section>
-					{speech?.voice ? (
-						<section className="rail-section">
-							<p className="rail-label">朗读语音</p>
-							<VoiceSettings voice={speech.voice} speech={speech} />
-							<LiveSpeechToggle
-								voice={speech.voice}
-								enabled={liveEnabled && liveAvailable}
-								onChange={onLiveEnabledChange}
-							/>
-						</section>
-					) : null}
-				</>
-			) : (
-				<section className="rail-placeholder">
-					<span>—</span>
-					<p>选择会话后查看运行信息</p>
-				</section>
-			)}
-		</aside>
 	);
 }
 

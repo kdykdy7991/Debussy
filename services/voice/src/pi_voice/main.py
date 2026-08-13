@@ -19,6 +19,39 @@ from pi_voice.service import AudioStreamError, VoiceService
 
 logger = logging.getLogger(__name__)
 
+_LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "()": "uvicorn.logging.DefaultFormatter",
+            "fmt": "%(asctime)s %(levelprefix)s %(message)s",
+            "use_colors": None,
+        },
+        "access": {
+            "()": "uvicorn.logging.AccessFormatter",
+            "fmt": '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr",
+        },
+        "access": {
+            "formatter": "access",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        "uvicorn.error": {"level": "INFO"},
+        "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+    },
+}
+
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
@@ -132,7 +165,7 @@ def create_app(config: VoiceConfig | None = None, service: VoiceService | None =
 
 def run() -> None:
     config = VoiceConfig.from_environment()
-    uvicorn.run(create_app(config), host=config.host, port=config.port)
+    uvicorn.run(create_app(config), host=config.host, port=config.port, log_config=_LOGGING_CONFIG)
 
 
 if __name__ == "__main__":

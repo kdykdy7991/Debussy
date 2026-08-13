@@ -29,7 +29,10 @@ const connection = createPiConnectionController(
 const uploads = createUploader({ baseUrl: httpBaseUrl, token: webSocketToken });
 const sessions = new SessionController(connection.client, uploads);
 
-void connection.connect().catch(() => {});
+void connection
+	.connect()
+	.then(() => sessions.openDefaultSession())
+	.catch(() => {});
 
 createRoot(root).render(
 	<StrictMode>

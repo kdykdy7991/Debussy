@@ -8,6 +8,7 @@ import type {
 	SessionSummary,
 	TranscriptItem,
 	TranscriptProgress,
+	UserTranscriptItem,
 } from "@earendil-works/pi-protocol";
 import type { PiUploadClient } from "./uploader.ts";
 
@@ -60,6 +61,7 @@ export interface SessionBrowserStore {
 	getSnapshot(): SessionBrowserSnapshot;
 	subscribe(listener: () => void): () => void;
 	createSession(): Promise<void>;
+	openDefaultSession(): Promise<void>;
 	selectSession(sessionId: string): Promise<void>;
 	send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult>;
 	abort(): Promise<void>;
@@ -88,7 +90,7 @@ export class SessionController implements SessionBrowserStore {
 			activeSessionId: undefined,
 			activeSession: undefined,
 			uploads: [],
-			loading: false,
+			loading: true,
 			submitting: false,
 			error: undefined,
 		};
@@ -107,6 +109,13 @@ export class SessionController implements SessionBrowserStore {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
 	};
+
+	/** Attach the most recently updated session, creating one only for a new workspace. */
+	async openDefaultSession(): Promise<void> {
+		if (this.#activeHandle?.active) return;
+		const latest = [...this.#snapshot.sessions].sort((left, right) => right.updatedAt - left.updatedAt)[0];
+		await this.#activate(() => (latest ? this.#client.attachSession(latest.id) : this.#client.createSession()));
+	}
 
 	async createSession(): Promise<void> {
 		await this.#activate(() => this.#client.createSession());
@@ -129,15 +138,51 @@ export class SessionController implements SessionBrowserStore {
 			...(speech ? { speech } : {}),
 		};
 		const hasPromptOptions = Object.keys(promptOptions).length > 0;
-		const promptResult = await this.#runSessionAction(handle, () =>
-			this.#snapshot.activeSession?.phase === "idle"
-				? hasPromptOptions
-					? handle.prompt(message, promptOptions)
-					: handle.prompt(message)
-				: hasPromptOptions
-					? handle.steer(message, promptOptions)
-					: handle.steer(message),
-		);
+		const shouldPrompt = this.#snapshot.activeSession?.phase === "idle";
+		const optimisticId = `local-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		const activeSession = this.#snapshot.activeSession;
+		if (activeSession) {
+			const optimisticMessage: UserTranscriptItem = {
+				id: optimisticId,
+				role: "user",
+				content: [{ type: "text", text: message }],
+				timestamp: Date.now(),
+			};
+			this.#setSnapshot({
+				...this.#snapshot,
+				activeSession: {
+					...activeSession,
+					phase: "turn",
+					transcript: [...activeSession.transcript, optimisticMessage],
+				},
+			});
+		}
+		let promptResult: { session: SessionSnapshot; command?: string; liveSpeech?: LiveSpeechJob };
+		try {
+			promptResult = await this.#runSessionAction(handle, () =>
+				shouldPrompt
+					? hasPromptOptions
+						? handle.prompt(message, promptOptions)
+						: handle.prompt(message)
+					: hasPromptOptions
+						? handle.steer(message, promptOptions)
+						: handle.steer(message),
+			);
+		} catch (error) {
+			if (this.#activeHandle === handle && this.#snapshot.activeSession?.id === activeSession?.id) {
+				const current = this.#snapshot.activeSession;
+				if (current) {
+					this.#setSnapshot({
+						...this.#snapshot,
+						activeSession: {
+							...current,
+							transcript: current.transcript.filter((item) => item.id !== optimisticId),
+						},
+					});
+				}
+			}
+			throw error;
+		}
 		// Surface any live朗读 job the server issued so the V9 web layer can
 		// subscribe via the connection-scoped handle map.
 		return {
