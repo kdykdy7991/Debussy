@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Ledger — Concept D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Public+Sans:wght@400;500;600&family=Ma+Shan+Zheng&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F6EFDF;
+    --paper-2:#EFE6CF;
+    --paper-3:#E7DCC0;
+    --ink:#2B2520;
+    --ink-2:#5C5348;
+    --ink-3:#9C917E;
+    --rule:rgba(43,37,32,.13);
+    --rule-soft:rgba(43,37,32,.07);
+    --accent:#2C5B8A;
+    --accent-ink:#1E4270;
+    --accent-soft:#E3E9F0;
+    --terra:#B4533A;
+    --terra-soft:#F4E2D8;
+    --green:#4F7A5A;
+    --serif:"Fraunces",Georgia,"Songti SC",serif;
+    --sans:"Public Sans",ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+    --hand:"Ma Shan Zheng","Kaiti SC",cursive;
+    --ease:cubic-bezier(.23,1,.32,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:var(--sans); background:var(--paper); color:var(--ink);
+    display:grid;
+    grid-template-columns:236px 1fr 216px;
+    grid-template-rows:1fr auto;
+    grid-template-areas:"index content margin" "index composer margin";
+    height:100vh; overflow:hidden;
+    -webkit-font-smoothing:antialiased; font-size:15px;
+  }
+
+  /* ---- index rail ---- */
+  .index{
+    grid-area:index; background:var(--paper-2); border-right:1px solid var(--rule);
+    padding:30px 20px; overflow-y:auto; position:relative;
+  }
+  .index::after{content:"";position:absolute;top:0;bottom:0;right:6px;width:1px;background:var(--rule-soft)}
+  .brand{font-family:var(--serif);font-weight:600;font-size:20px;letter-spacing:-.01em;margin-bottom:4px}
+  .brand .dot{color:var(--terra)}
+  .brand-sub{font-family:var(--hand);font-size:15px;color:var(--ink-3);margin-bottom:30px;transform:rotate(-1deg)}
+  .idx-cap{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:14px;font-weight:600}
+  .idx-item{
+    display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;cursor:pointer;
+    color:var(--ink-2);transition:background .16s ease,color .16s ease;
+  }
+  .idx-item:hover{background:var(--paper-3)}
+  .idx-item.on{background:var(--paper-3);color:var(--ink)}
+  .idx-item .n{font-family:var(--serif);font-size:13px;color:var(--ink-3);min-width:18px}
+  .idx-item.on .n{color:var(--terra)}
+  .idx-item .t{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .idx-item .tag{font-size:10px;color:var(--terra);background:var(--terra-soft);border-radius:5px;padding:1px 6px;margin-left:auto}
+  .idx-foot{margin-top:28px;padding-top:18px;border-top:1px dashed var(--rule);font-family:var(--hand);font-size:14px;color:var(--ink-3);line-height:1.9}
+
+  /* ---- content ---- */
+  .content{
+    grid-area:content; overflow-y:auto; padding:0;
+    background:
+      linear-gradient(var(--paper),var(--paper)),
+      repeating-linear-gradient(to bottom, transparent 0, transparent 31px, var(--rule-soft) 31px, var(--rule-soft) 32px);
+  }
+  .page{max-width:680px;margin:0 auto;padding:44px 40px 60px}
+
+  .date{font-family:var(--hand);font-size:16px;color:var(--ink-3);margin-bottom:40px;display:flex;align-items:center;gap:12px}
+  .date::after{content:"";flex:1;height:1px;background:var(--rule)}
+
+  .turn{margin-bottom:56px}
+  .usr{display:flex;gap:11px;align-items:flex-start;margin-bottom:28px}
+  .usr .pin{width:9px;height:9px;border-radius:50%;background:var(--terra);margin-top:8px;flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .usr .txt{font-family:var(--serif);font-size:17px;line-height:1.55;color:var(--ink)}
+
+  .ai-label{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .ai-label .ava{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:14px;font-weight:600}
+  .ai-label .name{font-family:var(--hand);font-size:15px;color:var(--ink-2)}
+
+  .prose h2{font-family:var(--serif);font-weight:500;font-size:26px;letter-spacing:-.015em;margin:0 0 20px}
+  .prose h2 .u{border-bottom:3px solid var(--paper-3);padding-bottom:2px}
+  .prose h3{font-family:var(--serif);font-weight:600;font-size:16.5px;margin:28px 0 12px}
+  .prose p{color:var(--ink-2);line-height:1.8;margin:0 0 16px;font-size:15.5px}
+  .prose p b,.prose p strong{color:var(--ink);font-weight:600}
+  .prose .lead{font-size:16.5px;color:var(--ink)}
+
+  /* inline citation — circled, hand-stamp */
+  .cite{
+    display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;
+    border-radius:50%;border:1.5px solid var(--accent);color:var(--accent);
+    font-family:var(--serif);font-size:11px;font-weight:600;vertical-align:1px;margin:0 3px;
+    cursor:pointer;transition:background .15s ease,color .15s ease,transform .14s ease;
+  }
+  .cite:hover{background:var(--accent);color:#fff}
+  .cite:active{transform:scale(.88)}
+
+  .prose ul{margin:0 0 18px;list-style:none}
+  .prose ul li{position:relative;padding:11px 0 11px 30px;border-bottom:1px dashed var(--rule);color:var(--ink-2);line-height:1.7}
+  .prose ul li:last-child{border-bottom:none}
+  .prose ul li::before{content:"✦";position:absolute;left:4px;top:12px;color:var(--terra);font-size:11px}
+
+  .tbl{width:100%;border-collapse:collapse;margin:8px 0 18px;font-size:13.5px;font-variant-numeric:tabular-nums}
+  .tbl th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;text-align:left;padding:9px 10px;border-bottom:2px solid var(--paper-3)}
+  .tbl td{padding:10px;border-bottom:1px dashed var(--rule);color:var(--ink-2)}
+  .tbl td.num{text-align:right}
+  .pos{color:var(--green);font-weight:600}.neg{color:var(--terra);font-weight:600}
+
+  .fig{margin:16px 0 20px;padding:18px 20px;background:rgba(255,255,255,.35);border:1px solid var(--rule);border-radius:12px}
+  .fig .cap{font-size:12px;color:var(--ink-3);display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .fig .legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2)}
+  .fig .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
+
+  /* chunk reveal + caret */
+  .chunk{opacity:0;transform:translateY(5px);transition:opacity .5s var(--ease),transform .5s var(--ease)}
+  .chunk.show{opacity:1;transform:none}
+  .caret{display:inline-block;width:2px;height:18px;background:var(--terra);border-radius:1px;vertical-align:-3px;margin-left:2px;animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* ---- margin (annotations) ---- */
+  .margin{grid-area:margin; border-left:1px solid var(--rule); background:var(--paper); padding:30px 18px 24px; overflow-y:auto}
+  .margin-cap{font-family:var(--hand);font-size:16px;color:var(--ink-3);margin-bottom:18px;display:flex;align-items:center;gap:8px}
+  .sticky{
+    background:#FFF9E6; border:1px solid #E8D9A8; border-radius:2px 8px 8px 8px;
+    padding:14px 14px 12px; margin-bottom:18px; position:relative;
+    box-shadow:0 4px 12px rgba(120,100,50,.10);
+  }
+  .sticky::before{content:"";position:absolute;top:-1px;right:-1px;border-width:0 16px 16px 0;border-style:solid;border-color:#E8D9A8 transparent transparent transparent}
+  .sticky .s-cap{font-family:var(--hand);font-size:14px;color:var(--terra);margin-bottom:8px}
+  .sticky .s-step{font-size:12.5px;color:var(--ink-2);line-height:1.8;display:flex;gap:8px}
+  .sticky .s-step .mk{color:var(--terra)}
+  .sticky .s-step{opacity:0;transition:opacity .4s ease}
+  .sticky .s-step.show{opacity:1}
+
+  .note{margin-bottom:14px;opacity:.92;transition:opacity .2s ease}
+  .note .n-cap{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+  .note .n-num{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--accent);color:var(--accent);font-family:var(--serif);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center}
+  .note .n-arrow{color:var(--ink-3);font-family:var(--hand);font-size:13px}
+  .note .n-body{font-family:var(--hand);font-size:14.5px;color:var(--accent-ink);line-height:1.55;padding-left:27px}
+  .note .n-src{font-family:var(--sans);font-size:11px;color:var(--ink-3);padding-left:27px;margin-top:2px;line-height:1.5}
+  .note.hot{opacity:1}
+  .note.hot .n-num{background:var(--accent);color:#fff}
+
+  /* ---- composer ---- */
+  .composer{grid-area:composer; border-top:1px solid var(--rule); background:var(--paper); padding:16px 40px 20px}
+  .composer-inner{max-width:680px;margin:0 auto}
+  .cbox{display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border:1.5px solid var(--paper-3);border-radius:12px;background:rgba(255,255,255,.3);transition:border-color .18s ease}
+  .cbox:focus-within{border-color:#CBBF9E}
+  .cbox textarea{flex:1;border:none;outline:none;resize:none;background:transparent;font-family:var(--sans);font-size:15px;line-height:1.6;color:var(--ink);max-height:130px;min-height:26px;padding:6px 2px}
+  .cbox textarea::placeholder{color:var(--ink-3)}
+  .wbtn{width:36px;height:36px;border-radius:10px;border:none;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:17px;transition:background .16s ease,transform .14s ease}
+  .wbtn:hover{background:var(--accent-ink)}
+  .wbtn:active{transform:scale(.9)}
+  .c-tools{display:flex;gap:4px;margin-right:2px}
+  .ctool{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--ink-3);cursor:pointer;font-size:14px;transition:background .15s ease,color .15s ease}
+  .ctool:hover{background:var(--paper-2);color:var(--ink-2)}
+  .c-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:11.5px;color:var(--ink-3)}
+  .c-foot .hint{display:flex;gap:16px}
+  .c-foot .model{font-family:var(--serif);font-style:italic;color:var(--ink-2)}
+
+  @media(prefers-reduced-motion:reduce){.chunk,.sticky .s-step{transition:none}.caret{animation:none;opacity:0}}
+  @media(max-width:1080px){.margin{display:none}body{grid-template-columns:236px 1fr}}
+  @media(max-width:760px){.index{display:none}body{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+  <nav class="index">
+    <div class="brand">Ledger<span class="dot">.</span></div>
+    <div class="brand-sub">同事手边的账本</div>
+    <div class="idx-cap">Threads</div>
+    <div class="idx-item on"><span class="n">1.</span><span class="t">华东区 Q2 经营分析</span></div>
+    <div class="idx-item"><span class="n">2.</span><span class="t">差旅报销政策整理</span><span class="tag">政策</span></div>
+    <div class="idx-item"><span class="n">3.</span><span class="t">Q3 销售预测草案</span></div>
+    <div class="idx-item"><span class="n">4.</span><span class="t">竞品定价对比</span></div>
+    <div class="idx-item"><span class="n">5.</span><span class="t">客户续约风险清单</span></div>
+    <div class="idx-item"><span class="n">6.</span><span class="t">上周市场周报</span><span class="tag">报告</span></div>
+    <div class="idx-foot">今日备忘<br>· 下午 3 点 复盘会<br>· 补交 Q2 报销</div>
+  </nav>
+
+  <main class="content">
+    <div class="page">
+      <div class="date">8 月 13 日 · 星期三</div>
+
+      <!-- TURN 1 -->
+      <section class="turn" id="turn1">
+        <div class="usr"><span class="pin"></span><span class="txt">早。</span></div>
+        <div class="ai-label"><span class="ava">L</span><span class="name">Ledger · 助手</span></div>
+        <div class="prose"><p class="chunk lead" id="d1">早。今天想从哪儿开始？数据、政策，还是先开份周报？</p></div>
+      </section>
+
+      <!-- TURN 2 -->
+      <section class="turn" id="turn2">
+        <div class="usr"><span class="pin"></span><span class="txt">这个季度的差旅报销政策，尤其国际出差部分，帮我整理一下。</span></div>
+        <div class="ai-label"><span class="ava">L</span><span class="name">Ledger · 已查阅知识库</span></div>
+        <div class="prose">
+          <h2 class="chunk">差旅报销<span class="u">要点</span></h2>
+          <p class="chunk lead">本季度沿用 4 月修订的《差旅管理办法 v4.2》，国际出差在<b>预审批、住宿上限、补贴起算</b>三处收紧。<span class="cite" data-n="1">1</span></p>
+          <h3 class="chunk">住宿标准 · 每晚含税</h3>
+          <div class="chunk"><ul>
+            <li>一线城市 — 1,200 元 · 持平<span class="cite" data-n="2">2</span></li>
+            <li>其他城市 — 800 元 · 下调 100</li>
+            <li>国际（欧美）— USD 280 · 新增浮动</li>
+            <li>国际（东南亚）— USD 150 · 需合住证明</li>
+          </ul></div>
+          <h3 class="chunk">国际 · 特别注意</h3>
+          <p class="chunk">补贴改按<b>「到达日 00:00」</b>起算，跨时区需附航司行程单复核。<span class="cite" data-n="3">3</span></p>
+        </div>
+      </section>
+
+      <!-- TURN 3 -->
+      <section class="turn" id="turn3">
+        <div class="usr"><span class="pin"></span><span class="txt">再把华东区 Q2 各产品线营收对比分析一下，附图表。</span></div>
+        <div class="ai-label"><span class="ava">L</span><span class="name">Ledger · 数据分析</span></div>
+        <div class="prose">
+          <h2 class="chunk">华东区 Q2 <span class="u">营收结构</span></h2>
+          <p class="chunk lead">总营收 <b>1.10 亿</b>，同比 <b>+14.2%</b>。云平台与智能硬件驱动增长，企业套件结构性下滑。</p>
+
+          <div class="fig chunk">
+            <div class="cap"><span>各产品线营收 · 百万元</span><span class="legend"><span><i style="background:var(--accent)"></i>今年 Q2</span><span><i style="background:#CBBF9E"></i>去年 Q2</span></span></div>
+            <svg viewBox="0 0 620 220" width="100%" role="img">
+              <g stroke="rgba(43,37,32,.08)" stroke-width="1"><line x1="40" y1="30" x2="620" y2="30"/><line x1="40" y1="82" x2="620" y2="82"/><line x1="40" y1="134" x2="620" y2="134"/><line x1="40" y1="186" x2="620" y2="186"/></g>
+              <g font-family="Public Sans" font-size="11" fill="#9C917E"><text x="34" y="33" text-anchor="end">40</text><text x="34" y="85" text-anchor="end">30</text><text x="34" y="137" text-anchor="end">20</text><text x="34" y="189" text-anchor="end">10</text></g>
+              <g>
+                <rect x="86"  y="65.1" width="32" height="120.9" rx="5" fill="#CBBF9E"/>
+                <rect x="122" y="22.2" width="32" height="163.8" rx="5" fill="#2C5B8A"/>
+                <text x="138" y="16" text-anchor="middle" font-family="Public Sans" font-size="12" font-weight="600" fill="#1E4270">42</text>
+              </g>
+              <g>
+                <rect x="204" y="92.4" width="32" height="93.6" rx="5" fill="#CBBF9E"/>
+                <rect x="240" y="76.8" width="32" height="109.2" rx="5" fill="#2C5B8A"/>
+                <text x="256" y="71" text-anchor="middle" font-family="Public Sans" font-size="12" font-weight="600" fill="#1E4270">28</text>
+              </g>
+              <g>
+                <rect x="322" y="100.2" width="32" height="85.8" rx="5" fill="#CBBF9E"/>
+                <rect x="358" y="112.2" width="32" height="73.8" rx="5" fill="#2C5B8A"/>
+                <text x="374" y="106" text-anchor="middle" font-family="Public Sans" font-size="12" font-weight="600" fill="#1E4270">19</text>
+              </g>
+              <g>
+                <rect x="440" y="154.8" width="32" height="31.2" rx="5" fill="#CBBF9E"/>
+                <rect x="476" y="139.2" width="32" height="46.8" rx="5" fill="#2C5B8A"/>
+                <text x="492" y="133" text-anchor="middle" font-family="Public Sans" font-size="12" font-weight="600" fill="#1E4270">12</text>
+              </g>
+              <g>
+                <rect x="558" y="143.1" width="32" height="42.9" rx="5" fill="#CBBF9E"/>
+                <rect x="594" y="151.2" width="32" height="34.8" rx="5" fill="#2C5B8A"/>
+                <text x="610" y="145" text-anchor="middle" font-family="Public Sans" font-size="12" font-weight="600" fill="#1E4270">9</text>
+              </g>
+              <g font-family="Public Sans" font-size="12" fill="#5C5348" text-anchor="middle"><text x="134" y="206">云平台</text><text x="252" y="206">数据服务</text><text x="370" y="206">企业套件</text><text x="488" y="206">智能硬件</text><text x="606" y="206">咨询</text></g>
+            </svg>
+          </div>
+
+          <h3 class="chunk">三个信号</h3>
+          <div class="chunk"><ul>
+            <li>云平台占比升至 <b>38%</b>，成为绝对主力。</li>
+            <li>企业套件 <span class="neg">−13.6%</span>，唯一负增长，续约流失集中在中型客户。</li>
+            <li>智能硬件基数小但增速最快（<span class="pos">+50%</span>），建议 Q3 提高备货弹性。</li>
+          </ul></div>
+
+          <div class="chunk"><table class="tbl">
+            <thead><tr><th>产品线</th><th class="num">今年 Q2</th><th class="num">去年 Q2</th><th class="num">同比</th></tr></thead>
+            <tbody>
+              <tr><td>云平台</td><td class="num">42.0</td><td class="num">31.0</td><td class="num pos">+35.5%</td></tr>
+              <tr><td>数据服务</td><td class="num">28.0</td><td class="num">24.0</td><td class="num pos">+16.7%</td></tr>
+              <tr><td>企业套件</td><td class="num">19.0</td><td class="num">22.0</td><td class="num neg">−13.6%</td></tr>
+              <tr><td>智能硬件</td><td class="num">12.0</td><td class="num">8.0</td><td class="num pos">+50.0%</td></tr>
+              <tr><td>咨询服务</td><td class="num">9.0</td><td class="num">11.0</td><td class="num neg">−18.2%</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside class="margin" id="margin">
+    <div class="margin-cap">✎ 页边批注</div>
+    <div class="sticky">
+      <div class="s-cap">正在处理…</div>
+      <div class="s-step" id="st1"><span class="mk">·</span>正在查阅知识库</div>
+      <div class="s-step" id="st2"><span class="mk">·</span>已找到 3 篇文档</div>
+      <div class="s-step" id="st3"><span class="mk">✓</span>整理完成</div>
+    </div>
+    <div class="note" data-note="1"><div class="n-cap"><span class="n-num">1</span><span class="n-arrow">↴ 出处</span></div><div class="n-body">《差旅管理办法 v4.2》</div><div class="n-src">HR / 政策与制度 / 差旅管理办法</div></div>
+    <div class="note" data-note="2"><div class="n-cap"><span class="n-num">2</span><span class="n-arrow">↴ 出处</span></div><div class="n-body">《2026 Q3 住宿标准调整》</div><div class="n-src">财务 / 费用标准 / 住宿</div></div>
+    <div class="note" data-note="3"><div class="n-cap"><span class="n-num">3</span><span class="n-arrow">↴ 出处</span></div><div class="n-body">《国际出差报销指引》</div><div class="n-src">财务 / 报销指引 / 国际</div></div>
+  </aside>
+
+  <div class="composer">
+    <div class="composer-inner">
+      <div class="cbox">
+        <div class="c-tools">
+          <span class="ctool" title="附件">📎</span>
+          <span class="ctool" title="知识库">@</span>
+        </div>
+        <textarea id="ta" rows="1" placeholder="继续追问，或记一个新问题…"></textarea>
+        <button class="wbtn" title="记录">✎</button>
+      </div>
+      <div class="c-foot">
+        <span class="hint"><span>⌘↵ 发送</span><span>⇧↵ 换行</span></span>
+        <span class="model">Fable 5</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const d = ms => new Promise(r=>setTimeout(r,ms));
+
+  async function playChunks(wrap, gap){
+    const cs = wrap.querySelectorAll('.chunk');
+    for(const c of cs){ c.classList.add('show'); if(!rm) await d(gap); }
+  }
+  async function playSticky(){
+    if(rm){ ['st1','st2','st3'].forEach(i=>document.getElementById(i).classList.add('show')); return; }
+    for(const id of ['st1','st2','st3']){ document.getElementById(id).classList.add('show'); await d(420); }
+  }
+
+  async function run(){
+    if(rm){ document.querySelectorAll('.chunk').forEach(c=>c.classList.add('show')); return; }
+    const caret = document.createElement('span'); caret.className='caret';
+    document.getElementById('d1').appendChild(caret);
+    await playChunks(document.querySelector('#turn1 .prose'), 30);
+    caret.remove();
+    await d(450);
+    await playSticky();
+    await playChunks(document.querySelector('#turn2 .prose'), 110);
+    await d(400);
+    await playChunks(document.querySelector('#turn3 .prose'), 95);
+  }
+  run();
+
+  document.querySelectorAll('.cite').forEach(c=>{
+    c.addEventListener('click', ()=>{
+      const n = c.dataset.n;
+      document.querySelectorAll('.note').forEach(no=>no.classList.remove('hot'));
+      const note = document.querySelector(`.note[data-note="${n}"]`);
+      if(note) note.classList.add('hot');
+    });
+  });
+})();
+</script>
+</body>
+</html>

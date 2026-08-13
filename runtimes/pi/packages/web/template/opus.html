@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Concept D - Document Stream</title>
+<style>
+:root {
+  --paper: #FDFBF7;
+  --paper-dark: #F5F1E8;
+  --paper-darker: #EBE5D6;
+
+  --ink-1: #1A1612;
+  --ink-2: #3E3A33;
+  --ink-3: #6B6760;
+  --ink-4: #9A968E;
+  --ink-5: #C4C1BA;
+
+  --terracotta: #D87A5C;
+  --terracotta-dim: #B86548;
+  --terracotta-pale: #F4DED6;
+
+  --olive: #8B9B7A;
+  --olive-pale: #E8EDE3;
+
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Monaco', monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--paper-dark);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+}
+
+.navbar {
+  background: var(--paper);
+  border-bottom: 1px solid var(--paper-darker);
+  padding: 0.75rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-left {
+  display: flex;
+  align-items: center;
+  gap: 2.5rem;
+}
+
+.brand {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--terracotta);
+  letter-spacing: -0.02em;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.nav-tab {
+  padding: 0.5rem 1rem;
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.15s;
+  font-family: var(--font-sans);
+}
+
+.nav-tab:hover {
+  background: var(--paper-dark);
+  color: var(--ink-2);
+}
+
+.nav-tab.active {
+  background: var(--terracotta-pale);
+  color: var(--terracotta-dim);
+}
+
+.nav-right {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.nav-btn {
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.15s;
+  font-family: var(--font-sans);
+}
+
+.nav-btn:hover {
+  background: var(--paper-dark);
+  color: var(--ink-2);
+}
+
+.main {
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  overflow: hidden;
+}
+
+.sidebar-left {
+  background: var(--paper);
+  border-right: 1px solid var(--paper-darker);
+  padding: 1.5rem 1rem;
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  margin-bottom: 2rem;
+}
+
+.sidebar-heading {
+  font-size: 11px;
+  color: var(--ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
+  padding: 0 0.75rem;
+  font-weight: 500;
+}
+
+.thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.thread-item {
+  padding: 0.6rem 0.75rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 13px;
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-item:hover {
+  background: var(--paper-dark);
+}
+
+.thread-item.active {
+  background: var(--terracotta-pale);
+  color: var(--terracotta-dim);
+  font-weight: 500;
+}
+
+.content-area {
+  background: var(--paper);
+  overflow-y: auto;
+  padding: 3rem 0;
+}
+
+.document {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 3rem;
+}
+
+.doc-header {
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 2px solid var(--paper-darker);
+}
+
+.doc-title {
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.03em;
+  line-height: 1.3;
+  margin-bottom: 1rem;
+}
+
+.doc-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 13px;
+  color: var(--ink-4);
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.doc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.question {
+  padding: 1rem 1.25rem;
+  background: var(--olive-pale);
+  border-left: 3px solid var(--olive);
+  border-radius: 0 8px 8px 0;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.answer-text {
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--ink-1);
+}
+
+.answer-text p {
+  margin-bottom: 1.25rem;
+}
+
+.answer-text h3 {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 2rem 0 1rem 0;
+  color: var(--ink-1);
+  letter-spacing: -0.02em;
+}
+
+.answer-text ul {
+  margin: 1.25rem 0;
+  padding-left: 1.5rem;
+}
+
+.answer-text li {
+  margin-bottom: 0.75rem;
+  color: var(--ink-2);
+}
+
+.answer-text strong {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+.ref-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 0.35rem;
+  font-size: 11px;
+  color: var(--terracotta);
+  text-decoration: none;
+  background: var(--terracotta-pale);
+  border-radius: 4px;
+  margin: 0 0.15em;
+  transition: all 0.15s;
+  font-weight: 600;
+}
+
+.ref-link:hover {
+  background: var(--terracotta-dim);
+  color: var(--paper);
+}
+
+.insight-box {
+  background: var(--terracotta-pale);
+  border: 1px solid var(--paper-darker);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.insight-label {
+  font-size: 11px;
+  color: var(--terracotta-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ink-1);
+  font-family: var(--font-serif);
+}
+
+.metric-note {
+  font-size: 12px;
+  color: var(--terracotta-dim);
+}
+
+.sources-section {
+  background: var(--paper-dark);
+  border: 1px solid var(--paper-darker);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.sources-heading {
+  font-size: 12px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.source-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.source {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: var(--paper);
+  border-radius: 8px;
+  border: 1px solid var(--paper-darker);
+}
+
+.source-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: var(--terracotta-pale);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--terracotta-dim);
+  font-weight: 600;
+}
+
+.source-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.source-title {
+  font-size: 13px;
+  color: var(--ink-1);
+  font-weight: 500;
+}
+
+.source-path {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+}
+
+.activity-note {
+  padding: 1rem 1.25rem;
+  background: var(--olive-pale);
+  border-left: 3px solid var(--olive);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.activity-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--olive-pale);
+  border-top-color: var(--olive);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.sidebar-right {
+  background: var(--paper-dark);
+  border-left: 1px solid var(--paper-darker);
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.panel {
+  margin-bottom: 2rem;
+}
+
+.panel-heading {
+  font-size: 12px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.knowledge-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.knowledge-chip {
+  padding: 0.75rem;
+  background: var(--paper);
+  border: 1px solid var(--paper-darker);
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.knowledge-chip:hover {
+  border-color: var(--terracotta-pale);
+}
+
+.knowledge-name {
+  color: var(--ink-2);
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.knowledge-count {
+  color: var(--ink-4);
+  font-size: 11px;
+}
+
+.composer-dock {
+  position: fixed;
+  bottom: 0;
+  left: 220px;
+  right: 280px;
+  background: var(--paper);
+  border-top: 1px solid var(--paper-darker);
+  padding: 1.5rem 3rem;
+  z-index: 100;
+}
+
+.composer {
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.composer-field {
+  background: var(--paper-dark);
+  border: 2px solid var(--paper-darker);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--ink-1);
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.composer-field:focus {
+  border-color: var(--terracotta-dim);
+}
+
+.composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.action-chips {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.action-chip {
+  background: none;
+  border: 1px solid var(--paper-darker);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  color: var(--ink-3);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--font-sans);
+}
+
+.action-chip:hover {
+  background: var(--paper-dark);
+  color: var(--ink-2);
+}
+
+.action-chip.enabled {
+  background: var(--terracotta-pale);
+  border-color: var(--terracotta-pale);
+  color: var(--terracotta-dim);
+}
+
+.submit-btn {
+  background: var(--terracotta);
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 1.75rem;
+  color: var(--paper);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-family: var(--font-sans);
+}
+
+.submit-btn:hover {
+  opacity: 0.9;
+}
+
+.writing-indicator {
+  display: inline-block;
+  width: 2px;
+  height: 1.2em;
+  background: var(--terracotta);
+  margin-left: 3px;
+  animation: blink 1s infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <nav class="navbar">
+    <div class="nav-left">
+      <div class="brand">Tangle</div>
+      <div class="nav-tabs">
+        <button class="nav-tab active">对话</button>
+        <button class="nav-tab">文档</button>
+        <button class="nav-tab">知识库</button>
+      </div>
+    </div>
+    <div class="nav-right">
+      <button class="nav-btn">GPT-4 ▾</button>
+      <button class="nav-btn">导出</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <aside class="sidebar-left">
+      <div class="sidebar-section">
+        <div class="sidebar-heading">最近对话</div>
+        <div class="thread-list">
+          <div class="thread-item active">Q3 产品规划分析</div>
+          <div class="thread-item">竞品调研报告</div>
+          <div class="thread-item">技术文档总结</div>
+          <div class="thread-item">用户访谈整理</div>
+          <div class="thread-item">周报生成</div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="content-area">
+      <article class="document">
+        <header class="doc-header">
+          <h1 class="doc-title">Q3 产品规划与增长策略分析</h1>
+          <div class="doc-meta">
+            <div class="meta-item">
+              <span>📅</span>
+              <span>2026年8月13日</span>
+            </div>
+            <div class="meta-item">
+              <span>🤖</span>
+              <span>Agent 生成</span>
+            </div>
+            <div class="meta-item">
+              <span>📚</span>
+              <span>4 个来源</span>
+            </div>
+          </div>
+        </header>
+
+        <div class="doc-body">
+          <div class="exchange">
+            <div class="question">
+              分析一下我们 Q3 的产品规划，重点关注用户增长策略
+            </div>
+
+            <div class="answer">
+              <div class="answer-text">
+                <p>根据 Q3 产品规划文档<a href="#" class="ref-link">1</a>和近期用户调研数据<a href="#" class="ref-link">2</a>，本季度增长策略聚焦在三个核心方向：</p>
+
+                <h3>用户获取优化</h3>
+                <p>计划通过改进 Onboarding 流程降低新用户流失率。当前数据显示首日留存率为 42%，目标提升至 58%。主要措施包括简化注册流程、优化首次使用引导，以及在关键节点提供情境化帮助<a href="#" class="ref-link">3</a>。</p>
+
+                <h3>功能深化与留存</h3>
+                <p>Q3 将重点打磨协作功能和知识管理模块。用户访谈反馈显示，团队协作场景下的需求尚未得到充分满足，计划推出实时协作编辑和更智能的知识检索能力。</p>
+
+                <h3>企业客户拓展</h3>
+                <p>基于现有 SMB 客户的成功案例，Q3 将系统化企业销售流程。产品层面需要补齐 SSO、权限管理和审计日志等企业必需功能<a href="#" class="ref-link">4</a>。</p>
+              </div>
+
+              <div class="insight-box">
+                <div class="insight-label">关键指标</div>
+                <div class="metrics">
+                  <div class="metric">
+                    <div class="metric-label">月活用户目标</div>
+                    <div class="metric-value">120K</div>
+                    <div class="metric-note">当前 85K，增长 41%</div>
+                  </div>
+                  <div class="metric">
+                    <div class="metric-label">付费转化率</div>
+                    <div class="metric-value">8.0%</div>
+                    <div class="metric-note">当前 5.2%，提升 2.8pp</div>
+                  </div>
+                  <div class="metric">
+                    <div class="metric-label">企业客户</div>
+                    <div class="metric-value">15 家</div>
+                    <div class="metric-note">新签约目标</div>
+                  </div>
+                  <div class="metric">
+                    <div class="metric-label">NPS 分数</div>
+                    <div class="metric-value">45+</div>
+                    <div class="metric-note">质量门槛</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sources-section">
+                <div class="sources-heading">参考来源</div>
+                <div class="source-grid">
+                  <div class="source">
+                    <div class="source-num">1</div>
+                    <div class="source-info">
+                      <div class="source-title">2026 Q3 产品规划 v2.3</div>
+                      <div class="source-path">/产品文档/规划/Q3-2026.md</div>
+                    </div>
+                  </div>
+                  <div class="source">
+                    <div class="source-num">2</div>
+                    <div class="source-info">
+                      <div class="source-title">用户调研报告 - 7月</div>
+                      <div class="source-path">/用户研究/调研/2026-07-report.pdf</div>
+                    </div>
+                  </div>
+                  <div class="source">
+                    <div class="source-num">3</div>
+                    <div class="source-info">
+                      <div class="source-title">Onboarding 优化方案</div>
+                      <div class="source-path">/产品文档/优化/onboarding-v3.md</div>
+                    </div>
+                  </div>
+                  <div class="source">
+                    <div class="source-num">4</div>
+                    <div class="source-info">
+                      <div class="source-title">企业功能需求清单</div>
+                      <div class="source-path">/销售/enterprise-requirements.xlsx</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="exchange">
+            <div class="question">
+              具体的增长目标是什么？
+            </div>
+
+            <div class="answer">
+              <div class="activity-note">
+                <div class="activity-spinner"></div>
+                <span>正在生成回复...</span>
+              </div>
+
+              <div class="answer-text">
+                <p>根据规划文档，Q3 核心增长目标包括：</p>
+                <ul>
+                  <li>月活用户增长至 120K（当前 85K）</li>
+                  <li>付费转化率提升至 8%（当前 5.2%）</li>
+                  <li>企业客户签约 15 家</li>
+                  <li>NPS 分数达到 45+</li>
+                </ul>
+                <p>这些目标对应的关键里程碑已在产品 Roadmap 中明确<span class="writing-indicator"></span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <div class="composer-dock">
+        <div class="composer">
+          <textarea class="composer-field" rows="2" placeholder="继续对话，或提出新问题..."></textarea>
+          <div class="composer-actions">
+            <div class="action-chips">
+              <button class="action-chip">📎 文件</button>
+              <button class="action-chip enabled">📚 知识库</button>
+              <button class="action-chip">🔍 搜索</button>
+              <button class="action-chip">💭 深度思考</button>
+            </div>
+            <button class="submit-btn">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="sidebar-right">
+      <div class="panel">
+        <div class="panel-heading">已启用知识库</div>
+        <div class="knowledge-items">
+          <div class="knowledge-chip">
+            <div class="knowledge-name">产品文档</div>
+            <div class="knowledge-count">128 篇文档</div>
+          </div>
+          <div class="knowledge-chip">
+            <div class="knowledge-name">用户研究</div>
+            <div class="knowledge-count">43 篇文档</div>
+          </div>
+          <div class="knowledge-chip">
+            <div class="knowledge-name">研发规范</div>
+            <div class="knowledge-count">67 篇文档</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-heading">Agent 能力</div>
+        <div class="knowledge-items">
+          <div class="knowledge-chip">
+            <div class="knowledge-name">文档分析</div>
+          </div>
+          <div class="knowledge-chip">
+            <div class="knowledge-name">数据提取</div>
+          </div>
+          <div class="knowledge-chip">
+            <div class="knowledge-name">报告生成</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+</body>
+</html>

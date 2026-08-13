@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concept A: Editorial Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      background: #F7F4EF;
+      color: #1F2421;
+      overflow: hidden;
+    }
+
+    .app {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 280px;
+      background: #FBF9F5;
+      border-right: 1px solid #E7E1D7;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 24px 20px;
+      border-bottom: 1px solid #E7E1D7;
+    }
+
+    .sidebar-title {
+      font-family: 'Fraunces', serif;
+      font-size: 18px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      color: #1F2421;
+      margin-bottom: 4px;
+    }
+
+    .sidebar-subtitle {
+      font-size: 12px;
+      color: #5C635D;
+      font-weight: 400;
+    }
+
+    .conversations {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .conversation-item {
+      padding: 12px;
+      margin-bottom: 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .conversation-item:hover {
+      background: rgba(196, 97, 47, 0.06);
+    }
+
+    .conversation-item.active {
+      background: #F2E3D6;
+    }
+
+    .conversation-title {
+      font-size: 13px;
+      font-weight: 400;
+      color: #1F2421;
+      margin-bottom: 4px;
+    }
+
+    .conversation-preview {
+      font-size: 11px;
+      color: #5C635D;
+      line-height: 1.4;
+    }
+
+    .new-chat-btn {
+      margin: 12px;
+      padding: 12px;
+      background: #C4612F;
+      color: #FBF9F5;
+      border: none;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .new-chat-btn:hover {
+      background: #A94E22;
+      transform: translateY(-1px);
+    }
+
+    /* Main */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #F7F4EF;
+    }
+
+    /* Nav */
+    .nav {
+      background: rgba(251, 249, 245, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid #E7E1D7;
+      padding: 16px 32px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .nav-content {
+      max-width: 720px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .nav-title {
+      font-family: 'Fraunces', serif;
+      font-size: 16px;
+      font-weight: 400;
+      color: #1F2421;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: #F2E3D6;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #C4612F;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #C4612F;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Chat */
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px;
+    }
+
+    .chat-inner {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .message {
+      margin-bottom: 32px;
+    }
+
+    .message-user {
+      display: inline-block;
+      padding: 10px 16px;
+      background: #FFFFFF;
+      border: 1px solid #E7E1D7;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #1F2421;
+      margin-bottom: 8px;
+    }
+
+    .message-meta {
+      font-size: 11px;
+      color: #5C635D;
+      margin-left: 4px;
+    }
+
+    /* AI Response */
+    .ai-response {
+      margin-top: 24px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 4px 10px;
+      background: #F2E3D6;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #C4612F;
+      font-weight: 500;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .ai-title {
+      font-family: 'Fraunces', serif;
+      font-size: 28px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.3;
+      color: #1F2421;
+      margin-bottom: 20px;
+    }
+
+    .ai-title em {
+      font-style: italic;
+      color: #C4612F;
+      font-weight: 400;
+    }
+
+    .ai-content {
+      font-size: 15px;
+      line-height: 1.7;
+      color: #1F2421;
+    }
+
+    .ai-content p {
+      margin-bottom: 16px;
+    }
+
+    .ai-content ul {
+      margin: 16px 0;
+      padding-left: 20px;
+    }
+
+    .ai-content li {
+      margin-bottom: 8px;
+    }
+
+    .citation-inline {
+      display: inline-block;
+      color: #C4612F;
+      text-decoration: none;
+      font-size: 12px;
+      vertical-align: super;
+      font-weight: 500;
+      margin-left: 2px;
+    }
+
+    .citation-inline:hover {
+      text-decoration: underline;
+    }
+
+    /* Agent Activity */
+    .agent-activity {
+      margin: 24px 0;
+      padding: 16px;
+      background: rgba(242, 227, 214, 0.3);
+      border-left: 2px solid #C4612F;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .activity-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .activity-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #C4612F;
+      animation: spin 1.5s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .activity-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #C4612F;
+    }
+
+    .activity-steps {
+      font-size: 13px;
+      color: #5C635D;
+      line-height: 1.6;
+    }
+
+    .activity-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .step-check {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #C4612F;
+      color: #FBF9F5;
+      font-size: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Sources */
+    .sources {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #E7E1D7;
+    }
+
+    .sources-title {
+      font-family: 'Fraunces', serif;
+      font-size: 14px;
+      font-weight: 400;
+      margin-bottom: 12px;
+      color: #5C635D;
+    }
+
+    .source-item {
+      display: block;
+      padding: 12px;
+      background: #FFFFFF;
+      border: 1px solid #E7E1D7;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+    }
+
+    .source-item:hover {
+      border-color: #C4612F;
+      transform: translateY(-1px);
+    }
+
+    .source-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #1F2421;
+      margin-bottom: 4px;
+    }
+
+    .source-path {
+      font-size: 11px;
+      color: #5C635D;
+    }
+
+    /* Composer */
+    .composer {
+      background: #FBF9F5;
+      border-top: 1px solid #E7E1D7;
+      padding: 24px 32px;
+    }
+
+    .composer-inner {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .composer-attachments {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .attachment-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: #F2E3D6;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #C4612F;
+      font-weight: 500;
+    }
+
+    .composer-input-wrapper {
+      position: relative;
+      background: #FFFFFF;
+      border: 1px solid #E7E1D7;
+      border-radius: 16px;
+      padding: 14px 16px;
+      transition: border-color 0.2s;
+    }
+
+    .composer-input-wrapper:focus-within {
+      border-color: #C4612F;
+    }
+
+    .composer-input {
+      width: 100%;
+      border: none;
+      outline: none;
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      color: #1F2421;
+      resize: none;
+      min-height: 24px;
+      max-height: 120px;
+    }
+
+    .composer-input::placeholder {
+      color: #5C635D;
+    }
+
+    .composer-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .composer-tools {
+      display: flex;
+      gap: 4px;
+    }
+
+    .tool-btn {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid #E7E1D7;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #5C635D;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-weight: 400;
+    }
+
+    .tool-btn:hover {
+      background: #F2E3D6;
+      border-color: #C4612F;
+      color: #C4612F;
+    }
+
+    .send-btn {
+      padding: 8px 20px;
+      background: #C4612F;
+      color: #FBF9F5;
+      border: none;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .send-btn:hover {
+      background: #A94E22;
+      transform: translateY(-1px);
+    }
+
+    /* Streaming cursor */
+    .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.2em;
+      background: #C4612F;
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+      vertical-align: baseline;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title">Enterprise AI</div>
+        <div class="sidebar-subtitle">智能助手</div>
+      </div>
+      <div class="conversations">
+        <div class="conversation-item active">
+          <div class="conversation-title">Q3 营收分析</div>
+          <div class="conversation-preview">基于最新财报数据的深度分析…</div>
+        </div>
+        <div class="conversation-item">
+          <div class="conversation-title">产品路线图规划</div>
+          <div class="conversation-preview">整理了过去三个月的需求…</div>
+        </div>
+        <div class="conversation-item">
+          <div class="conversation-title">竞品调研报告</div>
+          <div class="conversation-preview">已完成5家竞品的详细对比…</div>
+        </div>
+        <div class="conversation-item">
+          <div class="conversation-title">团队周报汇总</div>
+          <div class="conversation-preview">本周关键进展和风险点…</div>
+        </div>
+      </div>
+      <button class="new-chat-btn">新对话</button>
+    </aside>
+
+    <main class="main">
+      <nav class="nav">
+        <div class="nav-content">
+          <div class="nav-title">Q3 营收分析</div>
+          <div class="status-chip">
+            <span class="status-dot"></span>
+            正在思考
+          </div>
+        </div>
+      </nav>
+
+      <div class="chat">
+        <div class="chat-inner">
+          <div class="message">
+            <div class="message-user">帮我分析一下 Q3 的营收情况，重点关注各产品线的表现</div>
+            <div class="message-meta">刚刚</div>
+          </div>
+
+          <div class="ai-response">
+            <div class="eyebrow">知识检索完成</div>
+
+            <h1 class="ai-title">Q3 营收总体<em>稳健增长</em>，企业服务表现突出</h1>
+
+            <div class="agent-activity">
+              <div class="activity-header">
+                <div class="activity-icon"></div>
+                <div class="activity-label">正在分析企业知识库</div>
+              </div>
+              <div class="activity-steps">
+                <div class="activity-step">
+                  <span class="step-check">✓</span>
+                  <span>已检索 Q3 财报文档</span>
+                </div>
+                <div class="activity-step">
+                  <span class="step-check">✓</span>
+                  <span>已找到 8 份相关产品报告</span>
+                </div>
+                <div class="activity-step">
+                  <span class="step-check">✓</span>
+                  <span>正在对比历史数据…</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="ai-content">
+              <p>根据企业知识库中的财报数据<a href="#" class="citation-inline">[1]</a>，Q3 总营收达到 4.2 亿元，同比增长 23%，环比增长 8%。各产品线表现如下：</p>
+
+              <ul>
+                <li><strong>企业服务</strong>：营收 2.1 亿元，同比增长 35%，占比 50%。主要增长来自新签大客户和老客户续约率提升<a href="#" class="citation-inline">[2]</a></li>
+                <li><strong>云平台</strong>：营收 1.3 亿元，同比增长 18%，占比 31%。用量增长稳定但单价有所下降</li>
+                <li><strong>数据产品</strong>：营收 0.8 亿元，同比增长 12%，占比 19%。市场竞争加剧，需要关注<a href="#" class="citation-inline">[3]</a><span class="cursor"></span></li>
+              </ul>
+            </div>
+
+            <div class="sources">
+              <div class="sources-title">参考来源</div>
+              <a href="#" class="source-item">
+                <div class="source-name">[1] 2024 Q3 财务报告</div>
+                <div class="source-path">财务部 / 季度报告 / Q3_2024.pdf</div>
+              </a>
+              <a href="#" class="source-item">
+                <div class="source-name">[2] 企业服务产品线分析</div>
+                <div class="source-path">产品部 / 分析报告 / enterprise_q3.md</div>
+              </a>
+              <a href="#" class="source-item">
+                <div class="source-name">[3] 数据产品竞品研究</div>
+                <div class="source-path">战略部 / 竞品分析 / data_products.xlsx</div>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <div class="composer-attachments">
+            <div class="attachment-chip">📊 Q3财报.pdf</div>
+            <div class="attachment-chip">📁 知识库已连接</div>
+          </div>
+          <div class="composer-input-wrapper">
+            <textarea class="composer-input" placeholder="继续对话或提出新问题…" rows="1"></textarea>
+          </div>
+          <div class="composer-actions">
+            <div class="composer-tools">
+              <button class="tool-btn">📎 文件</button>
+              <button class="tool-btn">🔍 搜索</button>
+              <button class="tool-btn">🧠 深度思考</button>
+            </div>
+            <button class="send-btn">发送</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

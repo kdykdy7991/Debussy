@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Concept C — Document Flow</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --page: #FEFDFB;
+  --paper: #FFFFFF;
+  --shadow: rgba(45, 35, 25, 0.04);
+  --shadow-strong: rgba(45, 35, 25, 0.12);
+  --ink: #2D2319;
+  --ink-soft: #625648;
+  --ink-faint: #9D9285;
+  --line: #E8E3DA;
+  --line-soft: #F3F0EB;
+  --accent: #D97D3A;
+  --accent-dark: #B85E1F;
+  --accent-subtle: #FDF5EE;
+  --citation: #F4E8D8;
+  --agent-bg: #F9F6F1;
+}
+
+body {
+  font-family: 'Charter', 'Georgia', 'Iowan Old Style', serif;
+  background: var(--page);
+  color: var(--ink);
+  line-height: 1.65;
+  font-size: 16px;
+}
+
+.container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 24px 200px 24px;
+}
+
+/* Header */
+.header {
+  padding: 20px 0 40px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 48px;
+}
+
+.logo {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--ink-faint);
+  margin-top: 6px;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+/* Conversation */
+.exchange {
+  margin-bottom: 56px;
+}
+
+.query {
+  font-size: 18px;
+  color: var(--ink);
+  margin-bottom: 32px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.response {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  box-shadow: 0 2px 8px var(--shadow), 0 12px 28px var(--shadow);
+  padding: 40px 48px;
+}
+
+.response-title {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 24px;
+  color: var(--ink);
+}
+
+.response-body {
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.response-body p {
+  margin-bottom: 20px;
+}
+
+.response-body h3 {
+  font-size: 21px;
+  font-weight: 600;
+  margin: 36px 0 16px 0;
+  letter-spacing: -0.015em;
+}
+
+.response-body h4 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 28px 0 12px 0;
+  color: var(--ink-soft);
+}
+
+.response-body ul {
+  margin: 20px 0;
+  padding-left: 24px;
+}
+
+.response-body li {
+  margin-bottom: 12px;
+  color: var(--ink-soft);
+}
+
+.response-body strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.response-body em {
+  font-style: italic;
+  color: var(--accent-dark);
+}
+
+/* Citation */
+.ref {
+  display: inline-block;
+  background: var(--citation);
+  color: var(--accent-dark);
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: -apple-system, system-ui, sans-serif;
+  margin: 0 2px;
+  cursor: pointer;
+  transition: all 100ms;
+  vertical-align: baseline;
+  line-height: 1.4;
+}
+
+.ref:hover {
+  background: var(--accent-subtle);
+  transform: translateY(-1px);
+}
+
+/* Agent activity */
+.activity-bar {
+  background: var(--agent-bg);
+  border-left: 3px solid var(--accent);
+  padding: 16px 20px;
+  margin: 28px 0;
+  border-radius: 0 2px 2px 0;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.activity-label {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.activity-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.activity-check {
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+}
+
+/* Sources section */
+.sources {
+  margin-top: 40px;
+  padding-top: 32px;
+  border-top: 2px solid var(--line-soft);
+}
+
+.sources-heading {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  margin-bottom: 20px;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-weight: 600;
+}
+
+.source-entry {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.source-entry:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+.source-number {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
+  color: white;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.source-content {
+  flex: 1;
+}
+
+.source-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.source-meta {
+  font-size: 14px;
+  color: var(--ink-faint);
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+/* Input composer */
+.composer-anchor {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, var(--page) 65%, transparent);
+  padding: 40px 24px 28px;
+  pointer-events: none;
+}
+
+.composer-wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  pointer-events: all;
+}
+
+.composer {
+  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px var(--shadow), 0 16px 48px var(--shadow-strong);
+}
+
+.composer-field {
+  padding: 18px 22px;
+}
+
+.composer-textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ink);
+  resize: none;
+  min-height: 28px;
+  max-height: 180px;
+  background: none;
+}
+
+.composer-textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.composer-tools {
+  display: flex;
+  gap: 8px;
+}
+
+.tool-btn {
+  background: none;
+  border: 1px solid var(--line);
+  padding: 7px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 100ms;
+  font-family: inherit;
+}
+
+.tool-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  background: var(--accent-subtle);
+}
+
+.send-action {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 9px 24px;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms;
+  font-family: inherit;
+}
+
+.send-action:hover {
+  background: var(--accent-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+/* Streaming */
+.typing-indicator {
+  display: inline-block;
+  width: 2px;
+  height: 1.2em;
+  background: var(--accent);
+  margin-left: 3px;
+  animation: blink-smooth 1.2s ease-in-out infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink-smooth {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header class="header">
+    <div class="logo">Enterprise Intelligence</div>
+    <div class="subtitle">对话式企业知识助手</div>
+  </header>
+
+  <div class="exchange">
+    <div class="query">
+      帮我整理一份产品路线图规划文档,涵盖 Q3 和 Q4 的主要功能点
+    </div>
+
+    <div class="activity-bar">
+      <div class="activity-label">Agent 工作状态</div>
+      <div class="activity-item">
+        <div class="activity-check">✓</div>
+        <span>已检索产品需求文档库</span>
+      </div>
+      <div class="activity-item">
+        <div class="activity-check">✓</div>
+        <span>已加载工程团队排期表</span>
+      </div>
+      <div class="activity-item">
+        <div class="activity-dot"></div>
+        <span>正在生成结构化文档</span>
+      </div>
+    </div>
+
+    <div class="response">
+      <div class="response-title">2024 Q3-Q4 产品路线图</div>
+
+      <div class="response-body">
+        <p>基于产品委员会 7 月会议决议<span class="ref">1</span>以及工程团队产能评估<span class="ref">2</span>,以下是下半年的核心功能规划。整体策略聚焦在<em>企业级能力增强</em>和<em>移动端体验优化</em>两条主线。</p>
+
+        <h3>Q3 重点交付 (7-9月)</h3>
+
+        <h4>权限管理系统 2.0</h4>
+        <ul>
+          <li><strong>精细化权限控制</strong> — 支持字段级、视图级权限配置,满足金融和医疗行业合规要求<span class="ref">3</span></li>
+          <li><strong>审批流引擎</strong> — 可视化配置多级审批流程,支持条件分支和并行审批</li>
+          <li><strong>审计日志</strong> — 完整记录权限变更和敏感操作,支持导出合规报告</li>
+        </ul>
+
+        <h4>移动端原生重构</h4>
+        <ul>
+          <li>iOS 和 Android 客户端完全重写,启动速度提升 60%</li>
+          <li>离线模式支持,核心功能可在无网络环境下使用</li>
+          <li>推送通知优化,支持富文本和交互式通知</li>
+        </ul>
+
+        <h3>Q4 重点交付 (10-12月)</h3>
+
+        <h4>AI 驱动的数据洞察</h4>
+        <ul>
+          <li><strong>自然语言查询</strong> — 用自然语言直接查询业务数据,自动生成 SQL 并可视化结果<span class="ref">4</span></li>
+          <li><strong>异常检测</strong> — 自动识别业务指标异常波动并推送预警</li>
+          <li><strong>智能报告生成</strong> — 基于数据自动撰写周报、月报</li>
+        </ul>
+
+        <h4>企业集成平台</h4>
+        <ul>
+          <li>支持主流 SSO 协议 (SAML 2.0, OIDC)</li>
+          <li>预置 20+ 常用企业应用的连接器 (钉钉、企微、Salesforce 等)</li>
+          <li>开放 Webhook 和 REST API,支持第三方系统集成</li>
+        </ul>
+
+        <p>工程资源分配方面,Q3 将投入 65% 人力在企业级功能,35% 在移动端;Q4 比例调整为 AI 能力 40%、集成平台 35%、其他迭代 25%<span class="ref">5</span><span class="typing-indicator"></span></p>
+
+        <div class="sources">
+          <div class="sources-heading">参考文档</div>
+
+          <div class="source-entry">
+            <div class="source-number">1</div>
+            <div class="source-content">
+              <div class="source-title">产品委员会 2024-07 月度会议纪要</div>
+              <div class="source-meta">产品部 · 2024-07-18 · product-meeting-jul.pdf</div>
+            </div>
+          </div>
+
+          <div class="source-entry">
+            <div class="source-number">2</div>
+            <div class="source-content">
+              <div class="source-title">工程团队 H2 产能规划</div>
+              <div class="source-meta">工程部 · 2024-06-30 · eng-capacity-h2.xlsx</div>
+            </div>
+          </div>
+
+          <div class="source-entry">
+            <div class="source-number">3</div>
+            <div class="source-content">
+              <div class="source-title">金融客户合规需求汇总</div>
+              <div class="source-meta">销售部 · 2024-07-05 · compliance-requirements.docx</div>
+            </div>
+          </div>
+
+          <div class="source-entry">
+            <div class="source-number">4</div>
+            <div class="source-content">
+              <div class="source-title">AI 数据洞察功能 PRD</div>
+              <div class="source-meta">产品部 · 2024-06-20 · ai-insights-prd.md</div>
+            </div>
+          </div>
+
+          <div class="source-entry">
+            <div class="source-number">5</div>
+            <div class="source-content">
+              <div class="source-title">研发资源分配方案 v3</div>
+              <div class="source-meta">CTO Office · 2024-07-10 · resource-allocation-v3.pdf</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="composer-anchor">
+  <div class="composer-wrap">
+    <div class="composer">
+      <div class="composer-field">
+        <textarea class="composer-textarea" placeholder="继续提问或输入新的指令..." rows="1"></textarea>
+      </div>
+      <div class="composer-bar">
+        <div class="composer-tools">
+          <button class="tool-btn">📎 上传文件</button>
+          <button class="tool-btn">📚 引用知识库</button>
+          <button class="tool-btn">🔍 企业搜索</button>
+        </div>
+        <button class="send-action">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
