@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Veil · 企业 AI 笔记</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;1,8..60,300;1,8..60,400&family=Inter:wght@400;500&family=Caveat:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   VEIL · Soft Notebook / Tactile / Handmade
+   Design Language: Quiet, personal, handwoven
+   ============================================================ */
+
+:root {
+  /* Linen palette */
+  --linen:       #F4EEDD;          /* unbleached linen */
+  --linen-soft:  #FAF5E8;          /* pale cream */
+  --linen-deep:  #EBE3D0;          /* warm shadow */
+  --linen-fold:  #DDD4BC;          /* paper fold */
+  --linen-edge:  #C9BFA3;          /* edge tint */
+
+  /* Ink */
+  --ink-1: #2A241B;                /* deep brown */
+  --ink-2: #4A413A;
+  --ink-3: #7A6E5E;
+  --ink-4: #A89A82;
+  --ink-5: #C5B79E;
+
+  /* Tactile accents */
+  --moss:        #6B7E5A;
+  --moss-deep:   #4A5C3A;
+  --moss-soft:   rgba(107, 126, 90, 0.14);
+  --moss-line:   rgba(107, 126, 90, 0.30);
+
+  --terracotta:  #B85C3B;
+  --terracotta-deep: #8F4226;
+  --terracotta-soft: rgba(184, 92, 59, 0.12);
+  --terracotta-line: rgba(184, 92, 59, 0.28);
+
+  --indigo:      #3C4A6B;
+  --indigo-soft: rgba(60, 74, 107, 0.10);
+  --mustard:     #C99846;
+  --rose:        #C97A8E;
+
+  /* Status */
+  --ok:   #6B7E5A;
+  --warn: #C99846;
+  --err:  #B85C3B;
+  --info: #3C4A6B;
+
+  /* Typography */
+  --font-display: 'Spectral', 'Iowan Old Style', Georgia, serif;
+  --font-serif:   'Source Serif 4', 'Iowan Old Style', Georgia, serif;
+  --font-sans:    'Inter', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  --font-hand:    'Caveat', 'Bradley Hand', 'Comic Sans MS', cursive;
+
+  /* Type scale */
+  --t-10: 10px;  --t-11: 11px;  --t-12: 12px;  --t-13: 13px;
+  --t-14: 14px;  --t-15: 15px;  --t-16: 16px;  --t-17: 17px;
+  --t-18: 18px;  --t-20: 20px;  --t-22: 22px;
+  --t-26: 26px;  --t-30: 30px;  --t-36: 36px;
+  --t-44: 44px;  --t-52: 52px;
+
+  /* Spacing */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-7: 28px; --s-8: 32px;
+  --s-10: 40px; --s-12: 48px; --s-16: 64px;
+
+  /* Soft radius */
+  --r-2: 2px;
+  --r-4: 4px;
+  --r-8: 8px;
+  --r-12: 12px;
+  --r-20: 20px;
+  --r-28: 28px;
+  --r-pill: 999px;
+
+  /* Motion — slow, paper-like */
+  --ease:    cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --d-1: 180ms;
+  --d-2: 320ms;
+  --d-3: 480ms;
+  --d-4: 720ms;
+
+  /* Soft shadows */
+  --sh-1: 0 1px 2px rgba(42, 36, 27, 0.04);
+  --sh-2: 0 4px 16px rgba(42, 36, 27, 0.06);
+  --sh-3: 0 12px 32px rgba(42, 36, 27, 0.08);
+  --sh-paper: 0 24px 64px -16px rgba(42, 36, 27, 0.16), 0 2px 4px rgba(42, 36, 27, 0.04);
+}
+
+/* ============================================================
+   RESET
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+
+body {
+  font-family: var(--font-serif);
+  font-size: var(--t-15);
+  line-height: 1.6;
+  color: var(--ink-1);
+  background: var(--linen);
+  background-image:
+    radial-gradient(ellipse at 25% 20%, rgba(255, 251, 240, 0.5) 0%, transparent 55%),
+    radial-gradient(ellipse at 80% 70%, rgba(184, 92, 59, 0.04) 0%, transparent 55%),
+    radial-gradient(circle at 60% 30%, rgba(107, 126, 90, 0.04) 0%, transparent 40%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-variation-settings: "opsz" 14;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: inherit;
+}
+textarea { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--terracotta); outline-offset: 2px; border-radius: 4px; }
+::selection { background: var(--terracotta-soft); color: var(--ink-1); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--linen-edge); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+
+/* ============================================================
+   APP — Paper composition
+   ============================================================ */
+.app {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 88px 1fr 320px;
+  position: relative;
+}
+
+.app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 15% 25%, rgba(184, 92, 59, 0.06) 0%, transparent 25%),
+    radial-gradient(circle at 75% 60%, rgba(107, 126, 90, 0.08) 0%, transparent 30%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   LEFT RAIL — Ribbon of tools
+   ============================================================ */
+.rail {
+  background: var(--linen-soft);
+  border-right: 1px solid var(--linen-fold);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--s-6) 0;
+  position: relative;
+  z-index: 2;
+  box-shadow: 1px 0 0 var(--linen-edge);
+}
+
+.rail-mark {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-26);
+  font-weight: 500;
+  color: var(--terracotta);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--s-8);
+  position: relative;
+}
+.rail-mark::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  background: var(--terracotta);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--terracotta-soft);
+}
+
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  flex: 1;
+}
+
+.rail-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-12);
+  color: var(--ink-3);
+  transition: all var(--d-2) var(--ease-soft);
+}
+.rail-btn:hover {
+  background: var(--linen-deep);
+  color: var(--ink-1);
+  transform: translateY(-1px);
+}
+.rail-btn.active {
+  background: var(--terracotta-soft);
+  color: var(--terracotta);
+}
+.rail-btn.active::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 16px;
+  background: var(--terracotta);
+  border-radius: 0 3px 3px 0;
+}
+.rail-btn svg { width: 20px; height: 20px; }
+.rail-btn .dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  background: var(--terracotta);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--linen-soft);
+}
+
+.rail-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mustard), var(--terracotta));
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-15);
+  font-weight: 500;
+  color: var(--linen-soft);
+  margin-top: var(--s-4);
+}
+
+/* ============================================================
+   MAIN — Reading canvas
+   ============================================================ */
+.main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+
+.main-top {
+  padding: var(--s-5) var(--s-8) var(--s-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  font-family: var(--font-serif);
+  font-size: var(--t-13);
+  color: var(--ink-3);
+}
+.crumbs .sep {
+  color: var(--ink-4);
+  font-style: italic;
+  font-size: var(--t-12);
+}
+.crumbs .current {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-17);
+  font-weight: 500;
+  color: var(--ink-1);
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-family: var(--font-sans);
+  font-size: var(--t-11);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.session-meta .badge {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-13);
+  color: var(--terracotta);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.session-meta .badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: var(--moss);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--moss-soft);
+}
+
+.canvas {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+}
+
+.canvas-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-8) var(--s-16);
+  position: relative;
+}
+
+/* Watercolor wash background */
+.canvas-inner::before {
+  content: '';
+  position: absolute;
+  top: 80px;
+  left: -120px;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, var(--terracotta-soft) 0%, transparent 60%);
+  border-radius: 50%;
+  filter: blur(40px);
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.6;
+  animation: float 14s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(20px, -10px); }
+}
+
+.canvas-inner::after {
+  content: '';
+  position: absolute;
+  bottom: 200px;
+  right: -100px;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, var(--moss-soft) 0%, transparent 60%);
+  border-radius: 50%;
+  filter: blur(40px);
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.5;
+  animation: float 18s ease-in-out infinite reverse;
+}
+
+/* User message */
+.user-line {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--s-12);
+  animation: softIn 0.5s var(--ease-soft);
+}
+@keyframes softIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.user-card {
+  max-width: 75%;
+  padding: var(--s-4) var(--s-5);
+  background: var(--linen-soft);
+  border: 1px solid var(--linen-fold);
+  border-radius: var(--r-20);
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--t-15);
+  color: var(--ink-1);
+  line-height: 1.5;
+  font-variation-settings: "opsz" 16;
+  position: relative;
+  box-shadow: var(--sh-1);
+}
+.user-card::before {
+  content: '— a question, whispered';
+  position: absolute;
+  top: -16px;
+  right: 20px;
+  font-family: var(--font-hand);
+  font-size: var(--t-14);
+  color: var(--ink-4);
+  letter-spacing: 0.02em;
+}
+
+/* AI byline */
+.ai-byline {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-5);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px dashed var(--linen-fold);
+  font-family: var(--font-sans);
+  font-size: var(--t-11);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.ai-byline .who {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-14);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--terracotta);
+  font-weight: 500;
+}
+.ai-byline .time { margin-left: auto; font-family: var(--font-mono); letter-spacing: 0; text-transform: none; color: var(--ink-4); }
+
+/* Section number — italic display */
+.section {
+  margin-bottom: var(--s-12);
+  animation: softIn 0.6s var(--ease-soft);
+}
+.section-num {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-30);
+  font-weight: 400;
+  color: var(--terracotta);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--s-2);
+  line-height: 1;
+  font-variation-settings: "opsz" 30;
+}
+.section-num .small {
+  font-size: var(--t-13);
+  color: var(--ink-3);
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-left: var(--s-3);
+  font-style: normal;
+  font-family: var(--font-sans);
+  font-variation-settings: normal;
+}
+
+/* Title */
+.t-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-44);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink-1);
+  margin: 0 0 var(--s-3);
+  font-variation-settings: "opsz" 60;
+}
+.t-deck {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--t-17);
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin: 0 0 var(--s-8);
+  padding-left: var(--s-4);
+  border-left: 2px solid var(--terracotta);
+  font-weight: 400;
+  font-variation-settings: "opsz" 18;
+}
+
+/* Body */
+.t-body {
+  font-family: var(--font-serif);
+  font-size: var(--t-16);
+  line-height: 1.75;
+  color: var(--ink-1);
+  font-variation-settings: "opsz" 16;
+  letter-spacing: -0.005em;
+}
+.t-body p { margin: 0 0 var(--s-4); }
+.t-body p:first-of-type::first-letter {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 3.5em;
+  line-height: 0.9;
+  float: left;
+  padding: 0.05em 0.1em 0 0;
+  color: var(--terracotta);
+  font-weight: 500;
+  font-variation-settings: "opsz" 96;
+}
+.t-body strong {
+  font-weight: 600;
+  color: var(--ink-1);
+  background: linear-gradient(transparent 60%, var(--terracotta-soft) 60%);
+  padding: 0 2px;
+}
+.t-body em { font-style: italic; color: var(--indigo); }
+
+/* Inline citation — roman */
+.cite {
+  font-family: var(--font-display);
+  font-size: 0.78em;
+  vertical-align: super;
+  line-height: 0;
+  color: var(--terracotta);
+  font-style: italic;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 3px;
+  transition: background var(--d-1) var(--ease);
+}
+.cite:hover { background: var(--terracotta-soft); border-radius: 3px; }
+
+/* Section heading */
+.s-head {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-22);
+  font-weight: 500;
+  color: var(--ink-1);
+  margin: var(--s-8) 0 var(--s-3);
+  font-variation-settings: "opsz" 22;
+  position: relative;
+  padding-left: var(--s-3);
+}
+.s-head::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  bottom: 0.6em;
+  width: 2px;
+  background: var(--moss);
+  border-radius: 1px;
+}
+
+/* Tiered cards — soft watercolor */
+.tiered {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s-3);
+  margin: var(--s-5) 0;
+}
+.tier-c {
+  padding: var(--s-4) var(--s-5);
+  background: var(--linen-soft);
+  border: 1px solid var(--linen-fold);
+  border-radius: var(--r-12);
+  position: relative;
+  overflow: hidden;
+}
+.tier-c.t1 { background: linear-gradient(135deg, var(--linen-soft), var(--terracotta-soft)); }
+.tier-c.t2 { background: linear-gradient(135deg, var(--linen-soft), var(--moss-soft)); }
+.tier-c.t3 { background: var(--linen-soft); }
+.tier-c.t4 { background: var(--linen-deep); }
+.tier-c-label {
+  font-family: var(--font-sans);
+  font-size: var(--t-11);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--s-2);
+}
+.tier-c-value {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-30);
+  font-weight: 500;
+  color: var(--ink-1);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variation-settings: "opsz" 30;
+}
+.tier-c.t1 .tier-c-value { color: var(--terracotta-deep); }
+.tier-c.t2 .tier-c-value { color: var(--moss-deep); }
+.tier-c-meta {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--t-12);
+  color: var(--ink-3);
+  margin-top: var(--s-1);
+  font-variation-settings: "opsz" 14;
+}
+
+/* Pull quote — soft */
+.pull {
+  margin: var(--s-8) 0;
+  padding: var(--s-6) var(--s-5);
+  background: var(--linen-soft);
+  border-left: 2px solid var(--terracotta);
+  border-radius: 0 var(--r-12) var(--r-12) 0;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-22);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+  position: relative;
+  font-variation-settings: "opsz" 22;
+}
+
+/* Data table — soft */
+.dt {
+  width: 100%;
+  margin: var(--s-5) 0;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: var(--t-13);
+}
+.dt caption {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-12);
+  color: var(--ink-3);
+  text-align: left;
+  padding-bottom: var(--s-2);
+  caption-side: top;
+}
+.dt thead th {
+  text-align: left;
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--t-10);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--linen-edge);
+}
+.dt tbody td {
+  padding: var(--s-3);
+  border-bottom: 1px dotted var(--linen-fold);
+  color: var(--ink-1);
+}
+.dt tbody td:first-child { font-family: var(--font-display); font-style: italic; font-weight: 500; }
+.dt tbody td:last-child { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.dt tbody tr:last-child td { border-bottom: 1px solid var(--linen-edge); }
+
+/* Cursor */
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--terracotta);
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  animation: blink 1s steps(2) infinite;
+  opacity: 0.7;
+}
+@keyframes blink {
+  50% { opacity: 0.2; }
+}
+
+/* Hand-drawn annotation */
+.margin-note {
+  font-family: var(--font-hand);
+  font-size: var(--t-17);
+  color: var(--terracotta);
+  position: absolute;
+  right: -180px;
+  top: 0;
+  transform: rotate(-3deg);
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+/* ============================================================
+   RIGHT — Side notes
+   ============================================================ */
+.side {
+  background: var(--linen-soft);
+  border-left: 1px solid var(--linen-fold);
+  padding: var(--s-5) var(--s-5);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 2;
+  overflow-y: auto;
+}
+
+.side-head {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-22);
+  font-weight: 500;
+  color: var(--ink-1);
+  margin-bottom: var(--s-2);
+  font-variation-settings: "opsz" 22;
+}
+.side-sub {
+  font-family: var(--font-sans);
+  font-size: var(--t-11);
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: var(--s-5);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px dashed var(--linen-fold);
+}
+
+.note-card {
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-3);
+  background: var(--linen);
+  border: 1px solid var(--linen-fold);
+  border-radius: var(--r-12);
+  position: relative;
+  transition: all var(--d-2) var(--ease-soft);
+}
+.note-card:hover {
+  transform: translateX(-2px);
+  border-color: var(--terracotta-line);
+  box-shadow: var(--sh-1);
+}
+.note-card.running {
+  background: linear-gradient(135deg, var(--linen), var(--terracotta-soft));
+  border-color: var(--terracotta-line);
+}
+.note-card.running::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  background: var(--terracotta);
+  border-radius: 0 2px 2px 0;
+}
+.note-time {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+  margin-bottom: var(--s-1);
+  font-variant-numeric: tabular-nums;
+}
+.note-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-14);
+  font-weight: 500;
+  color: var(--ink-1);
+  line-height: 1.4;
+  margin-bottom: var(--s-1);
+}
+.note-meta {
+  font-family: var(--font-sans);
+  font-size: var(--t-11);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+
+/* Handwritten footnote */
+.foot-stitch {
+  margin-top: var(--s-6);
+  padding: var(--s-4);
+  background: var(--linen);
+  border-radius: var(--r-12);
+  border: 1px dashed var(--linen-fold);
+  font-family: var(--font-hand);
+  font-size: var(--t-15);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.foot-stitch-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-14);
+  font-weight: 500;
+  color: var(--terracotta);
+  margin-bottom: var(--s-2);
+}
+.foot-stitch-text {
+  font-family: var(--font-hand);
+  font-size: var(--t-15);
+  color: var(--ink-2);
+}
+
+/* ============================================================
+   COMPOSER — Lined notebook
+   ============================================================ */
+.composer-zone {
+  position: fixed;
+  bottom: 0;
+  left: 88px;
+  right: 320px;
+  padding: var(--s-3) var(--s-8) var(--s-5);
+  z-index: 50;
+  background: linear-gradient(to top, var(--linen) 60%, transparent 100%);
+}
+
+.notebook {
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--linen-soft);
+  border: 1px solid var(--linen-fold);
+  border-radius: var(--r-20);
+  box-shadow: var(--sh-paper);
+  overflow: hidden;
+  position: relative;
+}
+.notebook::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(to right, var(--terracotta), var(--moss), var(--indigo));
+  opacity: 0.6;
+}
+
+.nb-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+}
+
+.nb-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--t-16);
+  color: var(--ink-1);
+  padding: var(--s-2) 0;
+  line-height: 1.5;
+  font-variation-settings: "opsz" 16;
+  letter-spacing: -0.005em;
+}
+.nb-input::placeholder {
+  color: var(--ink-4);
+  font-style: italic;
+}
+.nb-input:focus {
+  font-style: normal;
+}
+
+.nb-send {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--terracotta);
+  color: var(--linen-soft);
+  flex-shrink: 0;
+  transition: all var(--d-2) var(--ease-soft);
+  box-shadow: var(--sh-2);
+}
+.nb-send:hover { background: var(--terracotta-deep); transform: scale(1.05); }
+.nb-send:disabled { background: var(--linen-fold); color: var(--ink-4); cursor: not-allowed; }
+.nb-send svg { width: 18px; height: 18px; }
+
+.nb-toolbar {
+  display: flex;
+  align-items: center;
+  padding: var(--s-2) var(--s-5) var(--s-3);
+  border-top: 1px dashed var(--linen-fold);
+  gap: var(--s-2);
+}
+
+.nb-tool {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 28px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-pill);
+  font-family: var(--font-sans);
+  font-size: var(--t-11);
+  font-weight: 500;
+  color: var(--ink-3);
+  transition: all var(--d-1) var(--ease);
+}
+.nb-tool:hover { background: var(--linen-deep); color: var(--ink-1); }
+.nb-tool.active { background: var(--terracotta-soft); color: var(--terracotta-deep); }
+.nb-tool svg { width: 13px; height: 13px; }
+.nb-tool .at {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-14);
+  font-weight: 500;
+}
+
+.nb-spacer { flex: 1; }
+
+.nb-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.nb-meta .dot {
+  width: 5px;
+  height: 5px;
+  background: var(--moss);
+  border-radius: 50%;
+}
+
+.nb-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--s-2) var(--s-5) var(--s-3);
+  font-family: var(--font-hand);
+  font-size: var(--t-14);
+  color: var(--ink-4);
+  letter-spacing: 0.02em;
+}
+.nb-foot b { font-weight: 600; color: var(--ink-3); font-family: var(--font-mono); font-size: var(--t-10); }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- =========== LEFT RAIL =========== -->
+  <aside class="rail">
+    <div class="rail-mark">V.</div>
+    <nav class="rail-list">
+      <button class="rail-btn active" title="笔记本">
+        <svg viewBox="0 0 20 20" fill="none"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h8A1.5 1.5 0 0 1 15 4.5v11l-2.5-1.5L10 15.5l-2.5-1.5L4 15.5v-11Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="rail-btn" title="问题">
+        <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M7.5 7.5a2.5 2.5 0 0 1 5 0c0 1.5-2 2-2.5 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="10" cy="13.5" r="0.8" fill="currentColor"/></svg>
+      </button>
+      <button class="rail-btn" title="资料">
+        <svg viewBox="0 0 20 20" fill="none"><path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11l-3-1.5L10 16l-3-1.5L4 16V5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <span class="dot"></span>
+      </button>
+      <button class="rail-btn" title="回忆">
+        <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M10 6v4l3 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="rail-btn" title="智能体">
+        <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M10 6.5a3.5 3.5 0 0 1 3.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="2 2"/></svg>
+      </button>
+    </nav>
+    <div class="rail-avatar">艾</div>
+  </aside>
+
+  <!-- =========== MAIN =========== -->
+  <main class="main">
+    <div class="main-top">
+      <div class="crumbs">
+        <span>study</span>
+        <span class="sep">·</span>
+        <span class="current">差旅政策研究</span>
+      </div>
+      <div class="session-meta">
+        <span class="badge">in progress</span>
+        <span>14:32 · 1.2s</span>
+      </div>
+    </div>
+
+    <div class="canvas">
+      <div class="canvas-inner">
+
+        <!-- USER -->
+        <div class="user-line">
+          <div class="user-card">
+            帮我整理一下差旅住宿相关标准，包括不同城市级别的报销上限、审批流程，以及如果超标需要怎么走。
+          </div>
+        </div>
+
+        <!-- AI · SECTION 01 -->
+        <div class="section">
+          <div class="ai-byline">
+            <span class="who">the research assistant</span>
+            <span>·</span>
+            <span>structured · 3 sources</span>
+            <span class="time">14:32:18</span>
+          </div>
+
+          <div class="section-num">
+            一 / 02 <span class="small">city tiers</span>
+          </div>
+
+          <h1 class="t-title">差旅住宿与报销</h1>
+          <p class="t-deck">一份关于城市分级、审批流程与超标例外的研究笔记 — 摘录自《差旅与报销管理办法 2024 修订》及最新补充规定。</p>
+
+          <div class="t-body">
+            <p>根据《差旅与报销管理办法 2024 修订》<span class="cite">i</span> 及最新的补充规定，企业差旅住宿按 <strong>城市级别</strong> 与 <strong>职级</strong> 双维度确定上限。简而言之：城市越大、职级越高，上限越宽松；超标需说明，但通过率整体较高。</p>
+
+            <div class="s-head">城市分级与上限</div>
+
+            <div class="tiered">
+              <div class="tier-c t1">
+                <div class="tier-c-label">一线 · T1</div>
+                <div class="tier-c-value">¥1,200</div>
+                <div class="tier-c-meta">北上深广</div>
+              </div>
+              <div class="tier-c t2">
+                <div class="tier-c-label">新一线 · T2</div>
+                <div class="tier-c-value">¥900</div>
+                <div class="tier-c-meta">杭蓉武苏</div>
+              </div>
+              <div class="tier-c t3">
+                <div class="tier-c-label">二线 · T3</div>
+                <div class="tier-c-value">¥700</div>
+                <div class="tier-c-meta">省会及重点</div>
+              </div>
+              <div class="tier-c t4">
+                <div class="tier-c-label">其他 · T4</div>
+                <div class="tier-c-value">¥500</div>
+                <div class="tier-c-meta">—</div>
+              </div>
+            </div>
+
+            <p>一线城市 1,200 元 / 晚的覆盖了绝大多数商务酒店的选择区间，<strong>仅 5%</strong> 的常见客户预订需求会超出该上限。如客户陪同，该上限可上浮 <strong>20%</strong>。<span class="cite">ii</span></p>
+
+            <div class="s-head">审批流程</div>
+
+            <p>出差前需通过 OA 系统提交「出差申请单」，并根据出差时长与预算分档审批。它的逻辑很简单 —— 决定了风险等级，决定了由谁来签字。</p>
+
+            <div class="pull">
+              ≤ ¥5,000 由直属上级审批；¥5,000 – ¥20,000 需部门负责人 + 财务备案；&gt; ¥20,000 需 VP 及以上审批。
+            </div>
+
+            <div class="s-head">超标处理</div>
+
+            <p>如确需超出标准预订（例如展会期间价格陡升），需在报销时附加 <strong>超标说明</strong>，由直属上级和财务共同确认。常见情况会通过，但要求 <strong>附原始预订截图</strong> 与 <strong>同档替代方案对比</strong>。<span class="cite">iii</span></p>
+
+            <div class="s-head">数据观察</div>
+
+            <table class="dt">
+              <caption>表 1 · Q2 差旅数据</caption>
+              <thead>
+                <tr>
+                  <th>指标</th>
+                  <th>数值</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>本月差旅</td><td>¥84.2K · ↑12%</td></tr>
+                <tr><td>平均单价</td><td>¥762 · ↓3%</td></tr>
+                <tr><td>超标率</td><td>4.8% · ↓1.2pp</td></tr>
+                <tr><td>人次</td><td>112 · ↑8</td></tr>
+              </tbody>
+            </table>
+
+            <p>落差最大的是 4 月广交会期间，区域二线城市的超标比例一度达到 18%。整体而言，<strong>展会出现频次</strong> 与 <strong>超标率</strong> 呈正相关。<span class="cursor"></span></p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- =========== SIDE NOTES =========== -->
+  <aside class="side">
+    <h2 class="side-head">marginalia</h2>
+    <div class="side-sub">notes · as it happens</div>
+
+    <div class="note-card">
+      <div class="note-time">14:32:18 · 0.2s</div>
+      <div class="note-title">意图分类</div>
+      <div class="note-meta">structured · knowledge</div>
+    </div>
+
+    <div class="note-card">
+      <div class="note-time">14:32:18 · 0.4s</div>
+      <div class="note-title">检索企业知识库</div>
+      <div class="note-meta">hybrid · 12 documents</div>
+    </div>
+
+    <div class="note-card">
+      <div class="note-time">14:32:19 · 0.5s</div>
+      <div class="note-title">重排序</div>
+      <div class="note-meta">reranker-v3 · top 3</div>
+    </div>
+
+    <div class="note-card running">
+      <div class="note-time">14:32:19 · stream</div>
+      <div class="note-title">撰写摘要</div>
+      <div class="note-meta">248 tokens / second</div>
+    </div>
+
+    <div class="note-card running">
+      <div class="note-time">14:32:30 · render</div>
+      <div class="note-title">引用匹配</div>
+      <div class="note-meta">3 citations · rendering</div>
+    </div>
+
+    <div class="foot-stitch">
+      <div class="foot-stitch-title">— a small handmade note</div>
+      <div class="foot-stitch-text">研究助理还在整理 Q2 数据 — 大约还要 8 秒。你可以再问一个问题，或者同步去看看隔壁的资料库。</div>
+    </div>
+  </aside>
+
+  <!-- =========== COMPOSER =========== -->
+  <div class="composer-zone">
+    <div class="notebook">
+      <div class="nb-row">
+        <input type="text" class="nb-input" placeholder="在这里写下一个问题…" value="看看超标最严重的几个部门" />
+        <button class="nb-send" title="递出">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v12M3 8l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="nb-toolbar">
+        <button class="nb-tool active">
+          <span class="at">@</span>
+          <span>引用</span>
+        </button>
+        <button class="nb-tool">
+          <svg viewBox="0 0 14 14" fill="none"><path d="M9 4 6 9.5a1.5 1.5 0 0 0 2.6 1.5l3-6a3 3 0 0 0-5.2-3L3 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <span>附件</span>
+        </button>
+        <button class="nb-tool">
+          <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M7 4a3 3 0 0 1 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="1.5 1.5"/></svg>
+          <span>研究助理</span>
+        </button>
+        <button class="nb-tool">
+          <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 6.5h3M5.5 8.5h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <span>深度</span>
+        </button>
+        <div class="nb-spacer"></div>
+        <div class="nb-meta">
+          <span class="dot"></span>
+          <span>v4 · 248 tok/s</span>
+        </div>
+      </div>
+      <div class="nb-foot">
+        <span>由企业知识库驱动 · 仅作参考</span>
+        <span><b>↵</b> 递出 · <b>⇧</b> <b>↵</b> 换行</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const cursor = document.querySelector('.cursor');
+if (cursor) {
+  setInterval(() => {
+    cursor.style.opacity = cursor.style.opacity === '0.2' ? '0.7' : '0.2';
+  }, 500);
+}
+
+document.querySelectorAll('.rail-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.rail-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+document.querySelectorAll('.nb-tool').forEach(t => {
+  t.addEventListener('click', () => {
+    if (t.querySelector('.at')) t.classList.toggle('active');
+  });
+});
+
+// Floating watercolor — subtle
+const inner = document.querySelector('.canvas-inner');
+let ticking = false;
+inner.addEventListener('scroll', () => {
+  if (!ticking) {
+    window.requestAnimationFrame(() => {
+      const y = inner.scrollTop;
+      inner.style.setProperty('--scroll', y + 'px');
+      ticking = false;
+    });
+    ticking = true;
+  }
+});
+</script>
+
+</body>
+</html>

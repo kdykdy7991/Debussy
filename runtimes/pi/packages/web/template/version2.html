@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<!-- saved from url=(0059)file:///C:/Users/10941/Desktop/homework/designer/index.html -->
+<html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurum · 企业 AI Agent Workspace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com/">
+    <link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin="">
+    <link href="./version2_files/css2" rel="stylesheet">
+    <link rel="stylesheet" href="./version2_files/styles.css">
+</head>
+<body>
+
+    <!-- ============ APP SHELL ============ -->
+    <div class="app">
+
+        <!-- ============ SIDEBAR ============ -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-top">
+                <button class="brand" aria-label="Aurum">
+                    <span class="brand-mark">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <path d="M10 2.5 L11.6 8.4 L17.5 10 L11.6 11.6 L10 17.5 L8.4 11.6 L2.5 10 L8.4 8.4 Z" fill="currentColor"></path>
+                        </svg>
+                    </span>
+                    <span class="brand-name">aurum</span>
+                </button>
+
+                <button class="icon-btn sidebar-new" id="newChatBtn" title="新建会话">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                        <rect x="4" y="5" width="12" height="14" rx="2.5" stroke="currentColor" stroke-width="1.3"></rect>
+                        <path d="M7 5V3.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 13 3.5V5" stroke="currentColor" stroke-width="1.3"></path>
+                        <path d="M10 9v4M8 11h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path>
+                    </svg>
+                    <span>新建会话</span>
+                </button>
+            </div>
+
+            <nav class="sidebar-nav">
+                <button class="nav-rail" data-section="chat" aria-label="会话">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h11A1.5 1.5 0 0 1 17 4.5v8A1.5 1.5 0 0 1 15.5 14H9l-4 3v-3h-.5A1.5 1.5 0 0 1 3 12.5v-8Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path></svg>
+                    <span>会话</span>
+                </button>
+                <button class="nav-rail" data-section="knowledge" aria-label="知识库">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11l-3-1.6L10 17l-3-1.6L4 15V5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path></svg>
+                    <span>知识库</span>
+                </button>
+                <button class="nav-rail" data-section="agents" aria-label="智能体">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.3"></circle><path d="M10 6.5a3.5 3.5 0 0 1 3.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="2 2.4"></path></svg>
+                    <span>智能体</span>
+                </button>
+                <button class="nav-rail" data-section="settings" aria-label="设置">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3.2" stroke="currentColor" stroke-width="1.3"></circle><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M5 5l1.4 1.4M13.6 13.6L15 15M15 5l-1.4 1.4M6.4 13.6L5 15" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></svg>
+                    <span>设置</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-mid-label">最近</div>
+            <div class="history-list" id="historyList">
+    <button class="history-item active" data-id="h1">
+      <span class="dot-mark"></span>
+      <span class="title">差旅住宿与报销标准</span>
+      <span class="meta">今天</span>
+    </button>
+  
+    <button class="history-item " data-id="h2">
+      <span class="dot-mark"></span>
+      <span class="title">Q2 区域销售对比分析</span>
+      <span class="meta">昨天</span>
+    </button>
+  
+    <button class="history-item " data-id="h3">
+      <span class="dot-mark"></span>
+      <span class="title">产品发布流程梳理</span>
+      <span class="meta">昨天</span>
+    </button>
+  
+    <button class="history-item " data-id="h4">
+      <span class="dot-mark"></span>
+      <span class="title">客户续约话术建议</span>
+      <span class="meta">本周</span>
+    </button>
+  
+    <button class="history-item " data-id="h5">
+      <span class="dot-mark"></span>
+      <span class="title">团队周报模板</span>
+      <span class="meta">本周</span>
+    </button>
+  
+    <button class="history-item " data-id="h6">
+      <span class="dot-mark"></span>
+      <span class="title">关于合同审批权限</span>
+      <span class="meta">上周</span>
+    </button>
+  
+    <button class="history-item " data-id="h7">
+      <span class="dot-mark"></span>
+      <span class="title">差旅申请单填写疑问</span>
+      <span class="meta">上周</span>
+    </button>
+  
+    <button class="history-item " data-id="h8">
+      <span class="dot-mark"></span>
+      <span class="title">市场活动数据复盘</span>
+      <span class="meta">上周</span>
+    </button>
+  
+    <button class="history-item " data-id="h9">
+      <span class="dot-mark"></span>
+      <span class="title">入职流程材料准备</span>
+      <span class="meta">8月1日</span>
+    </button>
+  
+    <button class="history-item " data-id="h10">
+      <span class="dot-mark"></span>
+      <span class="title">客户反馈整理：华东区</span>
+      <span class="meta">7月</span>
+    </button>
+  </div>
+
+            <div class="sidebar-bottom">
+                <div class="history-scroll-spacer"></div>
+                <div class="workspace-chip">企业知识工作区</div>
+                <button class="profile">
+                    <span class="avatar">Á</span>
+                    <span class="profile-meta">
+                        <span class="profile-name">Ásgeir</span>
+                        <span class="profile-sub">标准</span>
+                    </span>
+                    <svg class="profile-caret" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 10l4-4M10 6H6l4-4v8L6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </button>
+            </div>
+        </aside>
+
+        <!-- ============ MAIN ============ -->
+        <main class="main" id="main">
+
+            <!-- Toolbar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="icon-btn" id="sidebarToggle" title="折叠侧栏">
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M4 6h12M4 10h12M4 14h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+                    </button>
+                    <span class="topbar-title" id="conversationTitle">差旅住宿与报销标准</span>
+                </div>
+                <div class="topbar-right">
+                    <button class="icon-btn" title="分享">
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M4 10v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-5M10 10V3M7 6l3-3 3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                    <button class="icon-btn" title="更多">
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="5" r="1.3" fill="currentColor"></circle><circle cx="10" cy="10" r="1.3" fill="currentColor"></circle><circle cx="10" cy="15" r="1.3" fill="currentColor"></circle></svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Thread -->
+            <section class="thread-scroll" id="threadScroll">
+                <div class="thread" id="thread">
+    <div class="message-user">
+      <div class="bubble-user">差旅住宿标准是多少？哪些城市可以报 800 以上？</div>
+    </div>
+  
+    <div class="message-ai" data-ai="">
+      
+    <div class="ai-eyebrow">
+      <span class="mark">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+          <path d="M10 2.5 L11.6 8.4 L17.5 10 L11.6 11.6 L10 17.5 L8.4 11.6 L2.5 10 L8.4 8.4 Z" fill="currentColor"></path>
+        </svg>
+      </span>
+      <span class="name">Aurum</span>
+      
+      <span style="color:var(--ink-5); margin:0 2px;">·</span>
+      <span class="time">14:21</span>
+    </div>
+  
+      <div class="response-body" data-body=""><h1>差旅住宿标准与城市分级</h1><p>国内出差的住宿标准按城市分级管理，共分为 <strong>四档</strong>，每档对应不同的可报销上限。城市分级以差旅管理办法中的《国内差旅城市分级表》为准，每年根据实际情况调整一次。<sup class="citation">1</sup><sup class="citation">2</sup></p><h2>分档标准</h2><ul><li><strong>一档城市</strong>（含直辖市与省会）：单日上限 <strong>¥800</strong>，可覆盖一线及主要省会城市。</li><li><strong>二档城市</strong>（计划单列市与重点城市）：单日上限 <strong>¥650</strong>，如宁波、厦门、青岛等。</li><li><strong>三档城市</strong>（其他地级市）：单日上限 <strong>¥500</strong>。</li><li><strong>四档城市</strong>（县级及以下）：单日上限 <strong>¥350</strong>。</li></ul><p>如因客观原因（如展会、大型会议期间酒店价格上浮）需突破上限，<strong>可事前申请特批</strong>，由直属上级与财务共同审批。<sup class="citation">3</sup></p><h2>一档城市清单（可报 800 以上）</h2><p>根据最新分级表，一档城市共 31 个，覆盖以下区域：</p><ul><li><strong>直辖市</strong>：北京、上海、天津、重庆</li><li><strong>省会及特别城市</strong>：广州、深圳、杭州、南京、武汉、成都、西安、苏州、长沙、青岛、济南、合肥、福州、厦门、宁波、郑州、沈阳、大连、哈尔滨、长春、石家庄、太原、南宁、海口、贵阳、昆明、兰州、乌鲁木齐、拉萨<sup class="citation">1</sup></li></ul><blockquote>如果行程同时跨多个城市，标准按 <em>每一段</em> 单独适用。</blockquote><h2>实操建议</h2><p>预订酒店时建议保留 <strong>发票 + 住宿明细单</strong>，并在报销时附上出差申请单号。如对城市分级有疑问，可在提交申请前 @ 财务智能体快速核对。</p><span class="cursor" style="transition: opacity 400ms; opacity: 0;"></span></div>
+      
+    <div class="activity-subline done" data-subline="">
+      <span class="pulse"></span>
+      <span class="label">已基于 3 篇企业文档回答</span>
+      <span class="step">· 14:21</span>
+    </div>
+  
+      <div class="post-stream" data-post="">
+        
+    <div class="sources">
+      <div class="sources-head">
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none">
+          <path d="M5 3h7l3 3v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.3"></path>
+          <path d="M7 9h6M7 12h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path>
+        </svg>
+        来源 · 3 篇
+      </div>
+      <div class="sources-list">
+        
+          <div class="source-item">
+            <span class="source-num">1</span>
+            <div class="source-meta">
+              <div class="source-title">差旅管理办法（2025 修订）</div>
+              <div class="source-source">财务制度库 <span class="sep">·</span> 第 2.1 节 · 城市分级</div>
+            </div>
+          </div>
+        
+          <div class="source-item">
+            <span class="source-num">2</span>
+            <div class="source-meta">
+              <div class="source-title">国内差旅城市分级表（2025）</div>
+              <div class="source-source">财务制度库 · 附件 A <span class="sep">·</span> Excel · 31 个一档城市</div>
+            </div>
+          </div>
+        
+          <div class="source-item">
+            <span class="source-num">3</span>
+            <div class="source-meta">
+              <div class="source-title">特批申请流程说明</div>
+              <div class="source-source">财务制度库 <span class="sep">·</span> 第 4.5 节 · 特殊情形</div>
+            </div>
+          </div>
+        
+      </div>
+    </div>
+  
+        
+    <div class="response-actions">
+      <button class="action-btn">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"></rect><path d="M3 11V4a1 1 0 0 1 1-1h7" stroke="currentColor" stroke-width="1.2"></path></svg>
+        复制
+      </button>
+      <button class="action-btn">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        有用
+      </button>
+      <button class="action-btn">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M6 4v8M10 4v3M5 12l-2 2v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+        重新生成
+      </button>
+      <button class="action-btn" id="openActivity">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="1.2" fill="currentColor"></circle><circle cx="8" cy="8" r="1.2" fill="currentColor"></circle><circle cx="13" cy="8" r="1.2" fill="currentColor"></circle></svg>
+        任务进度
+      </button>
+    </div>
+  
+      </div>
+    </div>
+  </div>
+                <div class="thread-fade" aria-hidden="true"></div>
+            </section>
+
+            <!-- Attribution line for empty composer -->
+            <div class="attribution-empty" id="attributionEmpty">
+                <span class="dot" aria-hidden="true"></span>
+                AI 回答会基于知识库并标注来源
+            </div>
+
+            <!-- Composer -->
+            <div class="composer-zone" id="composerZone">
+                <div class="composer-shell" id="composerShell">
+                    <div class="composer" id="composer">
+                        <div class="composer-attachments" id="composerAttachments" hidden=""></div>
+                        <textarea class="composer-input" id="composerInput" rows="1" placeholder="输入你的问题，@ 调用知识库或任务…"></textarea>
+                        <div class="composer-toolbar" id="composerToolbar">
+                            <button class="composer-tool" data-tool="files" title="上传文件">
+                                <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M4 14V5.5A2.5 2.5 0 0 1 6.5 3H14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 0 0 4h8.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                                <span class="tool-sr">文件</span>
+                            </button>
+                            <button class="composer-tool" data-tool="knowledge" title="@知识库">
+                                <span class="at">@</span>
+                                <span class="tool-sr">知识库</span>
+                            </button>
+                            <button class="composer-tool" data-tool="agents" title="选择智能体">
+                                <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.3"></circle><path d="M10 6.5a3.5 3.5 0 0 1 3.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="2 2.4"></path></svg>
+                                <span class="tool-sr">智能体</span>
+                            </button>
+                            <button class="composer-tool" data-tool="thinking" title="深度思考">
+                                <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.3"></circle><path d="M8 8.5h4M8 11h2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></svg>
+                                <span class="tool-sr">思考</span>
+                            </button>
+                        </div>
+                        <button class="composer-send" id="composerSend" disabled="" title="发送">
+                            <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M10 3v14M4 9l6 6 6-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                        </button>
+                        <button class="composer-stop" id="composerStop" hidden="" title="停止">
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="1.5" y="1.5" width="9" height="9" rx="2"></rect></svg>
+                        </button>
+
+                        <div class="composer-intent" id="composerIntent" hidden=""></div>
+                    </div>
+                    <div class="composer-hint" id="composerHint">↵ 发送</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ============ OVERLAY: AGENT ACTIVITY PANEL ============ -->
+    <div class="activity-overlay" id="activityOverlay" aria-hidden="true">
+        <div class="activity-panel" id="activityPanel">
+            <div class="activity-head">
+                <span class="activity-title">任务进度</span>
+                <button class="icon-btn" id="activityClose" title="关闭">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+                </button>
+            </div>
+            <div class="activity-list" id="activityList">
+    <div class="act-item done" data-i="0">
+      <div class="act-marker"></div>
+      <div class="act-body">
+        <div class="act-label">理解问题</div>
+        
+        <div class="act-detail">intent: travel.policy · region: cn</div><button class="act-toggle">查看参数 <span class="chev">›</span></button>
+      </div>
+    </div>
+  
+    <div class="act-item done" data-i="1">
+      <div class="act-marker"></div>
+      <div class="act-body">
+        <div class="act-label">检索企业知识库</div>
+        <div class="act-meta"><span>via</span><span class="src">知识库 · 财务制度 v3.2</span></div>
+        <div class="act-detail">query: "差旅住宿 报销 城市分级"
+→ 命中 3 篇文档</div><button class="act-toggle">查看参数 <span class="chev">›</span></button>
+      </div>
+    </div>
+  
+    <div class="act-item done" data-i="2">
+      <div class="act-marker"></div>
+      <div class="act-body">
+        <div class="act-label">阅读相关条款</div>
+        
+        <div class="act-detail">doc: 财务制度.pdf#4.2
+doc: 差旅管理办法.pdf#2.1
+doc: 城市分级表(2025).xlsx</div><button class="act-toggle">查看参数 <span class="chev">›</span></button>
+      </div>
+    </div>
+  
+    <div class="act-item done" data-i="3">
+      <div class="act-marker"></div>
+      <div class="act-body">
+        <div class="act-label">生成回答</div>
+        
+        
+      </div>
+    </div>
+  </div>
+        </div>
+    </div>
+
+    <script src="./version2_files/script.js"></script>
+
+
+<div class="scene-switcher">
+    <span class="scene-label">View</span>
+    <button class="scene-btn" data-scene="empty">空状态</button>
+    <button class="scene-btn" data-scene="chat">简单对话</button>
+    <button class="scene-btn active" data-scene="policy">RAG 长文</button>
+    <button class="scene-btn" data-scene="report">数据分析</button>
+    <button class="scene-btn" data-scene="upload">文件</button>
+    <span style="width:1px; height:14px; background:var(--line-1); margin:0 4px;"></span>
+    <button class="scene-btn" id="activityBtn" title="活动面板">任务</button>
+  </div></body></html>

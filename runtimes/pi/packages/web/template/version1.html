@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<!-- saved from url=(0063)file:///C:/Users/10941/Desktop/homework/designer/concept-d.html -->
+<html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clave · 企业 AI 命令面</title>
+<link rel="preconnect" href="https://fonts.googleapis.com/">
+<link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin="">
+<link href="./version1_files/css2" rel="stylesheet">
+<style>
+/* ============================================================
+   CLAVE · Minimal Command Surface
+   Design Language: Function-first · Floating · Spotlight-like
+   ============================================================ */
+
+:root {
+  /* Surfaces — bone, almost no color */
+  --bone:        #FAFAF7;
+  --bone-soft:   #FFFFFF;
+  --bone-deep:   #F2F0EA;
+  --bone-fold:   #E9E6DD;
+
+  /* Ink */
+  --ink-1: #0E0E0C;
+  --ink-2: #2A2A26;
+  --ink-3: #5C5C56;
+  --ink-4: #8A8A82;
+  --ink-5: #B8B8B0;
+  --ink-6: #D9D9D2;
+
+  /* Lines */
+  --line-1: rgba(14, 14, 12, 0.08);
+  --line-2: rgba(14, 14, 12, 0.05);
+  --line-3: rgba(14, 14, 12, 0.02);
+
+  /* Accent — single bold signal */
+  --signal:      #FF5C2E;
+  --signal-deep: #D63F11;
+  --signal-soft: rgba(255, 92, 46, 0.10);
+  --signal-line: rgba(255, 92, 46, 0.28);
+  --signal-glow: rgba(255, 92, 46, 0.18);
+
+  /* Status */
+  --ok:   #1F8A4C;
+  --warn: #C77B12;
+  --err:  #C0392B;
+  --info: #2C5C8A;
+
+  /* Typography */
+  --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-tight: 'Inter Tight', 'Inter', system-ui, sans-serif;
+  --font-mono:  'IBM Plex Mono', 'SF Mono', Menlo, monospace;
+
+  /* Type scale */
+  --t-10: 10px;  --t-11: 11px;  --t-12: 12px;  --t-13: 13px;
+  --t-14: 14px;  --t-15: 15px;  --t-16: 16px;  --t-17: 17px;
+  --t-18: 18px;  --t-20: 20px;  --t-22: 22px;  --t-26: 26px;
+  --t-30: 30px;  --t-36: 36px;  --t-44: 44px;
+
+  /* Spacing */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-7: 28px; --s-8: 32px;
+  --s-10: 40px; --s-12: 48px; --s-16: 64px;
+
+  /* Radius */
+  --r-2: 2px;  --r-4: 4px;  --r-6: 6px;
+  --r-8: 8px;  --r-10: 10px; --r-12: 12px;
+  --r-pill: 999px;
+
+  /* Motion */
+  --ease:    cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.32, 0, 0.67, 0);
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --d-1: 100ms;
+  --d-2: 180ms;
+  --d-3: 280ms;
+  --d-4: 420ms;
+
+  /* Elevation */
+  --sh-1: 0 1px 0 rgba(14, 14, 12, 0.04);
+  --sh-2: 0 2px 8px rgba(14, 14, 12, 0.06), 0 1px 2px rgba(14, 14, 12, 0.03);
+  --sh-3: 0 12px 32px rgba(14, 14, 12, 0.08), 0 2px 6px rgba(14, 14, 12, 0.04);
+  --sh-pop: 0 24px 60px -16px rgba(14, 14, 12, 0.18), 0 4px 12px rgba(14, 14, 12, 0.06);
+  --sh-float: 0 32px 80px -24px rgba(14, 14, 12, 0.12), 0 1px 3px rgba(14, 14, 12, 0.04);
+
+  /* Layout */
+  --cwidth: 720px;
+}
+
+/* ============================================================
+   RESET
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--t-14);
+  line-height: 1.5;
+  color: var(--ink-1);
+  background: var(--bone);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  position: relative;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: inherit;
+}
+textarea { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 3px; }
+::selection { background: var(--signal-soft); color: var(--ink-1); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ink-6); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-5); }
+
+/* Mesh background — very subtle */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 92, 46, 0.04) 0%, transparent 50%),
+    radial-gradient(circle at 70% 80%, rgba(14, 14, 12, 0.03) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   APP — Centered canvas with floating panels
+   ============================================================ */
+.app {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+/* ============================================================
+   TOP STRIP — minimal, almost invisible
+   ============================================================ */
+.top-strip {
+  height: 48px;
+  padding: 0 var(--s-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.brand-glyph {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--ink-1);
+  color: var(--bone);
+  font-family: var(--font-mono);
+  font-size: var(--t-12);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.brand-name {
+  font-family: var(--font-tight);
+  font-size: var(--t-14);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.02em;
+}
+
+.top-strip-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.k-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 28px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-6);
+  font-size: var(--t-12);
+  font-weight: 500;
+  color: var(--ink-3);
+  transition: all var(--d-1) var(--ease);
+}
+.k-btn:hover { background: var(--bone-deep); color: var(--ink-1); }
+.k-btn .kbd {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  padding: 1px 5px;
+  border: 1px solid var(--line-1);
+  border-radius: 3px;
+  background: var(--bone-soft);
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+/* Channel breadcrumb */
+.channel {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 28px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-6);
+  font-size: var(--t-12);
+  color: var(--ink-3);
+  font-weight: 500;
+  transition: all var(--d-1) var(--ease);
+}
+.channel:hover { background: var(--bone-deep); color: var(--ink-1); }
+.channel-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  position: relative;
+}
+.channel-status::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--ok);
+  opacity: 0.4;
+  animation: ring 2s ease-out infinite;
+}
+@keyframes ring {
+  0% { transform: scale(1); opacity: 0.4; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+.channel-name {
+  font-family: var(--font-tight);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+}
+.channel-sub {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   MAIN STAGE — Centered reading area
+   ============================================================ */
+.stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--s-8) var(--s-5) var(--s-16);
+}
+
+.thread-inner {
+  max-width: var(--cwidth);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-12);
+  animation: stageIn 0.5s var(--ease);
+}
+@keyframes stageIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* User message — minimal, almost console-like */
+.user-msg {
+  display: flex;
+  justify-content: flex-end;
+  animation: msgIn 0.4s var(--ease);
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.user-bubble {
+  background: var(--ink-1);
+  color: var(--bone-soft);
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: var(--t-14);
+  line-height: 1.5;
+  max-width: 80%;
+}
+
+/* AI response */
+.ai-msg {
+  animation: msgIn 0.5s var(--ease);
+}
+
+.ai-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: var(--s-4);
+}
+.ai-eyebrow-line {
+  width: 24px;
+  height: 1px;
+  background: var(--ink-5);
+}
+.ai-eyebrow .agent {
+  color: var(--ink-1);
+  font-weight: 500;
+}
+.ai-eyebrow .time {
+  margin-left: auto;
+  color: var(--ink-4);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ai-title {
+  font-family: var(--font-tight);
+  font-size: var(--t-36);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+  color: var(--ink-1);
+  margin: 0 0 var(--s-3);
+}
+.ai-deck {
+  font-family: var(--font-mono);
+  font-size: var(--t-12);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: var(--s-8);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.ai-body {
+  font-size: var(--t-16);
+  line-height: 1.65;
+  color: var(--ink-1);
+  letter-spacing: -0.008em;
+}
+.ai-body p { margin: 0 0 var(--s-4); }
+.ai-body strong { font-weight: 600; }
+.ai-body em { font-style: italic; }
+.ai-body a {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-decoration-color: var(--signal-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--d-1) var(--ease);
+}
+.ai-body a:hover { text-decoration-color: var(--signal); }
+
+/* Inline citation */
+.ref {
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  vertical-align: super;
+  line-height: 0;
+  color: var(--signal);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: background var(--d-1) var(--ease);
+}
+.ref:hover { background: var(--signal-soft); }
+
+/* Section heading */
+.sh {
+  font-family: var(--font-tight);
+  font-size: var(--t-17);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.015em;
+  margin: var(--s-10) 0 var(--s-4);
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.sh-tag {
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  font-weight: 500;
+  color: var(--signal);
+  padding: 2px 6px;
+  background: var(--signal-soft);
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+
+/* List */
+.key-list {
+  margin: var(--s-4) 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: key;
+}
+.key-list li {
+  position: relative;
+  padding: var(--s-3) 0 var(--s-3) var(--s-8);
+  border-bottom: 1px solid var(--line-2);
+  counter-increment: key;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.key-list li:last-child { border-bottom: none; }
+.key-list li::before {
+  content: counter(key, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: var(--s-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  color: var(--ink-4);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.key-list strong {
+  font-weight: 600;
+  color: var(--ink-1);
+  font-family: var(--font-tight);
+  letter-spacing: -0.01em;
+}
+.key-list .tag {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-3);
+  background: var(--bone-deep);
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.key-list .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-left: auto;
+}
+
+/* Data table */
+.dt {
+  width: 100%;
+  margin: var(--s-5) 0;
+  border-collapse: collapse;
+  font-size: var(--t-13);
+}
+.dt thead th {
+  text-align: left;
+  padding: var(--s-2) var(--s-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  border-bottom: 1px solid var(--ink-2);
+}
+.dt tbody td {
+  padding: var(--s-3);
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink-2);
+}
+.dt tbody td:first-child { color: var(--ink-1); font-weight: 500; }
+.dt tbody td:last-child { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.dt .delta-up { color: var(--ok); }
+.dt .delta-down { color: var(--err); }
+.dt tfoot td {
+  padding: var(--s-3);
+  font-weight: 600;
+  color: var(--ink-1);
+  border-top: 1px solid var(--ink-2);
+  border-bottom: none;
+}
+.dt tfoot td:last-child { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Stat block */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  margin: var(--s-5) 0;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-8);
+  overflow: hidden;
+}
+.stat {
+  padding: var(--s-4);
+  border-right: 1px solid var(--line-1);
+}
+.stat:last-child { border-right: none; }
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: var(--s-2);
+}
+.stat-value {
+  font-family: var(--font-tight);
+  font-size: var(--t-26);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.stat-delta {
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  color: var(--ok);
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* Inline chart */
+.chart {
+  margin: var(--s-5) 0;
+  padding: var(--s-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-8);
+  background: var(--bone-soft);
+}
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-3);
+}
+.chart-title {
+  font-family: var(--font-tight);
+  font-size: var(--t-13);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+}
+.chart-info {
+  display: flex;
+  gap: var(--s-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+}
+.chart-info .chit { display: flex; align-items: center; gap: 4px; }
+.chart-info .chit .dot { width: 6px; height: 6px; border-radius: 1px; }
+.chart-svg { width: 100%; height: 120px; display: block; }
+
+/* Cursor */
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--signal);
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  border-radius: 1px;
+  animation: blink 1s steps(2) infinite;
+  position: relative;
+  top: 2px;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Inline stickers — pills */
+.slabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: var(--bone-deep);
+  padding: 1px 6px;
+  border-radius: var(--r-4);
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+/* Sources — compact, show-on-demand */
+.sources {
+  margin-top: var(--s-10);
+  padding: var(--s-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-8);
+  background: var(--bone-soft);
+}
+.sources-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-3);
+}
+.sources-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sources-toggle {
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  color: var(--ink-4);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  transition: color var(--d-1) var(--ease);
+}
+.sources-toggle:hover { color: var(--ink-1); }
+.source-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: var(--s-3);
+  align-items: center;
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line-2);
+  cursor: pointer;
+  transition: background var(--d-1) var(--ease);
+  border-radius: var(--r-4);
+  padding-left: var(--s-2);
+  padding-right: var(--s-2);
+}
+.source-row:hover { background: var(--bone-deep); }
+.source-num {
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  color: var(--signal);
+  font-weight: 500;
+}
+.source-name {
+  font-size: var(--t-13);
+  color: var(--ink-1);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+}
+.source-rel {
+  width: 48px;
+  height: 3px;
+  background: var(--bone-deep);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.source-rel-fill {
+  height: 100%;
+  background: var(--signal);
+  border-radius: 2px;
+}
+
+/* Empty state */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--s-10);
+  text-align: center;
+}
+.empty-glyph {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--bone-soft);
+  color: var(--ink-1);
+  margin-bottom: var(--s-6);
+  font-family: var(--font-mono);
+  font-size: var(--t-22);
+  font-weight: 500;
+  position: relative;
+}
+.empty-glyph::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--signal-line);
+  border-radius: 14px;
+  opacity: 0;
+  animation: emptyPulse 2.4s ease-in-out infinite;
+}
+@keyframes emptyPulse {
+  0%, 100% { opacity: 0; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.06); }
+}
+.empty-title {
+  font-family: var(--font-tight);
+  font-size: var(--t-36);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.035em;
+  margin-bottom: var(--s-2);
+  line-height: 1.1;
+}
+.empty-sub {
+  font-size: var(--t-15);
+  color: var(--ink-3);
+  max-width: 360px;
+  line-height: 1.6;
+  margin-bottom: var(--s-10);
+}
+.empty-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  justify-content: center;
+  max-width: 540px;
+}
+.empty-chip {
+  font-family: var(--font-mono);
+  font-size: var(--t-12);
+  color: var(--ink-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill);
+  background: var(--bone-soft);
+  transition: all var(--d-1) var(--ease);
+}
+.empty-chip:hover { color: var(--ink-1); border-color: var(--signal-line); background: var(--signal-soft); }
+
+/* ============================================================
+   COMPOSER — Floating bottom-center command bar
+   ============================================================ */
+.command-zone {
+  position: fixed;
+  bottom: 24px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--s-5);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.command {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 720px;
+  background: var(--bone-soft);
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  box-shadow: var(--sh-float);
+  overflow: hidden;
+  transition: all var(--d-2) var(--ease);
+  position: relative;
+}
+.command:focus-within {
+  border-color: var(--ink-1);
+  box-shadow: var(--sh-pop), 0 0 0 4px var(--signal-soft);
+}
+
+.command-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+}
+
+.command-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-sans);
+  font-size: var(--t-15);
+  line-height: 1.5;
+  color: var(--ink-1);
+  min-height: 28px;
+  max-height: 200px;
+  padding: 4px 0;
+  letter-spacing: -0.005em;
+}
+.command-input::placeholder {
+  color: var(--ink-4);
+}
+
+.command-submit {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--ink-1);
+  color: var(--bone-soft);
+  flex-shrink: 0;
+  transition: all var(--d-1) var(--ease);
+}
+.command-submit:hover { background: var(--signal); }
+.command-submit:disabled { background: var(--ink-6); cursor: not-allowed; }
+.command-submit svg { width: 14px; height: 14px; }
+
+.command-bar {
+  display: flex;
+  align-items: center;
+  padding: var(--s-1) var(--s-3);
+  border-top: 1px solid var(--line-2);
+  gap: var(--s-1);
+}
+.cmd-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--r-6);
+  font-size: var(--t-11);
+  font-weight: 500;
+  color: var(--ink-3);
+  transition: all var(--d-1) var(--ease);
+  font-family: var(--font-sans);
+}
+.cmd-pill:hover { background: var(--bone-deep); color: var(--ink-1); }
+.cmd-pill.active { background: var(--signal-soft); color: var(--signal); }
+.cmd-pill svg { width: 12px; height: 12px; }
+.cmd-pill .at {
+  font-family: var(--font-mono);
+  font-size: var(--t-12);
+  font-weight: 500;
+}
+
+.cmd-spacer { flex: 1; }
+
+.cmd-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+}
+.cmd-meta .dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.cmd-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--line-1);
+}
+
+/* Suggestion dropdown */
+.cmd-suggest {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--bone-soft);
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  box-shadow: var(--sh-pop);
+  overflow: hidden;
+  display: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cmd-suggest.show { display: block; animation: fadeUp 0.18s var(--ease); }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.cmd-suggest-section {
+  padding: var(--s-2) var(--s-3) var(--s-1);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cmd-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  cursor: pointer;
+  transition: background var(--d-1) var(--ease);
+}
+.cmd-suggest-item:hover, .cmd-suggest-item.active { background: var(--bone-deep); }
+.cmd-suggest-glyph {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--bone-deep);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-12);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.cmd-suggest-text { flex: 1; min-width: 0; }
+.cmd-suggest-title { font-size: var(--t-13); color: var(--ink-1); font-weight: 500; }
+.cmd-suggest-sub { font-size: var(--t-11); color: var(--ink-4); font-family: var(--font-mono); }
+.cmd-suggest-key {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  padding: 2px 6px;
+  border: 1px solid var(--line-1);
+  border-radius: 3px;
+  background: var(--bone);
+}
+
+/* ============================================================
+   FLOATING PANELS — Triggered by tools
+   ============================================================ */
+.floating-panel {
+  position: fixed;
+  background: var(--bone-soft);
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  box-shadow: var(--sh-pop);
+  overflow: hidden;
+  z-index: 50;
+  animation: popIn 0.2s var(--ease);
+}
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Activity panel — floats top-right */
+.activity {
+  top: 64px;
+  right: var(--s-5);
+  width: 320px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+}
+.act-head {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.act-head h3 {
+  font-family: var(--font-tight);
+  font-size: var(--t-13);
+  font-weight: 600;
+  color: var(--ink-1);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.act-head .meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.act-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-2);
+}
+.act-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2);
+  border-radius: var(--r-6);
+  font-size: var(--t-12);
+  align-items: flex-start;
+  transition: background var(--d-1) var(--ease);
+  cursor: pointer;
+}
+.act-row:hover { background: var(--bone-deep); }
+.act-marker {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  background: var(--ink-5);
+  border: 1px solid transparent;
+}
+.act-marker.running { background: var(--signal); border-color: var(--signal-soft); animation: pulse 1.2s ease-in-out infinite; }
+.act-marker.done { background: var(--ok); }
+.act-marker.warn { background: var(--warn); }
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.7; }
+}
+.act-content { min-width: 0; }
+.act-title { color: var(--ink-1); font-weight: 500; line-height: 1.4; }
+.act-sub { color: var(--ink-3); font-size: var(--t-11); font-family: var(--font-mono); margin-top: 2px; }
+.act-time { font-family: var(--font-mono); font-size: var(--t-10); color: var(--ink-4); margin-top: 3px; }
+
+/* Sources panel — floats left */
+.sources-panel {
+  top: 64px;
+  left: var(--s-5);
+  width: 280px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+}
+.src-head {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.src-head h3 {
+  font-family: var(--font-tight);
+  font-size: var(--t-13);
+  font-weight: 600;
+  color: var(--ink-1);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.src-head input {
+  background: var(--bone-deep);
+  border: 1px solid transparent;
+  border-radius: var(--r-4);
+  padding: 4px 8px;
+  font-size: var(--t-11);
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  outline: none;
+  width: 100px;
+  transition: all var(--d-1) var(--ease);
+}
+.src-head input:focus { border-color: var(--signal-line); background: var(--bone-soft); width: 140px; }
+
+.src-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-2);
+}
+.src-row {
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-6);
+  cursor: pointer;
+  transition: background var(--d-1) var(--ease);
+  margin-bottom: 2px;
+}
+.src-row:hover { background: var(--bone-deep); }
+.src-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 4px;
+}
+.src-row-id {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--signal);
+  font-weight: 500;
+}
+.src-row-type {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  background: var(--bone-deep);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.src-row-title {
+  font-size: var(--t-12);
+  color: var(--ink-1);
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.src-row-meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+}
+
+/* Tooltip mini */
+.mini-pop {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: var(--ink-1);
+  color: var(--bone-soft);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  border-radius: var(--r-4);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--d-1) var(--ease);
+  letter-spacing: 0.04em;
+}
+.cmd-pill:hover .mini-pop { opacity: 1; }
+
+/* Mini chip — top right corner session indicator */
+.session-indicator {
+  position: fixed;
+  top: 56px;
+  right: var(--s-5);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 4px 10px;
+  background: var(--bone-soft);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: var(--t-10);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  box-shadow: var(--sh-1);
+  z-index: 30;
+}
+.session-indicator .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.session-indicator .progress {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+  font-weight: 500;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- =========== TOP STRIP =========== -->
+  <div class="top-strip">
+    <div class="brand">
+      <div class="brand-glyph">⌘</div>
+      <span class="brand-name">Clave</span>
+    </div>
+
+    <div class="top-strip-right">
+      <button class="channel">
+        <div class="channel-status"></div>
+        <span class="channel-name">差旅政策研究</span>
+        <span class="channel-sub">· LIVE</span>
+      </button>
+      <button class="k-btn" id="openHistory">
+        <span>历史</span>
+        <span class="kbd">⌘ H</span>
+      </button>
+      <button class="k-btn" id="openSources">
+        <span>资料库</span>
+        <span class="kbd">⌘ K</span>
+      </button>
+      <button class="k-btn" id="openAct">
+        <span>活动</span>
+        <span class="kbd">⌘ J</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- =========== STAGE =========== -->
+  <div class="stage">
+    <div class="thread">
+      <div class="thread-inner">
+
+        <!-- USER MESSAGE -->
+        <div class="user-msg">
+          <div class="user-bubble">
+            帮我整理一下差旅住宿相关标准，包括不同城市级别的报销上限、审批流程，以及如果超标需要怎么走。
+          </div>
+        </div>
+
+        <!-- AI RESPONSE -->
+        <div class="ai-msg">
+          <div class="ai-eyebrow">
+            <span class="ai-eyebrow-line"></span>
+            <span class="agent">研究助理</span>
+            <span>·</span>
+            <span>3 steps</span>
+            <span class="time">14:32 · 1.2s</span>
+          </div>
+
+          <h1 class="ai-title">差旅住宿与报销标准</h1>
+          <div class="ai-deck">CITY · TIER · BUDGET · APPROVAL</div>
+
+          <div class="ai-body">
+            <p>根据《差旅与报销管理办法 2024 修订版》<span class="ref">1</span> 及最新的区域补充规定，企业差旅住宿按 <strong>城市级别</strong> 与 <strong>职级</strong> 双维度确定上限。一句话：城市越大、职级越高，上限越宽松；超标需说明，但通过率整体较高。</p>
+
+            <div class="sh">
+              <span>城市分级</span>
+              <span class="sh-tag">01</span>
+            </div>
+
+            <ul class="key-list">
+              <li><strong>一线城市</strong><span class="tag">北上深广</span><span class="num">¥ 1,200 / 晚</span></li>
+              <li><strong>新一线</strong><span class="tag">杭蓉武苏</span><span class="num">¥ 900 / 晚</span></li>
+              <li><strong>二线</strong><span class="tag">省会及重点</span><span class="num">¥ 700 / 晚</span></li>
+              <li><strong>其他</strong><span class="tag">—</span><span class="num">¥ 500 / 晚</span></li>
+            </ul>
+
+            <p>一线城市 1,200 元 / 晚的覆盖了绝大多数商务酒店的选择区间，<strong>仅 5%</strong> 的常见客户预订需求会超出该上限。如客户陪同，该上限可上浮 <strong>20%</strong><span class="ref">2</span>。</p>
+
+            <div class="sh">
+              <span>审批流程</span>
+              <span class="sh-tag">02</span>
+            </div>
+
+            <p>出差前需通过 OA 系统提交「出差申请单」，并根据出差时长与预算分档审批：</p>
+
+            <table class="dt">
+              <thead>
+                <tr>
+                  <th>预算区间</th>
+                  <th>审批人</th>
+                  <th>归档</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>≤ ¥ 5,000</td><td>直属上级</td><td>—</td></tr>
+                <tr><td>¥ 5,000 – ¥ 20,000</td><td>部门负责人</td><td>财务备案</td></tr>
+                <tr><td>&gt; ¥ 20,000</td><td>VP 及以上</td><td>财务 + CEO 办公室</td></tr>
+              </tbody>
+            </table>
+
+            <div class="sh">
+              <span>超标处理</span>
+              <span class="sh-tag">03</span>
+            </div>
+
+            <p>如确需超出标准预订（例如展会期间价格陡升），需在报销时附加 <strong>超标说明</strong>，由直属上级和财务共同确认。常见情况会通过，但要求 <strong>附原始预订截图</strong> 与 <strong>同档替代方案对比</strong><span class="ref">3</span>。</p>
+
+            <div class="sh">
+              <span>数据观察</span>
+              <span class="sh-tag">04</span>
+            </div>
+
+            <div class="stat-grid">
+              <div class="stat">
+                <div class="stat-label">本月差旅</div>
+                <div class="stat-value">¥ 84.2K</div>
+                <div class="stat-delta">+ 12%</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label">平均单价</div>
+                <div class="stat-value">¥ 762</div>
+                <div class="stat-delta">− 3%</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label">超标率</div>
+                <div class="stat-value">4.8%</div>
+                <div class="stat-delta">− 1.2pp</div>
+              </div>
+            </div>
+
+            <div class="chart">
+              <div class="chart-head">
+                <span class="chart-title">Q2 差旅支出趋势</span>
+                <div class="chart-info">
+                  <span class="chit"><span class="dot" style="background: var(--signal);"></span>住宿</span>
+                  <span class="chit"><span class="dot" style="background: var(--ink-5);"></span>超标</span>
+                </div>
+              </div>
+              <svg class="chart-svg" viewBox="0 0 400 120" preserveAspectRatio="none">
+                <line x1="0" y1="30" x2="400" y2="30" stroke="#E9E6DD" stroke-width="1"></line>
+                <line x1="0" y1="60" x2="400" y2="60" stroke="#E9E6DD" stroke-width="1"></line>
+                <line x1="0" y1="90" x2="400" y2="90" stroke="#E9E6DD" stroke-width="1"></line>
+                <path d="M0 80 L40 70 L80 72 L120 55 L160 60 L200 40 L240 45 L280 30 L320 50 L360 25 L400 20" stroke="#FF5C2E" stroke-width="2" fill="none"></path>
+                <path d="M0 100 L40 98 L80 95 L120 90 L160 92 L200 85 L240 88 L280 80 L320 85 L360 75 L400 72" stroke="#B8B8B0" stroke-width="1.2" stroke-dasharray="3 3" fill="none"></path>
+                <circle cx="200" cy="40" r="3" fill="#FF5C2E"></circle>
+                <circle cx="400" cy="20" r="3" fill="#FF5C2E"></circle>
+              </svg>
+            </div>
+
+            <p>落差最大的是 4 月广交会期间，受展会住宿价格陡升影响，区域二线城市的超标比例一度达到 18%。整体而言，<strong>展会出现频次</strong> 与 <strong>超标率</strong> 呈正相关，建议在展会集中月份增加临时审批通道。<span class="cursor" style="opacity: 0;"></span></p>
+
+            <!-- Sources -->
+            <div class="sources">
+              <div class="sources-head">
+                <span class="sources-title">引用 · 3 sources</span>
+                <span class="sources-toggle">
+                  <span>展开</span>
+                  <span>↓</span>
+                </span>
+              </div>
+              <div class="source-row">
+                <span class="source-num">01</span>
+                <span class="source-name">差旅与报销管理办法 2024 修订</span>
+                <span class="source-rel"><span class="source-rel-fill" style="width: 96%;"></span></span>
+              </div>
+              <div class="source-row">
+                <span class="source-num">02</span>
+                <span class="source-name">客户陪同差旅补充细则</span>
+                <span class="source-rel"><span class="source-rel-fill" style="width: 82%;"></span></span>
+              </div>
+              <div class="source-row">
+                <span class="source-num">03</span>
+                <span class="source-name">超标审批 SOP v3.1</span>
+                <span class="source-rel"><span class="source-rel-fill" style="width: 64%;"></span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- =========== FLOATING ACTIVITY PANEL (right) =========== -->
+  <div class="floating-panel activity" id="activityPanel" style="cursor: grab; display: flex;">
+    <div class="act-head">
+      <h3>任务进度</h3>
+      <span class="meta">3 / 9 · 1.2s</span>
+    </div>
+    <div class="act-stream">
+      <div class="act-row">
+        <div class="act-marker done"></div>
+        <div class="act-content">
+          <div class="act-title">意图分析</div>
+          <div class="act-sub">knowledge · structured</div>
+        </div>
+        <div class="act-time">0.2s</div>
+      </div>
+      <div class="act-row">
+        <div class="act-marker done"></div>
+        <div class="act-content">
+          <div class="act-title">检索企业知识库</div>
+          <div class="act-sub">hybrid · 12 docs</div>
+        </div>
+        <div class="act-time">0.4s</div>
+      </div>
+      <div class="act-row">
+        <div class="act-marker done"></div>
+        <div class="act-content">
+          <div class="act-title">重排序</div>
+          <div class="act-sub">top-k 3 · reranker-v3</div>
+        </div>
+        <div class="act-time">0.5s</div>
+      </div>
+      <div class="act-row">
+        <div class="act-marker done"></div>
+        <div class="act-content">
+          <div class="act-title">policy.search</div>
+          <div class="act-sub">差旅住宿 + 报销上限</div>
+        </div>
+        <div class="act-time">87ms</div>
+      </div>
+      <div class="act-row">
+        <div class="act-marker done"></div>
+        <div class="act-content">
+          <div class="act-title">analytics.run</div>
+          <div class="act-sub">Q2 差旅数据 · 6 rows</div>
+        </div>
+        <div class="act-time">142ms</div>
+      </div>
+      <div class="act-row">
+        <div class="act-marker running"></div>
+        <div class="act-content">
+          <div class="act-title">撰写摘要</div>
+          <div class="act-sub">stream · 248 tok/s</div>
+        </div>
+        <div class="act-time">◐</div>
+      </div>
+      <div class="act-row">
+        <div class="act-marker running"></div>
+        <div class="act-content">
+          <div class="act-title">引用匹配</div>
+          <div class="act-sub">inline · 3 cites</div>
+        </div>
+        <div class="act-time">◐</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========== FLOATING SOURCES PANEL (left) =========== -->
+  <div class="floating-panel sources-panel" id="sourcesPanel" style="cursor: grab; display: none;">
+    <div class="src-head">
+      <h3>资料库</h3>
+      <input type="text" placeholder="检索…">
+    </div>
+    <div class="src-list">
+      <div class="src-row">
+        <div class="src-row-head">
+          <span class="src-row-id">FIN-POL-024</span>
+          <span class="src-row-type">Policy</span>
+        </div>
+        <div class="src-row-title">差旅与报销管理办法 2024 修订</div>
+        <div class="src-row-meta">财务部 · 2024.06</div>
+      </div>
+      <div class="src-row">
+        <div class="src-row-head">
+          <span class="src-row-id">FIN-POL-024/S2</span>
+          <span class="src-row-type">Annex</span>
+        </div>
+        <div class="src-row-title">客户陪同差旅补充细则</div>
+        <div class="src-row-meta">行政部 · 2024.04</div>
+      </div>
+      <div class="src-row">
+        <div class="src-row-head">
+          <span class="src-row-id">FIN-SOP-018</span>
+          <span class="src-row-type">SOP</span>
+        </div>
+        <div class="src-row-title">超标审批 SOP v3.1</div>
+        <div class="src-row-meta">财务部 · 2024.07</div>
+      </div>
+      <div class="src-row">
+        <div class="src-row-head">
+          <span class="src-row-id">DATA-Q2-024</span>
+          <span class="src-row-type">Sheet</span>
+        </div>
+        <div class="src-row-title">Q2 差旅支出明细</div>
+        <div class="src-row-meta">BI · 2024.07.31</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========== COMMAND PALETTE (Composer) =========== -->
+  <div class="command-zone">
+    <div class="command">
+      <div class="command-row">
+        <textarea class="command-input" rows="1" placeholder="问问任何事，或用 ⌘K 打开命令面板…">看看超标最严重的几个部门，分析原因</textarea>
+        <button class="command-submit" title="发送">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v12M3 8l5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        </button>
+      </div>
+      <div class="command-bar">
+        <button class="cmd-pill active">
+          <span class="at">@</span>
+          <span>引用</span>
+        </button>
+        <button class="cmd-pill">
+          <svg viewBox="0 0 14 14" fill="none"><path d="M9 4l-3 6a1.5 1.5 0 0 0 2.6 1.5l3-6a3 3 0 0 0-5.2-3L3 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+          <span>附件</span>
+        </button>
+        <button class="cmd-pill">
+          <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"></circle><path d="M7 4a3 3 0 0 1 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="1.5 1.5"></path></svg>
+          <span>研究助理</span>
+        </button>
+        <button class="cmd-pill">
+          <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"></circle><path d="M5.5 6.5h3M5.5 8.5h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"></path></svg>
+          <span>Thinking</span>
+        </button>
+        <button class="cmd-pill">
+          <span style="font-family: var(--font-mono); font-weight: 600; font-size: var(--t-12);">/</span>
+          <span>命令</span>
+        </button>
+        <div class="cmd-spacer"></div>
+        <div class="cmd-meta">
+          <span class="dot"></span>
+          <span>claude-sonnet-5</span>
+        </div>
+        <div class="cmd-divider"></div>
+        <div class="cmd-meta">
+          <span>248 tok/s</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================
+// Minimal interactions
+// ============================================================
+
+// 1. Auto-resize composer
+const cmdInput = document.querySelector('.command-input');
+cmdInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+});
+
+// 2. Toggle floating panels
+const sourcesPanel = document.getElementById('sourcesPanel');
+const activityPanel = document.getElementById('activityPanel');
+
+document.getElementById('openSources').addEventListener('click', () => {
+  sourcesPanel.style.display = sourcesPanel.style.display === 'none' ? 'flex' : 'none';
+});
+document.getElementById('openAct').addEventListener('click', () => {
+  activityPanel.style.display = activityPanel.style.display === 'none' ? 'flex' : 'none';
+});
+
+// 3. Sources panel draggable feel (visual only)
+let dragData = null;
+[sourcesPanel, activityPanel].forEach(panel => {
+  panel.style.cursor = 'grab';
+  panel.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.act-row, .src-row, input, button')) return;
+    dragData = { panel, startX: e.clientX, startY: e.clientY, origX: panel.offsetLeft, origY: panel.offsetTop };
+  });
+});
+document.addEventListener('mousemove', (e) => {
+  if (!dragData) return;
+  const dx = e.clientX - dragData.startX;
+  const dy = e.clientY - dragData.startY;
+  const p = dragData.panel;
+  p.style.left = (dragData.origX + dx) + 'px';
+  p.style.top = (dragData.origY + dy) + 'px';
+  p.style.right = 'auto';
+});
+document.addEventListener('mouseup', () => { dragData = null; });
+
+// 4. Cmd pills toggle active
+document.querySelectorAll('.cmd-pill').forEach(pill => {
+  pill.addEventListener('click', () => {
+    if (pill.querySelector('.at')) {
+      pill.classList.toggle('active');
+    }
+  });
+});
+
+// 5. Live tickers in activity
+const tickers = document.querySelectorAll('.act-time');
+const tickStates = ['●', '◐', '○', '◑'];
+let tickIdx = 0;
+setInterval(() => {
+  tickers.forEach(t => {
+    if ('●◐○◑'.includes(t.textContent)) {
+      t.textContent = tickStates[tickIdx % 4];
+    }
+  });
+  tickIdx++;
+}, 600);
+
+// 6. Cursor blink
+const cursor = document.querySelector('.cursor');
+if (cursor) {
+  setInterval(() => {
+    cursor.style.opacity = cursor.style.opacity === '0' ? '1' : '0';
+  }, 500);
+}
+
+// 7. Channel hover animation
+const channel = document.querySelector('.channel');
+channel.addEventListener('click', () => {
+  channel.style.transform = 'scale(0.98)';
+  setTimeout(() => { channel.style.transform = 'scale(1)'; }, 100);
+});
+</script>
+
+
+
+</body></html>
