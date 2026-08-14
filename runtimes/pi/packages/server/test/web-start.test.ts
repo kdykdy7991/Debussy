@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
+import { parsePublishingConfig } from "../src/publishing/config.ts";
 import { buildVoiceLayer, resolveOptions } from "../src/web/start.ts";
 
 describe("web server configuration", () => {
@@ -70,6 +71,61 @@ describe("voice proxy configuration", () => {
 				{},
 			),
 		).toThrow(/default profile/);
+	});
+});
+
+describe("publishing feature configuration", () => {
+	test("defaults to disabled when the env var is unset", () => {
+		expect(parsePublishingConfig({})).toEqual({
+			enabled: false,
+			databaseUrl: undefined,
+			bootstrapTenantId: undefined,
+			bootstrapTenantName: undefined,
+			controlAdminTokenFile: undefined,
+			embedBaseUrl: "http://127.0.0.1:8765",
+		});
+	});
+
+	test("accepts case-insensitive boolean values", () => {
+		const enabled = expect.objectContaining({ enabled: true });
+		expect(parsePublishingConfig({ PI_PUBLISHING_ENABLED: "true" })).toEqual(enabled);
+		expect(parsePublishingConfig({ PI_PUBLISHING_ENABLED: "TRUE" })).toEqual(enabled);
+		expect(parsePublishingConfig({ PI_PUBLISHING_ENABLED: " false " })).toEqual(
+			expect.objectContaining({ enabled: false }),
+		);
+	});
+
+	test("reads the 24.2 publishing environment into the config", () => {
+		const config = parsePublishingConfig({
+			PI_PUBLISHING_ENABLED: "true",
+			PI_DATABASE_URL: "postgresql://u:p@host/db",
+			PI_BOOTSTRAP_TENANT_ID: "00000000-0000-7000-8000-000000000001",
+			PI_BOOTSTRAP_TENANT_NAME: "SKDY",
+			PI_CONTROL_ADMIN_TOKEN_FILE: "/run/secrets/control-admin-token",
+			PI_EMBED_ISSUER: "https://agent.example.com",
+		});
+		expect(config).toEqual({
+			enabled: true,
+			databaseUrl: "postgresql://u:p@host/db",
+			bootstrapTenantId: "00000000-0000-7000-8000-000000000001",
+			bootstrapTenantName: "SKDY",
+			controlAdminTokenFile: "/run/secrets/control-admin-token",
+			embedBaseUrl: "https://agent.example.com",
+		});
+	});
+
+	test("rejects non-boolean values so a misconfiguration fails startup", () => {
+		for (const raw of ["1", "yes", "on", "maybe"]) {
+			expect(() => parsePublishingConfig({ PI_PUBLISHING_ENABLED: raw })).toThrow(/PI_PUBLISHING_ENABLED/);
+		}
+	});
+
+	test("disabled publishing keeps the resolved listener configuration unchanged", () => {
+		// Existing URL and handler wiring must not depend on publishing infra.
+		const options = resolveOptions({});
+		expect(options.path).toBe("/api/pi/v1/ws");
+		expect(options.listener.allowedOrigins).toEqual(["http://127.0.0.1:*", "http://localhost:*"]);
+		expect(options.listener.authorizeUpgrade).toBeUndefined();
 	});
 });
 

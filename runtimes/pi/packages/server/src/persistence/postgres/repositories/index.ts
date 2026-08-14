@@ -1,0 +1,36 @@
+/**
+ * PostgreSQL implementations of the scoped publishing repositories.
+ *
+ * Every query embeds the resource scope (`tenant_id` and where applicable
+ * `published_app_id` / `owner_principal_id`) in the WHERE clause; there are no
+ * bare-id public methods. Row mapping keeps the domain records typed.
+ */
+
+import type { PublishingRepositories } from "../../../publishing/repositories.ts";
+import type { PostgresClient } from "../client.ts";
+import { createAgentDefinitionRepository } from "./agent-definitions.ts";
+import { createAuditEventRepository } from "./audit.ts";
+import { createConversationEventRepository } from "./conversation-events.ts";
+import { createConversationRepository } from "./conversations.ts";
+import { createIdempotencyRepository } from "./idempotency.ts";
+import { createPrincipalRepository } from "./principals.ts";
+import { createPublishedAppVersionRepository } from "./published-app-versions.ts";
+import { createPublishedAppRepository } from "./published-apps.ts";
+import { createTenantRepository } from "./tenants.ts";
+
+/** Build all scoped repositories over one Postgres client. */
+export function createPublishingRepositories(client: PostgresClient): PublishingRepositories {
+	return {
+		tenants: createTenantRepository(client),
+		agentDefinitions: createAgentDefinitionRepository(client),
+		publishedApps: createPublishedAppRepository(client),
+		publishedAppVersions: createPublishedAppVersionRepository(client),
+		principals: createPrincipalRepository(client),
+		conversations: createConversationRepository(client),
+		events: createConversationEventRepository(client),
+		idempotency: createIdempotencyRepository(client),
+		audit: createAuditEventRepository(client),
+	};
+}
+
+export type { PublishingRepositories } from "../../../publishing/repositories.ts";

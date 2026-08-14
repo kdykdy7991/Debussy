@@ -47,7 +47,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/legacy/cli.js dist/web/cli.js",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/legacy/cli.js dist/web/cli.js && shx cp -r src/persistence/postgres/migrations dist/persistence/postgres/migrations",
 		"test": "vitest --run",
 		"typecheck": "tsgo -p tsconfig.test.json",
 		"prepublishOnly": "npm run clean && npm run build"
@@ -71,7 +71,12 @@
 		"@earendil-works/pi-coding-agent": "^0.83.0",
 		"@earendil-works/pi-protocol": "^0.83.0",
 		"busboy": "1.6.0",
-		"ws": "8.21.0"
+		"ioredis": "6.0.0",
+		"jose": "6.2.8",
+		"minio": "8.0.7",
+		"postgres": "3.4.9",
+		"ws": "8.21.0",
+		"zod": "3.25.76"
 	},
 	"devDependencies": {
 		"@types/busboy": "1.5.4",

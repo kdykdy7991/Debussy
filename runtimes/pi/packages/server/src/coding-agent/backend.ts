@@ -102,6 +102,11 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 		return new CodingAgentPiSessionBackend(cwd, agentDir, sessionDir, allowedCwds, services);
 	}
 
+	/** Resolved cwd-bound services; used by the publishing control plane. */
+	getServices(): AgentSessionServices {
+		return this.services;
+	}
+
 	async listSessions(): Promise<SessionSummary[]> {
 		const records = await this.loadSessionIndex();
 		const summaries: SessionSummary[] = [];

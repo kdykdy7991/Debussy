@@ -23,6 +23,8 @@ import { CitationService, CitationStore } from "../citations/index.ts";
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
 import { PiServerError } from "../errors.ts";
+import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
+import { type ControlPlaneHandle, composeControlPlane } from "../publishing/control/compose.ts";
 import type { PiServer } from "../server.ts";
 import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
@@ -100,6 +102,12 @@ export interface StartWebServerOptions {
 	autoStart?: boolean;
 	/** Speech proxy; when omitted, speech commands and PCM routes are unavailable. */
 	voice?: WebVoiceOptions;
+	/**
+	 * Publishing configuration. When absent or disabled, no publishing
+	 * infrastructure (database, Redis, object store, keys) is created and the
+	 * existing `/api/pi/v1/ws` path behaves exactly as before.
+	 */
+	publishing?: PublishingConfig;
 }
 
 export interface WebServerHandle {
@@ -113,8 +121,23 @@ export interface WebServerHandle {
 export async function startWebServer(options: StartWebServerOptions = {}): Promise<WebServerHandle> {
 	const resolved = resolveOptions(options);
 	const log = options.log ?? console.log.bind(console);
+	const publishing = options.publishing ?? parsePublishingConfig(process.env);
+	if (publishing.enabled) {
+		log("publishing enabled: control/data/runtime planes will be composed by embed/start.ts");
+	}
 
 	const backend = await CodingAgentPiSessionBackend.create(resolved.backend);
+
+	let controlPlane: ControlPlaneHandle | undefined;
+	if (publishing.enabled) {
+		// 33.1/33.2: missing token / db / bootstrap config fails startup.
+		controlPlane = await composeControlPlane({
+			services: backend.getServices(),
+			publishing,
+			log,
+		});
+		log("control plane HTTP handler mounted");
+	}
 
 	const attachments = new AttachmentStore(join(resolved.agentDir, "uploads"));
 	await attachments.init();
@@ -138,6 +161,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		allowedHosts: resolved.listener.allowedHosts,
 	});
 	httpHandlers.push(...voiceHandlers);
+	if (controlPlane !== undefined) httpHandlers.push(controlPlane.handler);
 	const httpHandler = composeHttpHandlers(httpHandlers);
 
 	const citations = new CitationService({
@@ -182,6 +206,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				await server.close();
 			} catch (error) {
 				log(`error during server.close: ${formatError(error)}`);
+			}
+			if (controlPlane !== undefined) {
+				try {
+					await controlPlane.close();
+				} catch (error) {
+					log(`error during control plane close: ${formatError(error)}`);
+				}
 			}
 		})();
 		return closing;
