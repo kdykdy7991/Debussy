@@ -7,6 +7,7 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@earendil-works/pi-client": fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
+			"@earendil-works/pi-protocol": fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
 		},
 	},
 	server: {

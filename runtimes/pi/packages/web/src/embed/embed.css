@@ -1,0 +1,177 @@
+/* Embed 壳样式（TASK-019）：独立打开与 iframe 内自适应，响应式、最小无障碍。 */
+
+.embed-shell {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	--embed-primary: #2563eb;
+}
+
+.embed-header {
+	display: flex;
+	align-items: center;
+	padding: 0.625rem 1rem;
+	border-bottom: 1px solid var(--embed-border, #e5e7eb);
+	font-weight: 600;
+	color: var(--embed-primary);
+}
+
+.embed-body {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.embed-layout {
+	display: flex;
+	height: 100%;
+}
+
+.embed-conversations {
+	width: 220px;
+	border-right: 1px solid var(--embed-border, #e5e7eb);
+	overflow-y: auto;
+	padding: 0.5rem;
+	flex-shrink: 0;
+}
+
+.embed-conversation-list {
+	list-style: none;
+	margin: 0.5rem 0 0;
+	padding: 0;
+}
+
+.embed-conversation-item {
+	width: 100%;
+	text-align: left;
+	background: none;
+	border: none;
+	padding: 0.5rem 0.625rem;
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 0.875rem;
+}
+
+.embed-conversation-item:hover {
+	background: var(--embed-hover, #f3f4f6);
+}
+
+.embed-conversation-item.is-active {
+	background: color-mix(in srgb, var(--embed-primary) 12%, white);
+	color: var(--embed-primary);
+}
+
+.embed-conversation-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	display: block;
+}
+
+.embed-chat {
+	flex: 1;
+	overflow-y: auto;
+	padding: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.embed-message {
+	max-width: 80%;
+	padding: 0.5rem 0.75rem;
+	border-radius: 10px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 0.9375rem;
+	line-height: 1.45;
+}
+
+.embed-user {
+	align-self: flex-end;
+	background: var(--embed-primary);
+	color: #fff;
+}
+
+.embed-assistant {
+	align-self: flex-start;
+	background: var(--embed-hover, #f3f4f6);
+}
+
+.embed-system {
+	align-self: center;
+	font-size: 0.8125rem;
+	color: #6b7280;
+}
+
+.embed-empty {
+	color: #9ca3af;
+	text-align: center;
+	padding: 2rem 1rem;
+}
+
+.embed-inline-error {
+	color: #b91c1c;
+	font-size: 0.8125rem;
+}
+
+.embed-error {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 3rem 1rem;
+}
+
+.embed-error-message {
+	color: #6b7280;
+}
+
+.embed-composer {
+	border-top: 1px solid var(--embed-border, #e5e7eb);
+	padding: 0.625rem 1rem;
+}
+
+.embed-composer-form {
+	display: flex;
+	gap: 0.5rem;
+}
+
+.embed-input {
+	flex: 1;
+	padding: 0.5rem 0.75rem;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	font-size: 0.9375rem;
+}
+
+.embed-input:focus {
+	outline: 2px solid color-mix(in srgb, var(--embed-primary) 40%, transparent);
+}
+
+.embed-button {
+	padding: 0.5rem 0.875rem;
+	border: 1px solid var(--embed-primary);
+	border-radius: 8px;
+	background: var(--embed-primary);
+	color: #fff;
+	cursor: pointer;
+	font-size: 0.875rem;
+}
+
+.embed-button:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.embed-new {
+	margin-bottom: 0.25rem;
+}
+
+/* 移动端：隐藏会话列表，仅聊天。 */
+@media (max-width: 640px) {
+	.embed-conversations {
+		display: none;
+	}
+}
