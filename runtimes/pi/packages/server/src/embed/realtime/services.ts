@@ -1,0 +1,45 @@
+/**
+ * RealtimeServices 适配器（TASK-025）。
+ *
+ * 把 `ConversationService` 适配为 Realtime 连接所需的最小接口：授权后执行
+ * Turn（持久化 + 单写者）+ 会话快照。Realtime 与 HTTP 共享同一套授权/持久
+ * 化语义，不存在第二套用户隔离逻辑。
+ */
+import type { ConversationService } from "../conversations/service.ts";
+import type { RealtimeServices } from "./connection.ts";
+
+export function conversationRealtimeServices(service: ConversationService): RealtimeServices {
+	return {
+		async executeTurn({ principal, conversationId, text }) {
+			const result = await service.executeTurn({ principal, conversationId, text });
+			if (!result.ok) {
+				return {
+					ok: false,
+					code: result.error.code,
+					message: result.error.message,
+					retryable: result.error.retryable,
+				};
+			}
+			return {
+				ok: true,
+				turnId: result.data.turnId,
+				userMessageSequence: result.data.userMessageSequence,
+				assistantSequence: result.data.assistantSequence,
+				outputText: result.data.outputText,
+			};
+		},
+		async getConversation({ principal, conversationId }) {
+			const result = await service.getConversation({ principal, conversationId });
+			return result.ok ? result.data : undefined;
+		},
+		async listEvents({ principal, conversationId, afterSequence }) {
+			const result = await service.listEvents({
+				principal,
+				conversationId,
+				afterSequence,
+				limit: 200,
+			});
+			return result.ok ? result.data : [];
+		},
+	};
+}

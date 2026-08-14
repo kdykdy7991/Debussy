@@ -25,6 +25,7 @@ interface ResolvedWebSocketListenerOptions {
 	maxPendingBytes: number;
 	gracefulCloseTimeoutMs: number;
 	httpHandler?: HttpRequestHandler;
+	onUnhandledUpgrade?: (request: IncomingMessage, socket: Duplex, head: Buffer) => boolean;
 	onError?: (error: Error) => void;
 }
 
@@ -66,6 +67,7 @@ function resolveWebSocketListenerOptions(options: WebSocketListenerOptions): Res
 		maxPendingBytes,
 		gracefulCloseTimeoutMs,
 		httpHandler: options.httpHandler,
+		onUnhandledUpgrade: options.onUnhandledUpgrade,
 		onError: options.onError,
 	};
 }
@@ -240,6 +242,11 @@ export class WebSocketListener implements PiServerListener {
 	private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
 		if (this.closing) {
 			socket.destroy();
+			return;
+		}
+		// 非主路径 upgrade：交给可选扩展（如 embed Realtime ticket upgrade）。
+		const pathname = requestPathname(request.url);
+		if (pathname !== this.options.path && this.options.onUnhandledUpgrade?.(request, socket, head) === true) {
 			return;
 		}
 		const rejection = this.authorize(request);

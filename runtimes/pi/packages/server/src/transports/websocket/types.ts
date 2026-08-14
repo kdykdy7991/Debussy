@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import type { HttpRequestHandler, PiServerOptions } from "../../types.ts";
 
 export interface WebSocketListenerOptions {
@@ -21,6 +22,12 @@ export interface WebSocketListenerOptions {
 	allowedHosts?: readonly string[];
 	/** Additional synchronous authorization check performed before upgrade. */
 	authorizeUpgrade?: (request: IncomingMessage) => boolean;
+	/**
+	 * Handlers for upgrades on paths other than `path` (e.g. embed Realtime
+	 * ticket upgrade). Return true when the request was handled (responded or
+	 * upgraded); otherwise the listener rejects it with the usual 404.
+	 */
+	onUnhandledUpgrade?: (request: IncomingMessage, socket: Duplex, head: Buffer) => boolean;
 	/** Maximum accepted WebSocket message payload. Defaults to DEFAULT_MAX_FRAME_LENGTH. */
 	maxFrameLength?: number;
 	/** Maximum framed bytes queued per connection before a slow peer is disconnected. */
