@@ -169,8 +169,18 @@ export interface PublishedAppRepository {
 	insert(record: PublishedAppRecord): Promise<void>;
 	/** Scoped get: tenant + app must both match. */
 	get(scope: AppScope, publishedAppId: PublishedAppId): Promise<PublishedAppRecord | undefined>;
-	/** Scoped get by the public locator (publicAppId is not a credential). */
-	getByPublicAppId(scope: TenantScope, publicAppId: string): Promise<PublishedAppRecord | undefined>;
+	/**
+	 * Lookup by the globally-unique public locator (`public_app_id`, UNIQUE).
+	 *
+	 * This is the ONE intentionally unscoped lookup in the repository layer:
+	 * the embed Exchange endpoint is a public endpoint that only knows the
+	 * publicAppId, and `publicAppId` is not a resource id — it is an
+	 * unguessable, publicly-shareable locator (AD-10), so knowing it already
+	 * implies the app. The discovered `tenantId` immediately becomes the
+	 * scope for every downstream operation; there is no way to enumerate
+	 * another tenant's apps without their publicAppId.
+	 */
+	getByPublicAppId(publicAppId: string): Promise<PublishedAppRecord | undefined>;
 	/** Update mutable fields only (never historical versions). */
 	updateMutable(
 		scope: AppScope,

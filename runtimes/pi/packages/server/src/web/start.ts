@@ -22,6 +22,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { CitationService, CitationStore } from "../citations/index.ts";
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
+import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
 import { PiServerError } from "../errors.ts";
 import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
 import { type ControlPlaneHandle, composeControlPlane } from "../publishing/control/compose.ts";
@@ -129,6 +130,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	const backend = await CodingAgentPiSessionBackend.create(resolved.backend);
 
 	let controlPlane: ControlPlaneHandle | undefined;
+	let embedPlane: EmbedPlaneHandle | undefined;
 	if (publishing.enabled) {
 		// 33.1/33.2: missing token / db / bootstrap config fails startup.
 		controlPlane = await composeControlPlane({
@@ -137,6 +139,16 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			log,
 		});
 		log("control plane HTTP handler mounted");
+		// 24.2: missing pepper / access-token keys fails startup; the embed
+		// data plane reuses the control plane's Postgres connection/repos and
+		// runs turns on the same Agent backend (one runtime per conversation).
+		embedPlane = await composeEmbedPlane({
+			publishing,
+			repositories: controlPlane.repositories,
+			createSession: (options) =>
+				backend.createSession({ id: options.id, model: options.model, thinkingLevel: options.thinkingLevel }),
+			log,
+		});
 	}
 
 	const attachments = new AttachmentStore(join(resolved.agentDir, "uploads"));
@@ -162,6 +174,9 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	});
 	httpHandlers.push(...voiceHandlers);
 	if (controlPlane !== undefined) httpHandlers.push(controlPlane.handler);
+	if (embedPlane !== undefined) {
+		httpHandlers.push(embedPlane.bootstrapHandler, embedPlane.exchangeHandler, embedPlane.conversationsHandler);
+	}
 	const httpHandler = composeHttpHandlers(httpHandlers);
 
 	const citations = new CitationService({
@@ -172,6 +187,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 
 	const server = createWebSocketServer(backend, {
 		...resolved.listener,
+		// TASK-025：embed Realtime upgrade（ticket 校验）接管非主路径 upgrade。
+		...(embedPlane?.realtimeUpgrade !== undefined ? { onUnhandledUpgrade: embedPlane.realtimeUpgrade } : {}),
 		httpHandler,
 		attachments,
 		citations,
@@ -212,6 +229,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 					await controlPlane.close();
 				} catch (error) {
 					log(`error during control plane close: ${formatError(error)}`);
+				}
+			}
+			if (embedPlane !== undefined) {
+				try {
+					await embedPlane.close();
+				} catch (error) {
+					log(`error during embed plane close: ${formatError(error)}`);
 				}
 			}
 		})();

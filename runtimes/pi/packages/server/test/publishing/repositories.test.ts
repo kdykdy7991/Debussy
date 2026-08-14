@@ -200,11 +200,16 @@ describe.skipIf(!pgUp)("scoped repositories", () => {
 		expect(await repos.publishedApps.get(scopeA, appB)).toBeUndefined();
 	});
 
-	test("getByPublicAppId requires the tenant scope", async () => {
-		const scopeA = { tenantId: tenantA };
-		const scopeB = { tenantId: tenantB };
-		expect((await repos.publishedApps.getByPublicAppId(scopeA, "pub_repo_a"))?.publishedAppId).toBe(appA);
-		expect(await repos.publishedApps.getByPublicAppId(scopeB, "pub_repo_a")).toBeUndefined();
+	test("getByPublicAppId resolves by the globally-unique public locator", async () => {
+		// The public Exchange endpoint only knows the publicAppId; this is the
+		// one intentionally unscoped lookup because `public_app_id` is
+		// globally UNIQUE and unguessable (AD-10). The returned row carries
+		// the tenant that scopes every downstream operation.
+		const app = await repos.publishedApps.getByPublicAppId("pub_repo_a");
+		expect(app?.publishedAppId).toBe(appA);
+		expect(app?.tenantId).toBe(tenantA);
+		expect(await repos.publishedApps.getByPublicAppId("pub_repo_b")).toBeDefined();
+		expect(await repos.publishedApps.getByPublicAppId("pub_does_not_exist")).toBeUndefined();
 	});
 
 	test("version lookup requires tenant + app scope", async () => {

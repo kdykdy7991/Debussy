@@ -92,10 +92,16 @@ describe.skipIf(!pgUp)("control plane composition", () => {
 		return {
 			enabled: true,
 			databaseUrl: PG_URL,
+			redisUrl: undefined,
 			bootstrapTenantId: tenantId,
 			bootstrapTenantName: "compose-test",
 			controlAdminTokenFile: tokenFile,
 			embedBaseUrl: "https://embed.test",
+			subjectPepper: "compose-pepper-0123456789abcdef0123456789abcdef",
+			accessTokenPrivateKeyFile: undefined,
+			accessTokenPublicKeyFile: undefined,
+			accessTokenKeyId: undefined,
+			accessTokenTtlSeconds: 600,
 			...overrides,
 		};
 	}

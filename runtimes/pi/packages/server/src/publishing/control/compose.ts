@@ -10,6 +10,7 @@ import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
 import { PostgresClient } from "../../persistence/postgres/client.ts";
 import { runMigrations } from "../../persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../persistence/postgres/repositories/index.ts";
+import type { PublishingRepositories } from "../../publishing/repositories.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import type { PublishingConfig } from "../config.ts";
 import { parseIdOrThrow } from "../domain/ids.ts";
@@ -22,6 +23,10 @@ import { readTokenFile } from "./token.ts";
 export interface ControlPlaneHandle {
 	readonly handler: HttpRequestHandler;
 	readonly controlService: ControlService;
+	/** 共享 Postgres 连接；embed 数据面组合复用（避免二次建连）。 */
+	readonly client: PostgresClient;
+	/** 共享作用域仓库集合；embed 数据面组合复用。 */
+	readonly repositories: PublishingRepositories;
 	close(): Promise<void>;
 }
 
@@ -103,6 +108,8 @@ export async function composeControlPlane(options: {
 	return {
 		handler,
 		controlService,
+		client,
+		repositories,
 		close: () => client.close(),
 	};
 }

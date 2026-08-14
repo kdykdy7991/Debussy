@@ -79,10 +79,16 @@ describe("publishing feature configuration", () => {
 		expect(parsePublishingConfig({})).toEqual({
 			enabled: false,
 			databaseUrl: undefined,
+			redisUrl: undefined,
 			bootstrapTenantId: undefined,
 			bootstrapTenantName: undefined,
 			controlAdminTokenFile: undefined,
 			embedBaseUrl: "http://127.0.0.1:8765",
+			subjectPepper: undefined,
+			accessTokenPrivateKeyFile: undefined,
+			accessTokenPublicKeyFile: undefined,
+			accessTokenKeyId: undefined,
+			accessTokenTtlSeconds: 600,
 		});
 	});
 
@@ -99,19 +105,39 @@ describe("publishing feature configuration", () => {
 		const config = parsePublishingConfig({
 			PI_PUBLISHING_ENABLED: "true",
 			PI_DATABASE_URL: "postgresql://u:p@host/db",
+			PI_REDIS_URL: "redis://127.0.0.1:6379/0",
 			PI_BOOTSTRAP_TENANT_ID: "00000000-0000-7000-8000-000000000001",
 			PI_BOOTSTRAP_TENANT_NAME: "SKDY",
 			PI_CONTROL_ADMIN_TOKEN_FILE: "/run/secrets/control-admin-token",
 			PI_EMBED_ISSUER: "https://agent.example.com",
+			PI_EMBED_SUBJECT_PEPPER: "pepper-0123456789abcdef0123456789abcdef",
+			PI_EMBED_ACCESS_TOKEN_PRIVATE_KEY_FILE: "/run/secrets/embed-access-private.pem",
+			PI_EMBED_ACCESS_TOKEN_PUBLIC_KEY_FILE: "/run/secrets/embed-access-public.pem",
+			PI_EMBED_ACCESS_TOKEN_KEY_ID: "kid-2026-01",
+			PI_EMBED_ACCESS_TOKEN_TTL_SECONDS: "300",
 		});
 		expect(config).toEqual({
 			enabled: true,
 			databaseUrl: "postgresql://u:p@host/db",
+			redisUrl: "redis://127.0.0.1:6379/0",
 			bootstrapTenantId: "00000000-0000-7000-8000-000000000001",
 			bootstrapTenantName: "SKDY",
 			controlAdminTokenFile: "/run/secrets/control-admin-token",
 			embedBaseUrl: "https://agent.example.com",
+			subjectPepper: "pepper-0123456789abcdef0123456789abcdef",
+			accessTokenPrivateKeyFile: "/run/secrets/embed-access-private.pem",
+			accessTokenPublicKeyFile: "/run/secrets/embed-access-public.pem",
+			accessTokenKeyId: "kid-2026-01",
+			accessTokenTtlSeconds: 300,
 		});
+	});
+
+	test("rejects an invalid access-token ttl so a misconfiguration fails startup", () => {
+		for (const raw of ["0", "-5", "abc", "1.5", "90000"]) {
+			expect(() =>
+				parsePublishingConfig({ PI_PUBLISHING_ENABLED: "true", PI_EMBED_ACCESS_TOKEN_TTL_SECONDS: raw }),
+			).toThrow(/PI_EMBED_ACCESS_TOKEN_TTL_SECONDS/);
+		}
 	});
 
 	test("rejects non-boolean values so a misconfiguration fails startup", () => {

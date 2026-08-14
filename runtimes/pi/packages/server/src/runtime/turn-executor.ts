@@ -1,0 +1,84 @@
+/**
+ * Turn 执行器（TASK-018 内部/测试路径）。
+ *
+ * `TurnExecutor` 把「一次用户输入 -> 一段 assistant 输出」抽象出来，便于
+ * ConversationService 持久化 user.message / assistant.completed / turn.failed
+ * 事件而不耦合 Pi 具体执行细节。`runtimeTurnExecutor` 是基于
+ * `PiRuntimeAdapter` 的默认实现：打开 Runtime -> prompt -> 从会话 transcript
+ * 提取最后一条 complete assistant 文本 -> 幂等 close。
+ *
+ * 本路径标记为 internal/dev，不作为最终公开协议（TASK-025 的 Realtime
+ * 通道建成后关闭或仅测试可用）。
+ */
+import type { SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
+import type { RestoredContext } from "./context-restore.ts";
+import type { ConversationRuntimeManager } from "./conversation-runtime-manager.ts";
+import type { PiRuntimeAdapter } from "./pi-runtime-adapter.ts";
+import type { ScopeContext } from "./scope-context.ts";
+
+export interface TurnExecutionInput {
+	readonly scope: ScopeContext;
+	readonly spec: RuntimeSpec;
+	readonly text: string;
+	/** 恢复的历史上下文（TASK-022）；缺省为无。 */
+	readonly history?: RestoredContext;
+}
+
+export type TurnExecutionResult =
+	| { readonly ok: true; readonly outputText: string }
+	| { readonly ok: false; readonly error: string };
+
+export type TurnExecutor = (input: TurnExecutionInput) => Promise<TurnExecutionResult>;
+
+/** 基于 PiRuntimeAdapter 的默认执行器（open -> prompt -> 提取输出 -> close）。 */
+export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
+	return async ({ scope, spec, text, history }) => {
+		const opened = await adapter.open(spec, scope);
+		if (!opened.ok) return { ok: false, error: opened.reason };
+		const runtime = opened.runtime;
+		try {
+			await runtime.prompt(text, history !== undefined ? { history } : undefined);
+			return { ok: true, outputText: lastAssistantText(runtime.snapshot()) };
+		} catch (error) {
+			return { ok: false, error: error instanceof Error ? error.message : String(error) };
+		} finally {
+			await runtime.close().catch(() => {});
+		}
+	};
+}
+
+/**
+ * 基于 ConversationRuntimeManager 的执行器（TASK-021）：acquire 复用活跃
+ * Runtime（同 Conversation 连续 Turn 不重建底层会话），Turn 后 release 而非
+ * close——空闲回收由 manager 的空闲 TTL 负责，Runtime 生命周期不再跟随单次
+ * HTTP 请求。
+ */
+export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnExecutor {
+	return async ({ scope, spec, text, history }) => {
+		const acquired = await manager.acquire(spec, scope);
+		const runtime = acquired.runtime;
+		try {
+			await runtime.prompt(text, history !== undefined ? { history } : undefined);
+			return { ok: true, outputText: lastAssistantText(runtime.snapshot()) };
+		} catch (error) {
+			return { ok: false, error: error instanceof Error ? error.message : String(error) };
+		} finally {
+			manager.release(scope.conversationId);
+		}
+	};
+}
+
+/** 从会话快照提取最后一条 status=complete 的 assistant 文本（拼接 text content）。 */
+export function lastAssistantText(snapshot: SessionSnapshot): string {
+	for (let i = snapshot.transcript.length - 1; i >= 0; i -= 1) {
+		const item = snapshot.transcript[i];
+		if (item === undefined || item.role !== "assistant") continue;
+		if (item.status !== "complete") continue;
+		return item.content
+			.filter((content) => content.type === "text")
+			.map((content) => (content as { type: "text"; text: string }).text)
+			.join("\n");
+	}
+	return "";
+}

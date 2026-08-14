@@ -1,10 +1,5 @@
 import type { PublishedAppId, PublishedAppVersionId, TenantId } from "../../../publishing/domain/ids.ts";
-import type {
-	AppScope,
-	PublishedAppRecord,
-	PublishedAppRepository,
-	TenantScope,
-} from "../../../publishing/repositories.ts";
+import type { AppScope, PublishedAppRecord, PublishedAppRepository } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { txRows } from "./tx.ts";
 
@@ -26,8 +21,10 @@ function rowToRecord(row: Record<string, unknown>): PublishedAppRecord {
 }
 
 /**
- * PublishedApp repository. All reads are scoped by tenant; `publicAppId` is a
- * public locator (not a credential) and lookups still require the tenant scope.
+ * PublishedApp repository. All reads are scoped by tenant except
+ * `getByPublicAppId`, which resolves the globally-unique public locator for
+ * the public Exchange endpoint (the discovered tenant then scopes everything
+ * downstream).
  */
 export function createPublishedAppRepository(client: PostgresClient): PublishedAppRepository {
 	return {
@@ -62,12 +59,8 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 			);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
 		},
-		async getByPublicAppId(scope: TenantScope, publicAppId) {
-			const rows = await client.run(
-				"select * from published_apps where public_app_id = $1 and tenant_id = $2",
-				publicAppId,
-				scope.tenantId,
-			);
+		async getByPublicAppId(publicAppId) {
+			const rows = await client.run("select * from published_apps where public_app_id = $1", publicAppId);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
 		},
 		async updateMutable(scope: AppScope, publishedAppId, fields) {
