@@ -1309,12 +1309,17 @@ PI_OBJECT_STORE_REGION=...
 PI_OBJECT_STORE_BUCKET=...
 PI_OBJECT_STORE_ACCESS_KEY_ID=...
 PI_OBJECT_STORE_SECRET_ACCESS_KEY=...
+PI_EMBED_UPLOAD_QUOTA_CONVERSATION_BYTES=104857600
+PI_EMBED_UPLOAD_QUOTA_PRINCIPAL_BYTES=524288000
+PI_EMBED_UPLOAD_QUOTA_APP_BYTES=2147483648
 PI_EMBED_ISSUER=https://agent.example.com
 PI_EMBED_SUBJECT_PEPPER=<256-bit random server secret>
 PI_EMBED_ACCESS_TOKEN_PRIVATE_KEY_FILE=/run/secrets/embed-access-private.pem
 PI_EMBED_ACCESS_TOKEN_PUBLIC_KEY_FILE=/run/secrets/embed-access-public.pem
 PI_EMBED_ACCESS_TOKEN_KEY_ID=...
 PI_EMBED_ACCESS_TOKEN_TTL_SECONDS=600
+PI_EMBED_LAUNCH_TOKEN_AUDIENCE=skdy-embed
+PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS=https://host.example.com,https://host2.example.com
 PI_EMBED_WS_TICKET_TTL_SECONDS=45
 PI_EMBED_RUNTIME_IDLE_TTL_SECONDS=1200
 PI_EMBED_SYSTEM_MAX_RUNNING_TURNS=30
@@ -1329,6 +1334,9 @@ PI_BOOTSTRAP_TENANT_NAME=SKDY
 - `PI_PUBLISHING_ENABLED` 默认 `false`。
 - 私钥只从文件或 Secrets Manager 读取，不允许直接输出到日志。
 - `PI_EMBED_SUBJECT_PEPPER` 是匿名 subject hash 的服务端 HMAC 秘密（7.1/AD-09）：与 Access Token 私钥独立，互不替代；启用 Embed 数据面时缺失必须启动失败。
+- `PI_EMBED_LAUNCH_TOKEN_AUDIENCE` 是宿主 Launch Token 期望的 `aud` claim（7.2），默认 `skdy-embed`。
+- `PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS` 是逗号分隔的宿主 `iss` 白名单（7.2 必须验证 iss）。为空 = signed-user Exchange 关闭（PD-19 默认）：`mode: "signed_user"` 请求显式 403，绝不静默通过。
+- `PI_EMBED_UPLOAD_QUOTA_{CONVERSATION,PRINCIPAL,APP}_BYTES`（TASK-031，spec 14）：上传总量配额（单会话 / Principal / App 字节上限），正整数，非法值启动失败；缺省用平台默认（100 MiB / 500 MiB / 2 GiB）。单文件/单次上限来自 RuntimeSpec `capabilities.uploads`（PD-09），不在此配置。
 - 启用 Publishing 时缺少数据库、Redis或密钥配置必须启动失败，不能静默退化为无鉴权模式。
 - 本地开发配置放在不提交的 `.env.local` 或进程环境中。
 
@@ -1431,6 +1439,7 @@ runtime/
 embed/
 ├── common.ts
 ├── control.ts
+├── post-message.ts
 ├── public-http.ts
 ├── realtime.ts
 └── validation.ts

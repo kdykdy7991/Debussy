@@ -6,7 +6,7 @@
 
 ## 一、当前进度
 
-**阶段：D（匿名 iframe 文本闭环），TASK-015~019 已完成。服务端全链路与 web 逻辑层已验证；浏览器级 iframe 演示验证受环境限制待完整环境补做。**
+**阶段：G（文件、引用与 UI 完整性），TASK-000~032 已完成。服务端全链路与 web 逻辑层已验证；浏览器级 iframe 演示验证受环境限制待完整环境补做。**
 
 ### 任务清单
 
@@ -29,26 +29,21 @@
 - [x] **TASK-016** 实现 Conversation Service/API
 - [x] **TASK-017** 实现最小 PiRuntimeAdapter
 - [x] **TASK-018** 实现同步/测试用文本 Turn HTTP 路径
-- [x] **TASK-019** 实现 Embed Web 壳和匿名 Bootstrap ⏭ 已完成
-- [x] **TASK-020** 实现 EffectOwner ⏭ 已完成
-- [x] **TASK-021** 实现 ConversationRuntimeManager ⏭ 已完成
-- [x] **TASK-022** 实现持久事件到 Pi 上下文恢复 ⏭ 已完成
-- [x] **TASK-023** 定义 Embed Realtime v1 Decoder ⏭ 已完成
-- [x] **TASK-024** 实现 WebSocket Ticket ⏭ 已完成
-- [x] **TASK-025** 实现 Realtime Connection ⏭ 已完成
-- [x] **TASK-026** 实现 Web Realtime 与断线恢复 ⏭ 已完成
-- [ ] **TASK-027** 实现 Launch Key 管理 ⏭ 下一步
-- [ ] **TASK-023** 定义 Embed Realtime v1 Decoder
-- [ ] **TASK-024** 实现 WebSocket Ticket
-- [ ] **TASK-025** 实现 Realtime Connection
-- [ ] **TASK-026** 实现 Web Realtime 与断线恢复
-- [ ] **TASK-027** 实现 Launch Key 管理
-- [ ] **TASK-028** 实现 signed-user Exchange 与 nonce 防重放
-- [ ] **TASK-029** 实现 postMessage v1
-- [ ] **TASK-030** 实现对象存储 Attachment Service
-- [ ] **TASK-031** 加入 Attachment ResourceOwner 和配额
-- [ ] **TASK-032** 迁移 Citation 到 Conversation Scope
-- [ ] **TASK-033** 完善 Embed UI
+- [x] **TASK-019** 实现 Embed Web 壳和匿名 Bootstrap
+- [x] **TASK-020** 实现 EffectOwner
+- [x] **TASK-021** 实现 ConversationRuntimeManager
+- [x] **TASK-022** 实现持久事件到 Pi 上下文恢复
+- [x] **TASK-023** 定义 Embed Realtime v1 Decoder
+- [x] **TASK-024** 实现 WebSocket Ticket
+- [x] **TASK-025** 实现 Realtime Connection
+- [x] **TASK-026** 实现 Web Realtime 与断线恢复
+- [x] **TASK-027** 实现 Launch Key 管理
+- [x] **TASK-028** 实现 signed-user Exchange 与 nonce 防重放
+- [x] **TASK-029** 实现 postMessage v1
+- [x] **TASK-030** 实现对象存储 Attachment Service
+- [x] **TASK-031** 加入 Attachment ResourceOwner 和配额
+- [x] **TASK-032** 迁移 Citation 到 Conversation Scope
+- [ ] **TASK-033** 完善 Embed UI ⏭ 下一步
 - [ ] **TASK-034** 实现分层限流与并发槽
 - [ ] **TASK-035** 实现审计、指标和日志脱敏
 - [ ] **TASK-036** 条件性接入 TTS/Avatar
@@ -85,10 +80,12 @@ src/embed/
   http-shared.ts               Embed 数据面共享：统一错误信封 / CORS / requestId / 读 JSON 体
   auth/origin.ts               Strict Origin 策略（TASK-014，HTTP/Exchange/Realtime 共用）
   auth/access-token.ts         AccessTokenService（Ed25519 JWS 签发/验签）+ EmbedAccessKey 类型 + PEM 加载
-  auth/principal.ts            anonymousSubjectHash（HMAC pepper）+ ExchangeService（App/accessMode/Origin 校验 + Principal upsert + 签发）
-  auth/exchange-http.ts        POST /api/embed/v1/exchange 端点（匿名模式）
+  auth/principal.ts            anonymousSubjectHash + externalSubjectHash（HMAC pepper，tenant+app 命名空间）+ ExchangeService（匿名 + signed-user + App/accessMode/Origin 校验）
+  auth/launch-token.ts         LaunchTokenVerifier（kid→登记公钥验签、iss/aud/appId/origin/exp/iat/nonce、nonce 原子占用）
+  auth/exchange-http.ts        POST /api/embed/v1/exchange 端点（mode: anonymous | signed_user）
+  citations/service.ts         ConversationCitationService（TASK-032：进程级 CitationService 的会话级 capability adapter——citationsEnabled(spec)/indexReadyAttachment/retrieveForTurn/removeAttachment/listSources）
   middleware/authenticate.ts   EmbedAuthenticator（Bearer AccessToken -> EmbedAuthContext，401 统一映射）
-  conversations/service.ts     ConversationService（创建固定版本/列表 cursor/读取/事件恢复/归档/executeTurn，全 scope）
+  conversations/service.ts     ConversationService（创建固定版本/列表 cursor/读取/事件恢复/归档/executeTurn + TASK-032 引用检索注入，全 scope）
   conversations/http.ts        Conversation HTTP API（create 幂等 / list / get+events / archive / dev turn）
   start.ts                     Embed 数据面组合：loadEmbedPlaneConfig（pepper/密钥校验）+ createEmbedServices + composeEmbedPlane
 src/runtime/
@@ -101,16 +98,21 @@ src/runtime/
   conversation-runtime-manager.ts  ConversationRuntimeManager（opening 去重、active map、空闲 TTL、drain）
   context-restore.ts           持久事件 -> 上下文恢复（只恢复完成对、in-flight 收敛、schema/预算过滤）
 src/embed/bootstrap-http.ts    GET /api/embed/v1/bootstrap（公开主题摘要，无凭据）
+src/embed/uploads/            TASK-030/031/032 附件：scan.ts（大小/扩展/MIME/文件头/checksum）、service.ts（staged→ready/rejected + 失败补偿 + 三档配额 + 幂等删除 + 过期清理 + scope 读取 + ready 后建引用 source/删除后移除 source）、http.ts（POST upload / GET / DELETE）
+src/persistence/object-store/ ObjectStore 契约（types.ts）+ S3ObjectStore + LocalTestObjectStore
+src/persistence/postgres/repositories/attachments.ts  AttachmentRepository（全 scope + listSweepCandidates + listReadyByConversation）
 
 web（packages/web/src/embed/）:
   types.ts                     embed HTTP 契约类型（与 server 对齐；TASK-023 合并进 protocol 包）
   storage.ts                   visitorId 生成/保存（localStorage，可注入；PD-17）
   api.ts                       EmbedApi + EmbedApiError（fetch 封装、错误信封、Bearer）
-  auth-controller.ts           EmbedAuthController（Exchange、内存 token、logout）
+  auth-controller.ts           EmbedAuthController（Exchange、内存 token、signed_user exchange、logout）
   conversation-controller.ts   EmbedConversationController（list/create/open/send + 事件推导消息）
+  post-message.ts              EmbedPostMessageChannel（TASK-029：source/origin 校验、明确 targetOrigin、init/logout/ready/resize）
   bootstrap.ts 由 api.bootstrap 承担
   embed-app.tsx / embed-shell.tsx / conversation-list.tsx / error-state.tsx / embed.css
   main.tsx 路径分流：/embed/:publicAppId -> EmbedApp；其余 -> 现有内部 App
+  public/embed-demo/host-a.html、host-b.html（TASK-029 两个宿主演示 fixture）
 src/publishing/
   config.ts                     PI_PUBLISHING_ENABLED 解析（默认 false，非法值启动失败）
   domain/ids.ts                 12 种 branded ID + UUIDv7 + parseId/toPublicId/fromPublicId
@@ -134,9 +136,11 @@ src/persistence/
   postgres/migrations/0005_idempotency_audit.sql
   postgres/migrations/0006_agent_definition_source_hash.sql   agent_definitions 复合主键 (id,revision) + source_hash + 版本 runtime_spec/hash 可空
   postgres/repositories/       tenants / agent-definitions / published-apps / published-app-versions
-                               principals / conversations / conversation-events / idempotency / audit / tx
-                               （createPublishingRepositories 组装）
+                               principals / conversations / conversation-events / idempotency / audit
+                               launch-keys / tx（createPublishingRepositories 组装）
   redis/client.ts               RedisClient（lazyConnect + 首命令显式 connect）
+  redis/ticket-store.ts         WebSocket Ticket store（SET EX + Lua get+del 原子消费，只存 hash）
+  redis/nonce-store.ts          Launch nonce store（SET NX EX 原子占用，只存 sha256(nonce)）
   object-store/{types,s3,local-test}.ts
 src/web/start.ts                增加 publishing 选项，关闭时不创建任何新连接
 ```
@@ -160,6 +164,21 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - **Control 导入幂等**：importAgent 的幂等由「name + sourceHash」自然保证（idempotency 表依赖 app 级 principal，Control 发生在建 App 之前不可用）；expectedSourceHash 不匹配返回 409。
 - **平台服务 Principal**（TASK-013，33.1 扩展 + 26.2）：Control 幂等/审计需要 principal 但 import-current 发生在任何 App 之前 → principals.published_app_id 允许 NULL（仅 service 类型，CHECK 约束），migration 0007 加部分唯一索引 `(tenant_id, principal_type, subject_hash) WHERE published_app_id IS NULL`；bootstrapTenant 幂等 upsert 平台 principal（id=tenantId、type=service、subject=SHA-256("control:"+tenantId)）；Control HTTP 的 idempotency scope 即 tenant 自身。
 - **Origin 策略单点**（TASK-014，13.1）：`embed/auth/origin.ts` 单一策略函数供 HTTP/Exchange/Realtime 共用（禁止三分支各自实现）；严格解析 scheme/host/port，生产仅 HTTPS（localhost/127.0.0.0/8/::1 例外）；默认端口等价；仅接受 `*.sub.example.com` 单级子域通配（拒绝裸 `*`、通配 TLD、通配+端口）；拒绝路径/userinfo/`null` Origin；`buildFrameAncestors` 与运行时匹配同源生成（`'none'` 兜底）。ControlService.createPublishedApp 保存前 `validateOriginList` 校验，非法 → 400 INVALID_ORIGINS。
+- **Launch Key 只收公钥**（TASK-027，13.4/24.1）：平台登记宿主**公钥**（SPKI PEM，jose `importSPKI` 校验 Ed25519 可解析），拒绝私钥材料（PEM 头含 `PRIVATE KEY` 即拒 + import 失败兜底）；keyId 由宿主提供（`[A-Za-z0-9._-]{1,64}`，JWT `kid` 安全），每个 App 内 UNIQUE；`algorithm` MVP 仅接受 `EdDSA`；`expiresAt` 必须在 notBefore 之后且在未来（过期 key 登记即拒）。DB 表 `embed_launch_keys` 在 0001 已建，TASK-027 无需新 migration。
+- **轮换窗口=自动 retiring**（TASK-027 完成条件）：`launchKeys.insertWithRotation` 单事务内「查重（23505 兜底）→ insert active → 同 App 其它 active 全部置 retiring」；旧/新 key 在轮换期同时可用（TASK-028 验签须接受 active+retiring、拒绝 revoked）。吊销仅允许 active/retiring → revoked，重复吊销 409 KEY_ALREADY_REVOKED。
+- **Control 新错误码**（TASK-027）：`KEY_ID_CONFLICT`(409)/`INVALID_LAUNCH_KEY`(400)/`KEY_NOT_FOUND`(404)/`KEY_ALREADY_REVOKED`(409)；审计 action `app.launch-key.create`/`app.launch-key.revoke`（resourceType `embed_launch_key`，resourceId=keyId，metadata 含 launchKeyId/retiredKeyIds，**不含 PEM**）。
+- **Control HTTP 路由 params 化**（TASK-027）：Route ctx 由 `appId?` 改为 `params: readonly string[]`（`pathname.match(pattern).slice(1)`），支持双捕获组路由（如 `launch-keys/:keyId/revoke`）；`hashRequest` 改用 params.join("/")（幂等指纹包含全部路径参数）。
+- **signed-user 身份只来自已验证 claims**（TASK-028，AD-11）：Exchange 只信任 `LaunchTokenVerifier.verify` 的输出；URL 参数、普通 postMessage 字段、客户端提交的 Principal ID 一律不能建立身份。验证顺序：alg=EdDSA + kid → 按 `(tenant, app, kid)` 取登记公钥（revoked/未生效/过期 key 拒，active+retiring 接受）→ jwtVerify（iss 白名单/aud=skdy-embed/exp，clockTolerance 60s）→ appId===publicAppId / origin===请求 Origin / externalUserId 非空≤256 / iat 不得在未来 → **nonce 原子占用**（SET NX EX 300s，只存 sha256(nonce)）。
+- **externalUserId 按 (tenant, app) 命名空间 hash**（TASK-028，AD-08/AD-09）：`HMAC-SHA256(pepper, "external\n<tenant>\n<app>\n<externalUserId>")`；同用户跨 App 得到不同 Principal，明文 externalUserId 永不落库/日志/token。upsert 走同一 `principals.upsert`（type=external_user）。
+- **signed-user 功能开关**（TASK-028，PD-19）：`PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS` 为空（默认）= signed-user Exchange 关闭，`mode: "signed_user"` 请求显式 403 FORBIDDEN（不静默通过）；配置后 composeEmbedPlane 才创建 LaunchTokenVerifier（Redis nonce store + repos）。`PI_EMBED_LAUNCH_TOKEN_AUDIENCE` 默认 `skdy-embed`。spec 24.2 已补充。
+- **config 变更**（TASK-028）：`PublishingConfig` 新增 `launchTokenAudience` / `launchTokenAllowedIssuers`（readonly string[]）；web-start/embed-plane/control-compose 测试的 config 构造已同步。
+- **附件对象 Key 服务端生成、文件名永不入 Key**（TASK-030，26.2/禁止条件）：`objectKey = attachments/<tenantId>/<publishedAppId>/<attachmentId>`；HTTP 响应不回显 objectKey（对象存储路径对客户端透明）。文件名只存 metadata 列，且做卫生校验（≤255 字符、禁 `/` `\` NUL 与控制字符）。
+- **上传状态机 staged→ready/rejected + 失败补偿**（TASK-030）：scan（大小≤25MiB/扩展/文件头/声明 MIME 交叉校验/声明 checksum 校验）→ 插 staged 行 → `putObject` → `statObject` 校验字节数 → ready。putObject 失败 → 行标记 rejected（不悬空）；stat 校验失败 → removeObject + rejected；任何失败都不留对象存储残留。
+- **对象存储缺省 = uploads 显式 503**（TASK-030，24.1）：`PI_OBJECT_STORE_*` 全缺省时 composeEmbedPlane 不创建 store，uploads 端点 503 RUNTIME_UNAVAILABLE，**绝不静默退化为节点磁盘**；部分配置（endpoint/bucket/accessKey/secretKey 缺一）→ 启动失败。测试注入 LocalTestObjectStore / 失败注入 fake。
+- **删除幂等**（TASK-030，spec 6.3）：重复 DELETE 一律 200；越权/不存在 → `{deleted:false}` 200（不泄露资源归属、不做 ID 枚举）。sweepExpired 清理超龄 staged + 过期 ready（标记 deleted + removeObject）。
+- **上传能力以会话固定版本为准**（TASK-031，5.5/PD-09）：`capabilities.uploads`（enabled/maxFiles/maxFileBytes）从 conversation 固定版本的 RuntimeSpec 读取；uploads 未启用 → 422 UPLOAD_REJECTED；单文件超版本上限 → 422（HTTP 层 413 只是平台级粗拦）。
+- **三档总量配额原子预留**（TASK-031，spec 14）：`reserveStaged` 在**单事务内**「锁会话行（FOR UPDATE，并发上传同会话串行化）→ SUM staged+ready 字节（会话/Principal/App 三档）→ 配额检查 → 插入 staged」；超配额 → 429 QUOTA_EXCEEDED（retryable），不插入。deleted/rejected 不计入，删除与清理后额度回收。环境变量 `PI_EMBED_UPLOAD_QUOTA_{CONVERSATION,PRINCIPAL,APP}_BYTES`（默认 100MiB/500MiB/2GiB，非法启动失败）。
+- **读取全 scope + 猜 ID 不可探测**（TASK-031 完成条件）：`GET /conversations/:id/uploads/:attachmentId` 返回对象字节（content-type/filename 头），scope 校验在 service（tenant/app/principal/conversation 全匹配 + status=ready）；越权/不存在/非 ready → 统一 404；对象缺失 → 503。禁止 Pi Adapter 按裸 attachmentId 读取——一切读取经 AttachmentService。
 - **匿名 subject hash 用 HMAC pepper**（TASK-015，7.1/AD-09）：`anonymousSubjectHash(pepper, tenant, app, visitorId)` = `HMAC-SHA256(pepper, "anonymous\n<tenant>\n<app>\n<visitor>")`；visitorId 永不落库（库中只有 64 位 hex subject_hash，`external_user_id_ciphertext` 恒 NULL）、永不进 token/日志。pepper 环境变量 `PI_EMBED_SUBJECT_PEPPER`（新增到 spec 24.2），与 Access Token 私钥独立；ExchangeService 构造时显式注入。
 - **`getByPublicAppId` 是仓库层唯一无 scope 查找**（TASK-015）：Exchange 是公开端点，客户端只持有 `publicAppId`（全局 UNIQUE、不可猜测的公开定位符，AD-10），无法预先知道 tenant，故该方法去掉 TenantScope 参数；查到的 `tenantId` 立即成为下游所有操作的作用域。原「要求 tenant scope」的测试改为断言「按公开定位符解析且返回 tenant」。
 - **Access Token 类型**（TASK-015，7.3/24.1）：Ed25519/EdDSA JWS，独立 keyId（`PI_EMBED_ACCESS_TOKEN_KEY_ID`）；claims 只含 tokenId(jti)/tenantId/publishedAppId/principalId/principalType/scopes/publishedAppVersionId，无任何秘密；aud 固定 `skdy-embed-access`；TTL 默认 600s（`PI_EMBED_ACCESS_TOKEN_TTL_SECONDS`，1..86400 整数，非法启动失败）。由于仓库 tsconfig 无 DOM lib，密钥类型用 `EmbedAccessKey = GenerateKeyPairResult["privateKey"]`（jose 结构类型）而非裸 `CryptoKey`。
@@ -183,6 +202,7 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - **激活/回滚/停用**（TASK-012，27.3 + PD-04）：`publishedApps.transitionVersion` 事务内 `SELECT ... FOR UPDATE` 锁 app 行 → 校验目标版本属于本 App 且 ready → 翻转指针（activate 同时置 App active；rollback 只改指针、status 保持 active、历史 RuntimeSpec 永不复制/修改）；suspend 只置 suspended 不改指针；每个操作追加 audit_events（13.4），actor=platform_admin/tenant。并发 activate 串行化，无丢更新。
 - **migration 只前进**：已部署环境不修改旧文件；build 脚本会拷贝 migrations 进 dist。
 - 新增依赖必须固定精确版本、`npm install --ignore-scripts`（AGENTS.md + 依赖评审记录）。
+- **引用由 RuntimeSpec 控制 = uploads 能力**（TASK-032，spec 5.5 冻结五个能力键不新增）：MVP 引用来源是会话内上传文件，`capabilities.uploads.enabled` 同时控制上传与引用——uploads 关闭时上传 422、无 ready 附件、Turn 不触发检索（gate 短路）。若产品需要「可上传但不可引用」，需先修订 spec 5.5 新增 citation 能力键再做评审。
 
 ### 已知限制 / 未决项
 
@@ -331,6 +351,72 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - 全量回归：server 248 + web 15 + protocol 9 = 272、0 failed；biome 0 警告；根 tsgo --noEmit 0 错误。
 - 注：embed-app 前端仍走 dev turn HTTP（TASK-033 完善 UI 时切 Realtime）；transport 层已完成并可复用。
 
+### TASK-027 Launch Key 管理
+- `publishing/domain/ids.ts`：新增 `LaunchKeyId`（bare UUIDv7，表示层前缀 `lkey_`）+ `newLaunchKeyId()`。
+- `publishing/repositories.ts`：`LaunchKeyRecord` + `LaunchKeyRepository`（`insertWithRotation`/`get`/`getByKeyId`/`list`/`updateStatus`，全部 AppScope）+ `PublishingRepositories.launchKeys`。
+- `persistence/postgres/repositories/launch-keys.ts`：`insertWithRotation` 单事务（查重 + insert + 同 App 其它 active → retiring，23505 兜底并发冲突）；所有 WHERE 内嵌 tenant+app scope。
+- `publishing/control/service.ts`：`createLaunchKey`（keyId 格式/algorithm=EdDSA/公钥 PEM 校验（`isPublicKeyPem` 拒私钥头 + `importSPKI(pem,"Ed25519")` 验真）/notBefore 默认 now/expiresAt 须在未来且 > notBefore → 入库 + 审计）/`revokeLaunchKey`（按 keyId，active|retiring→revoked，重复 409）/`listLaunchKeys`；新错误码 4 个。
+- `publishing/control/http.ts`：Route ctx 改为 `params`（支持双捕获组）；`POST /published-apps/:id/launch-keys`（201，回 keyId/status/notBefore/expiresAt/retiredKeyIds/auditEventId）与 `POST /published-apps/:id/launch-keys/:keyId/revoke`（200，回 status/auditEventId），均走 Idempotency-Key。
+- 测试 `test/publishing/launch-keys.test.ts`（15 passed）：注册 active、重复 keyId 409、私钥/垃圾 PEM 400（无残留行）、RS256 拒、过期/乱序/畸形日期 400、轮换（k1→retiring 且两者都可用、k3 只 retire k2）、撤销+重复撤销 409、跨 App 隔离（同 keyId 不同 App 互不可见）、审计（create/revoke 事件）、HTTP 201/400/409/404、幂等 replay/conflict、401。
+- 全量回归：publishing+embed+runtime 263 passed、0 failed（唯一失败 `control-compose.test.ts` 为本环境已知 workspace dist 缺失，与本次无关）；biome 全仓 0 警告；根 tsgo `packages/server/` 0 错误；web typecheck 0 错误。
+- 说明：`event-idempotency.test.ts` 3 个「过期槽回收」用例在并行全量跑时有偶发超时失败（短 TTL 时间敏感 + 本机 PG 并行负载），单独/轻载跑稳定通过，非本次引入。
+- 完成条件核对：✅ 一个 App 可在轮换期同时接受旧/新公钥（insertWithRotation 单事务 + 测试断言 active/retiring 并存）；✅ 私钥永不落库（PEM 头 + importSPKI 双重拒绝，测试断言无残留行）。
+
+### TASK-028 signed-user Exchange 与 nonce 防重放
+- `persistence/redis/nonce-store.ts`（新）：`NonceStore.consume` = `SET embed:nonce:<sha256(nonce)> 1 EX <ttl> NX`；返回 false = 已占用（重放）。明文 nonce 不落 Redis。
+- `embed/auth/launch-token.ts`（新）：`LaunchTokenVerifier`——`decodeProtectedHeader`（alg=EdDSA、kid 必填）→ `repos.launchKeys.getByKeyId` 取公钥（revoked/notBefore>now/expiresAt<now 拒；active+retiring 接受）→ `jwtVerify`（iss 白名单数组、aud 默认 skdy-embed、algorithms 固定、clockTolerance 60s；JWTExpired→TOKEN_EXPIRED）→ claims 校验（appId===publicAppId、origin===请求 Origin、externalUserId 1..256、iat 不得超未来 skew）→ nonce 原子占用（失败→TOKEN_REPLAYED）。错误全部统一 TOKEN_INVALID（401），不泄漏细节。
+- `embed/auth/principal.ts`：`externalSubjectHash`（HMAC pepper，`external\n<tenant>\n<app>\n<externalUserId>`）；`ExchangeService.exchangeSignedUser`——App active/accessMode(signed_user|mixed)/originAllowed → verifier（未配置→403 FORBIDDEN「not enabled」）→ external_user Principal upsert → 签发 Access Token（claims.principalType=external_user）。`ExchangeServiceOptions.launchTokens?`。
+- `embed/auth/exchange-http.ts`：`parseExchangeBody` 支持 `mode: "anonymous"`（原逻辑）与 `mode: "signed_user"`（launchToken 非空 ≤16384）；未知 mode → 400「mode must be 'anonymous' or 'signed_user'」；错误消息不回显 visitorId/launchToken/externalUserId。
+- `publishing/config.ts`：新增 `launchTokenAudience`（默认 `skdy-embed`）与 `launchTokenAllowedIssuers`（逗号分隔去空白，默认空数组=关闭）；环境变量 `PI_EMBED_LAUNCH_TOKEN_AUDIENCE` / `PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS`。spec 24.2 已补充。
+- `embed/start.ts`：composeEmbedPlane 在 allowedIssuers 非空时创建 LaunchTokenVerifier（`createRedisNonceStore(redis)` + repos + config），传给 createEmbedServices → ExchangeService。
+- 测试 `test/embed/signed-user-exchange.test.ts`（18 passed，PG+Redis 双探测）：成功交换 + 身份稳定（同 externalUserId 不同 nonce → 同 principal）；不同 externalUserId → 不同 principal；同用户跨 App 隔离；nonce 重放 401 TOKEN_REPLAYED；并发同 nonce 恰好一个成功；篡改签名/过期/未来 iat/未知 kid/revoked key/错误 origin claim/错误 appId/错误 aud/未白名单 iss 全部 401；retiring key（轮换窗口）仍 200；未启用 signed-user → 403；App suspended/anonymous-only/Origin 拒绝；HTTP 请求体校验；Redis 只存 nonce hash。
+- 相关更新：`exchange.test.ts` 的「wrong mode」用例改为「signed_user 缺 launchToken」+「unknown mode」（signed_user 现在是合法 mode）；web-start/embed-plane/control-compose 的 config 构造加新字段。
+- 全量回归：publishing+embed+runtime 281 passed、0 failed（唯一失败 `control-compose.test.ts` 为本环境已知 workspace dist 缺失）；biome 全仓 0 警告；根 tsgo `packages/server/` 0 错误；web typecheck 0 错误。
+- 完成条件核对：✅ 所有身份只来自已验证 claims（AD-11，URL/query/postMessage 字段不构成身份）；✅ 禁止继续项无（不接受 URL query、未验证 postMessage payload、客户端提交 Principal ID）。
+
+### TASK-029 postMessage v1
+- **协议包 `embed/post-message.ts`**（新，spec 7.2/27.5/25.3）：信封统一 `{protocol:"skdy-embed", version:1, type, payload}`；host→iframe `init`（signed_user 带 `launchToken`，匿名不带）+ `logout`；iframe→host `ready`/`error`/`resize`；`decodeEmbedHostMessage`（NOT_OBJECT/WRONG_PROTOCOL/WRONG_VERSION/UNKNOWN_TYPE/INVALID_PAYLOAD）+ `encodeEmbedIframeMessage`；常量 `POST_MESSAGE_LAUNCH_TOKEN_MAX_CHARS=16384`（与 server 一致）、`POST_MESSAGE_RESIZE_MAX_HEIGHT=100000`。
+- **协议包 `public-http.ts`**：`ExchangeRequest` 改为 union（anonymous | signed_user）；`BootstrapResponse` 新增 `accessMode`（决定 iframe init 模式）+ `allowedOrigins`（postMessage 宿主 Origin 白名单，公开策略非凭据）。**server `bootstrap-http.ts`** 返回 `app.accessMode` / `app.allowedOrigins`。
+- **Web `post-message.ts`**（新）：`EmbedPostMessageChannel`——消息校验顺序：`event.source===window.parent`（伪造窗口丢弃）→ `event.origin` ∈ allowlist（错误 Origin 丢弃且不成为 targetOrigin）→ `decodeEmbedHostMessage`；只有通过全部校验才更新 `targetOrigin`，所有回发用明确 targetOrigin（**禁止 `"*"`**，TASK-029 禁止条件）；未收到合法 init 前不发送（独立打开静默）；`start`/`stop` 幂等；Launch Token 只经 `onInit` 回调传递、通道不保存（PD-18）。
+- **Web `auth-controller.ts`**：新增 `signInWithLaunchToken(publicAppId, launchToken)` → `api.exchange({mode:"signed_user", launchToken})`，交换后不保留 launchToken 引用。
+- **Web `embed-app.tsx`**：bootstrap 后按 `accessMode` 分流——`signed_user`：创建通道等宿主 `init`（无 token 则报错 INVALID_INIT），Exchange 成功后回发 `ready`；`anonymous`/`mixed`：匿名进入并回发 `ready`；宿主 `logout` → 清理凭据/会话并回到 loading 等重新 init。
+- **宿主演示 fixture**：`packages/web/public/embed-demo/host-a.html`（origin https://host-a.example.com，匿名/signed_user/logout + ready/error/resize 处理）、`host-b.html`（origin https://host-b.example.com，signed_user 演示）——两个不同 allowlist Origin 宿主页可接入（WP-07 验收）。
+- 测试：协议包 `test/embed/post-message.test.ts`（11 passed：匿名/带 token init、logout、伪造 protocol/version/type、非法 payload（非对象/非字符串/空/超长）、边界 16384、iframe 消息信封字段完整）；Web `test/embed/post-message.test.ts`（11 passed：伪造窗口丢弃、错误 Origin 丢弃且不成 targetOrigin、未知协议/版本/类型忽略、合法 init 交付 token 且通道不留存（JSON 序列化不含 token）、匿名 init undefined、重复 init 幂等、logout、明确 targetOrigin 从不 `"*"`、多 allowlist origin 重定向、stop 移除监听）；embed-logic 的 bootstrap mock 补新字段；embed-plane bootstrap 断言补 accessMode/allowedOrigins。
+- 全量回归：protocol 291 passed（含新 11）、web embed 26 passed（含新 11）、server publishing+embed+runtime 281 passed（唯一失败 control-compose 为本环境已知 dist 缺失）；biome 全仓 0 警告；根 tsgo 0 错误（server/web/protocol）；web typecheck 0 错误。
+- 完成条件核对：✅ 两个不同 allowlist Origin 的宿主演示可接入（host-a/host-b fixture）；✅ 禁止继续项无（postMessage 从不使用 `"*"` 传 Token；未接受无 origin 校验的 message；Launch Token 不放 URL）。
+
+### TASK-030 对象存储 Attachment Service
+- **`embed/uploads/scan.ts`**（新）：`scanUpload` 纯函数——文件名卫生（≤255、禁 `/` `\` NUL/控制字符）、大小（默认 25 MiB，可注入）、声明 checksum 校验（hex 格式 + 一致性）、扩展名/文件头（magic bytes）/声明 MIME 三方交叉（伪造 MIME → `declared_type_mismatch`；扩展与文件头类别不符 → `mime_mismatch`；未知二进制 → `unrecognized_file_type`）；返回权威 mediaType + sha256。`sha256Hex`/`isSha256Hex` 导出。
+- **`publishing/repositories.ts`**：`AttachmentRecord`（spec 26.2 列对齐）、`ConversationScope`（OwnerScope + conversationId）、`AttachmentRepository`（scoped insert/get/updateStatus——deleted 同时置 deleted_at；`listSweepCandidates` 唯一非 scope 查询，限定过期/超龄谓词）；`PublishingRepositories.attachments`。`persistence/postgres/repositories/attachments.ts` 实现（全 scope SQL WHERE）。
+- **`embed/uploads/service.ts`**（新）：`AttachmentService.upload`——会话越权统一 CONVERSATION_NOT_FOUND → scan → 插 staged → putObject（失败 → 行 rejected + RUNTIME_UNAVAILABLE 503）→ statObject 校验字节（失败 → removeObject + rejected）→ ready；`delete`（幂等：越权/不存在 200 `{deleted:false}`）；`sweepExpired`（超龄 staged + 过期 ready → removeObject + deleted，返回清理数）；`objectExists`/`statObjectBytes` 供测试/后续校验。objectKey 永不含文件名，响应视图不含 objectKey。
+- **`embed/uploads/http.ts`**（新）：`POST /api/embed/v1/conversations/:id/uploads`（raw body；头 `x-filename` 必填、`content-type`、`x-checksum-sha256` 可选、`Idempotency-Key` 可选——begin/complete 同 create 模式；content-length 先行 413；流读取超限 413）+ `DELETE .../uploads/:attachmentId`（幂等 200）；未配置 store（service 为空）→ 503 RUNTIME_UNAVAILABLE；先认证后 scope。`createEmbedServices` 把 uploads handler 排在 conversations 之前（同前缀）；`EmbedPlaneHandle` 增 `attachmentsHandler`（web/start.ts 挂载）。
+- **config.ts + start.ts**：`PublishingConfig.objectStore?`（`PI_OBJECT_STORE_ENDPOINT/REGION/BUCKET/ACCESS_KEY_ID/SECRET_ACCESS_KEY`；全缺省=关闭，部分配置=启动失败）；`composeEmbedPlane` 从 config 建 `S3ObjectStore`（URL 解析 host/port/SSL），测试可注入 `objectStore`/`attachmentBucket`；close 时关闭 store。
+- 测试：`test/embed/upload-scan.test.ts`（12 passed：合法 png/text/json/pdf、伪造 MIME 两条路径、扩展/文件头不符、未知二进制、空/超限、checksum 校验、文件名卫生、sha256Hex 与 crypto 一致）；`test/embed/attachments.test.ts`（14 passed，PG + LocalTestObjectStore：上传 201 ready + 对象可读 + DB 行 ready + objectKey 不外泄、伪造 MIME 422 无残留、checksum 不符 422、超限 413、缺 x-filename 400、对象存储故障 503 + 行 rejected + 无残留、stat 校验失败补偿、跨 Principal 会话 404、重复删除幂等、跨 Principal 删除不泄露、Idempotency-Key replay 同响应、sweepExpired 清超龄 staged、无 store 503、未认证 401）。
+- 全量回归：publishing+embed+runtime 307 passed（唯一失败 control-compose 为本环境已知 dist 缺失）；biome 全仓 0 警告；根 tsgo server/web/protocol 0 错误；web typecheck + pinned-deps/ts-imports/shrinkwrap/install-lock/browser-smoke 全过。
+- 完成条件核对：✅ 生产路径不依赖节点磁盘永久保存（S3 对象存储 + 缺省显式 503）；✅ 禁止继续项无（objectKey/最终路径使用未处理原文件名——objectKey 只含 scope+attachmentId）。
+
+### TASK-031 Attachment ResourceOwner 与配额
+- **`repositories.ts`**：`UploadQuotaLimits`（conversation/principal/app 字节上限）、`ReserveStagedOutcome`（ok/quota_exceeded/conversation_missing）；`AttachmentRepository.reserveStaged(scope, record, limits)` + `sumActiveBytes(scope)`。
+- **`persistence/postgres/repositories/attachments.ts`**：`reserveStaged` 单事务实现——`select ... for update` 锁会话行（并发同会话串行化）→ 单条 SQL 聚合三档用量（`sum(filter where ...)`，staged+ready 计入）→ 配额检查 → 插入 staged；`sumActiveBytes` 会话级活跃字节。
+- **`embed/uploads/service.ts`**（TASK-031 改造）：上传先读会话固定版本 `capabilities.uploads`（enabled/maxFiles/maxFileBytes 权威来源，spec 缺失保守拒绝 422）→ scan（用版本 maxFileBytes）→ `reserveStaged`（quota_exceeded → 429 QUOTA_EXCEEDED；conversation_missing → 404）→ putObject → stat 校验 → ready；新增 `getContent`（全 scope + status=ready，越权/非 ready 统一 404，对象缺失 503）；`activeConversationBytes` 供断言；`DEFAULT_ATTACHMENT_QUOTA`（100MiB/500MiB/2GiB）。
+- **`embed/uploads/http.ts`**：新增 `GET /conversations/:id/uploads/:attachmentId`（返回对象字节 + content-type + Content-Disposition（文件名经卫生处理，不进 objectKey）；越权/无效 ID 统一 404）。
+- **config.ts + start.ts**：`PublishingConfig.uploadQuota`（可选字段，缺省 DEFAULT_UPLOAD_QUOTA）+ `PI_EMBED_UPLOAD_QUOTA_{CONVERSATION,PRINCIPAL,APP}_BYTES`（正整数，非法启动失败）；`EmbedServicesOptions.uploadQuota` → AttachmentService；spec 24.2 已补充。
+- 测试 `test/embed/attachments-quota.test.ts`（10 passed，PG + LocalTestObjectStore）：跨 App（token 绑 app A 访问 app B 会话 → 404）、跨 Conversation（同 principal 幽灵会话 id → 404）、猜 Attachment ID 不可读（本人 200 / 他 principal 404 / 随机 ID 404）、读取返回精确字节+content-type、并发超会话配额（3000×2，配额 5000 → 恰一个 201 一个 429 QUOTA_EXCEEDED retryable）、Principal 配额跨会话累计、删除后额度回收（activeBytes 3000→0→再传 201）、版本 spec maxFileBytes=2048 超限 422、uploads.enabled=false → 422、App 配额跨 Principal 429。
+- 全量回归：publishing+embed+runtime 317 passed（唯一失败 control-compose 为本环境已知 dist 缺失）；biome 全仓 0 警告；根 tsgo server/web/protocol 0 错误；web typecheck + 其余 check 全过。
+- 完成条件核对：✅ 猜中 Attachment ID 也无法探测或使用（GET/上传/删除全 scope；越权统一 404）；✅ 禁止继续项无（Pi Adapter 无裸 attachmentId 读取路径——一切读取经 AttachmentService.getContent）。
+
+### TASK-032 迁移 Citation 到 Conversation Scope
+- **进程级 CitationService 解耦内容来源**（`citations/service.ts` + `chunker.ts`）：`CitationServiceOptions.attachments: AttachmentStore` 改为 `readContent: AttachmentContentReader`（`readBytes(attachmentId) => Promise<Buffer>`）；新增 `attachmentStoreReader(store)` 适配内部磁盘流，`readTextFile` 与新增 `readTextBuffer`（内存字节直读，embed 对象存储附件用）共用同一截断语义（`decodeTextBytes`）；`isTextMediaType` 从 sessions.ts 上移到 citations/service.ts 导出，sessions.ts 改为引用（内部 P2 行为不变）。
+- **会话级 store 访问器**（`citations/store.ts`，禁止继续项落地）：新增 `getSourceInSession(sessionId, sourceId)` / `loadChunksInSession(sessionId, sourceId)`，非本会话一律 undefined；`CitationService.retrieve` 内部改用 scoped 访问器（含 covered attachment 的 reference 解析），会话引用路径不再有任何全局 store 查找。
+- **会话级引用方法**（`citations/service.ts`）：`ensureConversationSource(scope, attachment, data)`（sessionId 必须 === conversationId，否则抛错；字节由调用方直传，不二次读对象存储；幂等与 `ensureSource` 同语义）、`retrieveForConversation(scope, {sourceIds,query,turnId,...})`（= retrieve 以 conversationId 为 sessionId）、`removeConversationSource(scope, attachmentId)`、`listConversationSources(scope)`、`getConversationSourceByAttachment(scope, attachmentId)`；`emptyRetrievalResult()` 导出。
+- **`embed/citations/service.ts`（新）**：`ConversationCitationService`（Citation capability adapter）——`citationsEnabled(spec)`（**RuntimeSpec 控制：capabilities.uploads.enabled，spec 5.5 冻结五能力键不新增**，uploads 同时控制上传与引用）、`indexReadyAttachment`（文本附件才建 source；非文本保持 P1 直传）、`retrieveForTurn`（以会话 ready 附件为授权来源枚举，只检索本会话）、`removeAttachment`、`listSources`。
+- **Repository**：`AttachmentRepository.listReadyByConversation(scope)`（全 scope SQL，只返回本会话 ready 附件）+ `attachments.ts` 实现。
+- **接线**：`AttachmentService` 可选 `citations`——ready 后后台 `indexReadyAttachment`（失败只记录，不影响上传），delete 后 scoped `removeAttachment`；`ConversationService` 可选 `citations`——`executeTurn` 在 spec 解析与 hash 校验后调 `prepareRetrieval`（gate：citations 存在 && `citationsEnabled(spec)`；结果经 `RetrievalInput` 注入 `TurnExecutionInput.retrieval`）；`TurnExecutor` 两实现透传 retrieval；`ConversationRuntime.prompt` 合并 history + retrieval 进 `PromptInput.retrieval`（仅 history 时输出与旧行为完全一致）；`embed/start.ts` 在 `EmbedPlaneOptions`/`EmbedServicesOptions` 增加可选 `citations`，`createEmbedServices` 组装 `ConversationCitationService` 注入两个 service；`web/start.ts` 把进程级 CitationService（`readContent: attachmentStoreReader(attachments)`）提前创建并同时传给内部会话流与 `composeEmbedPlane`（TASK-032 完成条件：同一进程级 Provider）。
+- 测试：`test/embed/citations-conversation.test.ts`（7 passed，PG + LocalTestObjectStore + fake 会话栈）：索引+Turn 注入 retrieval（title/excerpt/context/reference、事件持久化）、两用户同名文件隔离（excerpt 互不串）、跨会话 sourceId 混入被 session 过滤（直接 retrieveForConversation 也空）、模拟重启（同目录新 store + 新 service 栈）引用仍可用、uploads.enabled=false 版本 gate 关闭（Turn 无 retrieval + 上传 422）、删除附件后 source 移除不再引用、非文本附件不建 source；`retrieval.test.ts` 补 `getSourceInSession`/`loadChunksInSession` 跨会话拒绝用例；`retrieval.test.ts`/`citations-sessions.test.ts` 改用 `readContent: attachmentStoreReader(...)`。
+- 全量回归：embed+publishing+runtime 348 passed、0 failed（唯一失败 control-compose 为本环境已知 workspace dist 缺失，与本次无关）；biome 全仓 0 警告（顺带清理 TASK-031 遗留 `attachments-quota.test.ts` 3 个未用变量与 `attachments.ts` 未用 import，纯死代码，无行为变化）；根 tsgo `packages/server/` 0 错误；web typecheck + check:browser-smoke 全过。根 `npm run check` 仅根 tsgo 阶段失败，错误全部在 `packages/ai/test`、`packages/coding-agent/*`、`scripts/`（models 未 hydrate → ModelId=never；dist 缺失），为交接记录的环境限制，与本次无关。
+- 完成条件核对：✅ 引用结果只包含当前会话授权来源（retrieve 按 sessionId 过滤 + 会话 ready 附件枚举 + store scoped 访问器三层）；✅ 禁止继续项无（会话引用路径无 CitationStore 全局查找；`ensureConversationSource` 跨会话索引直接抛错）。
+- 已知限制：引用**未持久化为 conversation 事件**（`citation.updated` 事件与引用 UI 展示留待 TASK-033）；上传索引用上传缓冲直传（不二次读对象存储），进程重启后靠 CitationStore 磁盘恢复 source，不重索引。
+
 ### TASK-015 匿名 Principal Exchange
 - `embed/auth/access-token.ts`：`AccessTokenService`（jose `SignJWT`/`jwtVerify`，Ed25519/EdDSA；iss/aud/kid/jti/iat/exp；`TOKEN_EXPIRED`/`TOKEN_INVALID` 区分）、`EmbedAccessKey` 类型（= jose `GenerateKeyPairResult["privateKey"]`，规避无 DOM lib 的裸 `CryptoKey`）、`loadAccessTokenKeyMaterial`（PKCS8/SPKI PEM → CryptoKey）。
 - `embed/auth/principal.ts`：`anonymousSubjectHash`（HMAC-SHA256 pepper）+ `ExchangeService.exchangeAnonymous`（App 404 / 非 active 403 APP_SUSPENDED / accessMode 403 FORBIDDEN / Origin 403 ORIGIN_NOT_ALLOWED → upsert Principal（ON CONFLICT 稳定同访客身份）→ 签 Token）；features 读当前版本 RuntimeSpec capabilities。
@@ -361,11 +447,13 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - **migration 0006**：`agent_definitions` 复合主键 `(id, revision)` + `source_hash` 列（修复 0001 的 id 主键无法存多 revision 缺陷）；`published_app_versions.runtime_spec/runtime_spec_hash` 可空（rejected 版本无 spec）；移除 published_apps→agent_definitions FK。
 - 测试 `test/publishing/control-service.test.ts`（11 passed）：bootstrap 幂等、导入 revision 递增且旧版保留、跨 tenant agent 404、10 并发建版本号 1..10 唯一、rejected 版本带 validationErrors、草稿漂移不影响旧版、未知 revision 404。
 
-## 四、下一步（TASK-027）
+## 四、下一步（TASK-033）
 
-**实现 Launch Key 管理**（Control Service/API、launch-key Repository 和审计测试，前置 TASK-013）：
+**完善 Embed UI**（spec 29 / WP-07，前置 TASK-026 + TASK-031 + TASK-032）：
 
-- 创建 keyId、公钥登记、active/retiring/revoked、轮换窗口；平台不接收宿主私钥。
-- 测试：重复 keyId、过期 key、撤销、跨 App key、审计。
-- 完成条件：一个 App 可在轮换期同时接受旧/新公钥；禁止继续：私钥上传或持久化到平台数据库。
-- 之后 TASK-028（signed-user Exchange 与 nonce 防重放）用 Launch Key 验签 Launch Token。
+- 修改位置：Web Embed 组件（`packages/web/src/embed/*`）和测试。
+- 实现：会话列表、新建/切换/归档、上传、**引用展示**、流式状态、断线、限流、空状态、移动布局、键盘和基础无障碍。
+- 测试：桌面/移动、Token 过期、App suspend、上传错误、切换会话、宿主 resize。
+- 完成条件：无需内部 Web App 即可完成最终用户主要流程。
+- 禁止继续：Embed Bundle 暴露管理入口或内部 cwd/model 随意修改。
+- 提示：embed-app 前端目前仍走 dev turn HTTP（TASK-026 的 `realtime-transport.ts` 已完成可复用）；引用检索结果已注入 Turn（TASK-032），TASK-033 可把引用 UI 接上。
