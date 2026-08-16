@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>宿主演示 B（origin: https://host-b.example.com）</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #123; background: #fafcff; }
+      iframe { width: 100%; height: 480px; border: 2px dashed #689; border-radius: 10px; }
+      .note { background: #eef4fb; padding: .75rem 1rem; border-radius: 6px; font-size: .9rem; }
+      button { padding: .5rem 1rem; margin-right: .5rem; }
+      #log { margin-top: 1rem; font: 12px/1.5 monospace; white-space: pre-wrap; color: #456; }
+    </style>
+  </head>
+  <body>
+    <h1>宿主演示 B</h1>
+    <p class="note">
+      第二个演示宿主（origin: <code>https://host-b.example.com</code>）：展示不同
+      allowlist Origin 可独立接入同一 Embed App（WP-07 验收：至少两个不同 Origin
+      的演示宿主页可按 allowlist 嵌入）。与演示 A 使用同一 postMessage v1 信封。
+    </p>
+    <p>
+      <input id="appId" placeholder="pub_xxx" size="48" />
+      <button id="initSigned">发送 init（signed_user）</button>
+      <button id="logout">发送 logout</button>
+    </p>
+    <iframe id="frame" title="Embed App"></iframe>
+    <div id="log"></div>
+    <script>
+      "use strict";
+      var PROTOCOL = "skdy-embed";
+      var VERSION = 1;
+      var frame = document.getElementById("frame");
+      var frameOrigin = new URL(frame.src).origin;
+      var log = document.getElementById("log");
+      function note(text) {
+        log.textContent = new Date().toISOString() + "  " + text + "\n" + log.textContent;
+      }
+      function envelope(type, payload) {
+        var message = { protocol: PROTOCOL, version: VERSION, type: type };
+        if (payload !== undefined) message.payload = payload;
+        return message;
+      }
+      document.getElementById("initSigned").addEventListener("click", function () {
+        var appId = document.getElementById("appId").value;
+        frame.src = "/embed/" + appId;
+        // 生产：token 来自宿主后端会话；演示用运行时生成的随机值（仅协议演示）。
+        var token = "demo." + Math.random().toString(36).slice(2) + ".sig";
+        frame.contentWindow.postMessage(envelope("init", { launchToken: token }), frameOrigin);
+        note("sent init(signed_user) -> " + frameOrigin);
+      });
+      document.getElementById("logout").addEventListener("click", function () {
+        frame.contentWindow.postMessage(envelope("logout"), frameOrigin);
+        note("sent logout");
+      });
+      window.addEventListener("message", function (event) {
+        if (event.origin !== frameOrigin) return;
+        var data = event.data;
+        if (!data || data.protocol !== PROTOCOL || data.version !== VERSION) return;
+        if (data.type === "ready") note("iframe ready: " + JSON.stringify(data.payload));
+        else if (data.type === "error") note("iframe error: " + JSON.stringify(data.payload));
+        else if (data.type === "resize") {
+          frame.style.height = data.payload.height + "px";
+          note("iframe resize -> " + data.payload.height + "px");
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>宿主演示 A（origin: https://host-a.example.com）</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #222; }
+      iframe { width: 100%; height: 560px; border: 1px solid #ccc; border-radius: 8px; }
+      .note { background: #f5f5f5; padding: .75rem 1rem; border-radius: 6px; font-size: .9rem; }
+      button { padding: .5rem 1rem; margin-right: .5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>宿主演示 A</h1>
+    <p class="note">
+      演示 postMessage v1 协议（spec 27.5 / TASK-029）：iframe 只接受来自本页
+      origin（<code>https://host-a.example.com</code>）且通过
+      <code>event.source</code> 校验的 <code>init</code>；发送端使用明确
+      <code>targetOrigin</code>，禁止 <code>"*"</code>。
+      生产环境 Launch Token 由宿主后端签发；本演示从 URL 参数
+      <code>?launchToken=</code> 读取（演示专用，不用于生产）。
+    </p>
+    <p>
+      <input id="appId" placeholder="pub_xxx（iframe URL 中的 publicAppId）" size="48" />
+      <input id="launchToken" placeholder="可选：宿主签发的 Launch Token" size="48" />
+    </p>
+    <p>
+      <button id="init">发送 init（匿名）</button>
+      <button id="initSigned">发送 init（signed_user）</button>
+      <button id="logout">发送 logout</button>
+    </p>
+    <iframe id="frame" title="Embed App"></iframe>
+    <script>
+      "use strict";
+      var PROTOCOL = "skdy-embed";
+      var VERSION = 1;
+      var frame = document.getElementById("frame");
+      var frameOrigin = new URL(frame.src).origin;
+
+      function envelope(type, payload) {
+        var message = { protocol: PROTOCOL, version: VERSION, type: type };
+        if (payload !== undefined) message.payload = payload;
+        return message;
+      }
+      document.getElementById("init").addEventListener("click", function () {
+        frame.src = "/embed/" + document.getElementById("appId").value;
+        frame.contentWindow.postMessage(envelope("init"), frameOrigin);
+      });
+      document.getElementById("initSigned").addEventListener("click", function () {
+        frame.src = "/embed/" + document.getElementById("appId").value;
+        var token = document.getElementById("launchToken").value;
+        frame.contentWindow.postMessage(envelope("init", { launchToken: token }), frameOrigin);
+      });
+      document.getElementById("logout").addEventListener("click", function () {
+        frame.contentWindow.postMessage(envelope("logout"), frameOrigin);
+      });
+      window.addEventListener("message", function (event) {
+        // 校验来源：只接受 iframe 的 origin 与协议信封。
+        if (event.origin !== frameOrigin) return;
+        var data = event.data;
+        if (!data || data.protocol !== PROTOCOL || data.version !== VERSION) return;
+        if (data.type === "ready") console.info("[host-a] iframe ready:", data.payload);
+        else if (data.type === "error") console.error("[host-a] iframe error:", data.payload);
+        else if (data.type === "resize") {
+          frame.style.height = data.payload.height + "px";
+        }
+      });
+    </script>
+  </body>
+</html>

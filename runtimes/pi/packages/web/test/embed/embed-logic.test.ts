@@ -61,6 +61,8 @@ describe("embed api client", () => {
 					publicAppId: "pub_x",
 					name: "X",
 					status: "active",
+					accessMode: "anonymous",
+					allowedOrigins: ["https://host.example.com"],
 					currentVersionId: null,
 					features: { uploads: false, speech: false, avatar: false },
 					theme: {},

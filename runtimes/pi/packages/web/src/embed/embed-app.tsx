@@ -5,6 +5,7 @@ import { EmbedConversationController } from "./conversation-controller.ts";
 import { ConversationList } from "./conversation-list.tsx";
 import { EmbedShell } from "./embed-shell.tsx";
 import { EmbedErrorState } from "./error-state.tsx";
+import { EmbedPostMessageChannel } from "./post-message.ts";
 import type { BootstrapResponse, ChatMessage, ConversationSummary } from "./types.ts";
 
 type Phase = "loading" | "error" | "ready";
@@ -16,7 +17,7 @@ export interface EmbedAppProps {
 	readonly storage?: Storage;
 }
 
-/** Embed 应用根组件（TASK-019）：bootstrap -> 匿名 Exchange -> 会话 -> 聊天。 */
+/** Embed 应用根组件（TASK-019/029）：bootstrap -> 认证 -> 会话 -> 聊天。 */
 export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const [phase, setPhase] = useState<Phase>("loading");
 	const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -51,25 +52,74 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		const auth = new EmbedAuthController(api, props.storage ?? window.localStorage);
 		const conversations = new EmbedConversationController(api);
 		controllersRef.current = { auth, conversations };
-		async function boot(): Promise<void> {
-			try {
-				const summary = await api.bootstrap(props.publicAppId);
-				if (summary.status !== "active") throw new EmbedApiError("APP_SUSPENDED", "应用当前不可用", false);
-				const state = await auth.signIn(props.publicAppId);
-				tokenRef.current = state.accessToken;
-				setBootstrap(summary);
-				const items = await conversations.list(state.accessToken);
-				setConversations(items);
-				if (items.length > 0) {
-					await openConversation(items[0]!.id, state.accessToken, conversations);
-				}
-				setPhase("ready");
-			} catch (error) {
-				setError(error instanceof EmbedApiError ? error.message : "加载失败");
-				setPhase("error");
+		let channel: EmbedPostMessageChannel | undefined;
+		// signed_user 模式下收到宿主 logout：清理凭据与会话，回到等待宿主 init。
+		const handleLogout = (): void => {
+			tokenRef.current = null;
+			void auth.logout();
+			setConversations([]);
+			setMessages([]);
+			setActiveId(null);
+			setBootstrap((summary) => summary);
+			setPhase("loading");
+		};
+		async function signInAndLoad(mode: "anonymous" | "signed_user", launchToken?: string): Promise<void> {
+			if (mode === "signed_user" && launchToken === undefined) {
+				throw new EmbedApiError("INVALID_INIT", "宿主未提供 Launch Token", false);
 			}
+			const state =
+				mode === "signed_user"
+					? await auth.signInWithLaunchToken(props.publicAppId, launchToken!)
+					: await auth.signIn(props.publicAppId);
+			tokenRef.current = state.accessToken;
+			// PD-18：launchToken 即用即弃（此处不留存任何引用）。
+			const items = await conversations.list(state.accessToken);
+			setConversations(items);
+			if (items.length > 0) {
+				await openConversation(items[0]!.id, state.accessToken, conversations);
+			}
+			setPhase("ready");
 		}
-		void boot();
+		async function boot(): Promise<void> {
+			const summary = await api.bootstrap(props.publicAppId);
+			if (summary.status !== "active") throw new EmbedApiError("APP_SUSPENDED", "应用当前不可用", false);
+			setBootstrap(summary);
+			if (summary.accessMode === "signed_user") {
+				// signed_user：身份只来自宿主 postMessage init（AD-11）。
+				channel = new EmbedPostMessageChannel({
+					window: window,
+					parent: window.parent,
+					allowedOrigins: summary.allowedOrigins,
+					onInit: (launchToken) => {
+						void signInAndLoad("signed_user", launchToken).catch((caught: unknown) => {
+							setError(caught instanceof EmbedApiError ? caught.message : "宿主初始化失败");
+							setPhase("error");
+						});
+					},
+					onLogout: handleLogout,
+				});
+				channel.start();
+				return;
+			}
+			// anonymous / mixed：直接匿名进入；若有宿主窗口则回发 ready。
+			channel = new EmbedPostMessageChannel({
+				window: window,
+				parent: window.parent,
+				allowedOrigins: summary.allowedOrigins,
+				onInit: () => {}, // mixed 模式 MVP 不切换身份（HANDOFF 记录）
+				onLogout: handleLogout,
+			});
+			channel.start();
+			await signInAndLoad("anonymous");
+			channel.send({ type: "ready", publicAppId: summary.publicAppId, mode: "anonymous" });
+		}
+		void boot().catch((caught: unknown) => {
+			setError(caught instanceof EmbedApiError ? caught.message : "加载失败");
+			setPhase("error");
+		});
+		return () => {
+			channel?.stop();
+		};
 	}, [openConversation, props.api, props.publicAppId, props.storage]);
 
 	const handleNew = useCallback(async (): Promise<void> => {
@@ -81,8 +131,8 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			setConversations((items) => [created, ...items]);
 			setActiveId(created.id);
 			setMessages([]);
-		} catch (error) {
-			setError(error instanceof EmbedApiError ? error.message : "创建失败");
+		} catch (caught) {
+			setError(caught instanceof EmbedApiError ? caught.message : "创建失败");
 		}
 	}, []);
 
@@ -105,8 +155,8 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			setMessages((items) => [...items, userMessage]);
 			const assistant = await controller.conversations.send(token, conversationId, text);
 			setMessages((items) => [...items, assistant]);
-		} catch (error) {
-			const message = error instanceof EmbedApiError ? error.message : "发送失败";
+		} catch (caught) {
+			const message = caught instanceof EmbedApiError ? caught.message : "发送失败";
 			setMessages((items) => [...items, { role: "system", text: `发送失败：${message}`, sequence: -2 }]);
 		} finally {
 			setSending(false);
