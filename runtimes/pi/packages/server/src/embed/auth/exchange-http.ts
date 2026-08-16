@@ -1,14 +1,16 @@
 /**
- * Embed Exchange HTTP 端点（spec 27.4，TASK-015）。
+ * Embed Exchange HTTP 端点（spec 27.4，TASK-015/028）。
  *
- * `POST /api/embed/v1/exchange`：匿名模式把 `(publicAppId, mode:
- * "anonymous", anonymousVisitorId)` 换成短期 Access Token。签名用户模式
- * （launchToken）由 TASK-028 实现，当前返回 400。
+ * `POST /api/embed/v1/exchange`：
+ *
+ * - `mode: "anonymous"` —— 把 `(publicAppId, anonymousVisitorId)` 换成短期
+ *   Access Token（TASK-015）。
+ * - `mode: "signed_user"` —— 宿主后端签发的 `launchToken` 经
+ *   `LaunchTokenVerifier` 验证后建立 external_user Principal（TASK-028）。
  *
  * 端点只做 HTTP 关注点（请求体校验、Origin 提取、CORS、requestId、错误
- * 信封），业务校验（App 状态 / accessMode / Origin allowlist / Principal /
- * Token 签发）全部在 `ExchangeService` 中，Origin 校验复用 TASK-014 的单一
- * 策略函数。
+ * 信封），业务校验全部在 `ExchangeService` 中；Origin 校验复用 TASK-014 的
+ * 单一策略函数。错误消息绝不回显 visitorId / launchToken / externalUserId。
  */
 import { parsePublicAppId } from "../../publishing/domain/ids.ts";
 import { requestPathname } from "../../transports/websocket/listener.ts";
@@ -27,6 +29,8 @@ export const EMBED_API_PREFIX = "/api/embed/v1";
 export const EMBED_EXCHANGE_PATH = "/api/embed/v1/exchange";
 /** Exchange 请求体上限：匿名体很小，Launch Token 也可容纳（64 KiB）。 */
 export const EMBED_MAX_BODY_BYTES = 64 * 1024;
+/** Launch Token 长度边界（JWS 三段 base64url）。 */
+const LAUNCH_TOKEN_MAX_CHARS = 16384;
 
 export interface ExchangeHttpHandlerOptions {
 	readonly service: ExchangeService;
@@ -64,9 +68,9 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 			jsonBody(response, 400, errorEnvelope("INVALID_JSON", "Request body must be valid JSON", requestId, false));
 			return true;
 		}
-		let parsed: { publicAppId: string; anonymousVisitorId: string };
+		let parsed: ParsedExchangeBody;
 		try {
-			parsed = parseAnonymousBody(raw.value);
+			parsed = parseExchangeBody(raw.value);
 		} catch (error) {
 			if (error instanceof ExchangeHttpValidationError) {
 				jsonBody(response, 400, errorEnvelope("INVALID_REQUEST", error.message, requestId, false));
@@ -85,11 +89,18 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 		}
 
 		try {
-			const result = await options.service.exchangeAnonymous({
-				publicAppId,
-				anonymousVisitorId: parsed.anonymousVisitorId,
-				origin: request.headers.origin,
-			});
+			const result =
+				parsed.mode === "anonymous"
+					? await options.service.exchangeAnonymous({
+							publicAppId,
+							anonymousVisitorId: parsed.anonymousVisitorId,
+							origin: request.headers.origin,
+						})
+					: await options.service.exchangeSignedUser({
+							publicAppId,
+							launchToken: parsed.launchToken,
+							origin: request.headers.origin,
+						});
 			if (!result.ok) {
 				jsonBody(
 					response,
@@ -110,29 +121,40 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 	};
 }
 
-/** 校验匿名 Exchange 请求体；错误消息绝不回显 visitorId 的值。 */
-function parseAnonymousBody(body: unknown): { publicAppId: string; anonymousVisitorId: string } {
+type ParsedExchangeBody =
+	| { readonly mode: "anonymous"; readonly publicAppId: string; readonly anonymousVisitorId: string }
+	| { readonly mode: "signed_user"; readonly publicAppId: string; readonly launchToken: string };
+
+/** 校验 Exchange 请求体；错误消息绝不回显 visitorId / launchToken 的值。 */
+function parseExchangeBody(body: unknown): ParsedExchangeBody {
 	if (typeof body !== "object" || body === null || Array.isArray(body)) {
 		throw new ExchangeHttpValidationError("request body must be a JSON object");
 	}
 	const record = body as Record<string, unknown>;
 	const publicAppId = record.publicAppId;
 	const mode = record.mode;
-	const visitorId = record.anonymousVisitorId;
 	if (typeof publicAppId !== "string" || publicAppId === "") {
 		throw new ExchangeHttpValidationError("publicAppId must be a string");
 	}
-	if (mode !== "anonymous") {
-		throw new ExchangeHttpValidationError("mode must be 'anonymous'; signed_user exchange is not part of this MVP");
+	if (mode === "anonymous") {
+		const visitorId = record.anonymousVisitorId;
+		if (
+			typeof visitorId !== "string" ||
+			visitorId.length < ANONYMOUS_VISITOR_ID_MIN_CHARS ||
+			visitorId.length > ANONYMOUS_VISITOR_ID_MAX_CHARS
+		) {
+			throw new ExchangeHttpValidationError(
+				`anonymousVisitorId must be a string of ${ANONYMOUS_VISITOR_ID_MIN_CHARS}..${ANONYMOUS_VISITOR_ID_MAX_CHARS} characters`,
+			);
+		}
+		return { mode: "anonymous", publicAppId, anonymousVisitorId: visitorId };
 	}
-	if (
-		typeof visitorId !== "string" ||
-		visitorId.length < ANONYMOUS_VISITOR_ID_MIN_CHARS ||
-		visitorId.length > ANONYMOUS_VISITOR_ID_MAX_CHARS
-	) {
-		throw new ExchangeHttpValidationError(
-			`anonymousVisitorId must be a string of ${ANONYMOUS_VISITOR_ID_MIN_CHARS}..${ANONYMOUS_VISITOR_ID_MAX_CHARS} characters`,
-		);
+	if (mode === "signed_user") {
+		const launchToken = record.launchToken;
+		if (typeof launchToken !== "string" || launchToken === "" || launchToken.length > LAUNCH_TOKEN_MAX_CHARS) {
+			throw new ExchangeHttpValidationError("launchToken must be a non-empty JWS string");
+		}
+		return { mode: "signed_user", publicAppId, launchToken };
 	}
-	return { publicAppId, anonymousVisitorId: visitorId };
+	throw new ExchangeHttpValidationError("mode must be 'anonymous' or 'signed_user'");
 }

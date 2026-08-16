@@ -28,6 +28,7 @@ import { newPrincipalId, type PublicAppId, toPublicId } from "../../publishing/d
 import type { PublishedAppRecord, PublishingRepositories } from "../../publishing/repositories.ts";
 import { parseRuntimeSpec } from "../../publishing/runtime-spec/schema.ts";
 import type { AccessTokenService } from "./access-token.ts";
+import type { LaunchTokenVerifier } from "./launch-token.ts";
 import { originAllowed } from "./origin.ts";
 
 /** 匿名访客 ID 的合理长度边界（32..512 字符，覆盖 hex/base64url 随机值）。 */
@@ -50,11 +51,34 @@ export function anonymousSubjectHash(
 		.digest("hex");
 }
 
+/**
+ * 宿主已登录用户在一个 App 内的确定性 subject hash（spec 7.2 / 5.2）：
+ * `HMAC-SHA256(pepper, "external\n<tenant>\n<app>\n<externalUserId>")`。
+ * externalUserId 被限定在 `(tenantId, publishedAppId)` 命名空间内，不能作为
+ * 全平台主键（AD-08/AD-11）：同一个用户在不同 App 下得到不同 Principal。
+ * 明文 externalUserId 永不落库、永不进 token/日志。
+ */
+export function externalSubjectHash(
+	pepper: string,
+	tenantId: TenantId,
+	publishedAppId: PublishedAppId,
+	externalUserId: string,
+): string {
+	return createHmac("sha256", pepper)
+		.update(`external\n${tenantId}\n${publishedAppId}\n${externalUserId}`, "utf8")
+		.digest("hex");
+}
+
 export interface ExchangeServiceOptions {
 	readonly repositories: PublishingRepositories;
 	readonly accessTokens: AccessTokenService;
 	/** 匿名 subject hash 的服务端 HMAC pepper；永不写日志。 */
 	readonly subjectPepper: string;
+	/**
+	 * Launch Token 验证器（TASK-028）。未配置 = signed-user Exchange 关闭
+	 * （PD-19 默认）：`mode: "signed_user"` 请求显式 403，不静默通过。
+	 */
+	readonly launchTokens?: LaunchTokenVerifier;
 }
 
 export type ExchangeResult<T> =
@@ -82,15 +106,32 @@ export interface AnonymousExchangeData {
 	readonly app: ExchangeAppView;
 }
 
+export interface SignedUserExchangeInput {
+	readonly publicAppId: PublicAppId;
+	/** 宿主后端签发的短期 Launch Token（spec 7.2）。 */
+	readonly launchToken: string;
+	/** 请求 `Origin` 头；须与 Launch Token `origin` claim 一致且过 allowlist。 */
+	readonly origin: string | undefined;
+}
+
+export interface SignedUserExchangeData {
+	readonly accessToken: string;
+	readonly expiresAt: string;
+	readonly principal: { readonly id: string; readonly type: "external_user" };
+	readonly app: ExchangeAppView;
+}
+
 export class ExchangeService {
 	private readonly repos: PublishingRepositories;
 	private readonly accessTokens: AccessTokenService;
 	private readonly subjectPepper: string;
+	private readonly launchTokens: LaunchTokenVerifier | undefined;
 
 	constructor(options: ExchangeServiceOptions) {
 		this.repos = options.repositories;
 		this.accessTokens = options.accessTokens;
 		this.subjectPepper = options.subjectPepper;
+		this.launchTokens = options.launchTokens;
 	}
 
 	/**
@@ -148,6 +189,81 @@ export class ExchangeService {
 				principal: {
 					id: toPublicId("PrincipalId", principal.principalId),
 					type: "anonymous_visitor",
+				},
+				app: {
+					publicAppId: app.publicAppId,
+					name: app.name,
+					currentVersionId:
+						app.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", app.currentVersionId),
+					features: await this.readFeatures(app),
+				},
+			},
+		};
+	}
+
+	/**
+	 * signed-user Exchange（spec 27.4，TASK-028）：身份完全来自
+	 * `LaunchTokenVerifier` 已验证的 claims（AD-11）——URL、postMessage 字段
+	 * 或客户端提交的 Principal ID 都不能建立身份。externalUserId 经
+	 * `(tenant, app)` 命名空间 HMAC 折叠为 subject hash 后 upsert Principal，
+	 * 同一用户在不同 App 下严格隔离。
+	 */
+	async exchangeSignedUser(input: SignedUserExchangeInput): Promise<ExchangeResult<SignedUserExchangeData>> {
+		const app = await this.repos.publishedApps.getByPublicAppId(input.publicAppId);
+		if (app === undefined) return { ok: false, error: appNotFound() };
+		if (app.status !== "active") return { ok: false, error: appSuspended("App is not active") };
+		if (app.accessMode !== "signed_user" && app.accessMode !== "mixed") {
+			return { ok: false, error: forbidden("App does not allow signed-user access") };
+		}
+		if (!originAllowed(input.origin, app.allowedOrigins)) {
+			return { ok: false, error: originNotAllowed() };
+		}
+		if (this.launchTokens === undefined) {
+			return { ok: false, error: forbidden("signed-user exchange is not enabled on this platform") };
+		}
+		const verified = await this.launchTokens.verify({
+			token: input.launchToken,
+			app,
+			requestOrigin: input.origin,
+		});
+		if (!verified.ok) return { ok: false, error: verified.error };
+
+		const subjectHash = externalSubjectHash(
+			this.subjectPepper,
+			app.tenantId,
+			app.publishedAppId,
+			verified.claims.externalUserId,
+		);
+		const principal = await this.repos.principals.upsert({
+			principalId: newPrincipalId(),
+			tenantId: app.tenantId,
+			publishedAppId: app.publishedAppId,
+			principalType: "external_user",
+			subjectHash,
+			status: "active",
+			createdAt: new Date(),
+			lastSeenAt: new Date(),
+		});
+		if (principal.status !== "active") {
+			return { ok: false, error: forbidden("Principal is not active") };
+		}
+
+		const signed = await this.accessTokens.sign({
+			tenantId: app.tenantId,
+			publishedAppId: app.publishedAppId,
+			principalId: principal.principalId,
+			principalType: principal.principalType,
+			scopes: [],
+			publishedAppVersionId: app.currentVersionId,
+		});
+		return {
+			ok: true,
+			data: {
+				accessToken: signed.token,
+				expiresAt: signed.expiresAt.toISOString(),
+				principal: {
+					id: toPublicId("PrincipalId", principal.principalId),
+					type: "external_user",
 				},
 				app: {
 					publicAppId: app.publicAppId,
