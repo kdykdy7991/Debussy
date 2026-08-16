@@ -6,12 +6,10 @@
  * Realtime 接线时一并收敛；Web 端已改为从本模块 re-export。
  */
 
-/** `POST /api/embed/v1/exchange`（匿名模式，spec 27.4）。 */
-export interface ExchangeRequest {
-	readonly publicAppId: string;
-	readonly mode: "anonymous";
-	readonly anonymousVisitorId: string;
-}
+/** `POST /api/embed/v1/exchange`（spec 27.4）：匿名或 signed_user。 */
+export type ExchangeRequest =
+	| { readonly publicAppId: string; readonly mode: "anonymous"; readonly anonymousVisitorId: string }
+	| { readonly publicAppId: string; readonly mode: "signed_user"; readonly launchToken: string };
 
 export interface ExchangeResponse {
 	readonly accessToken: string;
@@ -25,11 +23,18 @@ export interface ExchangeResponse {
 	};
 }
 
-/** `GET /api/embed/v1/bootstrap?publicAppId=...`（公开主题摘要）。 */
+/**
+ * `GET /api/embed/v1/bootstrap?publicAppId=...`（公开主题摘要）。
+ * `accessMode` 决定 iframe 的 init 模式（signed_user 必须等待宿主 init）；
+ * `allowedOrigins` 是 postMessage 通道允许的宿主 Origin 白名单（公开策略，
+ * 非凭据，spec 13.1）——iframe 只接受来自这些 Origin 的消息并只向其发送。
+ */
 export interface BootstrapResponse {
 	readonly publicAppId: string;
 	readonly name: string;
 	readonly status: string;
+	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly allowedOrigins: readonly string[];
 	readonly currentVersionId: string | null;
 	readonly features: { readonly uploads: boolean; readonly speech: boolean; readonly avatar: boolean };
 	readonly theme: { readonly primaryColor?: string; readonly welcomeMessage?: string };
