@@ -12,9 +12,11 @@
  */
 import type {
 	AgentDefinitionId,
+	AttachmentId,
 	AuditEventId,
 	ConversationEventId,
 	ConversationId,
+	LaunchKeyId,
 	PrincipalId,
 	PublishedAppId,
 	PublishedAppVersionId,
@@ -23,7 +25,9 @@ import type {
 	TurnId,
 } from "./domain/ids.ts";
 import type {
+	AttachmentStatus,
 	ConversationStatus,
+	EmbedLaunchKeyStatus,
 	PrincipalType,
 	PublishedAppStatus,
 	PublishedAppVersionStatus,
@@ -38,6 +42,7 @@ import type { Principal, ResourceScope } from "./domain/types.ts";
  * - `TenantScope` for tenant-owned control-plane rows (agent definitions).
  * - `AppScope` for app-owned rows (apps, versions, principals).
  * - `OwnerScope` for principal-owned rows (conversations).
+ * - `ConversationScope` for attachment rows (conversation-scoped by principal).
  */
 export interface TenantScope {
 	readonly tenantId: TenantId;
@@ -47,6 +52,9 @@ export interface AppScope extends TenantScope {
 }
 export interface OwnerScope extends AppScope {
 	readonly principalId: PrincipalId;
+}
+export interface ConversationScope extends OwnerScope {
+	readonly conversationId: ConversationId;
 }
 
 /** Tenant record (control plane). */
@@ -135,6 +143,31 @@ export interface ConversationRecord {
 export interface ConversationListRow extends ConversationRecord {
 	/** Opaque cursor value: `lastActiveAt + "|" + id`. */
 	readonly cursor: string;
+}
+
+/**
+ * Attachment metadata record (spec 26.2 `attachments`, TASK-006/030).
+ *
+ * `objectKey` is always server-generated and never derived from the client
+ * filename; the actual bytes live in the object store (spec 24.1: production
+ * must not use node disk as the truth source). Status lifecycle:
+ * staged -> ready | rejected; ready -> deleted.
+ */
+export interface AttachmentRecord {
+	readonly attachmentId: AttachmentId;
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	readonly conversationId: ConversationId;
+	readonly ownerPrincipalId: PrincipalId;
+	readonly objectKey: string;
+	readonly filename: string;
+	readonly contentType: string;
+	readonly sizeBytes: number;
+	readonly checksumSha256: string;
+	readonly status: AttachmentStatus;
+	/** NULL = never expires (MVP ready rows are kept until deleted). */
+	readonly expiresAt: Date | null;
+	readonly createdAt: Date;
 }
 
 export interface ConversationListParams {
@@ -283,6 +316,59 @@ export interface ConversationRepository {
 	nextEventSequence(scope: OwnerScope, conversationId: ConversationId): Promise<number | undefined>;
 }
 
+/** Expired/aged-out attachment selection for the background sweep (TASK-030). */
+export interface AttachmentSweepParams {
+	readonly limit: number;
+	/** Staged rows older than this are swept (interrupted/abandoned uploads). */
+	readonly stagedBefore: Date;
+	/** Ready rows with `expires_at` before this are swept. */
+	readonly readyExpiredBefore: Date;
+}
+
+/** 上传总量配额（spec 14；TASK-031）：单会话 / Principal / App 字节上限。 */
+export interface UploadQuotaLimits {
+	readonly conversationBytes: number;
+	readonly principalBytes: number;
+	readonly appBytes: number;
+}
+
+export type ReserveStagedOutcome =
+	| { readonly outcome: "ok" }
+	| { readonly outcome: "quota_exceeded" }
+	| { readonly outcome: "conversation_missing" };
+
+export interface AttachmentRepository {
+	/** Scoped insert; the row is created in `staged` status (TASK-030). */
+	insert(record: AttachmentRecord): Promise<void>;
+	/** Scoped get; tenant/app/conversation/owner must all match. */
+	get(scope: ConversationScope, attachmentId: AttachmentId): Promise<AttachmentRecord | undefined>;
+	/**
+	 * 事务内原子预留：锁会话行（并发上传串行化）-> 统计 staged+ready 字节
+	 * （会话/Principal/App 三档）-> 配额检查 -> 插入 staged 行（TASK-031）。
+	 * 超配额返回 `quota_exceeded`（不插入）；会话缺失/越权返回
+	 * `conversation_missing`（统一不可用）。
+	 */
+	reserveStaged(
+		scope: ConversationScope,
+		record: AttachmentRecord,
+		limits: UploadQuotaLimits,
+	): Promise<ReserveStagedOutcome>;
+	/** 该会话内 staged+ready 字节总量（sweep/测试用）。 */
+	sumActiveBytes(scope: ConversationScope): Promise<number>;
+	/**
+	 * 会话内 status = ready 的附件列表（TASK-032 引用检索的授权来源枚举）。
+	 * 全 scope SQL：只返回本会话、本 principal 的附件。
+	 */
+	listReadyByConversation(scope: ConversationScope): Promise<AttachmentRecord[]>;
+	/**
+	 * Scoped status transition. Returns `false` when the row is missing or out
+	 * of scope (uniform unavailable; no ID enumeration).
+	 */
+	updateStatus(scope: ConversationScope, attachmentId: AttachmentId, status: AttachmentStatus): Promise<boolean>;
+	/** Sweep selection: expired ready rows + aged staged rows (spec 6.3). */
+	listSweepCandidates(params: AttachmentSweepParams): Promise<AttachmentRecord[]>;
+}
+
 /** Audit log row (append-only, spec section 26.2 / 13.4). */
 export interface AuditEventRecord {
 	readonly auditEventId: AuditEventId;
@@ -304,6 +390,56 @@ export interface AuditEventRepository {
 	listByTenant(scope: TenantScope, limit: number): Promise<AuditEventRecord[]>;
 }
 
+/**
+ * Embed launch key record (spec section 26.2 `embed_launch_keys`, TASK-027).
+ *
+ * Only public key material is ever stored: the platform registers the host's
+ * public key and never accepts or persists a private key. `keyId` is the
+ * host-facing identifier used in the Launch Token `kid` header, unique per
+ * published app. `status` lifecycle: `active` (current) -> `retiring`
+ * (still accepted during the rotation window) -> `revoked` (never accepted).
+ */
+export interface LaunchKeyRecord {
+	readonly launchKeyId: LaunchKeyId;
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	readonly keyId: string;
+	/** JWS algorithm of the launch token (MVP: only `EdDSA`). */
+	readonly algorithm: string;
+	/** SPKI PEM of the host's public key — never a private key. */
+	readonly publicKeyPem: string;
+	readonly status: EmbedLaunchKeyStatus;
+	readonly notBefore: Date;
+	readonly expiresAt: Date | null;
+	readonly createdAt: Date;
+}
+
+export interface LaunchKeyRepository {
+	/**
+	 * Register a new `active` launch key and atomically move every other
+	 * `active` key of the same app to `retiring` (the rotation window: the
+	 * old and new keys are accepted side by side until the old one is
+	 * revoked or expires — spec TASK-027). One transaction; a duplicate
+	 * `(published_app_id, key_id)` returns `key_id_conflict` instead of a
+	 * raw constraint error.
+	 */
+	insertWithRotation(
+		scope: AppScope,
+		record: LaunchKeyRecord,
+	): Promise<
+		| { readonly outcome: "created"; readonly created: LaunchKeyRecord; readonly retired: readonly LaunchKeyRecord[] }
+		| { readonly outcome: "key_id_conflict" }
+	>;
+	/** Scoped get by internal launch key id. */
+	get(scope: AppScope, launchKeyId: LaunchKeyId): Promise<LaunchKeyRecord | undefined>;
+	/** Scoped get by the host-facing keyId (used by TASK-028 verification). */
+	getByKeyId(scope: AppScope, keyId: string): Promise<LaunchKeyRecord | undefined>;
+	/** Scoped list, newest first. */
+	list(scope: AppScope): Promise<LaunchKeyRecord[]>;
+	/** Scoped status transition (active/retiring -> revoked, TASK-027). */
+	updateStatus(scope: AppScope, launchKeyId: LaunchKeyId, status: EmbedLaunchKeyStatus): Promise<void>;
+}
+
 /** Combined repository set wired to a single Postgres client. */
 export interface PublishingRepositories {
 	readonly tenants: TenantRepository;
@@ -315,6 +451,8 @@ export interface PublishingRepositories {
 	readonly events: ConversationEventRepository;
 	readonly idempotency: IdempotencyRepository;
 	readonly audit: AuditEventRepository;
+	readonly launchKeys: LaunchKeyRepository;
+	readonly attachments: AttachmentRepository;
 }
 
 /** Convenience type for a persisted Principal record with its typed fields. */

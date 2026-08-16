@@ -34,6 +34,7 @@ export type TurnId = string & Brand<"TurnId">;
 export type RequestId = string & Brand<"RequestId">;
 export type IdempotencyKey = string & Brand<"IdempotencyKey">;
 export type AuditEventId = string & Brand<"AuditEventId">;
+export type LaunchKeyId = string & Brand<"LaunchKeyId">;
 
 /** Identifier kinds and their display prefixes (representation layer only). */
 export type IdKind =
@@ -48,7 +49,8 @@ export type IdKind =
 	| "TurnId"
 	| "RequestId"
 	| "IdempotencyKey"
-	| "AuditEventId";
+	| "AuditEventId"
+	| "LaunchKeyId";
 
 const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	TenantId: "ten_",
@@ -63,6 +65,7 @@ const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	RequestId: "req_",
 	IdempotencyKey: "idem_",
 	AuditEventId: "aud_",
+	LaunchKeyId: "lkey_",
 };
 
 /** Generate a UUIDv7 string: 48-bit millisecond timestamp + random bits. */
@@ -158,6 +161,9 @@ export function newIdempotencyKey(): IdempotencyKey {
 }
 export function newAuditEventId(): AuditEventId {
 	return buildId("IdempotencyKey") as AuditEventId;
+}
+export function newLaunchKeyId(): LaunchKeyId {
+	return buildId("LaunchKeyId") as LaunchKeyId;
 }
 
 /** Public locator: stored in the `public_app_id` text column, keeps `pub_`. */

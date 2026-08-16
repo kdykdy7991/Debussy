@@ -9,10 +9,12 @@
 import type { PublishingRepositories } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { createAgentDefinitionRepository } from "./agent-definitions.ts";
+import { createAttachmentRepository } from "./attachments.ts";
 import { createAuditEventRepository } from "./audit.ts";
 import { createConversationEventRepository } from "./conversation-events.ts";
 import { createConversationRepository } from "./conversations.ts";
 import { createIdempotencyRepository } from "./idempotency.ts";
+import { createLaunchKeyRepository } from "./launch-keys.ts";
 import { createPrincipalRepository } from "./principals.ts";
 import { createPublishedAppVersionRepository } from "./published-app-versions.ts";
 import { createPublishedAppRepository } from "./published-apps.ts";
@@ -30,6 +32,8 @@ export function createPublishingRepositories(client: PostgresClient): Publishing
 		events: createConversationEventRepository(client),
 		idempotency: createIdempotencyRepository(client),
 		audit: createAuditEventRepository(client),
+		launchKeys: createLaunchKeyRepository(client),
+		attachments: createAttachmentRepository(client),
 	};
 }
 
