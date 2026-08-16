@@ -102,6 +102,13 @@ describe.skipIf(!pgUp)("control plane composition", () => {
 			accessTokenPublicKeyFile: undefined,
 			accessTokenKeyId: undefined,
 			accessTokenTtlSeconds: 600,
+			launchTokenAudience: "skdy-embed",
+			launchTokenAllowedIssuers: [],
+			uploadQuota: {
+				conversationBytes: 100 * 1024 * 1024,
+				principalBytes: 500 * 1024 * 1024,
+				appBytes: 2 * 1024 * 1024 * 1024,
+			},
 			...overrides,
 		};
 	}

@@ -22,6 +22,7 @@
  * the constructor (never implicit global settings).
  */
 
+import { importSPKI } from "jose";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import type {
 	AgentDefinitionId,
@@ -34,6 +35,7 @@ import type {
 import {
 	newAgentDefinitionId,
 	newAuditEventId,
+	newLaunchKeyId,
 	newPublicAppId,
 	newPublishedAppId,
 	newPublishedAppVersionId,
@@ -43,6 +45,7 @@ import {
 import type { AccessMode } from "../domain/states.ts";
 import type {
 	AgentDefinitionRecord,
+	LaunchKeyRecord,
 	PublishedAppRecord,
 	PublishedAppVersionRecord,
 	PublishingRepositories,
@@ -66,6 +69,10 @@ export type ControlErrorCode =
 	| "VERSION_NOT_FOUND" // source agent revision not found (404)
 	| "VERSION_UNAVAILABLE" // activate/rollback target not ready or not this app's (409)
 	| "INVALID_ORIGINS" // allowedOrigins fails strict origin policy (400)
+	| "KEY_ID_CONFLICT" // launch key keyId already registered for this app (409)
+	| "INVALID_LAUNCH_KEY" // launch key material/params fail validation (400)
+	| "KEY_NOT_FOUND" // launch key not visible in the app scope (404)
+	| "KEY_ALREADY_REVOKED" // revoke target is already revoked (409)
 	| "CONFLICT"; // unexpected concurrent conflict (409)
 
 export interface ControlServiceError {
@@ -114,6 +121,48 @@ export interface CreatePublishedAppVersionInput {
 
 export interface CreatePublishedAppVersionResult {
 	readonly version: PublishedAppVersionRecord;
+}
+
+/** MVP launch-token JWS algorithm (spec 24.1: Ed25519/EdDSA). */
+export const LAUNCH_KEY_ALGORITHM = "EdDSA";
+/** jose key-type name used to import the registered SPKI public key. */
+const LAUNCH_KEY_TYPE = "Ed25519";
+/** keyId charset: safe for JWT `kid` headers and control API URL paths. */
+const LAUNCH_KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+export interface CreateLaunchKeyInput {
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	/** Host-facing identifier used in the Launch Token `kid` header (required). */
+	readonly keyId: string;
+	/** JWS algorithm of host-signed launch tokens; MVP accepts only `EdDSA`. */
+	readonly algorithm?: string;
+	/** SPKI PEM of the host's public key. Private key material is rejected. */
+	readonly publicKeyPem: string;
+	/** ISO-8601; defaults to now. */
+	readonly notBefore?: string;
+	/** ISO-8601; optional. Must be after notBefore and in the future. */
+	readonly expiresAt?: string | null;
+	readonly requestId?: RequestId;
+}
+
+export interface CreateLaunchKeyResult {
+	readonly key: LaunchKeyRecord;
+	/** Previously-active keys of the app moved to `retiring` by this rotation. */
+	readonly retired: readonly LaunchKeyRecord[];
+	readonly auditEventId: AuditEventId;
+}
+
+export interface RevokeLaunchKeyInput {
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	readonly keyId: string;
+	readonly requestId?: RequestId;
+}
+
+export interface RevokeLaunchKeyResult {
+	readonly key: LaunchKeyRecord;
+	readonly auditEventId: AuditEventId;
 }
 
 /**
@@ -315,6 +364,131 @@ export class ControlService {
 	}
 
 	/**
+	 * Register a host launch key (spec 8.1 `POST .../launch-keys`, TASK-027).
+	 *
+	 * Only the host's *public* key is accepted and persisted; private key
+	 * material is rejected before any write. The first key for an app is
+	 * `active`; registering a new key atomically moves every other `active`
+	 * key to `retiring`, so old and new keys are both accepted during the
+	 * rotation window (completion condition of TASK-027). Audited.
+	 */
+	async createLaunchKey(input: CreateLaunchKeyInput): Promise<ControlResult<CreateLaunchKeyResult>> {
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+
+		if (!LAUNCH_KEY_ID_PATTERN.test(input.keyId)) {
+			return fail("INVALID_LAUNCH_KEY", 400, "keyId must match [A-Za-z0-9._-]{1,64}");
+		}
+		const algorithm = input.algorithm ?? LAUNCH_KEY_ALGORITHM;
+		if (algorithm !== LAUNCH_KEY_ALGORITHM) {
+			return fail("INVALID_LAUNCH_KEY", 400, `algorithm must be ${LAUNCH_KEY_ALGORITHM} in MVP`);
+		}
+		const pem = input.publicKeyPem.trim();
+		if (!isPublicKeyPem(pem) || !(await isEd25519Spki(pem))) {
+			return fail(
+				"INVALID_LAUNCH_KEY",
+				400,
+				"publicKeyPem must be a valid Ed25519 SPKI public key PEM (private keys are rejected)",
+			);
+		}
+		const notBefore = parseIsoOrNow(input.notBefore, () =>
+			fail("INVALID_LAUNCH_KEY", 400, "notBefore must be a valid ISO-8601 timestamp"),
+		);
+		if (!notBefore.ok) return notBefore;
+		const expiresAt = parseIsoOrNull(input.expiresAt, () =>
+			fail("INVALID_LAUNCH_KEY", 400, "expiresAt must be a valid ISO-8601 timestamp"),
+		);
+		if (!expiresAt.ok) return expiresAt;
+		if (expiresAt.data !== null) {
+			if (expiresAt.data.getTime() <= notBefore.data.getTime()) {
+				return fail("INVALID_LAUNCH_KEY", 400, "expiresAt must be after notBefore");
+			}
+			if (expiresAt.data.getTime() <= Date.now()) {
+				return fail("INVALID_LAUNCH_KEY", 400, "expiresAt must be in the future");
+			}
+		}
+
+		const record: LaunchKeyRecord = {
+			launchKeyId: newLaunchKeyId(),
+			tenantId: input.tenantId,
+			publishedAppId: input.publishedAppId,
+			keyId: input.keyId,
+			algorithm,
+			publicKeyPem: pem,
+			status: "active",
+			notBefore: notBefore.data,
+			expiresAt: expiresAt.data,
+			createdAt: new Date(),
+		};
+		const result = await this.repos.launchKeys.insertWithRotation(appScope, record);
+		if (result.outcome === "key_id_conflict") {
+			return fail("KEY_ID_CONFLICT", 409, `launch key ${input.keyId} is already registered for this app`);
+		}
+		const auditEventId = await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "app.launch-key.create",
+			resourceType: "embed_launch_key",
+			resourceId: input.keyId,
+			requestId: input.requestId,
+			metadata: {
+				launchKeyId: result.created.launchKeyId,
+				algorithm: result.created.algorithm,
+				notBefore: result.created.notBefore.toISOString(),
+				expiresAt: result.created.expiresAt === null ? null : result.created.expiresAt.toISOString(),
+				retiredKeyIds: result.retired.map((key) => key.keyId),
+			},
+		});
+		return { ok: true, data: { key: result.created, retired: result.retired, auditEventId } };
+	}
+
+	/**
+	 * Revoke a launch key by its host-facing keyId (spec 13.4 "吊销 Launch
+	 * Key"): `active`/`retiring` -> `revoked`, scoped to the app. A revoked
+	 * key is never accepted again (TASK-028 verification must skip it).
+	 * Audited.
+	 */
+	async revokeLaunchKey(input: RevokeLaunchKeyInput): Promise<ControlResult<RevokeLaunchKeyResult>> {
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+		const key = await this.repos.launchKeys.getByKeyId(appScope, input.keyId);
+		if (key === undefined) return fail("KEY_NOT_FOUND", 404, "launch key not found in app scope");
+		if (key.status === "revoked") {
+			return fail("KEY_ALREADY_REVOKED", 409, `launch key ${input.keyId} is already revoked`);
+		}
+		await this.repos.launchKeys.updateStatus(appScope, key.launchKeyId, "revoked");
+		const auditEventId = await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "app.launch-key.revoke",
+			resourceType: "embed_launch_key",
+			resourceId: input.keyId,
+			requestId: input.requestId,
+			metadata: { launchKeyId: key.launchKeyId, previousStatus: key.status },
+		});
+		const updated = await this.repos.launchKeys.getByKeyId(appScope, input.keyId);
+		return {
+			ok: true,
+			data: {
+				key: updated ?? { ...key, status: "revoked" as const },
+				auditEventId,
+			},
+		};
+	}
+
+	/** List the app's launch keys, newest first (admin visibility). */
+	async listLaunchKeys(input: {
+		readonly tenantId: TenantId;
+		readonly publishedAppId: PublishedAppId;
+	}): Promise<ControlResult<{ readonly keys: readonly LaunchKeyRecord[] }>> {
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+		const keys = await this.repos.launchKeys.list(appScope);
+		return { ok: true, data: { keys } };
+	}
+
+	/**
 	 * Activate a ready version (spec 27.3): the pointer flip and the app
 	 * status move to `active` happen in one transaction (row-locked), and an
 	 * audit event is appended. The target must belong to this app and be
@@ -451,4 +625,38 @@ export interface VersionTransitionResult {
 export interface TenantRecordResult {
 	readonly tenant: TenantRecord;
 	readonly created: boolean;
+}
+
+/** Accept only SPKI public-key PEM armor; any private-key marker is rejected. */
+function isPublicKeyPem(pem: string): boolean {
+	return pem.startsWith("-----BEGIN PUBLIC KEY-----") && !pem.includes("PRIVATE KEY");
+}
+
+/** Verify the PEM is cryptographically a usable Ed25519 SPKI public key. */
+async function isEd25519Spki(pem: string): Promise<boolean> {
+	try {
+		await importSPKI(pem, LAUNCH_KEY_TYPE);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Parse an optional ISO-8601 timestamp, defaulting to now. */
+function parseIsoOrNow(value: string | undefined, onInvalid: () => ControlResult<never>): ControlResult<Date> {
+	if (value === undefined || value === "") return { ok: true, data: new Date() };
+	const parsed = new Date(value);
+	if (Number.isNaN(parsed.getTime())) return onInvalid();
+	return { ok: true, data: parsed };
+}
+
+/** Parse an optional ISO-8601 timestamp (empty/null -> no expiry). */
+function parseIsoOrNull(
+	value: string | null | undefined,
+	onInvalid: () => ControlResult<never>,
+): ControlResult<Date | null> {
+	if (value === undefined || value === null || value === "") return { ok: true, data: null };
+	const parsed = new Date(value);
+	if (Number.isNaN(parsed.getTime())) return onInvalid();
+	return { ok: true, data: parsed };
 }

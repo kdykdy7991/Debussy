@@ -77,6 +77,8 @@ async function appSummary(
 	publicAppId: string;
 	name: string;
 	status: string;
+	accessMode: "anonymous" | "signed_user" | "mixed";
+	allowedOrigins: readonly string[];
 	currentVersionId: string | null;
 	features: { uploads: boolean; speech: boolean; avatar: boolean };
 	theme: { primaryColor?: string; welcomeMessage?: string };
@@ -104,6 +106,9 @@ async function appSummary(
 		publicAppId: app.publicAppId,
 		name: app.name,
 		status: app.status,
+		accessMode: app.accessMode,
+		// TASK-029：postMessage 通道的宿主 Origin 白名单（公开策略，非凭据）。
+		allowedOrigins: app.allowedOrigins,
 		currentVersionId: app.currentVersionId === null ? null : `pav_${app.currentVersionId}`,
 		features,
 		theme: policy.theme ?? {},

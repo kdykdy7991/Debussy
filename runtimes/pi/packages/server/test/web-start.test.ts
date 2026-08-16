@@ -89,6 +89,8 @@ describe("publishing feature configuration", () => {
 			accessTokenPublicKeyFile: undefined,
 			accessTokenKeyId: undefined,
 			accessTokenTtlSeconds: 600,
+			launchTokenAudience: "skdy-embed",
+			launchTokenAllowedIssuers: [],
 		});
 	});
 
@@ -115,6 +117,8 @@ describe("publishing feature configuration", () => {
 			PI_EMBED_ACCESS_TOKEN_PUBLIC_KEY_FILE: "/run/secrets/embed-access-public.pem",
 			PI_EMBED_ACCESS_TOKEN_KEY_ID: "kid-2026-01",
 			PI_EMBED_ACCESS_TOKEN_TTL_SECONDS: "300",
+			PI_EMBED_LAUNCH_TOKEN_AUDIENCE: "skdy-embed",
+			PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS: "https://host.example.com, https://host2.example.com",
 		});
 		expect(config).toEqual({
 			enabled: true,
@@ -129,6 +133,8 @@ describe("publishing feature configuration", () => {
 			accessTokenPublicKeyFile: "/run/secrets/embed-access-public.pem",
 			accessTokenKeyId: "kid-2026-01",
 			accessTokenTtlSeconds: 300,
+			launchTokenAudience: "skdy-embed",
+			launchTokenAllowedIssuers: ["https://host.example.com", "https://host2.example.com"],
 		});
 	});
 

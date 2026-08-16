@@ -12,6 +12,7 @@
  */
 import type { SessionSnapshot } from "@earendil-works/pi-protocol";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
+import type { RetrievalInput } from "../types.ts";
 import type { RestoredContext } from "./context-restore.ts";
 import type { ConversationRuntimeManager } from "./conversation-runtime-manager.ts";
 import type { PiRuntimeAdapter } from "./pi-runtime-adapter.ts";
@@ -23,6 +24,8 @@ export interface TurnExecutionInput {
 	readonly text: string;
 	/** 恢复的历史上下文（TASK-022）；缺省为无。 */
 	readonly history?: RestoredContext;
+	/** 会话级引用检索结果（TASK-032）；缺省为无（不注入 retrieval）。 */
+	readonly retrieval?: RetrievalInput;
 }
 
 export type TurnExecutionResult =
@@ -33,12 +36,12 @@ export type TurnExecutor = (input: TurnExecutionInput) => Promise<TurnExecutionR
 
 /** 基于 PiRuntimeAdapter 的默认执行器（open -> prompt -> 提取输出 -> close）。 */
 export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
-	return async ({ scope, spec, text, history }) => {
+	return async ({ scope, spec, text, history, retrieval }) => {
 		const opened = await adapter.open(spec, scope);
 		if (!opened.ok) return { ok: false, error: opened.reason };
 		const runtime = opened.runtime;
 		try {
-			await runtime.prompt(text, history !== undefined ? { history } : undefined);
+			await runtime.prompt(text, { history, retrieval });
 			return { ok: true, outputText: lastAssistantText(runtime.snapshot()) };
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -55,11 +58,11 @@ export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
  * HTTP 请求。
  */
 export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnExecutor {
-	return async ({ scope, spec, text, history }) => {
+	return async ({ scope, spec, text, history, retrieval }) => {
 		const acquired = await manager.acquire(spec, scope);
 		const runtime = acquired.runtime;
 		try {
-			await runtime.prompt(text, history !== undefined ? { history } : undefined);
+			await runtime.prompt(text, { history, retrieval });
 			return { ok: true, outputText: lastAssistantText(runtime.snapshot()) };
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };

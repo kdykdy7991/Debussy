@@ -13,37 +13,56 @@
  * 再 composeEmbedPlane 复用同一 `repositories`；`createSession` 由调用方把
  * `CodingAgentPiSessionBackend.createSession` 适配为 `RuntimeSessionFactory`。
  */
+
+import type { CitationService } from "../citations/service.ts";
+import { S3ObjectStore } from "../persistence/object-store/s3.ts";
+import type { ObjectStore } from "../persistence/object-store/types.ts";
 import { RedisClient } from "../persistence/redis/client.ts";
+import { createRedisNonceStore } from "../persistence/redis/nonce-store.ts";
 import { createRedisTicketStore } from "../persistence/redis/ticket-store.ts";
 import type { PublishingConfig } from "../publishing/config.ts";
-import type { PublishingRepositories } from "../publishing/repositories.ts";
+import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/repositories.ts";
 import { createConversationRuntimeManager } from "../runtime/conversation-runtime-manager.ts";
 import { createPiRuntimeAdapter, type RuntimeSessionFactory } from "../runtime/pi-runtime-adapter.ts";
 import { managedTurnExecutor } from "../runtime/turn-executor.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { AccessTokenService, loadAccessTokenKeyMaterial } from "./auth/access-token.ts";
 import { createExchangeHttpHandler } from "./auth/exchange-http.ts";
+import { LaunchTokenVerifier } from "./auth/launch-token.ts";
 import { ExchangeService } from "./auth/principal.ts";
 import { createWsTicketService, type WsTicketService } from "./auth/ws-ticket.ts";
 import { createBootstrapHttpHandler } from "./bootstrap-http.ts";
+import { ConversationCitationService } from "./citations/service.ts";
 import { createConversationsHttpHandler } from "./conversations/http.ts";
 import { ConversationService } from "./conversations/service.ts";
 import { createEmbedAuthenticator, type EmbedAuthContext } from "./middleware/authenticate.ts";
 import { EmbedRealtimeConnection } from "./realtime/connection.ts";
 import { createRealtimeUpgradeHandler, type UpgradeHandler } from "./realtime/http.ts";
 import { conversationRealtimeServices } from "./realtime/services.ts";
+import { createAttachmentsHttpHandler } from "./uploads/http.ts";
+import { AttachmentService } from "./uploads/service.ts";
 
 export interface EmbedPlaneOptions {
 	readonly publishing: PublishingConfig;
 	readonly repositories: PublishingRepositories;
 	/** 底层会话工厂（真实组合接 CodingAgentPiSessionBackend.createSession）。 */
 	readonly createSession: RuntimeSessionFactory;
+	/** 附件对象存储（测试注入）；缺省按 `PI_OBJECT_STORE_*` 创建 S3。 */
+	readonly objectStore?: ObjectStore;
+	/** 附件 bucket（与 objectStore 成对；缺省用 config.objectStore.bucket）。 */
+	readonly attachmentBucket?: string;
+	/**
+	 * 进程级 CitationService（TASK-032；与内部会话流共用同一实例）。未提供
+	 * = embed 不上传引用/检索引用（upload 仍可用，Turn 不带 retrieval）。
+	 */
+	readonly citations?: CitationService;
 	readonly log?: (message: string) => void;
 }
 
 export interface EmbedPlaneHandle {
 	readonly bootstrapHandler: HttpRequestHandler;
 	readonly exchangeHandler: HttpRequestHandler;
+	readonly attachmentsHandler: HttpRequestHandler;
 	readonly conversationsHandler: HttpRequestHandler;
 	/** Realtime upgrade handler（挂到 listener 的 onUnhandledUpgrade）。 */
 	readonly realtimeUpgrade: UpgradeHandler | undefined;
@@ -104,6 +123,19 @@ export interface EmbedServicesOptions {
 	readonly realtimeBaseUrl?: string;
 	/** Realtime upgrade handler（TASK-025）；未提供时无 Realtime 端点。 */
 	readonly realtimeUpgrade?: UpgradeHandler;
+	/**
+	 * Launch Token 验证器（TASK-028）。未提供 = signed-user Exchange 关闭
+	 * （PD-19 默认）：signed_user 请求显式 403，不静默通过。
+	 */
+	readonly launchTokens?: LaunchTokenVerifier;
+	/** 附件对象存储（TASK-030）；未提供时 uploads 端点显式 503。 */
+	readonly objectStore?: ObjectStore;
+	/** 对象存储 bucket（与 objectStore 一起提供）。 */
+	readonly attachmentBucket?: string;
+	/** 上传总量配额（TASK-031）；缺省用 service 平台默认。 */
+	readonly uploadQuota?: UploadQuotaLimits;
+	/** 进程级 CitationService（TASK-032）；未提供 = embed 引用链路关闭。 */
+	readonly citations?: CitationService;
 }
 
 export interface EmbedServicesHandle {
@@ -128,16 +160,45 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 		repositories: options.repositories,
 		accessTokens: options.accessTokens,
 		subjectPepper: options.subjectPepper,
+		launchTokens: options.launchTokens,
 	});
+	// TASK-032：会话级引用能力（进程级 CitationService + scope 适配器）。
+	// 未提供 CitationService 时引用链路整体关闭（upload 仍可用）。
+	const conversationCitations =
+		options.citations !== undefined
+			? new ConversationCitationService({
+					citations: options.citations,
+					repositories: options.repositories,
+				})
+			: undefined;
 	const authenticator = createEmbedAuthenticator({ accessTokens: options.accessTokens });
 	const conversationService = new ConversationService({
 		repositories: options.repositories,
 		turnExecutor: managedTurnExecutor(runtimeManager),
+		...(conversationCitations !== undefined ? { citations: conversationCitations } : {}),
 	});
+	// TASK-030/031：附件对象存储 + 总量配额；未配置 store 时 uploads 端点
+	// 503（不静默退化为磁盘）。
+	const attachmentsService =
+		options.objectStore !== undefined && options.attachmentBucket !== undefined
+			? new AttachmentService({
+					repositories: options.repositories,
+					objectStore: options.objectStore,
+					bucket: options.attachmentBucket,
+					quota: options.uploadQuota,
+					...(conversationCitations !== undefined ? { citations: conversationCitations } : {}),
+				})
+			: undefined;
 	return {
 		handlers: [
 			createBootstrapHttpHandler({ repositories: options.repositories }),
 			createExchangeHttpHandler({ service: exchangeService }),
+			// uploads 必须先于 conversations 匹配（同路径前缀）。
+			createAttachmentsHttpHandler({
+				service: attachmentsService,
+				authenticator,
+				repositories: options.repositories,
+			}),
 			createConversationsHttpHandler({
 				service: conversationService,
 				authenticator,
@@ -157,13 +218,28 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	const log = options.log ?? console.log.bind(console);
 	const config = await loadEmbedPlaneConfig(options.publishing);
 
-	// 24.2：启用 Embed 数据面需要 Redis（Ticket/限流）。
+	// 24.2：启用 Embed 数据面需要 Redis（Ticket/限流/nonce）。
 	const redisUrl = options.publishing.redisUrl;
 	if (redisUrl === undefined || redisUrl === "") {
 		throw new Error("PI_REDIS_URL is required when publishing is enabled");
 	}
 	const redis = new RedisClient({ url: redisUrl });
 	const wsTickets = createWsTicketService(createRedisTicketStore(redis));
+	// TASK-028：仅当配置了宿主 issuer 白名单时启用 signed-user Exchange
+	// （PD-19 默认关闭；未启用时 signed_user 请求显式 403）。
+	const launchTokens =
+		options.publishing.launchTokenAllowedIssuers.length > 0
+			? new LaunchTokenVerifier({
+					repositories: options.repositories,
+					nonces: createRedisNonceStore(redis),
+					audience: options.publishing.launchTokenAudience,
+					allowedIssuers: options.publishing.launchTokenAllowedIssuers,
+				})
+			: undefined;
+	// TASK-030：附件对象存储——生产用 S3（24.2），测试可注入；未配置 =
+	// uploads 显式 503，不静默退化为节点磁盘。
+	const objectStore = options.objectStore ?? createObjectStoreFromConfig(options.publishing);
+	const attachmentBucket = options.attachmentBucket ?? options.publishing.objectStore?.bucket;
 
 	let realtimeUpgrade: UpgradeHandler | undefined;
 	const services = createEmbedServices({
@@ -173,6 +249,10 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		createSession: options.createSession,
 		wsTickets,
 		realtimeBaseUrl: options.publishing.embedBaseUrl,
+		launchTokens,
+		...(objectStore !== undefined && attachmentBucket !== undefined ? { objectStore, attachmentBucket } : {}),
+		uploadQuota: options.publishing.uploadQuota,
+		...(options.citations !== undefined ? { citations: options.citations } : {}),
 	});
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。
@@ -209,12 +289,30 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	return {
 		bootstrapHandler: services.handlers[0],
 		exchangeHandler: services.handlers[1],
-		conversationsHandler: services.handlers[2],
+		attachmentsHandler: services.handlers[2],
+		conversationsHandler: services.handlers[3],
 		realtimeUpgrade,
 		accessTokens: config.accessTokens,
 		close: async () => {
 			await services.close();
 			await redis.close();
+			await objectStore?.close();
 		},
 	};
+}
+
+/** 按 24.2 环境变量创建 S3 兼容对象存储；未配置返回 undefined（uploads 关闭）。 */
+function createObjectStoreFromConfig(publishing: PublishingConfig): ObjectStore | undefined {
+	const store = publishing.objectStore;
+	if (store === undefined) return undefined;
+	const url = new URL(store.endpoint);
+	return new S3ObjectStore({
+		endPoint: url.hostname,
+		port: url.port === "" ? undefined : Number(url.port),
+		useSSL: url.protocol === "https:",
+		accessKey: store.accessKeyId,
+		secretKey: store.secretAccessKey,
+		region: store.region,
+		bucket: store.bucket,
+	});
 }

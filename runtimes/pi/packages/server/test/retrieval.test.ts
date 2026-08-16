@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attachment } from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
-import { CitationService, type CitationServiceOptions } from "../src/citations/service.ts";
+import { attachmentStoreReader, CitationService, type CitationServiceOptions } from "../src/citations/service.ts";
 import { CitationStore } from "../src/citations/store.ts";
 import { rankChunks, tokenize } from "../src/citations/tokenize.ts";
 import { AttachmentStore } from "../src/uploads/store.ts";
@@ -35,7 +35,7 @@ async function makeHarness(options: Partial<CitationServiceOptions> = {}) {
 	await attachments.init();
 	const store = new CitationStore(join(root, "citations"));
 	await store.init();
-	const service = new CitationService({ store, attachments, ...options });
+	const service = new CitationService({ store, readContent: attachmentStoreReader(attachments), ...options });
 	return { root, attachments, store, service };
 }
 
@@ -275,6 +275,21 @@ describe("CitationService.retrieve", () => {
 	});
 });
 
+describe("CitationStore scoped accessors (TASK-032)", () => {
+	test("getSourceInSession / loadChunksInSession reject foreign sessions", async () => {
+		const harness = await makeHarness();
+		await indexContent(harness, makeAttachment("att-scope", "session-1", "scope.txt"), "scoped source content here");
+		const source = harness.store.listSourcesBySession("session-1")[0]!;
+		expect(source.status).toBe("ready");
+		// 同会话可解析；他会话一律 undefined（禁止继续：无 Scope 的全局查找）。
+		expect(harness.store.getSourceInSession("session-1", source.id)?.id).toBe(source.id);
+		expect(harness.store.getSourceInSession("session-2", source.id)).toBeUndefined();
+		expect(harness.store.getSourceInSession("session-1", "source-missing")).toBeUndefined();
+		expect(harness.store.loadChunksInSession("session-1", source.id) ?? []).not.toHaveLength(0);
+		expect(harness.store.loadChunksInSession("session-2", source.id)).toBeUndefined();
+	});
+});
+
 describe("CitationService lifecycle and recovery", () => {
 	test("ensureSource is idempotent and never re-indexes an existing source", async () => {
 		const harness = await makeHarness();
@@ -336,7 +351,7 @@ describe("CitationService lifecycle and recovery", () => {
 		await store.init();
 		const attachments = new AttachmentStore(join(harness.root, "uploads"));
 		await attachments.init();
-		const service = new CitationService({ store, attachments });
+		const service = new CitationService({ store, readContent: attachmentStoreReader(attachments) });
 
 		const restored = service.listSourcesBySession("session-1");
 		expect(restored).toHaveLength(1);

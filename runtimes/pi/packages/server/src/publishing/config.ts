@@ -25,6 +25,36 @@ export const ACCESS_TOKEN_PUBLIC_KEY_FILE_ENV = "PI_EMBED_ACCESS_TOKEN_PUBLIC_KE
 export const ACCESS_TOKEN_KEY_ID_ENV = "PI_EMBED_ACCESS_TOKEN_KEY_ID";
 export const ACCESS_TOKEN_TTL_SECONDS_ENV = "PI_EMBED_ACCESS_TOKEN_TTL_SECONDS";
 export const EMBED_ACCESS_TOKEN_DEFAULT_TTL_SECONDS = 600;
+/** Launch Token 期望 audience（spec 7.2 `aud: "skdy-embed"`，TASK-028）。 */
+export const LAUNCH_TOKEN_AUDIENCE_ENV = "PI_EMBED_LAUNCH_TOKEN_AUDIENCE";
+export const EMBED_LAUNCH_TOKEN_DEFAULT_AUDIENCE = "skdy-embed";
+/** 逗号分隔的宿主 issuer 白名单；为空 = signed-user Exchange 关闭（PD-19）。 */
+export const LAUNCH_TOKEN_ALLOWED_ISSUERS_ENV = "PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS";
+export const OBJECT_STORE_ENDPOINT_ENV = "PI_OBJECT_STORE_ENDPOINT";
+export const OBJECT_STORE_REGION_ENV = "PI_OBJECT_STORE_REGION";
+export const OBJECT_STORE_BUCKET_ENV = "PI_OBJECT_STORE_BUCKET";
+export const OBJECT_STORE_ACCESS_KEY_ID_ENV = "PI_OBJECT_STORE_ACCESS_KEY_ID";
+export const OBJECT_STORE_SECRET_ACCESS_KEY_ENV = "PI_OBJECT_STORE_SECRET_ACCESS_KEY";
+export const UPLOAD_QUOTA_CONVERSATION_BYTES_ENV = "PI_EMBED_UPLOAD_QUOTA_CONVERSATION_BYTES";
+export const UPLOAD_QUOTA_PRINCIPAL_BYTES_ENV = "PI_EMBED_UPLOAD_QUOTA_PRINCIPAL_BYTES";
+export const UPLOAD_QUOTA_APP_BYTES_ENV = "PI_EMBED_UPLOAD_QUOTA_APP_BYTES";
+
+/** 上传总量配额平台默认（spec 14；TASK-031 可被环境变量覆盖）。 */
+export const DEFAULT_UPLOAD_QUOTA = {
+	conversationBytes: 100 * 1024 * 1024,
+	principalBytes: 500 * 1024 * 1024,
+	appBytes: 2 * 1024 * 1024 * 1024,
+} as const;
+
+/** S3 兼容对象存储配置（spec 24.1/24.2；TASK-030 附件落地）。 */
+export interface ObjectStoreConfig {
+	/** S3 endpoint（http(s)://host[:port]）。 */
+	readonly endpoint: string;
+	readonly region: string | undefined;
+	readonly bucket: string;
+	readonly accessKeyId: string;
+	readonly secretAccessKey: string;
+}
 
 /** Parsed publishing feature configuration. */
 export interface PublishingConfig {
@@ -62,6 +92,35 @@ export interface PublishingConfig {
 	 * recommends 5-15 minutes). Invalid values fail startup.
 	 */
 	readonly accessTokenTtlSeconds: number;
+	/**
+	 * `PI_EMBED_LAUNCH_TOKEN_AUDIENCE`; the expected `aud` claim of host
+	 * Launch Tokens (spec 7.2). Defaults to `skdy-embed`.
+	 */
+	readonly launchTokenAudience: string;
+	/**
+	 * `PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS`; comma-separated allowlist of
+	 * host issuers that may sign Launch Tokens. An empty list disables
+	 * signed-user Exchange (PD-19 default): `mode: "signed_user"` requests
+	 * are explicitly rejected, never silently accepted.
+	 */
+	readonly launchTokenAllowedIssuers: readonly string[];
+	/**
+	 * `PI_OBJECT_STORE_*` (spec 24.2); attachments object store. Absent =
+	 * uploads are disabled (explicit 503, never node disk; spec 24.1).
+	 * Partially-set values are a configuration error and fail startup.
+	 */
+	readonly objectStore?: ObjectStoreConfig | undefined;
+	/**
+	 * 上传总量配额（spec 14：单会话 / Principal / App 字节上限；TASK-031）。
+	 * `PI_EMBED_UPLOAD_QUOTA_{CONVERSATION,PRINCIPAL,APP}_BYTES`；缺省用
+	 * 平台默认（见 service 常量）。单文件/单次上限来自 RuntimeSpec
+	 * capabilities.uploads（PD-09），不在此配置。
+	 */
+	readonly uploadQuota: {
+		readonly conversationBytes: number;
+		readonly principalBytes: number;
+		readonly appBytes: number;
+	};
 }
 
 /**
@@ -84,6 +143,10 @@ function disabledConfig(): PublishingConfig {
 		accessTokenPublicKeyFile: undefined,
 		accessTokenKeyId: undefined,
 		accessTokenTtlSeconds: EMBED_ACCESS_TOKEN_DEFAULT_TTL_SECONDS,
+		launchTokenAudience: EMBED_LAUNCH_TOKEN_DEFAULT_AUDIENCE,
+		launchTokenAllowedIssuers: [],
+		objectStore: undefined,
+		uploadQuota: { ...DEFAULT_UPLOAD_QUOTA },
 	};
 }
 
@@ -119,5 +182,78 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 		accessTokenPublicKeyFile: env[ACCESS_TOKEN_PUBLIC_KEY_FILE_ENV],
 		accessTokenKeyId: env[ACCESS_TOKEN_KEY_ID_ENV],
 		accessTokenTtlSeconds,
+		launchTokenAudience: env[LAUNCH_TOKEN_AUDIENCE_ENV] ?? EMBED_LAUNCH_TOKEN_DEFAULT_AUDIENCE,
+		launchTokenAllowedIssuers: parseIssuerList(env[LAUNCH_TOKEN_ALLOWED_ISSUERS_ENV]),
+		objectStore: parseObjectStore(env),
+		uploadQuota: {
+			conversationBytes: parsePositiveBytes(
+				env[UPLOAD_QUOTA_CONVERSATION_BYTES_ENV],
+				DEFAULT_UPLOAD_QUOTA.conversationBytes,
+				UPLOAD_QUOTA_CONVERSATION_BYTES_ENV,
+			),
+			principalBytes: parsePositiveBytes(
+				env[UPLOAD_QUOTA_PRINCIPAL_BYTES_ENV],
+				DEFAULT_UPLOAD_QUOTA.principalBytes,
+				UPLOAD_QUOTA_PRINCIPAL_BYTES_ENV,
+			),
+			appBytes: parsePositiveBytes(
+				env[UPLOAD_QUOTA_APP_BYTES_ENV],
+				DEFAULT_UPLOAD_QUOTA.appBytes,
+				UPLOAD_QUOTA_APP_BYTES_ENV,
+			),
+		},
 	};
+}
+
+/** 解析字节数环境变量；非法（非正整数）启动失败。 */
+function parsePositiveBytes(raw: string | undefined, fallback: number, name: string): number {
+	if (raw === undefined || raw === "") return fallback;
+	const value = Number(raw);
+	if (!Number.isInteger(value) || value < 1) {
+		throw new Error(`${name} must be a positive integer (bytes), got: ${JSON.stringify(raw)}`);
+	}
+	return value;
+}
+
+/** 对象存储配置：全部缺省 = 关闭；部分缺省 = 配置错误（启动失败）。 */
+function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | undefined {
+	const endpoint = env[OBJECT_STORE_ENDPOINT_ENV];
+	const bucket = env[OBJECT_STORE_BUCKET_ENV];
+	const accessKeyId = env[OBJECT_STORE_ACCESS_KEY_ID_ENV];
+	const secretAccessKey = env[OBJECT_STORE_SECRET_ACCESS_KEY_ENV];
+	const region = env[OBJECT_STORE_REGION_ENV];
+	const provided = [endpoint, bucket, accessKeyId, secretAccessKey].filter(
+		(value) => value !== undefined && value !== "",
+	);
+	if (provided.length === 0) return undefined;
+	if (
+		endpoint === undefined ||
+		endpoint === "" ||
+		bucket === undefined ||
+		bucket === "" ||
+		accessKeyId === undefined ||
+		accessKeyId === "" ||
+		secretAccessKey === undefined ||
+		secretAccessKey === ""
+	) {
+		throw new Error(
+			`${OBJECT_STORE_ENDPOINT_ENV}, ${OBJECT_STORE_BUCKET_ENV}, ${OBJECT_STORE_ACCESS_KEY_ID_ENV} and ${OBJECT_STORE_SECRET_ACCESS_KEY_ENV} must all be set when object storage is enabled`,
+		);
+	}
+	return {
+		endpoint,
+		region: region !== undefined && region !== "" ? region : undefined,
+		bucket,
+		accessKeyId,
+		secretAccessKey,
+	};
+}
+
+/** 逗号分隔 issuer 白名单 -> 去空/去空白后的数组。 */
+function parseIssuerList(raw: string | undefined): readonly string[] {
+	if (raw === undefined) return [];
+	return raw
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry !== "");
 }

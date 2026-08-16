@@ -13,6 +13,7 @@ import type {
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import type { CitationService } from "./citations/service.ts";
+import { isTextMediaType } from "./citations/service.ts";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
 import { SessionEventLog } from "./event-log.ts";
@@ -726,17 +727,7 @@ export class LiveSessionManager {
 	}
 }
 
-/** Media types that P2 indexes as text Sources; anything else stays P1-injected. */
-function isTextMediaType(mediaType: string): boolean {
-	return (
-		mediaType.startsWith("text/") ||
-		mediaType === "application/json" ||
-		mediaType === "application/xml" ||
-		mediaType === "application/x-yaml" ||
-		mediaType === "application/yaml"
-	);
-}
-
+/** Merge the in-flight runtime snapshot into the stored snapshot for new connections. */
 function mergeRuntimeSnapshot(current: SessionSnapshot | undefined, runtime: SessionSnapshot): SessionSnapshot {
 	if (!current) return runtime;
 	const transcript = [...runtime.transcript];

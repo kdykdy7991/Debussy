@@ -291,6 +291,13 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 			accessTokenPublicKeyFile: publicKeyFile,
 			accessTokenKeyId: "kid-plane",
 			accessTokenTtlSeconds: 600,
+			launchTokenAudience: "skdy-embed",
+			launchTokenAllowedIssuers: [],
+			uploadQuota: {
+				conversationBytes: 100 * 1024 * 1024,
+				principalBytes: 500 * 1024 * 1024,
+				appBytes: 2 * 1024 * 1024 * 1024,
+			},
 		});
 		accessTokens = config.accessTokens;
 		const services = createEmbedServices({
@@ -334,6 +341,13 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 			accessTokenPublicKeyFile: undefined,
 			accessTokenKeyId: undefined,
 			accessTokenTtlSeconds: 600,
+			launchTokenAudience: "skdy-embed",
+			launchTokenAllowedIssuers: [],
+			uploadQuota: {
+				conversationBytes: 100 * 1024 * 1024,
+				principalBytes: 500 * 1024 * 1024,
+				appBytes: 2 * 1024 * 1024 * 1024,
+			},
 		};
 		await expect(loadEmbedPlaneConfig(base)).rejects.toThrow(/PI_EMBED_SUBJECT_PEPPER/);
 		await expect(loadEmbedPlaneConfig({ ...base, subjectPepper: PEPPER })).rejects.toThrow(/PI_EMBED_ACCESS_TOKEN/);
@@ -392,6 +406,8 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 		expect(ok.body.data.currentVersionId).toBe(`pav_${versionId}`);
 		expect(ok.body.data.features).toEqual({ uploads: true, speech: false, avatar: false });
 		expect(ok.body.data.theme).toEqual({});
+		expect(ok.body.data.accessMode).toBe("anonymous");
+		expect(ok.body.data.allowedOrigins).toEqual([ALLOWED_ORIGIN]);
 		expect(ok.body.requestId).toBeTruthy();
 
 		const missing = await httpCall({

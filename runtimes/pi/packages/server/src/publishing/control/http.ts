@@ -57,7 +57,8 @@ interface Route {
 	readonly handler: (ctx: {
 		requestId: string;
 		body: unknown;
-		appId?: string;
+		/** Regex capture groups from the path, e.g. `[appId]` or `[appId, keyId]`. */
+		params: readonly string[];
 	}) => Promise<{ status: number; body: unknown }>;
 }
 
@@ -169,9 +170,9 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			method: "POST",
 			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/versions$/,
 			operation: "published-apps.create-version",
-			handler: async ({ requestId, body, appId }) => {
+			handler: async ({ requestId, body, params }) => {
 				const parsed = parseBody(body, { sourceAgentRevision: "number" });
-				const publishedAppId = parseAppId(appId);
+				const publishedAppId = parseAppId(params[0]);
 				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
 				const created = await service.createPublishedAppVersion({
 					tenantId,
@@ -215,9 +216,9 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			method: "POST",
 			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/suspend$/,
 			operation: "published-apps.suspend",
-			handler: async ({ requestId, body, appId }) => {
+			handler: async ({ requestId, body, params }) => {
 				const parsed = parseBody(body, { reason: ["string", "undefined"] });
-				const publishedAppId = parseAppId(appId);
+				const publishedAppId = parseAppId(params[0]);
 				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
 				const reason = parsed.reason;
 				const result = await service.suspendApp({
@@ -238,14 +239,83 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				};
 			},
 		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/launch-keys$/,
+			operation: "published-apps.create-launch-key",
+			handler: async ({ requestId, body, params }) => {
+				const parsed = parseBody(body, {
+					keyId: "string",
+					algorithm: ["string", "undefined"],
+					publicKeyPem: "string",
+					notBefore: ["string", "undefined"],
+					expiresAt: ["string", "null", "undefined"],
+				});
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				const created = await service.createLaunchKey({
+					tenantId,
+					publishedAppId,
+					keyId: parsed.keyId as string,
+					algorithm: parsed.algorithm === undefined ? undefined : (parsed.algorithm as string),
+					publicKeyPem: parsed.publicKeyPem as string,
+					notBefore: parsed.notBefore === undefined ? undefined : (parsed.notBefore as string),
+					expiresAt: parsed.expiresAt === undefined ? undefined : (parsed.expiresAt as string | null),
+				});
+				if (!created.ok) return serviceError(created.error, requestId);
+				return {
+					status: 201,
+					body: {
+						data: {
+							id: toPublicId("LaunchKeyId", created.data.key.launchKeyId),
+							keyId: created.data.key.keyId,
+							algorithm: created.data.key.algorithm,
+							status: created.data.key.status,
+							notBefore: created.data.key.notBefore.toISOString(),
+							expiresAt: created.data.key.expiresAt === null ? null : created.data.key.expiresAt.toISOString(),
+							retiredKeyIds: created.data.retired.map((key) => key.keyId),
+							auditEventId: toPublicId("AuditEventId", created.data.auditEventId),
+						},
+						requestId,
+					},
+				};
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/launch-keys\/([^/]+)\/revoke$/,
+			operation: "published-apps.revoke-launch-key",
+			handler: async ({ requestId, params }) => {
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				const keyId = params[1] as string;
+				if (keyId === undefined || keyId === "") {
+					return badRequest("keyId must not be empty", requestId);
+				}
+				const revoked = await service.revokeLaunchKey({ tenantId, publishedAppId, keyId });
+				if (!revoked.ok) return serviceError(revoked.error, requestId);
+				return {
+					status: 200,
+					body: {
+						data: {
+							id: toPublicId("LaunchKeyId", revoked.data.key.launchKeyId),
+							keyId: revoked.data.key.keyId,
+							status: revoked.data.key.status,
+							auditEventId: toPublicId("AuditEventId", revoked.data.auditEventId),
+						},
+						requestId,
+					},
+				};
+			},
+		},
 	];
 
 	async function transition(
 		kind: "activate" | "rollback",
-		ctx: { requestId: string; body: unknown; appId?: string },
+		ctx: { requestId: string; body: unknown; params: readonly string[] },
 	): Promise<Envelope> {
 		const parsed = parseBody(ctx.body, { versionId: "string" });
-		const publishedAppId = parseAppId(ctx.appId);
+		const publishedAppId = parseAppId(ctx.params[0]);
 		if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", ctx.requestId);
 		const versionId = fromPublicId("PublishedAppVersionId", parsed.versionId as string);
 		if (versionId === null) return badRequest("versionId must be a bare pav_<uuid> id", ctx.requestId);
@@ -289,7 +359,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				jsonBody(response, 404, errorEnvelope("NOT_FOUND", "Unknown control route", requestId, false));
 				return true;
 			}
-			const appId = pathname.match(route.pattern)?.[1];
+			const params = pathname.match(route.pattern)?.slice(1) ?? [];
 
 			const raw = await readBody(request, maxBodyBytes);
 			if (raw === null) {
@@ -307,8 +377,8 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			const idempotencyKey = readIdempotencyKey(request);
 			const envelope =
 				idempotencyKey === undefined
-					? await route.handler({ requestId, body, appId })
-					: await withIdempotency(route, { requestId, body, appId, idempotencyKey });
+					? await route.handler({ requestId, body, params })
+					: await withIdempotency(route, { requestId, body, params, idempotencyKey });
 			jsonBody(response, envelope.status, envelope.body);
 			return true;
 		} catch (error) {
@@ -326,9 +396,9 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 
 	async function withIdempotency(
 		route: Route,
-		ctx: { requestId: string; body: unknown; appId?: string; idempotencyKey: string },
+		ctx: { requestId: string; body: unknown; params: readonly string[]; idempotencyKey: string },
 	): Promise<Envelope> {
-		const requestHash = hashRequest(route, ctx.body, ctx.appId);
+		const requestHash = hashRequest(route, ctx.body, ctx.params);
 		const began = await repos.idempotency.begin(
 			idempotencyScope,
 			route.operation,
@@ -438,10 +508,10 @@ function readIdempotencyKey(request: IncomingMessage): string | undefined {
 	return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
-function hashRequest(route: Route, body: unknown, appId: string | undefined): string {
+function hashRequest(route: Route, body: unknown, params: readonly string[]): string {
 	// Deterministic request fingerprint (no canonical sorting needed: the
 	// idempotency contract keys on the exact submitted request).
-	return `${route.operation}|${appId ?? ""}|${JSON.stringify(body ?? null)}`;
+	return `${route.operation}|${params.join("/")}|${JSON.stringify(body ?? null)}`;
 }
 
 function readBody(request: IncomingMessage, maxBytes: number): Promise<string | null> {

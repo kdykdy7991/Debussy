@@ -19,7 +19,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { CitationService, CitationStore } from "../citations/index.ts";
+import { attachmentStoreReader, CitationService, CitationStore } from "../citations/index.ts";
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
 import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
@@ -129,6 +129,18 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 
 	const backend = await CodingAgentPiSessionBackend.create(resolved.backend);
 
+	// 附件与引用索引是进程级共享资源：内部会话流与 embed 引用流共用同一
+	// CitationService 实例（TASK-032 完成条件），因此必须先于控制面/数据面
+	// 组合创建。
+	const attachments = new AttachmentStore(join(resolved.agentDir, "uploads"));
+	await attachments.init();
+	await attachments.sweepExpired();
+	const citations = new CitationService({
+		store: new CitationStore(join(resolved.agentDir, "citations")),
+		readContent: attachmentStoreReader(attachments),
+	});
+	await citations.store.init();
+
 	let controlPlane: ControlPlaneHandle | undefined;
 	let embedPlane: EmbedPlaneHandle | undefined;
 	if (publishing.enabled) {
@@ -147,13 +159,11 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			repositories: controlPlane.repositories,
 			createSession: (options) =>
 				backend.createSession({ id: options.id, model: options.model, thinkingLevel: options.thinkingLevel }),
+			citations,
 			log,
 		});
 	}
 
-	const attachments = new AttachmentStore(join(resolved.agentDir, "uploads"));
-	await attachments.init();
-	await attachments.sweepExpired();
 	const httpHandlers: HttpRequestHandler[] = [
 		createUploadHttpHandler({
 			store: attachments,
@@ -175,15 +185,14 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	httpHandlers.push(...voiceHandlers);
 	if (controlPlane !== undefined) httpHandlers.push(controlPlane.handler);
 	if (embedPlane !== undefined) {
-		httpHandlers.push(embedPlane.bootstrapHandler, embedPlane.exchangeHandler, embedPlane.conversationsHandler);
+		httpHandlers.push(
+			embedPlane.bootstrapHandler,
+			embedPlane.exchangeHandler,
+			embedPlane.attachmentsHandler,
+			embedPlane.conversationsHandler,
+		);
 	}
 	const httpHandler = composeHttpHandlers(httpHandlers);
-
-	const citations = new CitationService({
-		store: new CitationStore(join(resolved.agentDir, "citations")),
-		attachments,
-	});
-	await citations.store.init();
 
 	const server = createWebSocketServer(backend, {
 		...resolved.listener,

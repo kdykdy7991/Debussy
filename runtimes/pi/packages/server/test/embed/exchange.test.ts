@@ -494,9 +494,14 @@ describe.skipIf(!pgUp)("anonymous principal exchange", () => {
 				message: "32..512",
 			},
 			{
-				label: "wrong mode",
+				label: "signed_user without launchToken",
 				body: { publicAppId: appAPublicId, mode: "signed_user" },
-				message: "mode must be 'anonymous'",
+				message: "launchToken",
+			},
+			{
+				label: "unknown mode",
+				body: { publicAppId: appAPublicId, mode: "magic" },
+				message: "mode must be 'anonymous' or 'signed_user'",
 			},
 		];
 		for (const c of cases) {

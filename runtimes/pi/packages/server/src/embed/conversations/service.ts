@@ -24,6 +24,7 @@ import type {
 	ConversationEventRecord,
 	ConversationListRow,
 	ConversationRecord,
+	ConversationScope,
 	OwnerScope,
 	PublishingRepositories,
 } from "../../publishing/repositories.ts";
@@ -32,6 +33,8 @@ import { parseRuntimeSpec, type RuntimeSpec } from "../../publishing/runtime-spe
 import { type RestoredContext, restoreContext } from "../../runtime/context-restore.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import type { TurnExecutor } from "../../runtime/turn-executor.ts";
+import type { RetrievalInput } from "../../types.ts";
+import type { ConversationCitationService } from "../citations/service.ts";
 import type { EmbedAuthContext } from "../middleware/authenticate.ts";
 
 export type ConversationResult<T> =
@@ -42,6 +45,11 @@ export interface ConversationServiceOptions {
 	readonly repositories: PublishingRepositories;
 	/** Turn 执行器（TASK-018 内部/测试路径；Realtime 通道建成后替换）。 */
 	readonly turnExecutor: TurnExecutor;
+	/**
+	 * 会话级引用能力（TASK-032）。未提供 = Turn 不触发引用检索
+	 * （RuntimeSpec 的 uploads 能力同时控制上传与引用）。
+	 */
+	readonly citations?: ConversationCitationService;
 }
 
 export interface CreateConversationInput {
@@ -71,12 +79,14 @@ export interface ListEventsInput extends GetConversationInput {
 export class ConversationService {
 	private readonly repos: PublishingRepositories;
 	private readonly turnExecutor: TurnExecutor;
+	private readonly citations: ConversationCitationService | undefined;
 	/** 进程内单写者守卫：同一 Conversation 同时最多一个 Turn（PD-13）。 */
 	private readonly runningTurns = new Set<ConversationId>();
 
 	constructor(options: ConversationServiceOptions) {
 		this.repos = options.repositories;
 		this.turnExecutor = options.turnExecutor;
+		this.citations = options.citations;
 	}
 
 	/** 创建 Conversation 并固定当前版本（spec 27.5）。 */
@@ -169,6 +179,26 @@ export class ConversationService {
 	}
 
 	/**
+	 * TASK-032：会话级引用检索。RuntimeSpec（capabilities.uploads）控制是否
+	 * 启用；检索只考虑本会话 ready 附件的 sources（引用结果只含当前会话
+	 * 授权来源，跨会话/越权一律不可见）。无引用返回 undefined（Turn 不带
+	 * retrieval，与未配置引用能力时行为一致）。
+	 */
+	private async prepareRetrieval(
+		scope: OwnerScope,
+		spec: RuntimeSpec,
+		input: ExecuteTurnInput,
+		turnId: TurnId,
+	): Promise<RetrievalInput | undefined> {
+		const citations = this.citations;
+		if (citations === undefined || !citations.citationsEnabled(spec)) return undefined;
+		const conversationScope: ConversationScope = { ...scope, conversationId: input.conversationId };
+		const result = await citations.retrieveForTurn(conversationScope, input.text, turnId);
+		if (result.citations.length === 0) return undefined;
+		return { context: result.context, reference: result.reference, citations: result.citations };
+	}
+
+	/**
 	 * 同步执行一个文本 Turn（TASK-018 internal/dev 路径，spec 18）。
 	 *
 	 * 持久化 user.message -> 执行 TurnExecutor -> 持久化 assistant.completed
@@ -224,7 +254,10 @@ export class ConversationService {
 			});
 			if (userEvent === undefined) return { ok: false, error: conversationNotFound() };
 
-			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history });
+			// TASK-032：会话级引用检索（RuntimeSpec 门控），注入 retrieval。
+			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
+
+			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history, retrieval });
 			if (result.ok) {
 				const completed = await this.repos.events.append(scope, {
 					conversationId: input.conversationId,

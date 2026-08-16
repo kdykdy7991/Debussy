@@ -11,7 +11,7 @@
  * 鉴权：调用方必须先完成逐资源授权，再以已授权的 Scope 打开 Runtime。
  */
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
-import type { PiSessionRuntime, PiSessionRuntimeEvent } from "../types.ts";
+import type { PiSessionRuntime, PiSessionRuntimeEvent, RetrievalInput } from "../types.ts";
 import { historyToContextText, historyToReference, type RestoredContext } from "./context-restore.ts";
 import { createEffectOwner, type EffectOwner } from "./effect-owner.ts";
 import type { ScopeContext } from "./scope-context.ts";
@@ -71,22 +71,38 @@ export class ConversationRuntime {
 
 	/**
 	 * 向底层会话提交一轮用户输入（单写者由上层保证）。可附带恢复的历史
-	 * 上下文（TASK-022）：经 `PromptInput.retrieval` 注入（reference 摘要 +
-	 * context 历史全文），使释放/重建后的下一轮模型可见上下文一致。
+	 * 上下文（TASK-022）与会话级引用检索结果（TASK-032）：二者合并注入
+	 * `PromptInput.retrieval`（历史全文 + 引用 context；reference 摘要；
+	 * citations 数组）。只提供历史时输出与旧行为完全一致。
 	 */
-	async prompt(text: string, options?: { readonly history?: RestoredContext }): Promise<void> {
+	async prompt(
+		text: string,
+		options?: { readonly history?: RestoredContext; readonly retrieval?: RetrievalInput },
+	): Promise<void> {
 		if (this.closed) throw new Error("ConversationRuntime is closed");
 		const history = options?.history;
-		if (history === undefined || history.messages.length === 0) {
+		const retrieval = options?.retrieval;
+		const hasHistory = history !== undefined && history.messages.length > 0;
+		if (!hasHistory && retrieval === undefined) {
 			await this.session.prompt({ text });
 			return;
+		}
+		const contextParts: string[] = [];
+		const referenceParts: string[] = [];
+		if (hasHistory) {
+			contextParts.push(historyToContextText(history.messages));
+			referenceParts.push(historyToReference(history.messages));
+		}
+		if (retrieval !== undefined) {
+			if (retrieval.context !== "") contextParts.push(retrieval.context);
+			if (retrieval.reference !== "") referenceParts.push(retrieval.reference);
 		}
 		await this.session.prompt({
 			text,
 			retrieval: {
-				context: historyToContextText(history.messages),
-				reference: historyToReference(history.messages),
-				citations: [],
+				context: contextParts.join("\n\n"),
+				reference: referenceParts.join("\n"),
+				citations: retrieval?.citations ?? [],
 			},
 		});
 	}
