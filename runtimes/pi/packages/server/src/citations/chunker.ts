@@ -6,6 +6,11 @@
  * small overlap so retrieval does not lose matches that straddle a boundary.
  * Every chunk carries its 1-based line range and 0-based character range in the
  * original file so citations can be displayed with precise locations.
+ *
+ * Two content entry points share the same truncation semantics:
+ * `readTextFile` reads from a local file path (internal session flow), while
+ * `readTextBuffer` decodes bytes already held in memory (embed conversation
+ * flow, where attachments live in object storage).
  */
 import { open } from "node:fs/promises";
 import type { SourceChunk } from "@earendil-works/pi-protocol";
@@ -46,17 +51,31 @@ export async function readTextFile(path: string, maxBytes: number): Promise<Read
 		const bytesRead = Math.min(size, maxBytes);
 		const buffer = Buffer.alloc(bytesRead);
 		const { bytesRead: actuallyRead } = await handle.read(buffer, 0, bytesRead, 0);
-		let text = buffer.subarray(0, actuallyRead).toString("utf-8");
-		const truncated = size > maxBytes;
-		if (truncated) {
-			// Cut at the last paragraph boundary so we never split mid-sentence.
-			const cut = text.lastIndexOf("\n");
-			if (cut > maxBytes * 0.5) text = text.slice(0, cut);
-		}
-		return { text, truncated, bytesRead: actuallyRead };
+		return decodeTextBytes(buffer.subarray(0, actuallyRead), size > maxBytes);
 	} finally {
 		await handle.close();
 	}
+}
+
+/**
+ * Decode in-memory bytes as UTF-8 with the same byte cap and paragraph-boundary
+ * truncation as `readTextFile`. Used when attachment bytes already live in
+ * memory (object-store-backed embed attachments).
+ */
+export function readTextBuffer(data: Buffer, maxBytes: number): ReadTextResult {
+	const truncated = data.length > maxBytes;
+	return decodeTextBytes(data.subarray(0, Math.min(data.length, maxBytes)), truncated);
+}
+
+/** Shared decode + truncate step; `truncated` reports whether the source was cut. */
+function decodeTextBytes(data: Buffer, truncated: boolean): ReadTextResult {
+	let text = data.toString("utf-8");
+	if (truncated) {
+		// Cut at the last paragraph boundary so we never split mid-sentence.
+		const cut = text.lastIndexOf("\n");
+		if (cut > data.length * 0.5) text = text.slice(0, cut);
+	}
+	return { text, truncated, bytesRead: data.length };
 }
 
 /**

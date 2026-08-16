@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attachment, ServerEvent } from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
-import { CitationService } from "../src/citations/service.ts";
+import { attachmentStoreReader, CitationService } from "../src/citations/service.ts";
 import { CitationStore } from "../src/citations/store.ts";
 import type { PiServer } from "../src/index.ts";
 import { connectUnixTestClient, type ProtocolTestClient, TestSessionBackend } from "../src/testing/index.ts";
@@ -28,7 +28,7 @@ async function makeHarness(): Promise<Harness> {
 	await attachments.init();
 	const citationStore = new CitationStore(join(dir, "citations"));
 	await citationStore.init();
-	const citations = new CitationService({ store: citationStore, attachments });
+	const citations = new CitationService({ store: citationStore, readContent: attachmentStoreReader(attachments) });
 	const backend = new TestSessionBackend();
 	const server = createUnixServer(backend, {
 		path: join(dir, "server.sock"),

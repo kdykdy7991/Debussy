@@ -108,6 +108,19 @@ export class CitationStore {
 		return this.#sources.get(sourceId);
 	}
 
+	/**
+	 * Session-scoped source lookup: returns `undefined` unless the source
+	 * belongs to the given session/conversation. Conversation-scoped callers
+	 * must use this (or `listSourcesBySession`) instead of the bare
+	 * `getSource` so a foreign source id can never be resolved (TASK-032
+	 * forbids scope-less global lookups for the conversation citation path).
+	 */
+	getSourceInSession(sessionId: string, sourceId: string): Source | undefined {
+		const source = this.#sources.get(sourceId);
+		if (source === undefined || source.sessionId !== sessionId) return undefined;
+		return source;
+	}
+
 	listSourcesBySession(sessionId: string): Source[] {
 		return [...this.#sources.values()].filter(
 			(source) => source.sessionId === sessionId && source.status !== "removed",
@@ -134,6 +147,13 @@ export class CitationStore {
 	}
 
 	loadChunks(sourceId: string): SourceChunk[] | undefined {
+		return this.#chunks.get(sourceId);
+	}
+
+	/** Session-scoped chunk lookup (see `getSourceInSession`). */
+	loadChunksInSession(sessionId: string, sourceId: string): SourceChunk[] | undefined {
+		const source = this.getSourceInSession(sessionId, sourceId);
+		if (source === undefined) return undefined;
 		return this.#chunks.get(sourceId);
 	}
 
