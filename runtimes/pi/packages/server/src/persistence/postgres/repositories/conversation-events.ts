@@ -1,10 +1,13 @@
 /**
- * Conversation event repository (spec section 26.3).
+ * Conversation event repository (spec section 26.3 / WB-007).
  *
- * `append` runs the sequence bump and the event insert in ONE transaction:
- * the sequence is allocated with `UPDATE ... RETURNING` (never read-then-
- * increment), and if the insert fails the whole transaction rolls back, so a
- * failed append can never leave a hole or advance `last_event_sequence`.
+ * `append` runs the sequence bump, the payload byte write and the event
+ * insert in ONE transaction:
+ * - sequence is allocated via `UPDATE ... RETURNING` (never read-then-increment)
+ * - the conversation counter columns (`event_count`, `event_bytes`,
+ *   `turn_count`) are advanced in the same statement
+ * - if the insert fails the whole transaction rolls back, so a failed append
+ *   can never leave a hole, an inflated counter, or advance `last_event_sequence`
  * Every read embeds the full ownership scope; a bare event-id lookup is
  * impossible.
  */
@@ -38,8 +41,15 @@ function rowToRecord(row: Record<string, unknown>): ConversationEventRecord {
 		eventSchemaVersion: Number(row.event_schema_version),
 		turnId: (row.turn_id as TurnId | null) ?? null,
 		payload: row.payload,
+		payloadBytes: Number(row.payload_bytes ?? 0),
 		createdAt: row.created_at as Date,
 	};
+}
+
+export function computePayloadBytes(payload: unknown): number {
+	// JSON round-trip keeps the exact wire shape; encoder handles escaping.
+	const json = JSON.stringify(payload);
+	return json === undefined ? 0 : Buffer.byteLength(json, "utf8");
 }
 
 export function createConversationEventRepository(client: PostgresClient): ConversationEventRepository {
@@ -48,11 +58,29 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 			const eventId = newConversationEventId();
 			const eventSchemaVersion = input.eventSchemaVersion ?? 1;
 			const turnId = input.turnId ?? null;
+			const payloadBytes = input.payloadBytes ?? computePayloadBytes(input.payload);
 			return client.transaction(async (tx) => {
+				// Advance the conversation counter in the SAME UPDATE that bumps
+				// the sequence. The RETURNING clause lets us fail fast when the
+				// conversation is missing / out of scope. `turn_count` is only
+				// incremented when the row does not already record this turn
+				// id (first event for the turn wins).
 				const bumped = await txRows(
 					tx,
 					`update conversations
-					 set last_event_sequence = last_event_sequence + 1, updated_at = now(), last_active_at = now()
+					 set last_event_sequence = last_event_sequence + 1,
+					     event_count = event_count + 1,
+					     event_bytes = event_bytes + $5,
+					     turn_count = turn_count + case
+					         when $6::uuid is null then 0
+					         else (select case when exists (
+					             select 1 from conversation_events ce
+					             where ce.conversation_id = conversations.id
+					               and ce.turn_id = $6::uuid
+					         ) then 0 else 1 end)
+					     end,
+					     updated_at = now(),
+					     last_active_at = now()
 					 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
 					   and deleted_at is null
 					 returning last_event_sequence`,
@@ -60,6 +88,8 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					scope.tenantId,
 					scope.publishedAppId,
 					scope.principalId,
+					payloadBytes,
+					turnId,
 				);
 				if (bumped.length !== 1) return undefined;
 				const sequence = Number(bumped[0].last_event_sequence);
@@ -67,8 +97,8 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					tx,
 					`insert into conversation_events
 					 (id, tenant_id, published_app_id, conversation_id, sequence, event_type,
-					  event_schema_version, turn_id, payload, created_at)
-					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+					  event_schema_version, turn_id, payload, payload_bytes, created_at)
+					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
 					eventId,
 					scope.tenantId,
 					scope.publishedAppId,
@@ -78,6 +108,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					eventSchemaVersion,
 					turnId,
 					input.payload as SqlParameter,
+					payloadBytes,
 				);
 				return {
 					eventId,
@@ -89,6 +120,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					eventSchemaVersion,
 					turnId,
 					payload: input.payload,
+					payloadBytes,
 					createdAt: new Date(),
 				};
 			});

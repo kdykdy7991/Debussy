@@ -19,6 +19,7 @@ function event(overrides: Partial<ConversationEventRecord> & { eventType: string
 		eventSchemaVersion: 1,
 		turnId: null,
 		payload: {},
+		payloadBytes: 0,
 		createdAt: new Date(0),
 		...overrides,
 	};
@@ -152,5 +153,122 @@ describe("restoreContext", () => {
 		];
 		expect(historyToContextText(messages)).toBe("user: hi\nassistant: hello");
 		expect(historyToReference(messages)).toContain("1 轮");
+	});
+
+	test("WB-007: standard log level recovers final assistant messages and drops chunks", () => {
+		const events = [
+			user("t1", "hi", 1),
+			event({
+				eventType: "assistant.chunk",
+				turnId: "t1" as never,
+				payload: { text: "par", ordinal: 1, isFirst: true, isLast: false },
+				sequence: 2,
+			}),
+			event({
+				eventType: "assistant.chunk",
+				turnId: "t1" as never,
+				payload: { text: "tial", ordinal: 2, isFirst: false, isLast: false },
+				sequence: 3,
+			}),
+			assistant("t1", "partial", 4),
+		];
+		const result = restoreContext(events, { maxContextTokens: 100_000 }, "standard");
+		expect(result.messages).toEqual([
+			{ role: "user", text: "hi" },
+			{ role: "assistant", text: "partial" },
+		]);
+		expect(result.droppedChunks).toBe(2);
+		expect(result.observedLogLevel).toBe("diagnostic");
+	});
+
+	test("WB-007: diagnostic log level keeps chunks in count but recovers only final message", () => {
+		const events = [
+			user("t1", "hi", 1),
+			event({
+				eventType: "assistant.chunk",
+				turnId: "t1" as never,
+				payload: { text: "p", ordinal: 1, isFirst: true, isLast: false },
+				sequence: 2,
+			}),
+			assistant("t1", "partial", 3),
+		];
+		const result = restoreContext(events, { maxContextTokens: 100_000 }, "diagnostic");
+		expect(result.messages.map((m) => m.text)).toEqual(["hi", "partial"]);
+		expect(result.droppedChunks).toBe(1);
+		expect(result.observedLogLevel).toBe("diagnostic");
+	});
+
+	test("WB-007: tool.* / attachment / citation events do not produce messages but count toward skipped", () => {
+		const events = [
+			user("t1", "hi", 1),
+			event({
+				eventType: "tool/call",
+				turnId: "t1" as never,
+				payload: { tool: "search", input: { q: "x" } },
+				sequence: 2,
+			}),
+			event({
+				eventType: "tool/result",
+				turnId: "t1" as never,
+				payload: { output: "y" },
+				sequence: 3,
+			}),
+			event({
+				eventType: "attachment/added",
+				turnId: "t1" as never,
+				payload: { attachmentId: "att_1" },
+				sequence: 4,
+			}),
+			event({
+				eventType: "citation/updated",
+				turnId: "t1" as never,
+				payload: { count: 1 },
+				sequence: 5,
+			}),
+			assistant("t1", "answer", 6),
+		];
+		const result = restoreContext(events, { maxContextTokens: 100_000 }, "standard");
+		expect(result.messages).toEqual([
+			{ role: "user", text: "hi" },
+			{ role: "assistant", text: "answer" },
+		]);
+		expect(result.skippedEvents).toBe(4);
+		expect(result.observedLogLevel).toBe("standard");
+	});
+
+	test("WB-007: tool.error / turn.failed are counted as errorEventCount and end the pending turn", () => {
+		const events = [
+			user("t1", "boom", 1),
+			event({
+				eventType: "tool.error",
+				turnId: "t1" as never,
+				payload: { error: "nope" },
+				sequence: 2,
+			}),
+			user("t2", "ok", 3),
+			assistant("t2", "fine", 4),
+		];
+		const result = restoreContext(events, { maxContextTokens: 100_000 }, "standard");
+		expect(result.messages).toEqual([
+			{ role: "user", text: "ok" },
+			{ role: "assistant", text: "fine" },
+		]);
+		expect(result.errorEventCount).toBe(1);
+		expect(result.interruptedTurnIds).toEqual([]);
+	});
+
+	test("WB-007: full log level reports full observed level when tool events appear", () => {
+		const events = [
+			user("t1", "hi", 1),
+			event({
+				eventType: "tool/call",
+				turnId: "t1" as never,
+				payload: { tool: "x", input: {} },
+				sequence: 2,
+			}),
+			assistant("t1", "ok", 3),
+		];
+		const result = restoreContext(events, { maxContextTokens: 100_000 }, "full");
+		expect(result.observedLogLevel).toBe("full");
 	});
 });

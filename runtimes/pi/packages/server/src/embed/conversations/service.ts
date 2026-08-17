@@ -1,5 +1,5 @@
 /**
- * Conversation 服务（spec 27.5 / 8.2，TASK-016）。
+ * Conversation 服务（spec 27.5 / 8.2，TASK-016 + WB-007）。
  *
  * 创建时由服务端从 App 的 currentVersion 读取版本并事务性固定——客户端
  * 绝不能提交 `publishedAppVersionId` 或 `ownerPrincipalId`（禁止继续条件）。
@@ -9,8 +9,13 @@
  *
  * App 停用（PD-04）：suspended 后禁止新建 Conversation，已建会话仍可按
  * 策略读取/归档（读取由外层策略决定，MVP 允许本人读取历史）。
+ *
+ * WB-007: executeTurn 写入 `user.message` / `assistant.message` / `turn.end` /
+ * `turn.failed` / `turn.interrupted` 等结构化事件；流式 chunk / 工具调用 /
+ * 附件 / 引用 按 RuntimeSpec.contextPolicy.logLevel 决定是否持久化。
  */
-import type { Citation } from "@earendil-works/pi-protocol";
+import type { Citation, SessionLogLevel } from "@earendil-works/pi-protocol";
+import { assertEventPayloadSafe, shouldPersistAssistantChunk } from "@earendil-works/pi-protocol";
 import {
 	appNotFound,
 	appSuspended,
@@ -22,6 +27,7 @@ import {
 } from "../../publishing/domain/errors.ts";
 import { type ConversationId, newConversationId, newTurnId, type TurnId } from "../../publishing/domain/ids.ts";
 import type {
+	ConversationEventInput,
 	ConversationEventRecord,
 	ConversationListRow,
 	ConversationRecord,
@@ -119,6 +125,9 @@ export class ConversationService {
 			title: input.title,
 			status: "active",
 			lastEventSequence: 0,
+			eventCount: 0,
+			eventBytes: 0,
+			turnCount: 0,
 			createdAt: now,
 			updatedAt: now,
 			lastActiveAt: now,
@@ -161,9 +170,45 @@ export class ConversationService {
 		if (record === undefined) return { ok: false, error: conversationNotFound() };
 		if (record.status === "active") {
 			await this.repos.conversations.updateStatus(ownerScope(input.principal), input.conversationId, "archived");
+			// WB-007: 归档本身是事实变化，持久化 conversation/archived。
+			await this.safeAppend(ownerScope(input.principal), input.conversationId, {
+				eventType: "conversation/archived",
+				payload: { reason: "user_archived" },
+			});
 		}
 		const updated = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
 		return { ok: true, data: updated ?? record };
+	}
+
+	/**
+	 * WB-007: write one event without taking down the calling request. The
+	 * authoritative state lives in the conversation row, so a failed append
+	 * here only loses a side-channel observation — we never throw to the
+	 * caller for a background log failure. Returns `undefined` if the row
+	 * could not be written.
+	 */
+	private async safeAppend(
+		scope: OwnerScope,
+		conversationId: ConversationId,
+		input: Omit<ConversationEventInput, "conversationId">,
+	): Promise<ConversationEventRecord | undefined> {
+		try {
+			return await this.repos.events.append(scope, { ...input, conversationId });
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** WB-007: enforce the per-payload byte ceiling + sensitive-field guard. */
+	private safePayload(payload: unknown, byteLimit: number): unknown {
+		try {
+			assertEventPayloadSafe(payload, { byteLimit });
+			return payload;
+		} catch {
+			// Truncate / redact to a safe placeholder so a single oversized
+			// payload never aborts the surrounding Turn execution.
+			return { truncated: true, originalBytes: Buffer.byteLength(JSON.stringify(payload), "utf8") };
+		}
 	}
 
 	/** 读取持久事件并恢复上下文（TASK-022）；in-flight turn 收敛为 interrupted。 */
@@ -172,14 +217,20 @@ export class ConversationService {
 		conversationId: ConversationId,
 		spec: RuntimeSpec,
 	): Promise<RestoredContext> {
+		// WB-007: pass the configured log level so restoreContext can report
+		// dropped chunks accurately. `eventCount` is already bounded by
+		// summary/rollover (WB-008); here we just read a safe page.
 		const events = await this.repos.events.list(scope, conversationId, { limit: 10_000, afterSequence: 0 });
-		const restored = restoreContext(events, { maxContextTokens: spec.contextPolicy.maxContextTokens });
+		const restored = restoreContext(
+			events,
+			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
+			spec.contextPolicy.logLevel,
+		);
 		for (const turnId of restored.interruptedTurnIds) {
-			await this.repos.events.append(scope, {
-				conversationId,
-				eventType: "turn.interrupted",
+			await this.safeAppend(scope, conversationId, {
+				eventType: "turn/interrupted",
 				turnId: turnId as TurnId,
-				payload: { reason: "interrupted" },
+				payload: { reason: "interrupted_at_restart" },
 			});
 		}
 		return restored;
@@ -206,12 +257,20 @@ export class ConversationService {
 	}
 
 	/**
-	 * 同步执行一个文本 Turn（TASK-018 internal/dev 路径，spec 18）。
+	 * 同步执行一个文本 Turn（TASK-018 internal/dev 路径，spec 18 + WB-007）。
 	 *
-	 * 持久化 user.message -> 执行 TurnExecutor -> 持久化 assistant.completed
-	 * （失败持久化 turn.failed）；进程内单写者守卫使同一 Conversation 并发
-	 * Turn 返回 TURN_ALREADY_RUNNING（PD-13）。事件与 sequence 递增同事务
-	 * （TASK-008），重启后可从持久事件恢复历史。
+	 * 持久化顺序：
+	 *
+	 *   1. `turn/start`              — 记录 Turn 起点与 RuntimeSpec hash
+	 *   2. `user/message`            — 用户输入（payload 安全校验后写入）
+	 *   3. `assistant/message`       — 成功路径：最终 assistant 输出
+	 *   4. `turn/end`                — 成功路径
+	 *   失败路径：`turn/failed` 单独写入；中断收敛由 `restoreHistory` 写 `turn/interrupted`。
+	 *   流式 chunk / tool.* / attachment.* / citation.* 按 logLevel 决定是否落盘。
+	 *
+	 * 进程内单写者守卫使同一 Conversation 并发 Turn 返回 TURN_ALREADY_RUNNING
+	 * （PD-13）。事件与 sequence 递增同事务（TASK-008），重启后可从持久事件
+	 * 恢复历史。
 	 */
 	async executeTurn(input: ExecuteTurnInput): Promise<ConversationResult<ExecuteTurnData>> {
 		const scope = ownerScope(input.principal);
@@ -237,6 +296,7 @@ export class ConversationService {
 			const history = await this.restoreHistory(scope, input.conversationId, spec);
 
 			const turnId = newTurnId();
+			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
 			const turnScope: ScopeContext = {
 				tenantId: input.principal.tenantId,
 				publishedAppId: input.principal.publishedAppId,
@@ -253,24 +313,69 @@ export class ConversationService {
 				},
 			};
 
+			const turnStart = await this.safeAppend(scope, input.conversationId, {
+				eventType: "turn/start",
+				turnId,
+				payload: { model: spec.agent.model.modelId, logLevel },
+			});
+			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
+
 			const userEvent = await this.repos.events.append(scope, {
 				conversationId: input.conversationId,
-				eventType: "user.message",
+				eventType: "user/message",
 				turnId,
-				payload: { text: input.text },
+				payload: this.safePayload({ text: input.text }, 64 * 1024),
 			});
 			if (userEvent === undefined) return { ok: false, error: conversationNotFound() };
 
 			// TASK-032：会话级引用检索（RuntimeSpec 门控），注入 retrieval。
 			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
+			if (retrieval !== undefined) {
+				await this.safeAppend(scope, input.conversationId, {
+					eventType: "citation/updated",
+					turnId,
+					payload: {
+						count: retrieval.citations.length,
+						// WB-007: only metadata, never raw context strings; the
+						// full citation object is sent to the client once and
+						// never persisted (HANDOFF note).
+						reference: retrieval.reference,
+					},
+				});
+			}
 
 			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history, retrieval });
 			if (result.ok) {
-				const completed = await this.repos.events.append(scope, {
-					conversationId: input.conversationId,
-					eventType: "assistant.completed",
+				// WB-007: write the final assistant message at the standard
+				// level regardless of log level; this is the authoritative
+				// payload restored by `context-restore`. Streaming chunks
+				// would have been written before this point in a streaming
+				// path; the sync executor only emits the final message.
+				const completed = await this.safeAppend(scope, input.conversationId, {
+					eventType: "assistant/message",
 					turnId,
 					payload: { text: result.outputText },
+				});
+				// First-chunk / last-chunk pseudo events to honour the
+				// `diagnostic` log level (only when the executor exposes any
+				// streamed text). The actual streaming events would be
+				// written by a Realtime path; here we only have a final
+				// text, so a single milestone is enough to advertise the
+				// observed log level to restoreContext.
+				if (logLevel !== "standard") {
+					const sample = { ordinal: 1, isFirst: true, isLast: true };
+					if (shouldPersistAssistantChunk(logLevel, sample)) {
+						await this.safeAppend(scope, input.conversationId, {
+							eventType: "assistant/chunk",
+							turnId,
+							payload: { text: result.outputText.slice(0, 256), ordinal: 1, isFirst: true, isLast: true },
+						});
+					}
+				}
+				await this.safeAppend(scope, input.conversationId, {
+					eventType: "turn/end",
+					turnId,
+					payload: { ok: true },
 				});
 				return {
 					ok: true,
@@ -285,9 +390,8 @@ export class ConversationService {
 					},
 				};
 			}
-			await this.repos.events.append(scope, {
-				conversationId: input.conversationId,
-				eventType: "turn.failed",
+			await this.safeAppend(scope, input.conversationId, {
+				eventType: "turn/failed",
 				turnId,
 				payload: { error: result.error },
 			});

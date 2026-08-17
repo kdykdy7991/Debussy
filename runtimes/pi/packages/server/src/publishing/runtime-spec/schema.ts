@@ -45,6 +45,7 @@ export const PLATFORM_DEFAULTS = {
 	maxContextTokens: 100_000,
 	toolResultMaxBytes: 65_536,
 	securityPolicyVersion: "sp_001",
+	logLevel: "standard",
 } as const;
 
 const booleanCapability = z
@@ -113,6 +114,12 @@ const contextPolicySpec = z
 			.min(1)
 			.max(PLATFORM_LIMITS.maxToolResultBytes)
 			.default(PLATFORM_DEFAULTS.toolResultMaxBytes),
+		/**
+		 * WB-007: streaming chunk retention level for the conversation event
+		 * log. Defaults to `standard` so published apps do not silently start
+		 * persisting every chunk; admin debugging apps can opt into `full`.
+		 */
+		logLevel: z.enum(["standard", "diagnostic", "full"]).default(PLATFORM_DEFAULTS.logLevel),
 	})
 	.strict();
 

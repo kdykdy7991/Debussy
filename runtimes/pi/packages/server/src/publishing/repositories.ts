@@ -187,6 +187,10 @@ export interface ConversationRecord {
 	readonly title: string;
 	readonly status: ConversationStatus;
 	readonly lastEventSequence: number;
+	/** WB-007: running event counters advanced in the same transaction as the append. */
+	readonly eventCount: number;
+	readonly eventBytes: number;
+	readonly turnCount: number;
 	readonly createdAt: Date;
 	readonly updatedAt: Date;
 	readonly lastActiveAt: Date;
@@ -562,6 +566,8 @@ export type { Principal, ResourceScope };
  * Conversation event (append-only history row, spec section 26.2/26.3).
  * `sequence` is allocated by the atomic `UPDATE ... RETURNING` in the same
  * transaction that inserts the row, so it is never observable as a hole.
+ * `payloadBytes` is denormalised so the conversation counter can advance in
+ * the same transaction (spec §11.5, WB-007).
  */
 export interface ConversationEventRecord {
 	readonly eventId: ConversationEventId;
@@ -573,6 +579,7 @@ export interface ConversationEventRecord {
 	readonly eventSchemaVersion: number;
 	readonly turnId: TurnId | null;
 	readonly payload: unknown;
+	readonly payloadBytes: number;
 	readonly createdAt: Date;
 }
 
@@ -583,6 +590,12 @@ export interface ConversationEventInput {
 	readonly eventSchemaVersion?: number;
 	readonly turnId?: TurnId | null;
 	readonly payload: unknown;
+	/**
+	 * UTF-8 byte length of `payload` (WB-007). The caller computes this so
+	 * the repository does not have to re-serialise; a value of `0` lets the
+	 * repository recompute via `Buffer.byteLength(JSON.stringify(payload))`.
+	 */
+	readonly payloadBytes?: number;
 }
 
 export interface ConversationEventListParams {

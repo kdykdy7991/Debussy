@@ -1,6 +1,6 @@
 # WB-007：Session Event Log 补强
 
-状态：Blocked by WB-000
+状态：Complete（handoff 见 `handoffs/WB-007-session-event-log.md`）
 
 ## 目标
 

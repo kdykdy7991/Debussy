@@ -1,6 +1,6 @@
 # 管理员工作台开发任务索引
 
-状态：执行中（WB-000 已完成，当前从 WB-001 继续）
+状态：执行中（WB-000~WB-007 已完成，当前从 WB-008 继续）
 
 总规格：[管理员工作台整合与会话日志实施规格](../../ADMIN-WORKBENCH-INTEGRATION-IMPLEMENTATION.md)
 
