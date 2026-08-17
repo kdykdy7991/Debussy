@@ -20,6 +20,7 @@ import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { errorEnvelope, jsonBody, readRequestId, respondPreflight, setEmbedCorsHeaders } from "../http-shared.ts";
 import type { EmbedAuthContext, EmbedAuthenticator } from "../middleware/authenticate.ts";
+import type { RateLimiter } from "../rate-limits/limiter.ts";
 import { EMBED_MAX_FILE_BYTES } from "./scan.ts";
 import type { AttachmentService } from "./service.ts";
 
@@ -39,6 +40,8 @@ export interface AttachmentsHttpHandlerOptions {
 	/** 单文件上限；默认 25 MiB（测试注入更小值）。 */
 	readonly maxFileBytes?: number;
 	readonly onError?: (error: unknown) => void;
+	/** 分层限流（TASK-034）：upload POST 按 Principal 计数。 */
+	readonly limiter?: RateLimiter;
 }
 
 /** 读取 raw body；超过 maxBytes 返回 too_large（继续排空流以收响应）。 */
@@ -119,7 +122,24 @@ export function createAttachmentsHttpHandler(options: AttachmentsHttpHandlerOpti
 				jsonBody(response, 401, errorEnvelope(principal.code, principal.message, requestId, principal.retryable));
 				return true;
 			}
+			// TASK-034：上传维度限流（System/Tenant/App/Principal 最严格；会话量
+			// 大时 conversation 层也适用）。超限 429，不读 body。
 			const uploadMatch = pathname.match(UPLOAD_PATTERN);
+			if (options.limiter !== undefined && uploadMatch !== null && request.method === "POST") {
+				const allowed = await options.limiter.check({
+					dimension: "uploads",
+					scope: {
+						tenantId: principal.tenantId,
+						publishedAppId: principal.publishedAppId,
+						principalId: principal.principalId,
+						conversationId: fromPublicId("ConversationId", uploadMatch[1]!) ?? undefined,
+					},
+				});
+				if (!allowed.allowed) {
+					jsonBody(response, 429, errorEnvelope("RATE_LIMITED", "Rate limit exceeded", requestId, true));
+					return true;
+				}
+			}
 			if (uploadMatch !== null && request.method === "POST") {
 				await uploadRoute({
 					service,

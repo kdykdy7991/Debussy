@@ -33,6 +33,7 @@ import {
 	type ConversationId,
 	newAttachmentId,
 	type PublishedAppVersionId,
+	toPublicId,
 } from "../../publishing/domain/ids.ts";
 import type {
 	AttachmentRecord,
@@ -382,8 +383,10 @@ export class AttachmentService {
 
 	private toView(record: AttachmentRecord, status: AttachmentRecord["status"]): AttachmentView {
 		return {
-			attachmentId: record.attachmentId,
-			conversationId: record.conversationId,
+			// TASK-033：响应回公开表示（att_/conv_ 前缀），可直接回填到
+			// DELETE/GET 路径，客户端无需自行拼前缀（wire 契约自洽）。
+			attachmentId: toPublicId("AttachmentId", record.attachmentId),
+			conversationId: toPublicId("ConversationId", record.conversationId),
 			status,
 			filename: record.filename,
 			contentType: record.contentType,

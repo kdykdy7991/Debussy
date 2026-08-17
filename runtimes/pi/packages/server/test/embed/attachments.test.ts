@@ -33,6 +33,7 @@ import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../src/persistence/postgres/repositories/index.ts";
 import {
 	type ConversationId,
+	fromPublicId,
 	newAgentDefinitionId,
 	newAttachmentId,
 	newConversationId,
@@ -473,10 +474,10 @@ describe.skipIf(!pgReady)("embed attachment service", () => {
 		expect(keys).toHaveLength(1);
 		const stored = await store.getObject({ bucket: BUCKET, objectKey: keys[0]! });
 		expect(stored.equals(data)).toBe(true);
-		// DB 行 ready。
+		// DB 行 ready（响应是公开 att_ id，库内是裸 UUID）。
 		const rows = await client.run(
 			`select status, filename from attachments where id = $1`,
-			result.body.data.attachmentId,
+			fromPublicId("AttachmentId", result.body.data.attachmentId),
 		);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]!.status).toBe("ready");
@@ -600,11 +601,10 @@ describe.skipIf(!pgReady)("embed attachment service", () => {
 		const data = pngBytes();
 		const up = await upload({ filename: "delete-me.png", data, contentType: "image/png", checksum: sha256Hex(data) });
 		expect(up.status).toBe(201);
+		// TASK-033：上传响应直接返回公开 att_/conv_ id，可回填路径。
 		const attachmentId = up.body.data.attachmentId;
-		const path = conversationPublicPath(
-			toPublicId("ConversationId", conversationId),
-			toPublicId("AttachmentId", attachmentId),
-		);
+		expect(attachmentId).toMatch(/^att_/);
+		const path = conversationPublicPath(up.body.data.conversationId, attachmentId);
 		const first = await rawHttpCall({
 			method: "DELETE",
 			path,
@@ -621,9 +621,9 @@ describe.skipIf(!pgReady)("embed attachment service", () => {
 		expect(first.body.data.deleted).toBe(true);
 		expect(second.status).toBe(200);
 		expect(second.body.data.deleted).toBe(false);
-		// 对象已从存储移除。
+		// 对象已从存储移除（objectKey 内是裸 UUID）。
 		const keys = await objectKeysInStore();
-		expect(keys.some((key) => key.includes(attachmentId))).toBe(false);
+		expect(keys.some((key) => key.includes(fromPublicId("AttachmentId", attachmentId) ?? ""))).toBe(false);
 	});
 
 	test("cross-principal delete is idempotent (no enumeration leak)", async () => {
@@ -635,13 +635,9 @@ describe.skipIf(!pgReady)("embed attachment service", () => {
 			checksum: sha256Hex(data),
 		});
 		expect(up.status).toBe(201);
-		const attachmentId = up.body.data.attachmentId;
 		const result = await rawHttpCall({
 			method: "DELETE",
-			path: conversationPublicPath(
-				toPublicId("ConversationId", conversationId),
-				toPublicId("AttachmentId", attachmentId),
-			),
+			path: conversationPublicPath(up.body.data.conversationId, up.body.data.attachmentId),
 			base: httpBase,
 			headers: { origin: ORIGIN, authorization: `Bearer ${otherToken}` },
 		});

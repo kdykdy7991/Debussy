@@ -417,9 +417,10 @@ describe.skipIf(!pgReady)("embed attachment quota and ownership", () => {
 	test("guessing an attachment id cannot read or use it (GET 404)", async () => {
 		const up = await upload({ filename: "secret.txt", data: textBytes(64), contentType: "text/plain" });
 		expect(up.status).toBe(201);
-		const attachmentId = up.body.data.attachmentId;
-		const convPublic = toPublicId("ConversationId", conversationId);
-		const attPublic = toPublicId("AttachmentId", attachmentId);
+		// TASK-033：响应直接回公开 att_/conv_ id，可回填路径。
+		expect(up.body.data.attachmentId).toMatch(/^att_/);
+		const convPublic = up.body.data.conversationId;
+		const attPublic = up.body.data.attachmentId;
 		// 本人可读。
 		const ok = await rawHttpCall({
 			method: "GET",
@@ -452,10 +453,7 @@ describe.skipIf(!pgReady)("embed attachment quota and ownership", () => {
 		expect(up.status).toBe(201);
 		const result = await rawHttpCall({
 			method: "GET",
-			path: uploadPath(
-				toPublicId("ConversationId", conversationId),
-				toPublicId("AttachmentId", up.body.data.attachmentId),
-			),
+			path: uploadPath(up.body.data.conversationId, up.body.data.attachmentId),
 			base: httpBase,
 			headers: { origin: ORIGIN, authorization: `Bearer ${token}` },
 		});
@@ -515,10 +513,7 @@ describe.skipIf(!pgReady)("embed attachment quota and ownership", () => {
 		expect(before).toBe(3000);
 		const del = await rawHttpCall({
 			method: "DELETE",
-			path: uploadPath(
-				toPublicId("ConversationId", conversation3),
-				toPublicId("AttachmentId", up.body.data.attachmentId),
-			),
+			path: uploadPath(up.body.data.conversationId, up.body.data.attachmentId),
 			base: httpBase,
 			headers: { origin: ORIGIN, authorization: `Bearer ${token}` },
 		});
