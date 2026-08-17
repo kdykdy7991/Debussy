@@ -41,6 +41,7 @@ import {
 	newPublishedAppVersionId,
 	newRequestId,
 	newTenantId,
+	toPublicId,
 } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
 import type {
@@ -53,6 +54,106 @@ import type {
 } from "../repositories.ts";
 import { type AgentDraftConfig, type CapabilityCatalog, compileRuntimeSpec } from "../runtime-spec/compiler.ts";
 import { canonicalJson, sha256Hex } from "../runtime-spec/hash.ts";
+import { parseRuntimeSpec, type RuntimeSpec } from "../runtime-spec/schema.ts";
+
+/** Cursor-paginated query result shared by the console query API (ADMIN-002). */
+export interface CursorPage<T> {
+	readonly items: readonly T[];
+	readonly nextCursor: string | null;
+}
+
+/** `GET /api/control/v1/agent-definitions` item (ADMIN-002). */
+export interface AgentDefinitionSummary {
+	readonly id: string; // agent_<uuid>
+	readonly name: string;
+	readonly revision: number;
+	readonly sourceHash: string;
+	readonly createdAt: string;
+}
+
+/** `GET /api/control/v1/published-apps` item (ADMIN-002). */
+export interface PublishedAppSummary {
+	readonly id: string; // app_<uuid>
+	readonly publicAppId: string;
+	readonly name: string;
+	readonly status: string;
+	readonly accessMode: string;
+	readonly allowedOrigins: readonly string[];
+	readonly currentVersionId: string | null;
+	readonly embedUrl: string;
+	readonly createdAt: string;
+	readonly updatedAt: string;
+}
+
+/** Allowlisted capabilities of an activated version (never the full spec). */
+export interface VersionCapabilitiesSummary {
+	readonly tools: readonly string[];
+	readonly knowledgeBases: readonly string[];
+	readonly uploads: { readonly enabled: boolean; readonly maxFiles: number; readonly maxFileBytes: number };
+	readonly speech: { readonly enabled: boolean };
+	readonly avatar: { readonly enabled: boolean };
+}
+
+/** `GET /api/control/v1/published-apps/:appId` (ADMIN-002). */
+export interface PublishedAppDetail {
+	readonly id: string;
+	readonly publicAppId: string;
+	readonly name: string;
+	readonly status: string;
+	readonly accessMode: string;
+	readonly allowedOrigins: readonly string[];
+	readonly createdAt: string;
+	readonly updatedAt: string;
+	readonly sourceAgent: {
+		readonly id: string;
+		readonly name: string;
+		readonly revision: number;
+		readonly sourceHash: string;
+	};
+	readonly currentVersion: {
+		readonly id: string;
+		readonly versionNumber: number;
+		readonly status: string;
+		readonly sourceAgentRevision: number;
+		readonly runtimeSpecHash: string | null;
+		readonly createdAt: string;
+	} | null;
+	readonly capabilities: {
+		readonly model: { readonly provider: string; readonly modelId: string };
+		readonly context: {
+			readonly maxTurns: number;
+			readonly maxContextTokens: number;
+			readonly toolResultMaxBytes: number;
+		};
+		readonly profile: string;
+		readonly summary: VersionCapabilitiesSummary;
+	} | null;
+}
+
+/** `GET /api/control/v1/published-apps/:appId/versions` item (ADMIN-002). */
+export interface PublishedAppVersionSummary {
+	readonly id: string;
+	readonly versionNumber: number;
+	readonly status: string;
+	readonly sourceAgentRevision: number;
+	readonly runtimeSpecHash: string | null;
+	readonly validationErrors: readonly unknown[];
+	readonly createdAt: string;
+	readonly isCurrent: boolean;
+}
+
+/** `GET /api/control/v1/audit-events` item (ADMIN-002), bounded metadata only. */
+export interface AuditEventSummary {
+	readonly id: string;
+	readonly actorType: string;
+	readonly actorId: string;
+	readonly action: string;
+	readonly resourceType: string;
+	readonly resourceId: string;
+	readonly requestId: string;
+	readonly createdAt: string;
+	readonly metadata: unknown;
+}
 
 export interface ControlServiceOptions {
 	readonly repositories: PublishingRepositories;
@@ -488,6 +589,191 @@ export class ControlService {
 		return { ok: true, data: { keys } };
 	}
 
+	/** List agent definitions (newest-revision-per-agent by default) for the console. */
+	async listAgentDefinitions(input: {
+		readonly tenantId: TenantId;
+		readonly limit: number;
+		readonly cursor?: string;
+		readonly includeRevisions?: boolean;
+	}): Promise<ControlResult<CursorPage<AgentDefinitionSummary>>> {
+		const rows = await this.repos.agentDefinitions.list({
+			scope: { tenantId: input.tenantId },
+			limit: input.limit,
+			cursor: input.cursor,
+			includeRevisions: input.includeRevisions ?? false,
+		});
+		const { page, nextCursor } = sliceCursorPage(rows, input.limit);
+		return {
+			ok: true,
+			data: {
+				items: page.map((row) => ({
+					id: toPublicId("AgentDefinitionId", row.agentDefinitionId),
+					name: row.name,
+					revision: row.revision,
+					sourceHash: row.sourceHash,
+					createdAt: row.createdAt.toISOString(),
+				})),
+				nextCursor,
+			},
+		};
+	}
+
+	/** List published apps of the tenant, newest first, for the console. */
+	async listPublishedApps(input: {
+		readonly tenantId: TenantId;
+		readonly limit: number;
+		readonly cursor?: string;
+		readonly status?: string;
+	}): Promise<ControlResult<CursorPage<PublishedAppSummary>>> {
+		const status = input.status === undefined ? undefined : parsePublishedStatus(input.status);
+		const rows = await this.repos.publishedApps.list({
+			scope: { tenantId: input.tenantId },
+			limit: input.limit,
+			cursor: input.cursor,
+			status,
+		});
+		const { page, nextCursor } = sliceCursorPage(rows, input.limit);
+		return {
+			ok: true,
+			data: {
+				items: page.map((row) => ({
+					id: toPublicId("PublishedAppId", row.publishedAppId),
+					publicAppId: row.publicAppId,
+					name: row.name,
+					status: row.status,
+					accessMode: row.accessMode,
+					allowedOrigins: row.allowedOrigins,
+					currentVersionId:
+						row.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", row.currentVersionId),
+					embedUrl: `${this.embedBaseUrl}/embed/${row.publicAppId}`,
+					createdAt: row.createdAt.toISOString(),
+					updatedAt: row.updatedAt.toISOString(),
+				})),
+				nextCursor,
+			},
+		};
+	}
+
+	/** Fetch a published app with its source-agent and allowlisted current version summary. */
+	async getPublishedAppDetail(input: {
+		readonly tenantId: TenantId;
+		readonly publishedAppId: PublishedAppId;
+	}): Promise<ControlResult<PublishedAppDetail>> {
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+
+		const tenantScope = { tenantId: input.tenantId };
+		const agent = await this.repos.agentDefinitions.getLatest(tenantScope, app.agentDefinitionId);
+		const sourceAgent = {
+			id: toPublicId("AgentDefinitionId", agent?.agentDefinitionId ?? app.agentDefinitionId),
+			name: agent?.name ?? "",
+			revision: agent?.revision ?? 0,
+			sourceHash: agent?.sourceHash ?? "",
+		};
+
+		let currentVersion: PublishedAppDetail["currentVersion"] = null;
+		let capabilities: PublishedAppDetail["capabilities"] = null;
+		if (app.currentVersionId !== null) {
+			const version = await this.repos.publishedAppVersions.get(appScope, app.currentVersionId);
+			if (version !== undefined) {
+				currentVersion = {
+					id: toPublicId("PublishedAppVersionId", version.publishedAppVersionId),
+					versionNumber: version.versionNumber,
+					status: version.status,
+					sourceAgentRevision: version.sourceAgentRevision,
+					runtimeSpecHash: version.runtimeSpecHash,
+					createdAt: version.createdAt.toISOString(),
+				};
+				capabilities = summarizeCapabilities(version.runtimeSpec);
+			}
+		}
+
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("PublishedAppId", app.publishedAppId),
+				publicAppId: app.publicAppId,
+				name: app.name,
+				status: app.status,
+				accessMode: app.accessMode,
+				allowedOrigins: app.allowedOrigins,
+				createdAt: app.createdAt.toISOString(),
+				updatedAt: app.updatedAt.toISOString(),
+				sourceAgent,
+				currentVersion,
+				capabilities,
+			},
+		};
+	}
+
+	/** List immutable versions of an app, newest first, with the current flag. */
+	async listPublishedAppVersions(input: {
+		readonly tenantId: TenantId;
+		readonly publishedAppId: PublishedAppId;
+		readonly limit: number;
+		readonly cursor?: string;
+	}): Promise<ControlResult<CursorPage<PublishedAppVersionSummary>>> {
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+		const rows = await this.repos.publishedAppVersions.list({
+			scope: appScope,
+			limit: input.limit,
+			cursor: input.cursor,
+		});
+		const { page, nextCursor } = sliceCursorPage(rows, input.limit);
+		return {
+			ok: true,
+			data: {
+				items: page.map((row) => ({
+					id: toPublicId("PublishedAppVersionId", row.publishedAppVersionId),
+					versionNumber: row.versionNumber,
+					status: row.status,
+					sourceAgentRevision: row.sourceAgentRevision,
+					runtimeSpecHash: row.runtimeSpecHash,
+					validationErrors: row.validationErrors,
+					createdAt: row.createdAt.toISOString(),
+					isCurrent: row.isCurrent,
+				})),
+				nextCursor,
+			},
+		};
+	}
+
+	/** List recent management audit events (optionally app-scoped) for the console. */
+	async listAuditEvents(input: {
+		readonly tenantId: TenantId;
+		readonly appId?: PublishedAppId;
+		readonly limit: number;
+		readonly cursor?: string;
+	}): Promise<ControlResult<CursorPage<AuditEventSummary>>> {
+		const rows = await this.repos.audit.list({
+			scope: { tenantId: input.tenantId },
+			limit: input.limit,
+			cursor: input.cursor,
+			appId: input.appId,
+		});
+		const { page, nextCursor } = sliceCursorPage(rows, input.limit);
+		return {
+			ok: true,
+			data: {
+				items: page.map((row) => ({
+					id: toPublicId("AuditEventId", row.auditEventId),
+					actorType: row.actorType,
+					actorId: row.actorId,
+					action: row.action,
+					resourceType: row.resourceType,
+					resourceId: row.resourceId,
+					requestId: row.requestId,
+					createdAt: row.createdAt.toISOString(),
+					metadata: row.metadata,
+				})),
+				nextCursor,
+			},
+		};
+	}
+
 	/**
 	 * Activate a ready version (spec 27.3): the pointer flip and the app
 	 * status move to `active` happen in one transaction (row-locked), and an
@@ -659,4 +945,62 @@ function parseIsoOrNull(
 	const parsed = new Date(value);
 	if (Number.isNaN(parsed.getTime())) return onInvalid();
 	return { ok: true, data: parsed };
+}
+
+/** Validate a status filter against the published-app status union, or undefined. */
+function parsePublishedStatus(value: string): "draft" | "active" | "suspended" | "archived" | undefined {
+	return value === "draft" || value === "active" || value === "suspended" || value === "archived" ? value : undefined;
+}
+
+/**
+ * Split a `limit + 1` repo page into the visible page and the next cursor.
+ * The repository returns at most `limit + 1` rows so a full page with one
+ * extra row proves there is another page.
+ */
+function sliceCursorPage<T extends { readonly cursor: string }>(
+	rows: readonly T[],
+	limit: number,
+): {
+	readonly page: readonly T[];
+	readonly nextCursor: string | null;
+} {
+	const page = rows.slice(0, limit);
+	const nextCursor = rows.length > limit && page.length > 0 ? page[page.length - 1]!.cursor : null;
+	return { page, nextCursor };
+}
+
+/**
+ * Build the allowlisted capability summary of a version's RuntimeSpec for the
+ * console detail view. Reads only bounded fields (model, capability ids and
+ * limits) — never the system prompt or any secret. An unparseable/missing
+ * spec yields null so the console can still show the app.
+ */
+function summarizeCapabilities(runtimeSpec: unknown): PublishedAppDetail["capabilities"] {
+	if (runtimeSpec === null) return null;
+	const parsed = parseRuntimeSpec(runtimeSpec);
+	if (!parsed.ok) return null;
+	const spec: RuntimeSpec = parsed.spec;
+	return {
+		model: {
+			provider: spec.agent.model.provider,
+			modelId: spec.agent.model.modelId,
+		},
+		context: {
+			maxTurns: spec.contextPolicy.maxTurns,
+			maxContextTokens: spec.contextPolicy.maxContextTokens,
+			toolResultMaxBytes: spec.contextPolicy.toolResultMaxBytes,
+		},
+		profile: spec.runtimePolicy.profile,
+		summary: {
+			tools: spec.capabilities.tools.map((tool) => String(tool.id)),
+			knowledgeBases: spec.capabilities.knowledgeBases.map((kb) => String(kb.id)),
+			uploads: {
+				enabled: spec.capabilities.uploads.enabled,
+				maxFiles: spec.capabilities.uploads.maxFiles,
+				maxFileBytes: spec.capabilities.uploads.maxFileBytes,
+			},
+			speech: { enabled: spec.capabilities.speech.enabled },
+			avatar: { enabled: spec.capabilities.avatar.enabled },
+		},
+	};
 }

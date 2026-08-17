@@ -6,8 +6,21 @@
  * holds a small JSON object, never conversation bodies.
  */
 import type { AuditEventId, RequestId, TenantId } from "../../../publishing/domain/ids.ts";
-import type { AuditEventRecord, AuditEventRepository, TenantScope } from "../../../publishing/repositories.ts";
+import type {
+	AuditEventListParams,
+	AuditEventListRow,
+	AuditEventRecord,
+	AuditEventRepository,
+	TenantScope,
+} from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
+
+function toListRow(record: AuditEventRecord): AuditEventListRow {
+	return {
+		...record,
+		cursor: `${record.createdAt.toISOString()}|${record.auditEventId}`,
+	};
+}
 
 function rowToRecord(row: Record<string, unknown>): AuditEventRecord {
 	return {
@@ -51,6 +64,43 @@ export function createAuditEventRepository(client: PostgresClient): AuditEventRe
 				Math.min(Math.max(limit, 1), 100),
 			);
 			return rows.map((row) => rowToRecord(row));
+		},
+		async list(params: AuditEventListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 100);
+			const values: (string | null)[] = [params.scope.tenantId];
+			// Optional app filter resolves the app's own events plus its
+			// launch-key events (which are keyed by the host-facing keyId).
+			let appWhere = "";
+			if (params.appId !== undefined) {
+				const idx = values.length + 1;
+				appWhere =
+					"and ((resource_type = 'published_app' and resource_id = $" +
+					idx +
+					") or (resource_type = 'embed_launch_key' and resource_id in " +
+					"(select key_id from embed_launch_keys where tenant_id = $1 and published_app_id = $" +
+					idx +
+					")))";
+				values.push(params.appId);
+			}
+			let cursorWhere = "";
+			if (params.cursor !== undefined && params.cursor !== "") {
+				const [createdAt, id] = params.cursor.split("|");
+				if (createdAt !== undefined && id !== undefined) {
+					const first = values.length + 1;
+					cursorWhere = `and (created_at, id) < ($${first}::timestamptz, $${first + 1}::uuid)`;
+					values.push(createdAt, id);
+				}
+			}
+			const limitIndex = values.length + 1;
+			const rows = await client.run(
+				`select * from audit_events
+				 where tenant_id = $1 ${appWhere} ${cursorWhere}
+				 order by created_at desc, id desc
+				 limit $${limitIndex}`,
+				...values,
+				limit + 1,
+			);
+			return rows.map((row) => toListRow(rowToRecord(row)));
 		},
 	};
 }

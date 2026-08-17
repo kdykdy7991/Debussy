@@ -102,6 +102,7 @@ export async function composeControlPlane(options: {
 		repositories,
 		adminToken,
 		tenantId,
+		tenantName: bootstrapTenantName,
 		source,
 	});
 

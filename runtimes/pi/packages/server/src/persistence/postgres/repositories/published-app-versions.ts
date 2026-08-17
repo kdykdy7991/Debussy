@@ -1,11 +1,21 @@
 import type { PublishedAppId, PublishedAppVersionId, TenantId } from "../../../publishing/domain/ids.ts";
 import type {
 	AppScope,
+	PublishedAppVersionListParams,
+	PublishedAppVersionListRow,
 	PublishedAppVersionRecord,
 	PublishedAppVersionRepository,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { txRows } from "./tx.ts";
+
+function toListRow(record: PublishedAppVersionRecord, isCurrent: boolean): PublishedAppVersionListRow {
+	return {
+		...record,
+		isCurrent,
+		cursor: `${record.createdAt.toISOString()}|${record.publishedAppVersionId}`,
+	};
+}
 
 function rowToRecord(row: Record<string, unknown>): PublishedAppVersionRecord {
 	return {
@@ -118,6 +128,32 @@ export function createPublishedAppVersionRepository(client: PostgresClient): Pub
 				status,
 				validationErrors ?? [],
 			);
+		},
+		async list(params: PublishedAppVersionListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 100);
+			let cursorWhere = "";
+			const cursorParams: (string | number)[] = [];
+			if (params.cursor !== undefined && params.cursor !== "") {
+				const [createdAt, id] = params.cursor.split("|");
+				if (createdAt !== undefined && id !== undefined) {
+					cursorWhere = "and (pv.created_at, pv.id) < ($3::timestamptz, $4::uuid)";
+					cursorParams.push(createdAt, id);
+				}
+			}
+			const limitIndex = cursorParams.length > 0 ? 5 : 3;
+			const rows = await client.run(
+				`select pv.*, (pv.id = pa.current_version_id) as is_current
+				 from published_app_versions pv
+				 join published_apps pa on pa.id = pv.published_app_id and pa.tenant_id = pv.tenant_id
+				 where pv.tenant_id = $1 and pv.published_app_id = $2 ${cursorWhere}
+				 order by pv.created_at desc, pv.id desc
+				 limit $${limitIndex}`,
+				params.scope.tenantId,
+				params.scope.publishedAppId,
+				...cursorParams,
+				limit + 1,
+			);
+			return rows.map((row) => toListRow(rowToRecord(row), Boolean(row.is_current)));
 		},
 	};
 }

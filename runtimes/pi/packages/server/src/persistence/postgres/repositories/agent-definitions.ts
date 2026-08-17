@@ -1,6 +1,22 @@
 import type { AgentDefinitionId, TenantId } from "../../../publishing/domain/ids.ts";
-import type { AgentDefinitionRecord, AgentDefinitionRepository } from "../../../publishing/repositories.ts";
+import type {
+	AgentDefinitionListParams,
+	AgentDefinitionListRow,
+	AgentDefinitionRecord,
+	AgentDefinitionRepository,
+} from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
+
+function toListRow(row: Record<string, unknown>): AgentDefinitionListRow {
+	return {
+		agentDefinitionId: row.id as AgentDefinitionId,
+		name: String(row.name),
+		revision: Number(row.revision),
+		sourceHash: String(row.source_hash ?? ""),
+		createdAt: row.created_at as Date,
+		cursor: `${(row.created_at as Date).toISOString()}|${String(row.id)}`,
+	};
+}
 
 function rowToRecord(row: Record<string, unknown>): AgentDefinitionRecord {
 	return {
@@ -60,6 +76,33 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 				name,
 			);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
+		},
+		async list(params: AgentDefinitionListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 100);
+			let cursorWhere = "";
+			const cursorParams: (string | number)[] = [];
+			if (params.cursor !== undefined && params.cursor !== "") {
+				const [createdAt, id] = params.cursor.split("|");
+				if (createdAt !== undefined && id !== undefined) {
+					cursorWhere = "and (created_at, id) < ($3::timestamptz, $4::uuid)";
+					cursorParams.push(createdAt, id);
+				}
+			}
+			// Cursor mode adds two parameters, so the limit placeholder shifts.
+			const limitIndex = cursorParams.length > 0 ? 5 : 3;
+			const base = params.includeRevisions
+				? "select * from agent_definitions where tenant_id = $1"
+				: "select * from (select distinct on (id) * from agent_definitions where tenant_id = $1 order by id, revision desc) latest";
+			const rows = await client.run(
+				`${base}
+				 ${cursorWhere}
+				 order by created_at desc, id desc
+				 limit $${limitIndex}`,
+				params.scope.tenantId,
+				...cursorParams,
+				limit + 1,
+			);
+			return rows.map((row) => toListRow(row));
 		},
 	};
 }

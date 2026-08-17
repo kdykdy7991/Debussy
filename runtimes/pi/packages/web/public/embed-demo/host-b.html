@@ -30,7 +30,7 @@
       var PROTOCOL = "skdy-embed";
       var VERSION = 1;
       var frame = document.getElementById("frame");
-      var frameOrigin = new URL(frame.src).origin;
+      var frameOrigin = window.location.origin;
       var log = document.getElementById("log");
       function note(text) {
         log.textContent = new Date().toISOString() + "  " + text + "\n" + log.textContent;
@@ -41,12 +41,19 @@
         return message;
       }
       document.getElementById("initSigned").addEventListener("click", function () {
-        var appId = document.getElementById("appId").value;
-        frame.src = "/embed/" + appId;
+        var appId = document.getElementById("appId").value.trim();
+        if (!/^pub_[0-9a-fA-F-]{36}$/.test(appId)) {
+          note("invalid publicAppId");
+          return;
+        }
         // 生产：token 来自宿主后端会话；演示用运行时生成的随机值（仅协议演示）。
         var token = "demo." + Math.random().toString(36).slice(2) + ".sig";
-        frame.contentWindow.postMessage(envelope("init", { launchToken: token }), frameOrigin);
-        note("sent init(signed_user) -> " + frameOrigin);
+        frame.addEventListener("load", function onLoad() {
+          frame.removeEventListener("load", onLoad);
+          frame.contentWindow.postMessage(envelope("init", { launchToken: token }), frameOrigin);
+          note("sent init(signed_user) -> " + frameOrigin);
+        });
+        frame.src = "/embed/" + appId;
       });
       document.getElementById("logout").addEventListener("click", function () {
         frame.contentWindow.postMessage(envelope("logout"), frameOrigin);

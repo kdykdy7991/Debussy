@@ -75,7 +75,7 @@ function httpCall(options: {
 	base: string;
 	headers?: Record<string, string>;
 	body?: unknown;
-}): Promise<{ status: number; body: any; requestId?: string }> {
+}): Promise<{ status: number; body: any; requestId?: string; tenantId?: string; tenantName?: string }> {
 	return new Promise((resolve, reject) => {
 		const url = new URL(options.path, options.base);
 		const payload = options.body === undefined ? undefined : JSON.stringify(options.body);
@@ -105,6 +105,8 @@ function httpCall(options: {
 						status: res.statusCode ?? 0,
 						body,
 						requestId: res.headers["x-request-id"] as string | undefined,
+						tenantId: res.headers["x-tenant-id"] as string | undefined,
+						tenantName: res.headers["x-tenant-name"] as string | undefined,
 					});
 				});
 			},
@@ -140,6 +142,7 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 			repositories: repos,
 			adminToken: ADMIN_TOKEN,
 			tenantId,
+			tenantName: "bootstrap",
 			source: source(baseConfig()),
 			onError: (error) => console.error("CONTROL HANDLER ERROR:", error),
 		});
@@ -200,6 +203,8 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		]);
 		expect(res.body.requestId).toBeTruthy();
 		expect(res.requestId).toBe(res.body.requestId);
+		expect(res.tenantId).toBe(String(adminId));
+		expect(res.tenantName).toBe("bootstrap");
 	});
 
 	test("import-current is idempotent per Idempotency-Key (same response, no new revision)", async () => {

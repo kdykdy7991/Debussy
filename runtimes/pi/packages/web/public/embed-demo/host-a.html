@@ -36,21 +36,33 @@
       var PROTOCOL = "skdy-embed";
       var VERSION = 1;
       var frame = document.getElementById("frame");
-      var frameOrigin = new URL(frame.src).origin;
+      // 演示页与 Embed 由同一 Vite/生产 Origin 提供；iframe 初始无 src，
+      // 不能在导航前对空字符串调用 new URL(frame.src)。
+      var frameOrigin = window.location.origin;
 
       function envelope(type, payload) {
         var message = { protocol: PROTOCOL, version: VERSION, type: type };
         if (payload !== undefined) message.payload = payload;
         return message;
       }
+      function navigateAndPost(message) {
+        var appId = document.getElementById("appId").value.trim();
+        if (!/^pub_[0-9a-fA-F-]{36}$/.test(appId)) {
+          console.error("[host-a] invalid publicAppId");
+          return;
+        }
+        frame.addEventListener("load", function onLoad() {
+          frame.removeEventListener("load", onLoad);
+          frame.contentWindow.postMessage(message, frameOrigin);
+        });
+        frame.src = "/embed/" + appId;
+      }
       document.getElementById("init").addEventListener("click", function () {
-        frame.src = "/embed/" + document.getElementById("appId").value;
-        frame.contentWindow.postMessage(envelope("init"), frameOrigin);
+        navigateAndPost(envelope("init"));
       });
       document.getElementById("initSigned").addEventListener("click", function () {
-        frame.src = "/embed/" + document.getElementById("appId").value;
-        var token = document.getElementById("launchToken").value;
-        frame.contentWindow.postMessage(envelope("init", { launchToken: token }), frameOrigin);
+        var token = document.getElementById("launchToken").value.trim();
+        navigateAndPost(envelope("init", { launchToken: token }));
       });
       document.getElementById("logout").addEventListener("click", function () {
         frame.contentWindow.postMessage(envelope("logout"), frameOrigin);

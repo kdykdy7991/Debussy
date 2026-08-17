@@ -109,8 +109,10 @@ export class EmbedRealtimeTransport {
 			return;
 		}
 		if (this.closed || conversationId !== this.conversationId) return;
+		const realtimeUrl = new URL(ticket.realtimeUrl);
+		realtimeUrl.searchParams.set("ticket", ticket.ticket);
 		const ws = (this.options.wsFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike))(
-			ticket.realtimeUrl,
+			realtimeUrl.toString(),
 		);
 		this.ws = ws;
 		ws.addEventListener("open", this.onOpen);

@@ -66,6 +66,29 @@ export interface TenantRecord {
 	readonly updatedAt: Date;
 }
 
+/**
+ * Row shape returned by the agent-definition list query (ADMIN-001).
+ * `cursor` is the opaque value used to request the next page.
+ */
+export interface AgentDefinitionListRow {
+	readonly agentDefinitionId: AgentDefinitionId;
+	readonly name: string;
+	readonly revision: number;
+	readonly sourceHash: string;
+	readonly createdAt: Date;
+	/** Opaque cursor value: `createdAt + "|" + agentDefinitionId`. */
+	readonly cursor: string;
+}
+
+export interface AgentDefinitionListParams {
+	readonly scope: TenantScope;
+	readonly limit: number;
+	/** Opaque cursor from a previous page; when omitted starts from the newest. */
+	readonly cursor?: string;
+	/** false (default) = each agent's newest revision; true = all revisions. */
+	readonly includeRevisions?: boolean;
+}
+
 /** Agent definition record (control plane). */
 export interface AgentDefinitionRecord {
 	readonly agentDefinitionId: AgentDefinitionId;
@@ -77,6 +100,21 @@ export interface AgentDefinitionRecord {
 	readonly sourceHash: string;
 	readonly createdAt: Date;
 	readonly updatedAt: Date;
+}
+
+/** Row shape returned by the published-app list query (ADMIN-001). */
+export interface PublishedAppListRow extends PublishedAppRecord {
+	/** Opaque cursor value: `createdAt + "|" + publishedAppId`. */
+	readonly cursor: string;
+}
+
+export interface PublishedAppListParams {
+	readonly scope: TenantScope;
+	readonly limit: number;
+	/** Opaque cursor from a previous page; when omitted starts from the newest. */
+	readonly cursor?: string;
+	/** Optional status filter (draft | active | suspended | archived). */
+	readonly status?: PublishedAppStatus;
 }
 
 /** PublishedApp record. */
@@ -93,6 +131,21 @@ export interface PublishedAppRecord {
 	readonly mutablePolicy: unknown;
 	readonly createdAt: Date;
 	readonly updatedAt: Date;
+}
+
+/** Row shape returned by the version list query (ADMIN-001). */
+export interface PublishedAppVersionListRow extends PublishedAppVersionRecord {
+	/** true when this version is the app's current pointer. */
+	readonly isCurrent: boolean;
+	/** Opaque cursor value: `createdAt + "|" + publishedAppVersionId`. */
+	readonly cursor: string;
+}
+
+export interface PublishedAppVersionListParams {
+	readonly scope: AppScope;
+	readonly limit: number;
+	/** Opaque cursor from a previous page; when omitted starts from the newest. */
+	readonly cursor?: string;
 }
 
 /** PublishedAppVersion record (immutable after creation). */
@@ -196,12 +249,19 @@ export interface AgentDefinitionRepository {
 	getLatest(scope: TenantScope, agentDefinitionId: AgentDefinitionId): Promise<AgentDefinitionRecord | undefined>;
 	/** Latest revision of the named agent within the tenant (control import). */
 	getLatestByName(scope: TenantScope, name: string): Promise<AgentDefinitionRecord | undefined>;
+	/** Agent-definition list, newest first, opaque-cursor paginated (ADMIN-001). */
+	list(params: AgentDefinitionListParams): Promise<AgentDefinitionListRow[]>;
 }
 
 export interface PublishedAppRepository {
 	insert(record: PublishedAppRecord): Promise<void>;
 	/** Scoped get: tenant + app must both match. */
 	get(scope: AppScope, publishedAppId: PublishedAppId): Promise<PublishedAppRecord | undefined>;
+	/**
+	 * Published-app list scoped to a tenant, newest first, opaque-cursor
+	 * paginated, optional status filter (ADMIN-001).
+	 */
+	list(params: PublishedAppListParams): Promise<PublishedAppListRow[]>;
 	/**
 	 * Lookup by the globally-unique public locator (`public_app_id`, UNIQUE).
 	 *
@@ -253,6 +313,11 @@ export interface PublishedAppVersionRepository {
 	insert(record: PublishedAppVersionRecord): Promise<void>;
 	/** Scoped get by id; version must belong to the app in scope. */
 	get(scope: AppScope, publishedAppVersionId: PublishedAppVersionId): Promise<PublishedAppVersionRecord | undefined>;
+	/**
+	 * Version list for an app, newest first, opaque-cursor paginated, with the
+	 * `isCurrent` flag resolved against the app's current pointer (ADMIN-001).
+	 */
+	list(params: PublishedAppVersionListParams): Promise<PublishedAppVersionListRow[]>;
 	/** Next version number for the app (max + 1, starting at 1). */
 	nextVersionNumber(scope: AppScope, publishedAppId: PublishedAppId): Promise<number>;
 	/**
@@ -383,11 +448,28 @@ export interface AuditEventRecord {
 	readonly createdAt: Date;
 }
 
+/** Row shape returned by the audit list query (ADMIN-001). */
+export interface AuditEventListRow extends AuditEventRecord {
+	/** Opaque cursor value: `createdAt + "|" + auditEventId`. */
+	readonly cursor: string;
+}
+
+export interface AuditEventListParams {
+	readonly scope: TenantScope;
+	readonly limit: number;
+	/** Opaque cursor from a previous page; when omitted starts from the newest. */
+	readonly cursor?: string;
+	/** When set, only events for the app's resources are returned (ADMIN-001). */
+	readonly appId?: PublishedAppId;
+}
+
 export interface AuditEventRepository {
 	/** Append one audit event (never updated or deleted). */
 	insert(record: AuditEventRecord): Promise<void>;
 	/** List recent audit events for a tenant, newest first. */
 	listByTenant(scope: TenantScope, limit: number): Promise<AuditEventRecord[]>;
+	/** List recent audit events, newest first, opaque-cursor + optional app filter. */
+	list(params: AuditEventListParams): Promise<AuditEventListRow[]>;
 }
 
 /**

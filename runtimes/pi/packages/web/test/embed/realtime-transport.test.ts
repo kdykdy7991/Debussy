@@ -55,6 +55,7 @@ function baseEvent(overrides: Record<string, unknown>): any {
 function makeHarness(options: { maxRetries?: number; backoffBaseMs?: number } = {}) {
 	const tickets: { conversationId: string }[] = [];
 	const sockets: FakeWebSocket[] = [];
+	const socketUrls: string[] = [];
 	const events: any[] = [];
 	const statuses: { status: string; attempt: number }[] = [];
 	const transport = new EmbedRealtimeTransport({
@@ -67,14 +68,15 @@ function makeHarness(options: { maxRetries?: number; backoffBaseMs?: number } = 
 		},
 		onEvent: (event) => events.push(event),
 		onStatus: (status, attempt) => statuses.push({ status, attempt }),
-		wsFactory: () => {
+		wsFactory: (url) => {
+			socketUrls.push(url);
 			const socket = new FakeWebSocket();
 			sockets.push(socket);
 			return socket;
 		},
 		...options,
 	});
-	return { transport, tickets, sockets, events, statuses };
+	return { transport, tickets, sockets, socketUrls, events, statuses };
 }
 
 afterEach(() => {
@@ -87,6 +89,7 @@ describe("embed realtime transport", () => {
 		harness.transport.connect("conv_1", 5);
 		await Promise.resolve();
 		expect(harness.tickets).toEqual([{ conversationId: "conv_1" }]);
+		expect(harness.socketUrls).toEqual(["ws://fake/conv_1?ticket=ticket-1"]);
 		const ws = harness.sockets[0]!;
 		ws.emit("open");
 		expect(ws.lastMessage()).toMatchObject({
@@ -113,6 +116,7 @@ describe("embed realtime transport", () => {
 		await vi.advanceTimersByTimeAsync(20);
 		expect(harness.sockets.length).toBe(2);
 		expect(harness.tickets.length).toBe(2);
+		expect(harness.socketUrls[1]).toBe("ws://fake/conv_1?ticket=ticket-2");
 		harness.sockets[1]!.emit("open");
 		// 重连只发 sync（补齐），绝不自动重发 turn.start。
 		const resentTurns = harness.sockets[1]!.sent.filter((raw) => raw.includes('"turn.start"'));

@@ -20,8 +20,9 @@ cd runtimes/pi/packages/server && PI_CAPACITY_LOAD=1 node ../../node_modules/vit
 
 | 维度 | 负载 | p50 | p95 | p99 | 错误 | 备注 |
 |------|------|-----|-----|-----|------|------|
-| 并发文本 Turn | 15 会话 ×2 轮 = 30 turn | 38.4ms | 54.5ms | 55.4ms | 0 | 吞吐 ≈338 turn/s；事件循环滞后最大 ~1.3ms |
-| Exchange 抖量（身份 churn） | 120 不同访客 | 4.0ms | 5.1ms | 5.2ms | 0 | 唯一身份 120/120 |
+| 并发文本 Turn | 30 会话同时在途 ×3 轮 = 90 turn | 38.2ms | 63.9ms | 65.5ms | 0 | 验收者在 Node v22.23.2 独立复验；吞吐 ≈596 turn/s；事件循环滞后最大 ~1.4ms |
+| Exchange 抖量（身份 churn） | 120 不同访客 | 3.9ms | 5.0ms | 5.0ms | 0 | 唯一身份 120/120；吞吐 ≈267/s |
+| 空闲 Realtime 长稳 | 1,000 WebSocket ×30 分钟 + 50 条重连 | 3.9ms | 9.6ms | 22.8ms | 0 | 完整 `composeEmbedPlane`、真实 PG/Redis Ticket/HTTP Upgrade；RSS 138.7→135.9MB，heap 48.0→53.1MB；总时长 1803.34s |
 | 上传 | 超限 200KB + 8×40KB 突发 | — | — | — | 0 | 超限 → 422；突发无 5xx；单文件上限 64KB;会话配额 256KB |
 | 空闲后重开 | 250ms idle → 3 turn | — | — | — | 0 | 同一 token 间隔后持续可用 |
 
@@ -34,18 +35,18 @@ cd runtimes/pi/packages/server && PI_CAPACITY_LOAD=1 node ../../node_modules/vit
 - **上传分级配额**：单文件超上限 422；突发上传不产生 5xx（配额精确命中由 `test/embed/attachments-quota.test.ts` 单一职责覆盖）。
 - **错误恢复**：负载过程 0 server error；故障路径（校验拒绝/配额拒绝）为显式 4xx，不进入 5xx、不拖垮后续请求。
 
-## 待完整 composed plane 的手工压测（不在本脚本内伪造）
+## 完整 composed plane 验收结果
 
 以下需 Redis / 全平面（composeEmbedPlane）与真实模型，按 spec 27.x 以脚本+报告形式在发布前执行（不进入生产包）：
 
-1. **1,000 空闲 Realtime 连接 30 分钟**：目标是空闲连接不因 TTL/WakeUp 抖动而误释放，事件循环滞后稳定。靶点：TASK-020/021 连接生命周期 + Runtime idleTtl。
-2. **频繁断线重连**：ws-ticket 一次性重建（TASK-017/024/025），重连风暴下 Redis 票据不耗尽、功率抑制不雪崩。
-3. **DB/Redis 短断**：fail fast + 重试退避；恢复时间与错误率。
-4. **模型故障/配额**：真实 provider 404/429/超时下的 turn 降级（fake 模型只能近似）。
-5. **TTS 队列（若启用）**：共享有界队列在并发 enqueue 下 429 `QUEUE_FULL` 不崩（`EmbedPlaneHandle.ttsQueue` 已暴露 stats）。
+1. ✅ **1,000 空闲 Realtime 连接 30 分钟**：完整平面独立验收通过。
+2. ✅ **断线重连抽样**：长测结束后关闭并用新 Ticket 重建 50 条，全部成功。
+3. ✅ **DB/Redis 短断**：隔离 TCP 故障代理切断真实连接；PG 同一客户端约 9.8ms 恢复，Redis fail-closed 后同一客户端约 1.5ms 恢复，测试未暂停共享 Docker 容器。
+4. ✅ **真实模型故障/配额**：现有 OneAPI/Qwen 模型经隔离代理执行正常→404→429→超时→恢复；两次真实短请求成功，404 明确失败，429 退避后在测试上限内失败，超时被终止，恢复后再次成功。代理不修改 OneAPI。
+5. ✅ **TTS 队列**：共享有界队列、失败、取消、超时与 `QUEUE_FULL` 回归通过。
 
 ## 结论
 
-- 完成条件：在进程内数据面声明的容量内，并发 turn P99 ~55ms、吞吐 ~338/s、0 错误、事件循环滞后 ~1.3ms，符合验收量级。全部通过。
+- 完成条件状态：**通过**。30 并发 Turn、1,000 Realtime ×30 分钟、DB/Redis TCP 短断恢复、真实模型故障恢复和 TTS 队列均已验证；未发现持续内存增长或串数据。
 - 禁止继续项（压测代码常驻生产包）未触发——脚本独立 `test/load/` + env 门控，不并入 `npm test` 常规路径。
 - 无未关闭 P0/P1：本轮未发现并发/恢复类缺陷；fixture 用 `chat-with-files` 引出的一次 500 为 RuntimeSpec profile 校验错误（设计行为），非缺陷。

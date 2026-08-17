@@ -31,6 +31,9 @@ import { secureEqual } from "./token.ts";
 
 export const CONTROL_API_PREFIX = "/api/control/v1";
 
+/** Module-scoped empty query for POST route handlers that ignore the query. */
+const emptyQuery = new URLSearchParams();
+
 /** Default cap for a control request body (1 MiB); oversized -> 413. */
 export const CONTROL_MAX_BODY_BYTES = 1024 * 1024;
 /** Idempotency slot TTL for control writes. */
@@ -43,6 +46,8 @@ export interface ControlHttpHandlerOptions {
 	readonly adminToken: string;
 	/** Every control operation maps to this bootstrap tenant (spec 33.1). */
 	readonly tenantId: TenantId;
+	/** Display name exposed only on authenticated control responses. */
+	readonly tenantName?: string;
 	/** Collects the current agent configuration for import-current (33.3). */
 	readonly source: CurrentAgentDefinitionSource;
 	readonly idempotencyTtlMs?: number;
@@ -51,12 +56,14 @@ export interface ControlHttpHandlerOptions {
 }
 
 interface Route {
-	readonly method: "POST";
+	readonly method: "GET" | "POST";
 	readonly pattern: RegExp;
 	readonly operation: string;
 	readonly handler: (ctx: {
 		requestId: string;
 		body: unknown;
+		/** Query-string parameters for GET routes (empty for POST routes). */
+		query: URLSearchParams;
 		/** Regex capture groups from the path, e.g. `[appId]` or `[appId, keyId]`. */
 		params: readonly string[];
 	}) => Promise<{ status: number; body: unknown }>;
@@ -80,8 +87,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 	const tenantId = options.tenantId;
 	const service = options.service;
 	const repos = options.repositories;
-	// 33.1: the control principal of a tenant IS the tenant (platform service
-	// principal id = tenantId), so the idempotency/audit scope is the tenant.
 	// 33.1: the control principal of a tenant IS the tenant (platform service
 	// principal id = tenantId), so the idempotency/audit scope is the tenant.
 	const idempotencyScope: IdempotencyScope = { tenantId, principalId: tenantId as unknown as PrincipalId };
@@ -308,6 +313,125 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				};
 			},
 		},
+		// ---- Query routes (ADMIN-002). GETs are authenticated reads; they
+		// never read a request body and never write idempotency records. ----
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/agent-definitions$/,
+			operation: "agent-definitions.list",
+			handler: async ({ requestId, query }) => {
+				const parsed = parseListQuery(query, { includeRevisions: true });
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const listed = await service.listAgentDefinitions({
+					tenantId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+					includeRevisions: parsed.data.includeRevisions,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/published-apps$/,
+			operation: "published-apps.list",
+			handler: async ({ requestId, query }) => {
+				const parsed = parseListQuery(query, { status: true });
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const listed = await service.listPublishedApps({
+					tenantId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+					status: parsed.data.status,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)$/,
+			operation: "published-apps.get",
+			handler: async ({ requestId, params }) => {
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				const detail = await service.getPublishedAppDetail({ tenantId, publishedAppId });
+				if (!detail.ok) return serviceError(detail.error, requestId);
+				return { status: 200, body: { data: detail.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/versions$/,
+			operation: "published-apps.list-versions",
+			handler: async ({ requestId, query, params }) => {
+				const parsed = parseListQuery(query, {});
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				const listed = await service.listPublishedAppVersions({
+					tenantId,
+					publishedAppId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/launch-keys$/,
+			operation: "published-apps.list-launch-keys",
+			handler: async ({ requestId, params }) => {
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				const listed = await service.listLaunchKeys({ tenantId, publishedAppId });
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				// Never return PEM material: only keyId/algorithm/status/times.
+				return {
+					status: 200,
+					body: {
+						data: {
+							items: listed.data.keys.map((key) => ({
+								id: toPublicId("LaunchKeyId", key.launchKeyId),
+								keyId: key.keyId,
+								algorithm: key.algorithm,
+								status: key.status,
+								notBefore: key.notBefore.toISOString(),
+								expiresAt: key.expiresAt === null ? null : key.expiresAt.toISOString(),
+								createdAt: key.createdAt.toISOString(),
+							})),
+						},
+						requestId,
+					},
+				};
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/audit-events$/,
+			operation: "audit-events.list",
+			handler: async ({ requestId, query }) => {
+				const parsed = parseListQuery(query, {});
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const appIdParam = query.get("appId") ?? undefined;
+				if (appIdParam !== undefined && fromPublicId("PublishedAppId", appIdParam) === null) {
+					return badRequest("appId must be a bare app_<uuid> id", requestId);
+				}
+				const appId =
+					appIdParam === undefined ? undefined : (fromPublicId("PublishedAppId", appIdParam) ?? undefined);
+				const listed = await service.listAuditEvents({
+					tenantId,
+					appId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
 	];
 
 	async function transition(
@@ -353,6 +477,8 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			}
 			const requestId = readRequestId(request);
 			response.setHeader("X-Request-Id", requestId);
+			response.setHeader("X-Tenant-Id", String(tenantId));
+			if (options.tenantName !== undefined) response.setHeader("X-Tenant-Name", options.tenantName);
 
 			const route = routes.find((r) => r.method === request.method && r.pattern.test(pathname));
 			if (!route) {
@@ -360,6 +486,15 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return true;
 			}
 			const params = pathname.match(route.pattern)?.slice(1) ?? [];
+
+			// GETs are authenticated reads: they never read a body and never
+			// write idempotency records (spec review: read paths skip slots).
+			if (request.method === "GET") {
+				const query = new URL(request.url ?? "", "http://control.local").searchParams;
+				const envelope = await route.handler({ requestId, body: undefined, query, params });
+				jsonBody(response, envelope.status, envelope.body);
+				return true;
+			}
 
 			const raw = await readBody(request, maxBodyBytes);
 			if (raw === null) {
@@ -377,8 +512,8 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			const idempotencyKey = readIdempotencyKey(request);
 			const envelope =
 				idempotencyKey === undefined
-					? await route.handler({ requestId, body, params })
-					: await withIdempotency(route, { requestId, body, params, idempotencyKey });
+					? await route.handler({ requestId, body, query: emptyQuery, params })
+					: await withIdempotency(route, { requestId, body, query: emptyQuery, params, idempotencyKey });
 			jsonBody(response, envelope.status, envelope.body);
 			return true;
 		} catch (error) {
@@ -396,7 +531,13 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 
 	async function withIdempotency(
 		route: Route,
-		ctx: { requestId: string; body: unknown; params: readonly string[]; idempotencyKey: string },
+		ctx: {
+			requestId: string;
+			body: unknown;
+			query: URLSearchParams;
+			params: readonly string[];
+			idempotencyKey: string;
+		},
 	): Promise<Envelope> {
 		const requestHash = hashRequest(route, ctx.body, ctx.params);
 		const began = await repos.idempotency.begin(
@@ -451,6 +592,47 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 function parseAppId(appId: string | undefined): PublishedAppId | null {
 	if (appId === undefined) return null;
 	return fromPublicId("PublishedAppId", appId);
+}
+
+/** Parse shared list query params, validating limit/status for the console. */
+function parseListQuery(
+	query: URLSearchParams,
+	opts: { readonly includeRevisions?: boolean; readonly status?: boolean },
+):
+	| {
+			readonly ok: true;
+			readonly data: {
+				readonly limit: number;
+				readonly cursor?: string;
+				readonly includeRevisions?: boolean;
+				readonly status?: string;
+			};
+	  }
+	| { readonly ok: false; readonly message: string } {
+	const rawLimit = query.get("limit") ?? "50";
+	if (!/^\d+$/.test(rawLimit)) return { ok: false, message: "limit must be a positive integer" };
+	const limit = Number(rawLimit);
+	if (!Number.isInteger(limit) || limit < 1) return { ok: false, message: "limit must be a positive integer" };
+	const cursorRaw = query.get("cursor") ?? "";
+	const cursor = cursorRaw.trim() === "" ? undefined : cursorRaw.trim();
+	let includeRevisions: boolean | undefined;
+	if (opts.includeRevisions === true) {
+		const raw = query.get("includeRevisions");
+		includeRevisions = raw === "true" ? true : raw === "false" ? false : undefined;
+	}
+	let status: string | undefined;
+	if (opts.status === true) {
+		const raw = query.get("status") ?? "";
+		status = raw.trim() === "" ? undefined : raw.trim();
+		if (status !== undefined && !["draft", "active", "suspended", "archived"].includes(status)) {
+			return { ok: false, message: "status must be draft | active | suspended | archived" };
+		}
+	}
+	const data: { limit: number; cursor?: string; includeRevisions?: boolean; status?: string } = { limit };
+	if (cursor !== undefined) data.cursor = cursor;
+	if (includeRevisions !== undefined) data.includeRevisions = includeRevisions;
+	if (status !== undefined) data.status = status;
+	return { ok: true, data };
 }
 
 /** View of a published app for API responses (27.1/27.3). */

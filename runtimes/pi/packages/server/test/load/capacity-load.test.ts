@@ -1,15 +1,14 @@
 /**
  * TASK-038：容量与故障压测（独立脚本，不进入生产包）。
  *
- * 进程内 `createEmbedServices`（真实 PG + 真实 handler + 假会话实时），
+ * 完整 `composeEmbedPlane`（真实 PG + Redis Ticket + HTTP/WS handler + 假模型），
  * 度量 server 数据面在并发下 p50/p95/p99、错误率、事件循环滞后、RSS/heap 与
  * 恢复。**默认被跳过**——设 `PI_CAPACITY_LOAD=1` 才跑（避免拖慢日常 `--run test`）。
  *
- * 覆盖：并发文本 Turn（TASK-038 第 2 项）、Exchange 抖量（身份 churn）、
+ * 覆盖：30 个真正同时在途的文本 Turn（TASK-038 第 2 项）、Exchange 抖量（身份 churn）、
  * 上传配额边界（单文件上限 + 会话配额，断言不崩溃）、空闲后重开（Runtime
- * idle/reopen 等价面）。1,000 空闲 Realtime 连接与 DB/Redis 短断需完整
- * composed plane（Redis），见 docs/MULTI-USER-PUBLISHING-CAPACITY-REPORT.md
- * 的手工全平面步骤，不在本脚本内伪造。
+ * idle/reopen 等价面）。设置 `PI_REALTIME_CAPACITY_LOAD=1` 时另跑真实的
+ * Realtime Upgrade 长稳测试；时长由 `PI_REALTIME_CAPACITY_MINUTES` 控制。
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
@@ -19,7 +18,9 @@ import { performance } from "node:perf_hooks";
 import type { ModelRef, SessionSnapshot, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { exportPKCS8, exportSPKI, generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createEmbedServices, loadEmbedPlaneConfig } from "../../src/embed/start.ts";
+import WebSocket from "ws";
+import { createEmbedLimits } from "../../src/embed/rate-limits/index.ts";
+import { composeEmbedPlane, type EmbedPlaneHandle } from "../../src/embed/start.ts";
 import { LocalTestObjectStore } from "../../src/persistence/object-store/local-test.ts";
 import { PostgresClient } from "../../src/persistence/postgres/client.ts";
 import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
@@ -91,11 +92,19 @@ class FakeSession {
 	async dispose(): Promise<void> {}
 }
 
-const RUN = process.env.PI_CAPACITY_LOAD !== undefined;
+const REALTIME_RUN = process.env.PI_REALTIME_CAPACITY_LOAD !== undefined;
+const BROWSER_RUN = process.env.PI_BROWSER_ACCEPTANCE_LOAD !== undefined;
+const RUN = process.env.PI_CAPACITY_LOAD !== undefined || REALTIME_RUN || BROWSER_RUN;
+const TURN_CONCURRENCY = 30;
+const TURN_ROUNDS = Number(process.env.PI_CAPACITY_TURN_ROUNDS ?? "3");
+const REALTIME_CONNECTIONS = Number(process.env.PI_REALTIME_CAPACITY_CONNECTIONS ?? "1000");
+const REALTIME_MINUTES = Number(process.env.PI_REALTIME_CAPACITY_MINUTES ?? "30");
 const SCHEMA = `cap_${process.pid}_${Date.now().toString(36)}`;
 const PG_URL = process.env.PI_TEST_DATABASE_URL ?? "postgresql://skdy:skdy123@127.0.0.1:5433/skdy_agent_test";
+const REDIS_URL = process.env.PI_TEST_REDIS_URL ?? "redis://127.0.0.1:6380/15";
 const PEPPER = "cap-pepper-0123456789abcdef0123456789abcdef";
 const ORIGIN = "https://host-a.example.com";
+const BROWSER_ORIGIN = process.env.PI_BROWSER_ACCEPTANCE_ORIGIN ?? "http://127.0.0.1:5194";
 
 async function probe(): Promise<boolean> {
 	try {
@@ -152,10 +161,14 @@ function summarize(lat: number[]): { p50: number; p95: number; p99: number; mean
 }
 
 describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
+	if (!Number.isSafeInteger(TURN_ROUNDS) || TURN_ROUNDS < 2) {
+		throw new Error("PI_CAPACITY_TURN_ROUNDS must be an integer >= 2");
+	}
 	let root: string;
 	let client: PostgresClient;
 	let repos: ReturnType<typeof createPublishingRepositories>;
 	let handlers: readonly HttpRequestHandler[];
+	let plane: EmbedPlaneHandle;
 	let server: Server;
 	let httpBase: string;
 	let publicAppId: string;
@@ -168,7 +181,7 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 	const exchangeLatency: number[] = [];
 	let exchangeErrors = 0;
 	const uploadLatency: number[] = [];
-	let uploadErrors = 0;
+	let expectedUploadRejects = 0;
 
 	function httpCall(options: {
 		method: string;
@@ -256,7 +269,7 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 			status: "active",
 			accessMode: "anonymous",
 			currentVersionId: null,
-			allowedOrigins: [ORIGIN],
+			allowedOrigins: [ORIGIN, BROWSER_ORIGIN],
 			mutablePolicy: {},
 			createdAt: now,
 			updatedAt: now,
@@ -278,14 +291,14 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 		});
 		await repos.publishedApps.setCurrentVersion({ tenantId, publishedAppId: appId }, appId, versionId);
 
-		const config = await loadEmbedPlaneConfig({
+		const publishing = {
 			enabled: true,
 			databaseUrl: PG_URL,
-			redisUrl: undefined,
+			redisUrl: REDIS_URL,
 			bootstrapTenantId: tenantId,
 			bootstrapTenantName: "cap",
 			controlAdminTokenFile: undefined,
-			embedBaseUrl: "https://agent.example.com",
+			embedBaseUrl: BROWSER_RUN ? BROWSER_ORIGIN : "https://agent.example.com",
 			subjectPepper: PEPPER,
 			accessTokenPrivateKeyFile: priv,
 			accessTokenPublicKeyFile: pub,
@@ -298,17 +311,26 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 				principalBytes: 2 * 1024 * 1024,
 				appBytes: 8 * 1024 * 1024,
 			},
-		});
+		} as const;
 		const obj = new LocalTestObjectStore(join(root, "objects"));
-		const services = createEmbedServices({
-			accessTokens: config.accessTokens,
-			subjectPepper: config.subjectPepper,
+		plane = await composeEmbedPlane({
+			publishing,
 			repositories: repos,
 			createSession: async (options) => new FakeSession(options.id, options.model),
 			objectStore: obj,
 			attachmentBucket: "attachments",
+			limits: createEmbedLimits({
+				config: {
+					system: {
+						connections: { count: REALTIME_CONNECTIONS + 100, windowMs: 60_000 },
+						exchange: { count: REALTIME_CONNECTIONS + 100, windowMs: 60_000 },
+						token: { count: REALTIME_CONNECTIONS + 100, windowMs: 60_000 },
+					},
+				},
+			}),
+			log: () => {},
 		});
-		handlers = services.handlers;
+		handlers = [plane.bootstrapHandler, plane.exchangeHandler, plane.attachmentsHandler, plane.conversationsHandler];
 		server = createServer((req, res) => {
 			(async () => {
 				for (const h of handlers) {
@@ -316,6 +338,9 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 				}
 				res.writeHead(404).end();
 			})();
+		});
+		server.on("upgrade", (request, socket, head) => {
+			if (!plane.realtimeUpgrade?.(request, socket, head)) socket.destroy();
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		httpBase = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -334,8 +359,25 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 			});
 	});
 
+	test.runIf(BROWSER_RUN)(
+		"keeps a complete browser acceptance server running",
+		async () => {
+			const stateFile = process.env.PI_BROWSER_ACCEPTANCE_STATE_FILE;
+			if (stateFile === undefined) throw new Error("PI_BROWSER_ACCEPTANCE_STATE_FILE is required");
+			writeFileSync(stateFile, `${JSON.stringify({ httpBase, publicAppId, origin: BROWSER_ORIGIN })}\n`, "utf8");
+			console.log(`[browser-acceptance] backend=${httpBase} publicAppId=${publicAppId} origin=${BROWSER_ORIGIN}`);
+			const holdMinutes = Number(process.env.PI_BROWSER_ACCEPTANCE_MINUTES ?? "120");
+			await new Promise((resolve) => setTimeout(resolve, holdMinutes * 60_000));
+		},
+		125 * 60_000,
+	);
+
 	afterAll(async () => {
-		if (server !== undefined) await new Promise<void>((resolve) => server.close(() => resolve()));
+		if (plane !== undefined) await plane.close();
+		if (server !== undefined) {
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
 		await client.run(`drop schema if exists ${SCHEMA} cascade`);
 		await client.close();
 		rmSync(root, { recursive: true, force: true });
@@ -345,9 +387,72 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 				`heap=${(mem.heapUsed / 1048576).toFixed(1)}MB(heapStart=${(heapStart / 1048576).toFixed(1)})`,
 		);
 		console.log(
-			`[load] turn(err=${turnErrors}) ${JSON.stringify(summarize(turnsLatency))} | exchange(err=${exchangeErrors}) ${JSON.stringify(summarize(exchangeLatency))} | upload(err=${uploadErrors}) ${JSON.stringify(summarize(uploadLatency))}`,
+			`[load] turn(err=${turnErrors}) ${JSON.stringify(summarize(turnsLatency))} | exchange(err=${exchangeErrors}) ${JSON.stringify(summarize(exchangeLatency))} | upload(expectedRejects=${expectedUploadRejects}) ${JSON.stringify(summarize(uploadLatency))}`,
 		);
 	});
+
+	test.runIf(REALTIME_RUN)(
+		"keeps the configured number of real Realtime WebSockets open and reconnects a sample",
+		async () => {
+			if (!Number.isSafeInteger(REALTIME_CONNECTIONS) || REALTIME_CONNECTIONS < 1)
+				throw new Error("invalid connection count");
+			if (!Number.isFinite(REALTIME_MINUTES) || REALTIME_MINUTES <= 0) throw new Error("invalid duration");
+			const sockets: WebSocket[] = [];
+			const openLatency: number[] = [];
+			async function openSocket(index: number): Promise<WebSocket> {
+				const session = await exchangeAndCreate();
+				const ticket = await httpCall({
+					method: "POST",
+					path: `/api/embed/v1/conversations/${session.convId}/ws-ticket`,
+					headers: { authorization: `Bearer ${session.token}`, origin: ORIGIN },
+				});
+				if (ticket.status !== 200) {
+					throw new Error(`ws-ticket failed: HTTP ${ticket.status} ${JSON.stringify(ticket.body)}`);
+				}
+				const started = performance.now();
+				const ws = await new Promise<WebSocket>((resolve, reject) => {
+					const socket = new WebSocket(
+						`${httpBase.replace("http:", "ws:")}/api/embed/v1/realtime?ticket=${ticket.body.data.ticket}`,
+						{
+							headers: { origin: ORIGIN },
+						},
+					);
+					const timer = setTimeout(() => reject(new Error(`WebSocket ${index} timeout`)), 10_000);
+					socket.once("open", () => {
+						clearTimeout(timer);
+						resolve(socket);
+					});
+					socket.once("error", reject);
+				});
+				openLatency.push(performance.now() - started);
+				return ws;
+			}
+			for (let offset = 0; offset < REALTIME_CONNECTIONS; offset += 25) {
+				const batch = await Promise.all(
+					Array.from({ length: Math.min(25, REALTIME_CONNECTIONS - offset) }, (_, index) =>
+						openSocket(offset + index),
+					),
+				);
+				sockets.push(...batch);
+			}
+			expect(sockets).toHaveLength(REALTIME_CONNECTIONS);
+			expect(sockets.every((socket) => socket.readyState === WebSocket.OPEN)).toBe(true);
+			await new Promise((resolve) => setTimeout(resolve, REALTIME_MINUTES * 60_000));
+			expect(sockets.every((socket) => socket.readyState === WebSocket.OPEN)).toBe(true);
+			const reconnectCount = Math.min(50, sockets.length);
+			for (const socket of sockets.splice(0, reconnectCount)) socket.close(1000, "reconnect sample");
+			const replacements = await Promise.all(
+				Array.from({ length: reconnectCount }, (_, index) => openSocket(index)),
+			);
+			sockets.push(...replacements);
+			expect(sockets.every((socket) => socket.readyState === WebSocket.OPEN)).toBe(true);
+			console.log(
+				`[load] phase=realtime connections=${sockets.length} minutes=${REALTIME_MINUTES} reconnects=${reconnectCount} ${JSON.stringify(summarize(openLatency))}`,
+			);
+			for (const socket of sockets) socket.close(1000, "capacity complete");
+		},
+		35 * 60_000,
+	);
 
 	async function exchangeAndCreate(): Promise<{ token: string; convId: string }> {
 		const visitor = `visitor-${Math.random().toString(36).slice(2)}-`.repeat(3);
@@ -369,9 +474,9 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 		return { token, convId: cc.body.data.id as string };
 	}
 
-	test("30 concurrent text turns across many conversations (p50/p95/p99)", async () => {
-		const N = 15;
-		const M = 2;
+	test("30 simultaneously in-flight text turns across many conversations, repeated for multiple rounds", async () => {
+		const N = TURN_CONCURRENCY;
+		const M = TURN_ROUNDS;
 		const sessions: { token: string; convId: string }[] = [];
 		const before = performance.now();
 		for (let i = 0; i < N; i++) sessions.push(await exchangeAndCreate());
@@ -413,7 +518,7 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 		if (firstFailStatus !== 0) console.log(`[load] firstTurnFail status=${firstFailStatus} body=${firstFailBody}`);
 		const wall = performance.now() - start;
 		console.log(
-			`[load] phase=turns setups=${N} turns=${N * M} wallMs=${wall.toFixed(1)} setupMs=${setupMs.toFixed(1)} ` +
+			`[load] phase=turns concurrency=${N} rounds=${M} turns=${N * M} wallMs=${wall.toFixed(1)} setupMs=${setupMs.toFixed(1)} ` +
 				`throughput=${((N * M) / (wall / 1000)).toFixed(1)}/s err=${turnErrors} eventLoopLagMax=${lagMax}ms`,
 		);
 		expect(turnErrors).toBe(0);
@@ -469,7 +574,7 @@ describe.runIf(RUN && pgUp)("embed data plane capacity/load", () => {
 			raw: big,
 		});
 		uploadLatency.push(performance.now() - s0);
-		if (oversized.status >= 400) uploadErrors++;
+		if (oversized.status >= 400) expectedUploadRejects++;
 		expect([413, 422]).toContain(oversized.status);
 
 		// (b) 连续上传直到配额区（评审：精确命中配额由 attachments-quota 单测覆盖；

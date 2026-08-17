@@ -1,7 +1,20 @@
 import type { PublishedAppId, PublishedAppVersionId, TenantId } from "../../../publishing/domain/ids.ts";
-import type { AppScope, PublishedAppRecord, PublishedAppRepository } from "../../../publishing/repositories.ts";
+import type {
+	AppScope,
+	PublishedAppListParams,
+	PublishedAppListRow,
+	PublishedAppRecord,
+	PublishedAppRepository,
+} from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { txRows } from "./tx.ts";
+
+function toListRow(record: PublishedAppRecord): PublishedAppListRow {
+	return {
+		...record,
+		cursor: `${record.createdAt.toISOString()}|${record.publishedAppId}`,
+	};
+}
 
 function rowToRecord(row: Record<string, unknown>): PublishedAppRecord {
 	return {
@@ -62,6 +75,36 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 		async getByPublicAppId(publicAppId) {
 			const rows = await client.run("select * from published_apps where public_app_id = $1", publicAppId);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
+		},
+		async list(params: PublishedAppListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 100);
+			// Parameter order: tenantId($1) [status($2)] [cursor($n, $n+1)],
+			// then the limit placeholder at the next index.
+			const values: (string | null)[] = [params.scope.tenantId];
+			let statusWhere = "";
+			if (params.status !== undefined) {
+				statusWhere = "and status = $2";
+				values.push(params.status);
+			}
+			let cursorWhere = "";
+			if (params.cursor !== undefined && params.cursor !== "") {
+				const [createdAt, id] = params.cursor.split("|");
+				if (createdAt !== undefined && id !== undefined) {
+					const first = values.length + 1;
+					cursorWhere = `and (created_at, id) < ($${first}::timestamptz, $${first + 1}::uuid)`;
+					values.push(createdAt, id);
+				}
+			}
+			const limitIndex = values.length + 1;
+			const rows = await client.run(
+				`select * from published_apps
+				 where tenant_id = $1 ${statusWhere} ${cursorWhere}
+				 order by created_at desc, id desc
+				 limit $${limitIndex}`,
+				...values,
+				limit + 1,
+			);
+			return rows.map((row) => toListRow(rowToRecord(row)));
 		},
 		async updateMutable(scope: AppScope, publishedAppId, fields) {
 			await client.run(
