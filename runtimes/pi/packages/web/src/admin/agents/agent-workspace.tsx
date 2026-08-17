@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
+import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { AgentForm } from "./agent-form.tsx";
 import {
@@ -50,6 +51,7 @@ export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.Rea
 	const [tab, setTab] = useState<Tab>("config");
 	const [changeSummary, setChangeSummary] = useState("");
 	const idempotencyRef = useRef<string>("");
+	const [publishDrawerMode, setPublishDrawerMode] = useState<"closed" | "open">("closed");
 
 	const reload = useCallback(async () => {
 		setLoad({ kind: "loading" });
@@ -131,6 +133,9 @@ export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.Rea
 					最新 revision: {state.display.currentRevision} · 最后更新 {state.display.updatedAt} · 关联应用{" "}
 					{detail.associatedAppCount}
 				</p>
+				<button type="button" onClick={() => setPublishDrawerMode("open")} disabled={state.status !== "saved"}>
+					发布
+				</button>
 			</header>
 			<nav aria-label="Agent tabs">
 				{(
@@ -160,6 +165,16 @@ export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.Rea
 			{tab === "revisions" ? <RevisionTab agentId={agentId} api={resolvedApi} /> : null}
 			{tab === "apps" ? <AppsTab agentId={agentId} api={resolvedApi} /> : null}
 			{tab === "debug" ? <DebugTab /> : null}
+			<PublishDrawer
+				agentId={agentId}
+				hasDraft={state.status !== "saved"}
+				mode={publishDrawerMode}
+				onClose={() => setPublishDrawerMode("closed")}
+				onPublished={() => {
+					setPublishDrawerMode("closed");
+					void reload();
+				}}
+			/>
 		</section>
 	);
 }

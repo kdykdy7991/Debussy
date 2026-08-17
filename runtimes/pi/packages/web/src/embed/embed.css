@@ -351,6 +351,16 @@
 	padding: 0.25rem 0.625rem;
 }
 
+.embed-preview-banner {
+	margin: 0;
+	padding: 0.5rem 0.75rem;
+	background: #fff3cd;
+	border-bottom: 1px solid #e7c75f;
+	color: #604800;
+	font-size: 0.8125rem;
+	text-align: center;
+}
+
 /* 移动端：会话列表默认隐藏，经 header 开关以抽屉形式展开。 */
 @media (max-width: 640px) {
 	.embed-list-toggle {

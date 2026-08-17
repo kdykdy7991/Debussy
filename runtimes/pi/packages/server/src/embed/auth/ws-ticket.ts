@@ -8,7 +8,13 @@
  * Access Token 绝不能进 URL 或访问日志（禁止继续条件）。
  */
 import { createHash, randomBytes } from "node:crypto";
-import type { ConversationId, PrincipalId, PublishedAppId, TenantId } from "../../publishing/domain/ids.ts";
+import type {
+	ConversationId,
+	PrincipalId,
+	PublishedAppId,
+	PublishedAppVersionId,
+	TenantId,
+} from "../../publishing/domain/ids.ts";
 import type { PrincipalType } from "../../publishing/domain/states.ts";
 
 export interface TicketClaims {
@@ -18,6 +24,8 @@ export interface TicketClaims {
 	readonly principalType: PrincipalType;
 	readonly tokenId: string;
 	readonly conversationId: ConversationId;
+	/** Pinned version (WB-005). Preview conversations must not switch versions. */
+	readonly publishedAppVersionId: PublishedAppVersionId | null;
 	/** 签发时的请求 Origin；null 表示签发时无 Origin（严格模式应拒绝）。 */
 	readonly origin: string | null;
 }
@@ -32,6 +40,7 @@ export interface WsTicketService {
 		readonly tokenId: string;
 		readonly conversationId: ConversationId;
 		readonly origin: string | undefined;
+		readonly publishedAppVersionId?: PublishedAppVersionId | null;
 	}): Promise<{ readonly ticket: string; readonly expiresAt: Date }>;
 	/**
 	 * 单次消费：原子 get+del；ticket 不存在/已消费，或 claims 与期望的
@@ -66,6 +75,7 @@ export function createWsTicketService(store: TicketStore, options: { readonly tt
 				principalType: input.principalType,
 				tokenId: input.tokenId,
 				conversationId: input.conversationId,
+				publishedAppVersionId: input.publishedAppVersionId ?? null,
 				origin: input.origin ?? null,
 			};
 			const ttlSeconds = Math.max(1, Math.ceil(ttlMs / 1000));

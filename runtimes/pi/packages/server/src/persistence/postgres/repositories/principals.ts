@@ -88,5 +88,12 @@ export function createPrincipalRepository(client: PostgresClient): PrincipalRepo
 				scope.publishedAppId,
 			);
 		},
+		async countActive(scope: TenantScope) {
+			const rows = await client.run(
+				"select count(*)::int as cnt from principals where tenant_id = $1 and status = 'active'",
+				scope.tenantId,
+			);
+			return Number(rows[0]?.cnt ?? 0);
+		},
 	};
 }

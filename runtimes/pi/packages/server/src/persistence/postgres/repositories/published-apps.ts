@@ -5,6 +5,7 @@ import type {
 	PublishedAppListRow,
 	PublishedAppRecord,
 	PublishedAppRepository,
+	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { txRows } from "./tx.ts";
@@ -181,6 +182,13 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 				}
 				return { ok: true, previousVersionId };
 			});
+		},
+		async count(scope: TenantScope) {
+			const rows = await client.run(
+				"select count(*)::int as cnt from published_apps where tenant_id = $1",
+				scope.tenantId,
+			);
+			return Number(rows[0]?.cnt ?? 0);
 		},
 	};
 }

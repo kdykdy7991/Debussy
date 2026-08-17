@@ -22,9 +22,13 @@ import {
 	type EmbedError,
 	forbidden,
 	originNotAllowed,
+	tokenExpired,
+	tokenInvalid,
+	tokenReplayed,
 } from "../../publishing/domain/errors.ts";
-import type { PublishedAppId, TenantId } from "../../publishing/domain/ids.ts";
+import type { PublishedAppId, PublishedAppVersionId, TenantId } from "../../publishing/domain/ids.ts";
 import { newPrincipalId, type PublicAppId, toPublicId } from "../../publishing/domain/ids.ts";
+import type { PreviewTicketService } from "../../publishing/preview-ticket.ts";
 import type { PublishedAppRecord, PublishingRepositories } from "../../publishing/repositories.ts";
 import { parseRuntimeSpec } from "../../publishing/runtime-spec/schema.ts";
 import type { AccessTokenService } from "./access-token.ts";
@@ -79,6 +83,8 @@ export interface ExchangeServiceOptions {
 	 * （PD-19 默认）：`mode: "signed_user"` 请求显式 403，不静默通过。
 	 */
 	readonly launchTokens?: LaunchTokenVerifier;
+	/** Preview ticket service (WB-005). Required for `mode: "preview"` Exchange. */
+	readonly previewTickets?: PreviewTicketService;
 }
 
 export type ExchangeResult<T> =
@@ -121,17 +127,35 @@ export interface SignedUserExchangeData {
 	readonly app: ExchangeAppView;
 }
 
+/** WB-005: Preview Exchange input. */
+export interface PreviewExchangeInput {
+	readonly publicAppId: PublicAppId;
+	readonly ticket: string;
+	readonly origin: string | undefined;
+}
+
+/** WB-005: Preview Exchange response. `pinnedVersionId` is the version the preview pins to. */
+export interface PreviewExchangeData {
+	readonly accessToken: string;
+	readonly expiresAt: string;
+	readonly principal: { readonly id: string; readonly type: "platform_admin_preview" };
+	readonly app: ExchangeAppView;
+	readonly pinnedVersionId: PublishedAppVersionId;
+}
+
 export class ExchangeService {
 	private readonly repos: PublishingRepositories;
 	private readonly accessTokens: AccessTokenService;
 	private readonly subjectPepper: string;
 	private readonly launchTokens: LaunchTokenVerifier | undefined;
+	private readonly previewTickets: PreviewTicketService | undefined;
 
 	constructor(options: ExchangeServiceOptions) {
 		this.repos = options.repositories;
 		this.accessTokens = options.accessTokens;
 		this.subjectPepper = options.subjectPepper;
 		this.launchTokens = options.launchTokens;
+		this.previewTickets = options.previewTickets;
 	}
 
 	/**
@@ -273,6 +297,116 @@ export class ExchangeService {
 					features: await this.readFeatures(app),
 				},
 			},
+		};
+	}
+
+	/**
+	 * WB-005: preview exchange. The ticket binds the conversation to a
+	 * pinned version (`pinnedVersionId`) — the existing current-version code
+	 * path never sees this version because the access token explicitly carries
+	 * the preview version id. The principal is `platform_admin_preview` and is
+	 * scoped to a single (tenant, app) pair so it cannot escape into other
+	 * apps.
+	 */
+	async exchangePreview(input: PreviewExchangeInput): Promise<ExchangeResult<PreviewExchangeData>> {
+		if (this.previewTickets === undefined) {
+			return { ok: false, error: forbidden("preview exchange is not enabled on this platform") };
+		}
+		const app = await this.repos.publishedApps.getByPublicAppId(input.publicAppId);
+		if (app === undefined) return { ok: false, error: appNotFound() };
+		const verified = await this.previewTickets.consume({
+			publicAppId: input.publicAppId,
+			origin: input.origin,
+			ticket: input.ticket,
+		});
+		if (!verified.ok) {
+			const code =
+				verified.code === "EXPIRED" ? "EXPIRED" : verified.code === "ALREADY_CONSUMED" ? "REPLAYED" : "INVALID";
+			return {
+				ok: false,
+				error:
+					code === "EXPIRED"
+						? tokenExpired("Preview ticket expired")
+						: code === "REPLAYED"
+							? tokenReplayed("Preview ticket was already used")
+							: tokenInvalid("Preview ticket invalid"),
+			};
+		}
+		// Cross-app guard: the ticket's app id must match the published app id
+		// derived from the publicAppId. Tickets are scoped via signature claim.
+		if (verified.appId !== app.publishedAppId) {
+			return { ok: false, error: forbidden("preview ticket does not match the requested app") };
+		}
+		const version = await this.repos.publishedAppVersions.get(
+			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
+			verified.versionId,
+		);
+		if (version === undefined || version.status !== "ready") {
+			return { ok: false, error: forbidden("preview version is not ready") };
+		}
+		// The preview principal is per-app, deterministic by ticket JTI so that
+		// subsequent tickets for the same admin converge to one Principal row
+		// but never collide with an anonymous or external_user principal.
+		const subjectHash = createHmac("sha256", this.subjectPepper)
+			.update(`preview\n${app.tenantId}\n${app.publishedAppId}\n${input.ticket}`, "utf8")
+			.digest("hex");
+		const principal = await this.repos.principals.upsert({
+			principalId: newPrincipalId(),
+			tenantId: app.tenantId,
+			publishedAppId: app.publishedAppId,
+			principalType: "platform_admin_preview",
+			subjectHash,
+			status: "active",
+			createdAt: new Date(),
+			lastSeenAt: new Date(),
+		});
+		if (principal.status !== "active") {
+			return { ok: false, error: forbidden("Principal is not active") };
+		}
+		const signed = await this.accessTokens.sign({
+			tenantId: app.tenantId,
+			publishedAppId: app.publishedAppId,
+			principalId: principal.principalId,
+			principalType: principal.principalType,
+			scopes: [],
+			publishedAppVersionId: verified.versionId,
+		});
+		return {
+			ok: true,
+			data: {
+				accessToken: signed.token,
+				expiresAt: signed.expiresAt.toISOString(),
+				principal: {
+					id: toPublicId("PrincipalId", principal.principalId),
+					type: "platform_admin_preview",
+				},
+				app: {
+					publicAppId: app.publicAppId,
+					name: app.name,
+					currentVersionId:
+						app.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", app.currentVersionId),
+					features: await this.readFeaturesFromVersion(app, verified.versionId),
+				},
+				pinnedVersionId: verified.versionId,
+			},
+		};
+	}
+
+	private async readFeaturesFromVersion(
+		app: PublishedAppRecord,
+		versionId: PublishedAppVersionId,
+	): Promise<ExchangeAppView["features"]> {
+		const version = await this.repos.publishedAppVersions.get(
+			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
+			versionId,
+		);
+		if (version === undefined) return { uploads: false, speech: false, avatar: false };
+		const parsed = parseRuntimeSpec(version.runtimeSpec);
+		if (!parsed.ok) return { uploads: false, speech: false, avatar: false };
+		return {
+			uploads: parsed.spec.capabilities.uploads.enabled,
+			speech: parsed.spec.capabilities.speech.enabled,
+			avatar: parsed.spec.capabilities.avatar.enabled,
 		};
 	}
 

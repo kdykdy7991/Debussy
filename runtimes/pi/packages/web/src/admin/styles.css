@@ -193,3 +193,269 @@ button {
 	font-size: 13px;
 	margin-top: 12px;
 }
+
+/* WB-004 应用工作台 */
+
+/* Dashboard metrics */
+.dashboard-cards {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 12px;
+	margin: 16px 0;
+}
+.dashboard-cards .card {
+	background: #fff;
+	border: 1px solid #e3ddcf;
+	border-radius: 8px;
+	padding: 16px;
+}
+.dashboard-cards .metric {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.dashboard-cards .metric strong {
+	font-size: 28px;
+	color: #1c1b19;
+}
+.dashboard-cards .metric small {
+	color: #6e6960;
+	font-size: 13px;
+}
+
+/* Pending versions */
+.pending-section {
+	margin: 16px 0;
+	padding: 16px;
+	background: #fff8e7;
+	border: 1px solid #e3c97a;
+	border-radius: 8px;
+}
+.pending-row {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 8px 0;
+	border-bottom: 1px solid #efe3b9;
+}
+.pending-row:last-child { border-bottom: 0; }
+
+/* App list toolbar */
+.app-list-toolbar {
+	display: flex;
+	gap: 8px;
+	margin: 12px 0;
+}
+.app-list-toolbar select,
+.app-list-toolbar input {
+	padding: 6px 10px;
+	border: 1px solid #cfc8b8;
+	border-radius: 6px;
+	background: #fff;
+}
+
+/* App list rows */
+.app-list {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	background: #e3ddcf;
+	border-radius: 8px;
+	overflow: hidden;
+}
+.app-row {
+	display: grid;
+	grid-template-columns: 2fr 1.5fr 1fr 1fr 1.5fr;
+	gap: 12px;
+	padding: 12px;
+	background: #fff;
+}
+.app-row .name strong { display: block; }
+.app-row .name small { color: #6e6960; font-size: 12px; }
+
+/* Detail tabs */
+.detail-tabs {
+	display: flex;
+	gap: 4px;
+	border-bottom: 1px solid #e3ddcf;
+	margin: 12px 0;
+}
+.detail-tabs button {
+	background: none;
+	border: 0;
+	padding: 8px 16px;
+	cursor: pointer;
+	color: #6e6960;
+	border-bottom: 2px solid transparent;
+}
+.detail-tabs button[aria-selected="true"] {
+	color: #1c1b19;
+	border-bottom-color: #1c1b19;
+}
+
+.panel {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.card {
+	background: #fff;
+	border: 1px solid #e3ddcf;
+	border-radius: 8px;
+	padding: 16px;
+}
+.card h3 { margin-top: 0; }
+.card table { width: 100%; border-collapse: collapse; }
+.card table td { padding: 6px 8px; border-bottom: 1px solid #f1ece2; }
+.card table td:first-child { color: #6e6960; width: 30%; }
+
+.form-row {
+	display: flex;
+	gap: 8px;
+	margin: 8px 0;
+}
+.form-row input,
+.form-row textarea {
+	flex: 1;
+	padding: 6px 10px;
+	border: 1px solid #cfc8b8;
+	border-radius: 6px;
+	font-family: inherit;
+}
+.pem-textarea { font-family: ui-monospace, monospace; min-height: 80px; }
+
+.banner {
+	padding: 12px;
+	border-radius: 6px;
+	margin: 8px 0;
+}
+.banner.error { background: #fce8e8; color: #8a1c1c; border: 1px solid #e2a4a4; }
+.banner.warning { background: #fff8e7; color: #7a5c1a; border: 1px solid #e3c97a; }
+.card.empty { text-align: center; color: #6e6960; }
+.card.error { background: #fce8e8; border-color: #e2a4a4; color: #8a1c1c; }
+.card.error button { margin-top: 8px; }
+
+.version-table,
+.key-table,
+.audit-table {
+	width: 100%;
+	border-collapse: collapse;
+	background: #fff;
+	border: 1px solid #e3ddcf;
+	border-radius: 8px;
+	overflow: hidden;
+}
+.version-table th,
+.version-table td,
+.key-table th,
+.key-table td,
+.audit-table th,
+.audit-table td {
+	padding: 8px 12px;
+	text-align: left;
+	border-bottom: 1px solid #f1ece2;
+}
+.version-table tr.current { background: #fff8e7; }
+.version-table th,
+.audit-table th,
+.key-table th { background: #f1ece2; }
+
+.badge {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 4px;
+	font-size: 12px;
+	background: #e3ddcf;
+	color: #1c1b19;
+}
+.badge.status-active { background: #d6efd6; color: #1a4d1a; }
+.badge.status-draft { background: #e3ddcf; color: #6e6960; }
+.badge.status-suspended { background: #ffe0b3; color: #7a4d1a; }
+.badge.status-archived { background: #ddd; color: #555; }
+.badge.status-ready { background: #d6efd6; color: #1a4d1a; }
+.badge.status-rejected { background: #fce8e8; color: #8a1c1c; }
+.badge.status-retired { background: #ddd; color: #555; }
+.badge.status-active { background: #d6efd6; color: #1a4d1a; }
+.badge.status-revoked { background: #ddd; color: #555; }
+.badge.status-retiring { background: #ffe0b3; color: #7a4d1a; }
+
+.panel.danger { border: 1px solid #e2a4a4; padding: 16px; border-radius: 8px; background: #fff8f8; }
+.panel.danger button.danger { background: #8a1c1c; color: #fff; padding: 8px 16px; border-radius: 6px; border: 0; cursor: pointer; }
+.panel.danger button.danger:hover { background: #6e1717; }
+.panel.danger button.danger:disabled { background: #aaa; cursor: not-allowed; }
+
+/* Publish drawer */
+.drawer-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.4);
+	z-index: 100;
+	display: flex;
+	justify-content: center;
+	align-items: flex-start;
+	padding-top: 80px;
+}
+.drawer {
+	background: #fff;
+	border-radius: 8px;
+	padding: 24px;
+	width: min(640px, 90vw);
+	max-height: 80vh;
+	overflow-y: auto;
+	box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+.drawer h2 { margin-top: 0; }
+.drawer-subtitle { color: #6e6960; font-size: 13px; }
+.drawer-step { margin: 16px 0; }
+.drawer-step h3 { margin-top: 0; }
+.drawer-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 16px;
+	justify-content: flex-end;
+}
+.drawer-actions button.primary { background: #1c1b19; color: #fff; padding: 8px 16px; border-radius: 6px; border: 0; cursor: pointer; }
+.drawer-actions button.primary:disabled { background: #aaa; }
+
+.app-select-list,
+.revision-select-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 320px;
+	overflow-y: auto;
+	border: 1px solid #e3ddcf;
+	border-radius: 6px;
+	padding: 8px;
+	margin: 8px 0;
+}
+.app-select-row,
+.revision-select-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+.app-select-row:hover,
+.revision-select-row:hover { background: #f7f4ee; }
+.app-select-row span,
+.revision-select-row span {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.app-select-row small,
+.revision-select-row small { color: #6e6960; font-size: 12px; }
+
+.diff-summary {
+	background: #f7f4ee;
+	border: 1px solid #e3ddcf;
+	border-radius: 6px;
+	padding: 12px;
+}
+.diff-summary dl { display: grid; grid-template-columns: 100px 1fr; gap: 8px; margin: 0; }
+.diff-summary dt { color: #6e6960; }
+.diff-summary dd { margin: 0; }

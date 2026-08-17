@@ -125,7 +125,13 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 		try {
 			// TASK-035 脱敏：把本次输入的匿名身份/Launch Token 注册为敏感值，
 			// 若误被记录，日志层会打码（这些值是本会话可复现的稳定标识或一次性凭据）。
-			options.secrets?.register(parsed.mode === "anonymous" ? parsed.anonymousVisitorId : parsed.launchToken);
+			options.secrets?.register(
+				parsed.mode === "anonymous"
+					? parsed.anonymousVisitorId
+					: parsed.mode === "preview"
+						? parsed.ticket
+						: parsed.launchToken,
+			);
 			const result =
 				parsed.mode === "anonymous"
 					? await options.service.exchangeAnonymous({
@@ -133,11 +139,17 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 							anonymousVisitorId: parsed.anonymousVisitorId,
 							origin: request.headers.origin,
 						})
-					: await options.service.exchangeSignedUser({
-							publicAppId,
-							launchToken: parsed.launchToken,
-							origin: request.headers.origin,
-						});
+					: parsed.mode === "preview"
+						? await options.service.exchangePreview({
+								publicAppId,
+								ticket: parsed.ticket,
+								origin: request.headers.origin,
+							})
+						: await options.service.exchangeSignedUser({
+								publicAppId,
+								launchToken: parsed.launchToken,
+								origin: request.headers.origin,
+							});
 			if (!result.ok) {
 				recordResult(result.error.code === "RATE_LIMITED" ? "rate_limited" : "denied");
 				jsonBody(
@@ -173,7 +185,8 @@ function requestIp(request: import("node:http").IncomingMessage): string | undef
 
 type ParsedExchangeBody =
 	| { readonly mode: "anonymous"; readonly publicAppId: string; readonly anonymousVisitorId: string }
-	| { readonly mode: "signed_user"; readonly publicAppId: string; readonly launchToken: string };
+	| { readonly mode: "signed_user"; readonly publicAppId: string; readonly launchToken: string }
+	| { readonly mode: "preview"; readonly publicAppId: string; readonly ticket: string };
 
 /** 校验 Exchange 请求体；错误消息绝不回显 visitorId / launchToken 的值。 */
 function parseExchangeBody(body: unknown): ParsedExchangeBody {
@@ -206,5 +219,12 @@ function parseExchangeBody(body: unknown): ParsedExchangeBody {
 		}
 		return { mode: "signed_user", publicAppId, launchToken };
 	}
-	throw new ExchangeHttpValidationError("mode must be 'anonymous' or 'signed_user'");
+	if (mode === "preview") {
+		const ticket = record.ticket;
+		if (typeof ticket !== "string" || ticket === "" || ticket.length > LAUNCH_TOKEN_MAX_CHARS) {
+			throw new ExchangeHttpValidationError("ticket must be a non-empty JWS string");
+		}
+		return { mode: "preview", publicAppId, ticket };
+	}
+	throw new ExchangeHttpValidationError("mode must be 'anonymous', 'preview' or 'signed_user'");
 }

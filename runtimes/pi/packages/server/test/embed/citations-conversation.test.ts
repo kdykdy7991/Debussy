@@ -140,6 +140,7 @@ describe.skipIf(!pgUp)("conversation-scoped citations (TASK-032)", () => {
 			scopes: [],
 			issuedAt: new Date(),
 			expiresAt: new Date(),
+			publishedAppVersionId: newPublishedAppVersionId(),
 		};
 	}
 

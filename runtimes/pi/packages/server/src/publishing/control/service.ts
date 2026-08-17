@@ -29,6 +29,7 @@ import type {
 	AgentDefinitionDetail,
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
+	PreviewTicket,
 	SaveAgentRevisionRequest,
 	SaveAgentRevisionResponse,
 } from "@earendil-works/pi-protocol";
@@ -54,6 +55,7 @@ import {
 	toPublicId,
 } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
+import type { PreviewTicketService } from "../preview-ticket.ts";
 import type {
 	AgentDefinitionRecord,
 	LaunchKeyRecord,
@@ -170,6 +172,8 @@ export interface ControlServiceOptions {
 	readonly catalog: CapabilityCatalog;
 	/** Base URL used to build the embedUrl returned on app creation. */
 	readonly embedBaseUrl: string;
+	/** Preview ticket issuer (WB-005). Required for `createPreviewTicket`. */
+	readonly previewTicketService?: PreviewTicketService;
 }
 
 export type ControlErrorCode =
@@ -186,6 +190,7 @@ export type ControlErrorCode =
 	| "INVALID_LAUNCH_KEY" // launch key material/params fail validation (400)
 	| "KEY_NOT_FOUND" // launch key not visible in the app scope (404)
 	| "KEY_ALREADY_REVOKED" // revoke target is already revoked (409)
+	| "PREVIEW_TICKET_FAILED" // preview ticket creation failed (500)
 	| "CONFLICT"; // unexpected concurrent conflict (409)
 
 export interface ControlServiceError {
@@ -295,11 +300,13 @@ export class ControlService {
 	private readonly repos: PublishingRepositories;
 	private readonly catalog: CapabilityCatalog;
 	private readonly embedBaseUrl: string;
+	private readonly previewTicketService: PreviewTicketService | undefined;
 
 	constructor(options: ControlServiceOptions) {
 		this.repos = options.repositories;
 		this.catalog = options.catalog;
 		this.embedBaseUrl = options.embedBaseUrl.replace(/\/+$/, "");
+		this.previewTicketService = options.previewTicketService;
 	}
 
 	/** Bootstrap the MVP tenant idempotently (spec 33.1). */
@@ -916,6 +923,37 @@ export class ControlService {
 	}
 
 	/** List published apps of the tenant, newest first, for the console. */
+	async getDashboardSummary(input: {
+		readonly tenantId: TenantId;
+	}): Promise<ControlResult<import("@earendil-works/pi-protocol").DashboardSummary>> {
+		const [appCount, userCount, sessionCount, errorCount, pendingRows] = await Promise.all([
+			this.repos.publishedApps.count({ tenantId: input.tenantId }),
+			this.repos.principals.countActive({ tenantId: input.tenantId }),
+			this.repos.conversations.countActive({ tenantId: input.tenantId }),
+			this.repos.events.countErrors({ tenantId: input.tenantId }),
+			this.repos.publishedAppVersions.listPendingByTenant({ tenantId: input.tenantId }),
+		]);
+		return {
+			ok: true,
+			data: {
+				appCount,
+				activeUserCount: userCount,
+				activeSessionCount: sessionCount,
+				errorEventCount: errorCount,
+				pendingApps: pendingRows.map((row) => ({
+					appId: toPublicId("PublishedAppId", row.publishedAppId),
+					publicAppId: row.publicAppId,
+					name: row.name,
+					status: row.appStatus as import("@earendil-works/pi-protocol").KnownPublishedAppStatus,
+					pendingVersionNumber: row.versionNumber,
+					pendingVersionStatus:
+						row.versionStatus as import("@earendil-works/pi-protocol").KnownPublishedAppVersionStatus,
+				})),
+			},
+		};
+	}
+
+	/** List published apps of the tenant, newest first, for the console. */
 	async listPublishedApps(input: {
 		readonly tenantId: TenantId;
 		readonly limit: number;
@@ -1131,6 +1169,56 @@ export class ControlService {
 				auditEventId,
 			},
 		};
+	}
+
+	/**
+	 * WB-005: issue a single-use preview ticket bound to a specific non-current
+	 * version of an app. Tickets are short-lived (default 5 min) and never
+	 * logged. The preview is for admins only and never modifies the app's
+	 * `current_version_id` or runtime state.
+	 */
+	async createPreviewTicket(input: {
+		readonly tenantId: TenantId;
+		readonly publishedAppId: PublishedAppId;
+		readonly versionId: PublishedAppVersionId;
+		readonly ttlSeconds?: number;
+		readonly requestId?: RequestId;
+	}): Promise<ControlResult<PreviewTicket>> {
+		if (this.previewTicketService === undefined) {
+			return fail("PREVIEW_TICKET_FAILED", 500, "preview ticket service not configured");
+		}
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+		const version = await this.repos.publishedAppVersions.get(appScope, input.versionId);
+		if (version === undefined) return fail("VERSION_NOT_FOUND", 404, "version not found in app scope");
+		if (version.status !== "ready") {
+			return fail("VERSION_UNAVAILABLE", 409, "preview version must be ready");
+		}
+		try {
+			const ticket = await this.previewTicketService.issue({
+				tenantId: input.tenantId,
+				appId: input.publishedAppId,
+				versionId: input.versionId,
+				publicAppId: app.publicAppId,
+				ttlSeconds: input.ttlSeconds,
+			});
+			await this.writeAudit({
+				tenantId: input.tenantId,
+				action: "app.preview-ticket",
+				resourceType: "published_app_version",
+				resourceId: input.versionId,
+				requestId: input.requestId,
+				metadata: { expiresAt: ticket.expiresAt },
+			});
+			return { ok: true, data: ticket };
+		} catch (error) {
+			return fail(
+				"PREVIEW_TICKET_FAILED",
+				500,
+				`preview ticket creation failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 	}
 
 	private async transitionVersion(

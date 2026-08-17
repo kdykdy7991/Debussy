@@ -160,6 +160,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			createSession: (options) =>
 				backend.createSession({ id: options.id, model: options.model, thinkingLevel: options.thinkingLevel }),
 			citations,
+			previewTickets: controlPlane.previewTicketService,
 			log,
 		});
 	}

@@ -307,6 +307,18 @@ export interface PublishedAppRepository {
 		versionId: PublishedAppVersionId,
 		input: { readonly activate: boolean },
 	): Promise<{ readonly ok: boolean; readonly previousVersionId: PublishedAppVersionId | null }>;
+	/** Count published apps in the tenant (dashboard). */
+	count(scope: TenantScope): Promise<number>;
+}
+
+/** Pending (ready, non-current) version row for dashboard. */
+export interface PendingVersionRow {
+	readonly publishedAppId: PublishedAppId;
+	readonly publicAppId: string;
+	readonly name: string;
+	readonly appStatus: string;
+	readonly versionNumber: number;
+	readonly versionStatus: string;
 }
 
 export interface PublishedAppVersionRepository {
@@ -338,6 +350,8 @@ export interface PublishedAppVersionRepository {
 		status: Exclude<PublishedAppVersionStatus, "validating">,
 		validationErrors: readonly unknown[],
 	): Promise<void>;
+	/** Newest ready non-current version per app in the tenant. */
+	listPendingByTenant(scope: TenantScope): Promise<PendingVersionRow[]>;
 }
 
 export interface PrincipalRepository {
@@ -359,6 +373,8 @@ export interface PrincipalRepository {
 	): Promise<PrincipalRecord | undefined>;
 	/** Touch `last_seen_at` (scoped). */
 	touch(scope: AppScope, principalId: PrincipalId): Promise<void>;
+	/** Count active principals in the tenant (dashboard). */
+	countActive(scope: TenantScope): Promise<number>;
 }
 
 export interface ConversationRepository {
@@ -379,6 +395,8 @@ export interface ConversationRepository {
 	 * `undefined` when the conversation is missing/out of scope (spec 26.3).
 	 */
 	nextEventSequence(scope: OwnerScope, conversationId: ConversationId): Promise<number | undefined>;
+	/** Count active conversations in the tenant (dashboard, across all apps/principals). */
+	countActive(scope: TenantScope): Promise<number>;
 }
 
 /** Expired/aged-out attachment selection for the background sweep (TASK-030). */
@@ -588,6 +606,8 @@ export interface ConversationEventRepository {
 		conversationId: ConversationId,
 		params: ConversationEventListParams,
 	): Promise<ConversationEventRecord[]>;
+	/** Count error-type events in the tenant (dashboard). */
+	countErrors(scope: TenantScope): Promise<number>;
 }
 
 /** Scope for idempotency records: the table keys on (tenant, principal). */

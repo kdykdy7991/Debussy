@@ -289,6 +289,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 			scopes: [],
 			issuedAt: new Date(),
 			expiresAt: new Date(Date.now() + 600_000),
+			publishedAppVersionId: newPublishedAppVersionId(),
 		};
 
 		const upgrade = createRealtimeUpgradeHandler({
@@ -332,6 +333,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 				type: "turn.start",
 				requestId: "r1",
 				conversationId: `conv_${conversationId}`,
+				publishedAppVersionId: newPublishedAppVersionId(),
 				message: { text: "hi", attachmentIds: [] },
 				lastSeenSequence: 0,
 			}),
@@ -365,6 +367,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 					type: "turn.start",
 					requestId: "r-cite",
 					conversationId: `conv_${conversationId}`,
+					publishedAppVersionId: newPublishedAppVersionId(),
 					message: { text: "cite me", attachmentIds: [] },
 					lastSeenSequence: 0,
 				}),
@@ -395,6 +398,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 					type: "turn.start",
 					requestId: "r2",
 					conversationId: `conv_${conversationId}`,
+					publishedAppVersionId: newPublishedAppVersionId(),
 					message: { text: "one", attachmentIds: [] },
 					lastSeenSequence: 0,
 				}),
@@ -404,6 +408,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 					type: "turn.start",
 					requestId: "r3",
 					conversationId: `conv_${conversationId}`,
+					publishedAppVersionId: newPublishedAppVersionId(),
 					message: { text: "two", attachmentIds: [] },
 					lastSeenSequence: 0,
 				}),
@@ -427,6 +432,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 			JSON.stringify({
 				type: "conversation.subscribe",
 				conversationId: "conv_00000000-0000-7000-8000-000000000000",
+				publishedAppVersionId: newPublishedAppVersionId(),
 			}),
 		);
 		const closed = await closeInfo;
@@ -462,6 +468,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 				type: "turn.start",
 				requestId: "r-catchup",
 				conversationId: `conv_${conversationId}`,
+				publishedAppVersionId: newPublishedAppVersionId(),
 				message: { text: "earlier", attachmentIds: [] },
 				lastSeenSequence: 0,
 			}),
@@ -486,6 +493,7 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 			JSON.stringify({
 				type: "conversation.sync",
 				conversationId: `conv_${conversationId}`,
+				publishedAppVersionId: newPublishedAppVersionId(),
 				lastSeenSequence: earlier.sequence,
 			}),
 		);

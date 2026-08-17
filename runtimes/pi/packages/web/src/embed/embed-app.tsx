@@ -10,10 +10,16 @@ import type { WebSocketLike } from "./realtime-transport.ts";
 import type { BootstrapResponse, ChatMessage } from "./types.ts";
 
 type Phase = "loading" | "error" | "ready";
-type EmbedMode = "anonymous" | "signed_user";
+type EmbedMode = "anonymous" | "signed_user" | "preview";
 
 export interface EmbedAppProps {
 	readonly publicAppId: string;
+	/**
+	 * WB-005: when set, runs the app in preview mode. The ticket is exchanged
+	 * for a short-lived token pinned to a specific (admin-chosen) version;
+	 * no postMessage channel is opened (preview is admin-only, not iframe).
+	 */
+	readonly previewTicket?: string;
 	/** 测试注入。 */
 	readonly api?: EmbedApi;
 	readonly storage?: Storage;
@@ -70,15 +76,20 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			const state =
 				mode === "signed_user"
 					? await controllers.auth.signInWithLaunchToken(props.publicAppId, launchToken!)
-					: await controllers.auth.signIn(props.publicAppId);
+					: mode === "preview"
+						? await controllers.auth.signInWithPreviewTicket(props.publicAppId, props.previewTicket ?? "")
+						: await controllers.auth.signIn(props.publicAppId);
 			// PD-18：launchToken 即用即弃（此处不留存任何引用）。
 			await controllers.chat.initialize(state.features);
 			setChatState(controllers.chat.getState());
 			setPhase("ready");
-			channel?.send({ type: "ready", publicAppId: props.publicAppId, mode });
+			if (mode !== "preview") {
+				// WB-005: preview never postMessages the host (admin-only tab).
+				channel?.send({ type: "ready", publicAppId: props.publicAppId, mode });
+			}
 			focusComposer();
 		},
-		[focusComposer, props.publicAppId],
+		[focusComposer, props.publicAppId, props.previewTicket],
 	);
 
 	const handleLogout = useCallback(
@@ -126,6 +137,14 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		let mode: EmbedMode = "anonymous";
 
 		async function boot(): Promise<void> {
+			if (props.previewTicket !== undefined) {
+				// WB-005: preview mode skips postMessage channel (no host).
+				mode = "preview";
+				const summary = await api.bootstrap(props.publicAppId);
+				setBootstrap(summary);
+				await signInAndLoad("preview");
+				return;
+			}
 			const summary = await api.bootstrap(props.publicAppId);
 			if (summary.status !== "active") throw new EmbedApiError("APP_SUSPENDED", "应用当前不可用", false);
 			setBootstrap(summary);
@@ -175,6 +194,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		handleLogout,
 		props.api,
 		props.publicAppId,
+		props.previewTicket,
 		props.storage,
 		props.wsFactory,
 		reportHeight,
@@ -246,76 +266,83 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const errorBanner = chatState.error;
 	const activeConversationId = chatState.activeId;
 	return (
-		<EmbedShell
-			title={summary.name}
-			primaryColor={summary.theme.primaryColor}
-			onSend={handleSend}
-			sending={chatState.sending}
-			connectionStatus={chatState.connectionStatus}
-			uploadsEnabled={chatState.uploadsEnabled}
-			uploading={chatState.uploading}
-			onUpload={handleUpload}
-			inputRef={inputRef}
-			attachments={
-				chatState.attachments.length > 0 ? (
-					<ul className="embed-attachments" aria-label="已上传附件">
-						{chatState.attachments.map((attachment) => (
-							<li key={attachment.attachmentId} className="embed-attachment">
-								<span className="embed-attachment-name">{attachment.filename}</span>
-								<button
-									type="button"
-									className="embed-attachment-remove"
-									aria-label={`移除附件：${attachment.filename}`}
-									onClick={() => void controllersRef.current?.chat.removeAttachment(attachment.attachmentId)}
-								>
-									×
-								</button>
-							</li>
+		<>
+			{props.previewTicket !== undefined && (
+				<p className="embed-preview-banner">预览模式：此对话固定使用待上线版本，不影响线上用户。</p>
+			)}
+			<EmbedShell
+				title={summary.name}
+				primaryColor={summary.theme.primaryColor}
+				onSend={handleSend}
+				sending={chatState.sending}
+				connectionStatus={chatState.connectionStatus}
+				uploadsEnabled={chatState.uploadsEnabled}
+				uploading={chatState.uploading}
+				onUpload={handleUpload}
+				inputRef={inputRef}
+				attachments={
+					chatState.attachments.length > 0 ? (
+						<ul className="embed-attachments" aria-label="已上传附件">
+							{chatState.attachments.map((attachment) => (
+								<li key={attachment.attachmentId} className="embed-attachment">
+									<span className="embed-attachment-name">{attachment.filename}</span>
+									<button
+										type="button"
+										className="embed-attachment-remove"
+										aria-label={`移除附件：${attachment.filename}`}
+										onClick={() =>
+											void controllersRef.current?.chat.removeAttachment(attachment.attachmentId)
+										}
+									>
+										×
+									</button>
+								</li>
+							))}
+						</ul>
+					) : undefined
+				}
+				headerExtra={
+					<button
+						type="button"
+						className="embed-button embed-list-toggle"
+						aria-expanded={showList}
+						onClick={() => setShowList((open) => !open)}
+					>
+						{showList ? "关闭列表" : "会话列表"}
+					</button>
+				}
+			>
+				<div className={`embed-layout${showList ? " is-list-open" : ""}`}>
+					<ConversationList
+						items={chatState.conversations}
+						activeId={activeConversationId}
+						onSelect={handleSelect}
+						onNew={handleNew}
+						onArchive={(id) => {
+							if (id === activeConversationId) {
+								handleArchive();
+							} else {
+								// 归档非当前会话：先切换过去再归档。
+								void controllersRef.current?.chat.openConversation(id).then(() => handleArchive());
+							}
+						}}
+					/>
+					<main className="embed-chat" aria-live="polite">
+						{errorBanner !== null && (
+							<p className="embed-inline-error" role="alert">
+								{errorBanner.message}
+							</p>
+						)}
+						{chatState.messages.length === 0 && (
+							<p className="embed-empty">{summary.theme.welcomeMessage ?? "开始对话吧"}</p>
+						)}
+						{chatState.messages.map((message) => (
+							<MessageBubble key={message.id ?? `${message.role}-${message.sequence}`} message={message} />
 						))}
-					</ul>
-				) : undefined
-			}
-			headerExtra={
-				<button
-					type="button"
-					className="embed-button embed-list-toggle"
-					aria-expanded={showList}
-					onClick={() => setShowList((open) => !open)}
-				>
-					{showList ? "关闭列表" : "会话列表"}
-				</button>
-			}
-		>
-			<div className={`embed-layout${showList ? " is-list-open" : ""}`}>
-				<ConversationList
-					items={chatState.conversations}
-					activeId={activeConversationId}
-					onSelect={handleSelect}
-					onNew={handleNew}
-					onArchive={(id) => {
-						if (id === activeConversationId) {
-							handleArchive();
-						} else {
-							// 归档非当前会话：先切换过去再归档。
-							void controllersRef.current?.chat.openConversation(id).then(() => handleArchive());
-						}
-					}}
-				/>
-				<main className="embed-chat" aria-live="polite">
-					{errorBanner !== null && (
-						<p className="embed-inline-error" role="alert">
-							{errorBanner.message}
-						</p>
-					)}
-					{chatState.messages.length === 0 && (
-						<p className="embed-empty">{summary.theme.welcomeMessage ?? "开始对话吧"}</p>
-					)}
-					{chatState.messages.map((message) => (
-						<MessageBubble key={message.id ?? `${message.role}-${message.sequence}`} message={message} />
-					))}
-				</main>
-			</div>
-		</EmbedShell>
+					</main>
+				</div>
+			</EmbedShell>
+		</>
 	);
 }
 

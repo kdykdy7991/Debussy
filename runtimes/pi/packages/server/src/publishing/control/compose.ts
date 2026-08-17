@@ -14,6 +14,7 @@ import type { PublishingRepositories } from "../../publishing/repositories.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import type { PublishingConfig } from "../config.ts";
 import { parseIdOrThrow } from "../domain/ids.ts";
+import { PreviewTicketService } from "../preview-ticket.ts";
 import { buildCapabilityCatalog } from "./catalog.ts";
 import { createControlHttpHandler } from "./http.ts";
 import { ControlService } from "./service.ts";
@@ -23,10 +24,12 @@ import { readTokenFile } from "./token.ts";
 export interface ControlPlaneHandle {
 	readonly handler: HttpRequestHandler;
 	readonly controlService: ControlService;
-	/** 共享 Postgres 连接；embed 数据面组合复用（避免二次建连）。 */
+	/** Shared Postgres connection (also reused by embed plane). */
 	readonly client: PostgresClient;
-	/** 共享作用域仓库集合；embed 数据面组合复用。 */
+	/** Shared scoped repositories (also reused by embed plane). */
 	readonly repositories: PublishingRepositories;
+	/** Preview ticket service (WB-005), shared so embed exchange can consume tickets. */
+	readonly previewTicketService: PreviewTicketService;
 	close(): Promise<void>;
 }
 
@@ -79,10 +82,15 @@ export async function composeControlPlane(options: {
 	// MVP: the publishable whitelist is the running agent's own capabilities.
 	const catalog = buildCapabilityCatalog(options.services);
 	const source = createServerAgentSource({ services: options.services, catalog });
+	const previewTicketService = new PreviewTicketService({
+		adminToken,
+		embedBaseUrl: publishing.embedBaseUrl,
+	});
 	const controlService = new ControlService({
 		repositories,
 		catalog,
 		embedBaseUrl: publishing.embedBaseUrl,
+		previewTicketService,
 	});
 
 	const bootstrapped = await controlService.bootstrapTenant({
@@ -111,6 +119,7 @@ export async function composeControlPlane(options: {
 		controlService,
 		client,
 		repositories,
+		previewTicketService,
 		close: () => client.close(),
 	};
 }

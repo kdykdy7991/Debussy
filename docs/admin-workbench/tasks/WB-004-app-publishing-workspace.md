@@ -1,6 +1,6 @@
 # WB-004：应用与发布工作区
 
-状态：Blocked by WB-002/WB-003
+状态：Complete（handoff 见 `handoffs/WB-004-app-publishing-workspace.md`）
 
 ## 目标
 

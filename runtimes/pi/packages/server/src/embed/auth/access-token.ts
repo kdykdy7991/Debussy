@@ -14,7 +14,7 @@
 import { readFile } from "node:fs/promises";
 import { errors, type GenerateKeyPairResult, importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
 import { type EmbedError, tokenExpired, tokenInvalid } from "../../publishing/domain/errors.ts";
-import type { PrincipalId, PublishedAppId, TenantId } from "../../publishing/domain/ids.ts";
+import type { PrincipalId, PublishedAppId, PublishedAppVersionId, TenantId } from "../../publishing/domain/ids.ts";
 import { newRequestId } from "../../publishing/domain/ids.ts";
 import type { PrincipalType } from "../../publishing/domain/states.ts";
 
@@ -41,7 +41,7 @@ export interface AccessTokenClaims {
 	readonly principalType: PrincipalType;
 	readonly scopes: readonly string[];
 	/** Current published-app-version id at issuance (informational, 7.3). */
-	readonly publishedAppVersionId: string | null;
+	readonly publishedAppVersionId: PublishedAppVersionId | null;
 	readonly issuedAt: Date;
 	readonly expiresAt: Date;
 }
@@ -168,7 +168,7 @@ function decodeClaims(payload: Record<string, unknown>): AccessTokenClaims | nul
 		principalId: principalId as PrincipalId,
 		principalType: principalType as PrincipalType,
 		scopes: scopes as readonly string[],
-		publishedAppVersionId: publishedAppVersionId === null ? null : (publishedAppVersionId as string),
+		publishedAppVersionId: publishedAppVersionId === null ? null : (publishedAppVersionId as PublishedAppVersionId),
 		issuedAt: new Date(issuedAt * 1000),
 		expiresAt: new Date(expiresAt * 1000),
 	};

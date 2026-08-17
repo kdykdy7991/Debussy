@@ -13,7 +13,12 @@ import { createTtsHttpHandler } from "../../src/embed/tts/http.ts";
 import type { TtsAudioResult, TtsProvider } from "../../src/embed/tts/provider.ts";
 import { EmbedTtsQueue } from "../../src/embed/tts/queue.ts";
 import { tokenInvalid } from "../../src/publishing/domain/errors.ts";
-import { newTenantId, type PrincipalId, type PublishedAppId } from "../../src/publishing/domain/ids.ts";
+import {
+	newPublishedAppVersionId,
+	newTenantId,
+	type PrincipalId,
+	type PublishedAppId,
+} from "../../src/publishing/domain/ids.ts";
 
 const tenantId = newTenantId();
 const publishedAppId = "app-00000000-0000-7000-8000-000000000001" as PublishedAppId;
@@ -26,6 +31,7 @@ const principal: EmbedAuthContext = {
 	principalId,
 	principalType: "anonymous_visitor",
 	scopes: [],
+	publishedAppVersionId: newPublishedAppVersionId(),
 	issuedAt: new Date(),
 	expiresAt: new Date(Date.now() + 60_000),
 };

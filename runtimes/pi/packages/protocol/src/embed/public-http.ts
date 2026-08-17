@@ -6,10 +6,16 @@
  * Realtime 接线时一并收敛；Web 端已改为从本模块 re-export。
  */
 
-/** `POST /api/embed/v1/exchange`（spec 27.4）：匿名或 signed_user。 */
+/** `POST /api/embed/v1/exchange`（spec 27.4 / WB-005）：匿名 / signed_user / preview。 */
 export type ExchangeRequest =
 	| { readonly publicAppId: string; readonly mode: "anonymous"; readonly anonymousVisitorId: string }
-	| { readonly publicAppId: string; readonly mode: "signed_user"; readonly launchToken: string };
+	| { readonly publicAppId: string; readonly mode: "signed_user"; readonly launchToken: string }
+	| { readonly publicAppId: string; readonly mode: "preview"; readonly ticket: string };
+
+/** Preview exchange response (WB-005). */
+export interface PreviewExchangeResponse extends ExchangeResponse {
+	readonly pinnedVersionId: string;
+}
 
 export interface ExchangeResponse {
 	readonly accessToken: string;

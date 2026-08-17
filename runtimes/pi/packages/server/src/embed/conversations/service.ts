@@ -90,7 +90,13 @@ export class ConversationService {
 		this.citations = options.citations;
 	}
 
-	/** 创建 Conversation 并固定当前版本（spec 27.5）。 */
+	/**
+	 * 创建 Conversation 并固定到 Token claim 里的版本（spec 27.5 / WB-005）。
+	 * 对于普通 principal, `principal.publishedAppVersionId` 等于
+	 * `app.currentVersionId`（签 token 时填的）；对于
+	 * `platform_admin_preview` principal, 它是 admin 想要预览的待上线版本。
+	 * 这样 preview 会话**绝不会**跟 current 版本混用。
+	 */
 	async createConversation(input: CreateConversationInput): Promise<ConversationResult<ConversationRecord>> {
 		const scope = ownerScope(input.principal);
 		const app = await this.repos.publishedApps.get(
@@ -99,8 +105,8 @@ export class ConversationService {
 		);
 		if (app === undefined) return { ok: false, error: appNotFound() };
 		if (app.status !== "active") return { ok: false, error: appSuspended("App is not active") };
-		if (app.currentVersionId === null) return { ok: false, error: versionUnavailable() };
-		const version = await this.repos.publishedAppVersions.get(scope, app.currentVersionId);
+		const pinnedVersionId = input.principal.publishedAppVersionId;
+		const version = await this.repos.publishedAppVersions.get(scope, pinnedVersionId);
 		if (version === undefined || version.status !== "ready") return { ok: false, error: versionUnavailable() };
 
 		const now = new Date();
@@ -108,7 +114,7 @@ export class ConversationService {
 			conversationId: newConversationId(),
 			tenantId: input.principal.tenantId,
 			publishedAppId: input.principal.publishedAppId,
-			publishedAppVersionId: app.currentVersionId,
+			publishedAppVersionId: pinnedVersionId,
 			ownerPrincipalId: input.principal.principalId,
 			title: input.title,
 			status: "active",

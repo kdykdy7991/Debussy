@@ -508,6 +508,7 @@ describe.skipIf(!pgReady)("embed attachment quota and ownership", () => {
 			scopes: [],
 			issuedAt: new Date(),
 			expiresAt: new Date(),
+			publishedAppVersionId: newPublishedAppVersionId(),
 		};
 		const before = await service.activeConversationBytes(ctx, conversation3);
 		expect(before).toBe(3000);

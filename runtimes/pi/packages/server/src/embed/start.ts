@@ -23,6 +23,7 @@ import { RedisClient } from "../persistence/redis/client.ts";
 import { createRedisNonceStore } from "../persistence/redis/nonce-store.ts";
 import { createRedisTicketStore } from "../persistence/redis/ticket-store.ts";
 import type { PublishingConfig } from "../publishing/config.ts";
+import type { PreviewTicketService } from "../publishing/preview-ticket.ts";
 import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/repositories.ts";
 import { parseRuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import { createConversationRuntimeManager } from "../runtime/conversation-runtime-manager.ts";
@@ -73,6 +74,8 @@ export interface EmbedPlaneOptions {
 	readonly secrets?: SecretRegistry;
 	/** 共享进程级 TTS Provider（TASK-036）；未提供 = speech 关闭。 */
 	readonly ttsProvider?: TtsProvider;
+	/** Preview ticket service (WB-005). */
+	readonly previewTickets?: PreviewTicketService;
 	readonly log?: (message: string) => void;
 }
 
@@ -170,6 +173,8 @@ export interface EmbedServicesOptions {
 	readonly ttsProvider?: TtsProvider;
 	/** TTS 队列有界容量/超时（TASK-036；缺省 64 / 30s）。 */
 	readonly tts?: { readonly maxPending?: number; readonly timeoutMs?: number };
+	/** Preview ticket service (WB-005). 未提供 = preview exchange 显式 403。 */
+	readonly previewTickets?: PreviewTicketService;
 }
 
 export interface EmbedServicesHandle {
@@ -210,6 +215,7 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 		accessTokens: options.accessTokens,
 		subjectPepper: options.subjectPepper,
 		launchTokens: options.launchTokens,
+		...(options.previewTickets !== undefined ? { previewTickets: options.previewTickets } : {}),
 	});
 	// TASK-032：会话级引用能力（进程级 CitationService + scope 适配器）。
 	// 未提供 CitationService 时引用链路整体关闭（upload 仍可用）。
@@ -369,6 +375,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		...(objectStore !== undefined && attachmentBucket !== undefined ? { objectStore, attachmentBucket } : {}),
 		uploadQuota: options.publishing.uploadQuota,
 		...(options.citations !== undefined ? { citations: options.citations } : {}),
+		...(options.previewTickets !== undefined ? { previewTickets: options.previewTickets } : {}),
 	});
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。
@@ -403,6 +410,10 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		wsTickets,
 		limits,
 		createSession: ({ ws, request, claims }) => {
+			if (claims.publishedAppVersionId === null) {
+				ws.close(1008, "Missing published app version");
+				return;
+			}
 			const principal: EmbedAuthContext = {
 				tokenId: claims.tokenId,
 				tenantId: claims.tenantId,
@@ -412,6 +423,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 				scopes: [],
 				issuedAt: new Date(),
 				expiresAt: new Date(),
+				publishedAppVersionId: claims.publishedAppVersionId,
 			};
 			realtimeConnections.add(1);
 			new EmbedRealtimeConnection({

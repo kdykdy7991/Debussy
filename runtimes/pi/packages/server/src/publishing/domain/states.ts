@@ -19,7 +19,12 @@ export type AccessMode = "anonymous" | "signed_user" | "mixed";
  */
 export type PublishedAppVersionStatus = "validating" | "ready" | "rejected" | "retired";
 
-export type PrincipalType = "platform_user" | "external_user" | "anonymous_visitor" | "service";
+export type PrincipalType =
+	| "platform_user"
+	| "external_user"
+	| "anonymous_visitor"
+	| "service"
+	| "platform_admin_preview";
 
 export type PrincipalStatus = "active" | "blocked" | "deleted";
 
@@ -50,6 +55,7 @@ export const PRINCIPAL_TYPE_VALUES: readonly PrincipalType[] = [
 	"external_user",
 	"anonymous_visitor",
 	"service",
+	"platform_admin_preview",
 ];
 
 export const PRINCIPAL_STATUS_VALUES: readonly PrincipalStatus[] = ["active", "blocked", "deleted"];

@@ -12,7 +12,7 @@
  */
 import type { IncomingMessage } from "node:http";
 import { type EmbedError, tokenInvalid } from "../../publishing/domain/errors.ts";
-import type { PrincipalId, PublishedAppId, TenantId } from "../../publishing/domain/ids.ts";
+import type { PrincipalId, PublishedAppId, PublishedAppVersionId, TenantId } from "../../publishing/domain/ids.ts";
 import type { PrincipalType } from "../../publishing/domain/states.ts";
 import type { AccessTokenService } from "../auth/access-token.ts";
 
@@ -26,6 +26,12 @@ export interface EmbedAuthContext {
 	readonly scopes: readonly string[];
 	readonly issuedAt: Date;
 	readonly expiresAt: Date;
+	/**
+	 * Pinned `PublishedAppVersionId` (WB-005). Always present; equals
+	 * `app.currentVersionId` for non-preview principals. For
+	 * `platform_admin_preview` principals this is the non-current version.
+	 */
+	readonly publishedAppVersionId: PublishedAppVersionId;
 }
 
 export interface EmbedAuthenticator {
@@ -44,7 +50,11 @@ export function createEmbedAuthenticator(options: { readonly accessTokens: Acces
 			const verified = await options.accessTokens.verify(bearer);
 			if (!verified.ok) return verified.error;
 			const claims = verified.claims;
-			return {
+			if (claims.publishedAppVersionId === null) {
+				return tokenInvalid("Token missing publishedAppVersionId");
+			}
+			const pinnedVersionId: PublishedAppVersionId = claims.publishedAppVersionId;
+			const ctx: EmbedAuthContext = {
 				tokenId: claims.tokenId,
 				tenantId: claims.tenantId,
 				publishedAppId: claims.publishedAppId,
@@ -53,7 +63,9 @@ export function createEmbedAuthenticator(options: { readonly accessTokens: Acces
 				scopes: claims.scopes,
 				issuedAt: claims.issuedAt,
 				expiresAt: claims.expiresAt,
+				publishedAppVersionId: pinnedVersionId,
 			};
+			return ctx;
 		},
 	};
 }

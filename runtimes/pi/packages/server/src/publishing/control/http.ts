@@ -22,7 +22,7 @@ import type { IncomingMessage } from "node:http";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
-import type { AgentDefinitionId, PrincipalId, PublishedAppId, TenantId } from "../domain/ids.ts";
+import type { AgentDefinitionId, PrincipalId, PublishedAppId, RequestId, TenantId } from "../domain/ids.ts";
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
 import type { IdempotencyScope, PublishedAppRecord, PublishingRepositories } from "../repositories.ts";
@@ -430,6 +430,48 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				});
 				if (!listed.ok) return serviceError(listed.error, requestId);
 				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		// ---- Dashboard summary (WB-004 / SPEC §5.3). ----
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/dashboard\/summary$/,
+			operation: "dashboard.summary",
+			handler: async ({ requestId }) => {
+				const result = await service.getDashboardSummary({ tenantId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		// ---- Preview ticket (WB-005 / SPEC §6.3). ----
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/preview-ticket$/,
+			operation: "published-apps.preview-ticket",
+			handler: async ({ requestId, body, params }) => {
+				const appId = parseAppId(params[0]);
+				if (appId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				if (body === undefined || typeof body !== "object" || body === null) {
+					return badRequest("body must be a JSON object", requestId);
+				}
+				const draft = body as Record<string, unknown>;
+				const versionIdRaw = draft.versionId;
+				if (typeof versionIdRaw !== "string" || versionIdRaw === "") {
+					return badRequest("versionId must be a non-empty string", requestId);
+				}
+				const versionId = fromPublicId("PublishedAppVersionId", versionIdRaw);
+				if (versionId === null) return badRequest("versionId must be a bare pav_<uuid> id", requestId);
+				const ttlSeconds =
+					typeof draft.ttlSeconds === "number" && Number.isFinite(draft.ttlSeconds) ? draft.ttlSeconds : undefined;
+				const result = await service.createPreviewTicket({
+					tenantId,
+					publishedAppId: appId,
+					versionId,
+					ttlSeconds,
+					requestId: requestId as RequestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
 			},
 		},
 		// ---- AgentDefinition detail (WB-003 / SPEC §5.2 / §15.1). ----

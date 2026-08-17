@@ -10,6 +10,7 @@ import type {
 	ConversationRecord,
 	ConversationRepository,
 	OwnerScope,
+	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 
@@ -128,6 +129,13 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				scope.principalId,
 			);
 			return rows.length === 1 ? Number(rows[0].last_event_sequence) : undefined;
+		},
+		async countActive(scope: TenantScope) {
+			const rows = await client.run(
+				"select count(*)::int as cnt from conversations where tenant_id = $1 and status = 'active' and deleted_at is null",
+				scope.tenantId,
+			);
+			return Number(rows[0]?.cnt ?? 0);
 		},
 	};
 }

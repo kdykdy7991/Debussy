@@ -22,6 +22,7 @@ import type {
 	ConversationEventRecord,
 	ConversationEventRepository,
 	OwnerScope,
+	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient, SqlParameter } from "../client.ts";
 import { txRows } from "./tx.ts";
@@ -113,6 +114,14 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				limit,
 			);
 			return rows.map((row) => rowToRecord(row));
+		},
+		async countErrors(scope: TenantScope) {
+			const rows = await client.run(
+				`select count(*)::int as cnt from conversation_events
+				 where tenant_id = $1 and event_type in ('turn.failed', 'tool.error')`,
+				scope.tenantId,
+			);
+			return Number(rows[0]?.cnt ?? 0);
 		},
 	};
 }

@@ -1,5 +1,6 @@
 export * from "./admin-workbench.ts";
 export * from "./admin-workbench-agents.ts";
+export * from "./admin-workbench-apps.ts";
 export * from "./cbor/index.ts";
 export * from "./codec.ts";
 export * from "./embed/common.ts";

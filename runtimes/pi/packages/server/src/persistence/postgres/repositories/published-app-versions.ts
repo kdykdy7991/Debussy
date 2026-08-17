@@ -1,10 +1,12 @@
 import type { PublishedAppId, PublishedAppVersionId, TenantId } from "../../../publishing/domain/ids.ts";
 import type {
 	AppScope,
+	PendingVersionRow,
 	PublishedAppVersionListParams,
 	PublishedAppVersionListRow,
 	PublishedAppVersionRecord,
 	PublishedAppVersionRepository,
+	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { txRows } from "./tx.ts";
@@ -154,6 +156,27 @@ export function createPublishedAppVersionRepository(client: PostgresClient): Pub
 				limit + 1,
 			);
 			return rows.map((row) => toListRow(rowToRecord(row), Boolean(row.is_current)));
+		},
+		async listPendingByTenant(scope: TenantScope): Promise<PendingVersionRow[]> {
+			const rows = await client.run(
+				`select distinct on (a.id)
+				   a.id as published_app_id, a.public_app_id, a.name, a.status as app_status,
+				   v.version_number, v.status as version_status
+				 from published_app_versions v
+				 join published_apps a on a.id = v.published_app_id and a.tenant_id = v.tenant_id
+				 where a.tenant_id = $1 and v.status = 'ready'
+				   and a.current_version_id is distinct from v.id
+				 order by a.id, v.version_number desc`,
+				scope.tenantId,
+			);
+			return rows.map((row) => ({
+				publishedAppId: row.published_app_id as PublishedAppId,
+				publicAppId: String(row.public_app_id),
+				name: String(row.name),
+				appStatus: String(row.app_status),
+				versionNumber: Number(row.version_number),
+				versionStatus: String(row.version_status),
+			}));
 		},
 	};
 }

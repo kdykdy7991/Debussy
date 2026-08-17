@@ -414,6 +414,7 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 			tokenId: ctx.principal.tokenId,
 			conversationId,
 			origin: ctx.request.headers.origin,
+			publishedAppVersionId: ctx.principal.publishedAppVersionId,
 		});
 		const base = (options.realtimeBaseUrl ?? "").replace(/\/$/, "");
 		jsonBody(ctx.response, 200, {

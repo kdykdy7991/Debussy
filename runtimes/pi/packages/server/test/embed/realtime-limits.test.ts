@@ -22,6 +22,7 @@ import {
 	newConversationId,
 	newPrincipalId,
 	newPublishedAppId,
+	newPublishedAppVersionId,
 	newTenantId,
 	toPublicId,
 } from "../../src/publishing/domain/ids.ts";
@@ -75,6 +76,7 @@ const principal: EmbedAuthContext = {
 	principalId: prnId,
 	principalType: "anonymous_visitor",
 	scopes: [],
+	publishedAppVersionId: newPublishedAppVersionId(),
 	issuedAt: new Date(),
 	expiresAt: new Date(),
 };
@@ -106,6 +108,7 @@ function makeConnection(options: { services?: RealtimeServices; limits: EmbedLim
 		requestOrigin: undefined,
 		claims: {
 			conversationId: convId,
+			publishedAppVersionId: newPublishedAppVersionId(),
 			tenantId,
 			publishedAppId: appId,
 			principalId: prnId,
@@ -126,6 +129,7 @@ function sendTurn(ws: FakeWebSocket): void {
 		JSON.stringify({
 			type: "turn.start",
 			conversationId: publicConvId,
+			publishedAppVersionId: newPublishedAppVersionId(),
 			requestId: "r1",
 			lastSeenSequence: 0,
 			message: { text: "hi", attachmentIds: [] },

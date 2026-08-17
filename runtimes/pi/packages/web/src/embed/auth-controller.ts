@@ -26,7 +26,7 @@ export class EmbedAuthController {
 	private token: string | null = null;
 	private principalId: string | null = null;
 	private expiresAt: string | null = null;
-	private mode: "anonymous" | "signed_user" | null = null;
+	private mode: "anonymous" | "signed_user" | "preview" | null = null;
 	private readonly storage: ReturnType<typeof createVisitorStorage>;
 	private readonly api: EmbedApi;
 
@@ -66,6 +66,22 @@ export class EmbedAuthController {
 	}
 
 	/**
+	 * WB-005: preview exchange. The ticket is a single-use JWS issued by
+	 * Control Service. Tokens are short-lived (≤1h) and pinned to a specific
+	 * non-current version. The preview principal is scoped to one (tenant,
+	 * app) pair so it cannot leak across apps.
+	 */
+	async signInWithPreviewTicket(publicAppId: string, ticket: string): Promise<EmbedAuthState> {
+		const response: ExchangeResponse = await this.api.exchange({
+			publicAppId,
+			mode: "preview",
+			ticket,
+		});
+		this.mode = "preview";
+		return this.accept(response);
+	}
+
+	/**
 	 * TASK-033：Token 刷新。匿名模式用同一 visitorId 重新 Exchange（服务端收敛
 	 * 到同一 Principal，身份稳定）；signed_user 模式 Launch Token 已即用即弃
 	 * （PD-18），无法静默刷新，抛 `AUTH_EXPIRED` 由宿主重新 `init`。
@@ -76,6 +92,9 @@ export class EmbedAuthController {
 		}
 		if (this.mode === "anonymous") {
 			return this.signIn(publicAppId);
+		}
+		if (this.mode === "preview") {
+			throw new EmbedApiError("AUTH_EXPIRED", "预览票已过期，请重新创建预览", false);
 		}
 		throw new EmbedApiError("NOT_SIGNED_IN", "尚未完成身份交换", false);
 	}
