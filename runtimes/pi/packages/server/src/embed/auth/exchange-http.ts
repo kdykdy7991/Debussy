@@ -12,6 +12,9 @@
  * 信封），业务校验全部在 `ExchangeService` 中；Origin 校验复用 TASK-014 的
  * 单一策略函数。错误消息绝不回显 visitorId / launchToken / externalUserId。
  */
+
+import type { SecretRegistry } from "../../logging/redact.ts";
+import type { MetricRegistry } from "../../metrics/index.ts";
 import { parsePublicAppId } from "../../publishing/domain/ids.ts";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
@@ -23,6 +26,7 @@ import {
 	respondPreflight,
 	setEmbedCorsHeaders,
 } from "../http-shared.ts";
+import { ipDiscriminator, type RateLimiter } from "../rate-limits/limiter.ts";
 import { ANONYMOUS_VISITOR_ID_MAX_CHARS, ANONYMOUS_VISITOR_ID_MIN_CHARS, type ExchangeService } from "./principal.ts";
 
 export const EMBED_API_PREFIX = "/api/embed/v1";
@@ -36,6 +40,12 @@ export interface ExchangeHttpHandlerOptions {
 	readonly service: ExchangeService;
 	readonly maxBodyBytes?: number;
 	readonly onError?: (error: unknown) => void;
+	/** 分层限流（spec 14）：Exchange 维度，按调用方 IP 计数。 */
+	readonly limiter?: RateLimiter;
+	/** 指标注册表（spec 15.1）：`embed_exchange_total{result}`。 */
+	readonly metrics?: MetricRegistry;
+	/** 敏感值注册表（spec 13.3/15 脱敏）：签发 token / visitorId 注册后不出现在日志。 */
+	readonly secrets?: SecretRegistry;
 }
 
 /** 请求体校验失败（映射 400）。 */
@@ -43,6 +53,15 @@ class ExchangeHttpValidationError extends Error {}
 
 export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): HttpRequestHandler {
 	const maxBodyBytes = options.maxBodyBytes ?? EMBED_MAX_BODY_BYTES;
+	// TASK-035：Exchange 结果计数（`embed_exchange_total{result}`），本地。
+	const exchangeTotal = options.metrics?.counter({
+		name: "embed_exchange_total",
+		help: "Exchange attempts by result",
+		labels: ["result"],
+	});
+	const recordResult = (result: string): void => {
+		exchangeTotal?.inc({ result });
+	};
 
 	return async (request, response): Promise<boolean> => {
 		const pathname = requestPathname(request.url);
@@ -58,6 +77,21 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 		setEmbedCorsHeaders(response, request.headers.origin);
 		const requestId = readRequestId(request);
 		response.setHeader("X-Request-Id", requestId);
+
+		// TASK-034：Exchange 维度限流先于业务处理（按 IP；System 层最粗、App 无
+		// 身份只走 IP 区分）。超限 429，不透露后续端点信息。
+		if (options.limiter !== undefined) {
+			const allowed = await options.limiter.check({
+				dimension: "exchange",
+				scope: {},
+				discriminator: ipDiscriminator(requestIp(request)),
+			});
+			if (!allowed.allowed) {
+				recordResult("rate_limited");
+				jsonBody(response, 429, errorEnvelope("RATE_LIMITED", "Rate limit exceeded", requestId, true));
+				return true;
+			}
+		}
 
 		const raw = await readJsonBody(request, maxBodyBytes);
 		if (raw.kind === "too_large") {
@@ -89,6 +123,9 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 		}
 
 		try {
+			// TASK-035 脱敏：把本次输入的匿名身份/Launch Token 注册为敏感值，
+			// 若误被记录，日志层会打码（这些值是本会话可复现的稳定标识或一次性凭据）。
+			options.secrets?.register(parsed.mode === "anonymous" ? parsed.anonymousVisitorId : parsed.launchToken);
 			const result =
 				parsed.mode === "anonymous"
 					? await options.service.exchangeAnonymous({
@@ -102,6 +139,7 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 							origin: request.headers.origin,
 						});
 			if (!result.ok) {
+				recordResult(result.error.code === "RATE_LIMITED" ? "rate_limited" : "denied");
 				jsonBody(
 					response,
 					result.error.httpStatus,
@@ -109,16 +147,28 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 				);
 				return true;
 			}
+			recordResult("ok");
+			// 脱敏：登出的短期 Access Token 一旦被写进日志，日志层必须打码。
+			options.secrets?.register(result.data.accessToken);
 			jsonBody(response, 200, { data: result.data, requestId });
 			return true;
 		} catch (error) {
 			options.onError?.(error);
 			if (!response.headersSent) {
+				recordResult("error");
 				jsonBody(response, 500, errorEnvelope("INTERNAL", "Internal server error", requestId, true));
 			}
 			return true;
 		}
 	};
+}
+
+/** 调用方 IP：直连取 socket 地址，反向代理回显上游也可用。 */
+function requestIp(request: import("node:http").IncomingMessage): string | undefined {
+	const forwarded = request.headers["x-forwarded-for"];
+	const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+	if (typeof value === "string" && value.trim() !== "") return value.trim();
+	return request.socket.remoteAddress;
 }
 
 type ParsedExchangeBody =

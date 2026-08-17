@@ -359,4 +359,36 @@ describe.skipIf(!pgUp)("control service", () => {
 		if (missing.ok) return;
 		expect(missing.error.code).toBe("VERSION_NOT_FOUND");
 	});
+
+	test("audit failure fails closed on management ops (spec 13.4/15, TASK-035)", async () => {
+		const tenantC = newTenantId();
+		const boot = await service.bootstrapTenant({ tenantId: tenantC, tenantName: "tenant-c" });
+		expect(boot.ok).toBe(true);
+		const imported = await service.importAgent({ tenantId: tenantC }, source(baseConfig()));
+
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const app = await service.createPublishedApp({
+			tenantId: tenantC,
+			agentDefinitionId: imported.data.agentDefinitionId,
+			name: "audit-fail-app",
+			accessMode: "anonymous",
+		});
+		expect(app.ok).toBe(true);
+		if (!app.ok) return;
+
+		// 审计失败策略：管理操作必须写审计，审计写失败 = 调用方收到 failure
+		// （fail-closed），绝不静默返回成功（允许后续运维员读到审计再交接）。
+		const savedInsert = repos.audit.insert;
+		repos.audit.insert = async () => {
+			throw new Error("audit store unavailable");
+		};
+		try {
+			await expect(
+				service.suspendApp({ tenantId: tenantC, publishedAppId: app.data.app.publishedAppId }),
+			).rejects.toThrow(/audit store unavailable/);
+		} finally {
+			repos.audit.insert = savedInsert;
+		}
+	});
 });
