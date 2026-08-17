@@ -91,6 +91,12 @@ describe("publishing feature configuration", () => {
 			accessTokenTtlSeconds: 600,
 			launchTokenAudience: "skdy-embed",
 			launchTokenAllowedIssuers: [],
+			objectStore: undefined,
+			uploadQuota: {
+				conversationBytes: 100 * 1024 * 1024,
+				principalBytes: 500 * 1024 * 1024,
+				appBytes: 2 * 1024 * 1024 * 1024,
+			},
 		});
 	});
 
@@ -135,6 +141,12 @@ describe("publishing feature configuration", () => {
 			accessTokenTtlSeconds: 300,
 			launchTokenAudience: "skdy-embed",
 			launchTokenAllowedIssuers: ["https://host.example.com", "https://host2.example.com"],
+			objectStore: undefined,
+			uploadQuota: {
+				conversationBytes: 100 * 1024 * 1024,
+				principalBytes: 500 * 1024 * 1024,
+				appBytes: 2 * 1024 * 1024 * 1024,
+			},
 		});
 	});
 

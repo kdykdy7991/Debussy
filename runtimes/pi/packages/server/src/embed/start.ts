@@ -15,6 +15,8 @@
  */
 
 import type { CitationService } from "../citations/service.ts";
+import { createRedactingSink, createSecretRegistry, type SecretRegistry } from "../logging/redact.ts";
+import { createMetricRegistry, type MetricRegistry } from "../metrics/index.ts";
 import { S3ObjectStore } from "../persistence/object-store/s3.ts";
 import type { ObjectStore } from "../persistence/object-store/types.ts";
 import { RedisClient } from "../persistence/redis/client.ts";
@@ -22,6 +24,7 @@ import { createRedisNonceStore } from "../persistence/redis/nonce-store.ts";
 import { createRedisTicketStore } from "../persistence/redis/ticket-store.ts";
 import type { PublishingConfig } from "../publishing/config.ts";
 import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/repositories.ts";
+import { parseRuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import { createConversationRuntimeManager } from "../runtime/conversation-runtime-manager.ts";
 import { createPiRuntimeAdapter, type RuntimeSessionFactory } from "../runtime/pi-runtime-adapter.ts";
 import { managedTurnExecutor } from "../runtime/turn-executor.ts";
@@ -36,9 +39,15 @@ import { ConversationCitationService } from "./citations/service.ts";
 import { createConversationsHttpHandler } from "./conversations/http.ts";
 import { ConversationService } from "./conversations/service.ts";
 import { createEmbedAuthenticator, type EmbedAuthContext } from "./middleware/authenticate.ts";
-import { EmbedRealtimeConnection } from "./realtime/connection.ts";
+import { createEmbedLimits, type EmbedLimits } from "./rate-limits/index.ts";
+import { createRedisRateLimitStore } from "./rate-limits/store.ts";
+import { EmbedRealtimeConnection, type RealtimeObservability } from "./realtime/connection.ts";
 import { createRealtimeUpgradeHandler, type UpgradeHandler } from "./realtime/http.ts";
 import { conversationRealtimeServices } from "./realtime/services.ts";
+import { createTtsHttpHandler } from "./tts/http.ts";
+import type { TtsProvider } from "./tts/provider.ts";
+import { ttsProviderError } from "./tts/provider.ts";
+import { EmbedTtsQueue } from "./tts/queue.ts";
 import { createAttachmentsHttpHandler } from "./uploads/http.ts";
 import { AttachmentService } from "./uploads/service.ts";
 
@@ -56,6 +65,14 @@ export interface EmbedPlaneOptions {
 	 * = embed 不上传引用/检索引用（upload 仍可用，Turn 不带 retrieval）。
 	 */
 	readonly citations?: CitationService;
+	/** 分层限流 + 并发槽（TASK-034）；缺省用 Redis store + spec 默认规则。 */
+	readonly limits?: EmbedLimits;
+	/** 指标注册表（TASK-035）；缺省进程单例。 */
+	readonly metrics?: MetricRegistry;
+	/** 敏感值注册表（TASK-035 日志脱敏）；未提供 = 内部创建并用于 redacting sink。 */
+	readonly secrets?: SecretRegistry;
+	/** 共享进程级 TTS Provider（TASK-036）；未提供 = speech 关闭。 */
+	readonly ttsProvider?: TtsProvider;
 	readonly log?: (message: string) => void;
 }
 
@@ -67,6 +84,10 @@ export interface EmbedPlaneHandle {
 	/** Realtime upgrade handler（挂到 listener 的 onUnhandledUpgrade）。 */
 	readonly realtimeUpgrade: UpgradeHandler | undefined;
 	readonly accessTokens: AccessTokenService;
+	/** 指标注册表 + Prometheus 文本（spec 15.1；操作者可渲染/暴露）。 */
+	readonly metrics: MetricRegistry;
+	/** 共享 TTS 队列（TASK-036；单实例进程级）。 */
+	readonly ttsQueue: EmbedTtsQueue;
 	close(): Promise<void>;
 }
 
@@ -136,6 +157,19 @@ export interface EmbedServicesOptions {
 	readonly uploadQuota?: UploadQuotaLimits;
 	/** 进程级 CitationService（TASK-032）；未提供 = embed 引用链路关闭。 */
 	readonly citations?: CitationService;
+	/** 分层限流 + 并发槽（TASK-034）；缺省用内存实现 + spec 默认规则。 */
+	readonly limits?: EmbedLimits;
+	/** 指标注册表（TASK-035）；缺省进程单例。 */
+	readonly metrics?: MetricRegistry;
+	/** 敏感值注册表（TASK-035 日志脱敏）；未提供 = 内部创建。 */
+	readonly secrets?: SecretRegistry;
+	/**
+	 * 共享进程级 TTS Provider（TASK-036）。单个实例跨所有会话共享（不为
+	 * 每用户加载模型）；未提供 = speech 端点 503（不静默假成功）。
+	 */
+	readonly ttsProvider?: TtsProvider;
+	/** TTS 队列有界容量/超时（TASK-036；缺省 64 / 30s）。 */
+	readonly tts?: { readonly maxPending?: number; readonly timeoutMs?: number };
 }
 
 export interface EmbedServicesHandle {
@@ -143,12 +177,27 @@ export interface EmbedServicesHandle {
 	readonly realtimeUpgrade: UpgradeHandler | undefined;
 	/** 供 Realtime upgrade 闭包复用（授权后的 Turn/快照）。 */
 	readonly conversationService: ConversationService;
+	/** 分层限流 + 并发槽（TASK-034；createEmbedServices 内部构造/透传）。 */
+	readonly limits: EmbedLimits;
+	/** 指标注册表 + Prometheus 文本（TASK-035）。 */
+	readonly metrics: MetricRegistry;
+	/** 敏感值注册表（TASK-035 日志脱敏）。 */
+	readonly secrets: SecretRegistry;
+	/** 共享 TTS 队列（TASK-036；单实例进程级，默认并发 1、有界队列）。 */
+	readonly ttsQueue: EmbedTtsQueue;
 	close(): Promise<void>;
 }
 
 /** 纯组装：Exchange + Conversations + authenticator + managed turn executor。 */
 export function createEmbedServices(options: EmbedServicesOptions): EmbedServicesHandle {
 	const adapter = createPiRuntimeAdapter({ createSession: options.createSession });
+	// TASK-034：分层限流 + 并发槽（缺省内存实现 + spec 默认规则；生产可从
+	// compose 注入 Redis store）。暴露在 handle 上供 realtime upgrade 复用。
+	const limits = options.limits ?? createEmbedLimits();
+	// TASK-035：指标 + 敏感值注册表（缺省进程单例；各 handler/upgrade 用
+	// `embed_*` 指标命名空间，logs 经 compose 的 redacting sink 输出）。
+	const metrics = options.metrics ?? createMetricRegistry();
+	const secrets = options.secrets ?? createSecretRegistry();
 	const runtimeManager = createConversationRuntimeManager({
 		opener: async (spec, scope) => {
 			const opened = await adapter.open(spec, scope);
@@ -189,15 +238,63 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 					...(conversationCitations !== undefined ? { citations: conversationCitations } : {}),
 				})
 			: undefined;
+
+	// TASK-036：共享进程级 TTS 队列（单实例，默认并发 1、有界、超时/取消；
+	// 语音故障绝不倒灌到文本 turn 路径）。providerAvailable=false 时 speech
+	// 端点显式 503，不假装成功。capabilities.speech 读取（RuntimeSpec 控制）。
+	const speechEnabled = async (principal: EmbedAuthContext, _conversationId: string): Promise<boolean> => {
+		const app = await options.repositories.publishedApps.get(
+			{ tenantId: principal.tenantId, publishedAppId: principal.publishedAppId },
+			principal.publishedAppId,
+		);
+		if (app === undefined || app.currentVersionId === null) return false;
+		const version = await options.repositories.publishedAppVersions.get(
+			{ tenantId: principal.tenantId, publishedAppId: principal.publishedAppId },
+			app.currentVersionId,
+		);
+		if (version === undefined) return false;
+		const parsed = parseRuntimeSpec(version.runtimeSpec);
+		return parsed.ok && parsed.spec.capabilities.speech.enabled;
+	};
+	const ttsQueued = metrics.gauge({ name: "embed_tts_queued", help: "TTS pending jobs" });
+	const ttsRunning = metrics.gauge({ name: "embed_tts_running", help: "TTS running jobs" });
+	const ttsJobs = metrics.counter({
+		name: "embed_tts_jobs_total",
+		help: "TTS jobs by result",
+		labels: ["result"],
+	});
+	const ttsQueue = new EmbedTtsQueue({
+		provider:
+			options.ttsProvider ??
+			((_input, _signal) => Promise.reject(ttsProviderError("no TTS provider configured", false))),
+		maxPending: options.tts?.maxPending,
+		timeoutMs: options.tts?.timeoutMs,
+		onEvent: (event) => {
+			const stats = ttsQueue.stats();
+			ttsQueued.set(stats.pendingLocked);
+			ttsRunning.set(stats.running);
+			if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
+				ttsJobs.inc({ result: event.type });
+			}
+		},
+	});
+	const ttsHandler = createTtsHttpHandler({
+		authenticator,
+		queue: ttsQueue,
+		speechEnabled,
+		providerAvailable: options.ttsProvider !== undefined,
+	});
+
 	return {
 		handlers: [
 			createBootstrapHttpHandler({ repositories: options.repositories }),
-			createExchangeHttpHandler({ service: exchangeService }),
+			createExchangeHttpHandler({ service: exchangeService, limiter: limits.limiter, metrics, secrets }),
 			// uploads 必须先于 conversations 匹配（同路径前缀）。
 			createAttachmentsHttpHandler({
 				service: attachmentsService,
 				authenticator,
 				repositories: options.repositories,
+				limiter: limits.limiter,
 			}),
 			createConversationsHttpHandler({
 				service: conversationService,
@@ -205,17 +302,29 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 				repositories: options.repositories,
 				...(options.wsTickets !== undefined ? { wsTickets: options.wsTickets } : {}),
 				...(options.realtimeBaseUrl !== undefined ? { realtimeBaseUrl: options.realtimeBaseUrl } : {}),
+				limiter: limits.limiter,
 			}),
+			ttsHandler,
 		],
 		realtimeUpgrade: options.realtimeUpgrade,
 		conversationService,
+		limits,
+		metrics,
+		secrets,
+		ttsQueue,
 		close: () => runtimeManager.drain(),
 	};
 }
 
 /** 组合 Embed 数据面。 */
 export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<EmbedPlaneHandle> {
-	const log = options.log ?? console.log.bind(console);
+	// TASK-035：日志经 redacting sink 输出（Token/Ticket/Key/visitorId 打码）。
+	// secrets 与 createEmbedServices 共用同一注册表，handler 里注册的敏感值
+	// 即刻被 sink 识别。
+	const metrics = options.metrics ?? createMetricRegistry();
+	const secrets = options.secrets ?? createSecretRegistry();
+	const rawLog = options.log ?? console.log.bind(console);
+	const log = createRedactingSink(rawLog, () => secrets.list());
 	const config = await loadEmbedPlaneConfig(options.publishing);
 
 	// 24.2：启用 Embed 数据面需要 Redis（Ticket/限流/nonce）。
@@ -225,6 +334,9 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	}
 	const redis = new RedisClient({ url: redisUrl });
 	const wsTickets = createWsTicketService(createRedisTicketStore(redis));
+	// TASK-034：分层限流 + 并发槽。生产用 Redis store（cluster-wide 计数、
+	// 身份/并发故障默认 fail-closed），检查者可注入自定义实现。
+	const limits = options.limits ?? createEmbedLimits({ store: createRedisRateLimitStore(redis) });
 	// TASK-028：仅当配置了宿主 issuer 白名单时启用 signed-user Exchange
 	// （PD-19 默认关闭；未启用时 signed_user 请求显式 403）。
 	const launchTokens =
@@ -250,6 +362,10 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		wsTickets,
 		realtimeBaseUrl: options.publishing.embedBaseUrl,
 		launchTokens,
+		limits,
+		metrics,
+		secrets,
+		...(options.ttsProvider !== undefined ? { ttsProvider: options.ttsProvider } : {}),
 		...(objectStore !== undefined && attachmentBucket !== undefined ? { objectStore, attachmentBucket } : {}),
 		uploadQuota: options.publishing.uploadQuota,
 		...(options.citations !== undefined ? { citations: options.citations } : {}),
@@ -260,9 +376,32 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	log("embed data plane composed: bootstrap + exchange + conversations + dev turn + realtime");
 
 	// 组装 Realtime upgrade：消费 Ticket -> 构建 EmbedRealtimeConnection。
+	// TASK-035：连接数 gauge + Turn 结果/耗时在此组装（连接不直接耦合指标名）。
+	const realtimeConnections = metrics.gauge({
+		name: "embed_realtime_connections",
+		help: "Currently open realtime connections",
+	});
+	const turnTotal = metrics.counter({
+		name: "embed_turn_total",
+		help: "Turn outcomes",
+		labels: ["result"],
+	});
+	const turnLatency = metrics.histogram({
+		name: "embed_turn_latency",
+		help: "Turn latency ms",
+		buckets: [500, 1000, 2000, 5000],
+	});
+	const observability: RealtimeObservability = {
+		onConnectionClose: () => realtimeConnections.add(-1),
+		onTurnResult: (result, latencyMs) => {
+			turnTotal.inc({ result });
+			turnLatency.observe(latencyMs);
+		},
+	};
 	const conversationService = services.conversationService;
 	realtimeUpgrade = createRealtimeUpgradeHandler({
 		wsTickets,
+		limits,
 		createSession: ({ ws, request, claims }) => {
 			const principal: EmbedAuthContext = {
 				tokenId: claims.tokenId,
@@ -274,12 +413,15 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 				issuedAt: new Date(),
 				expiresAt: new Date(),
 			};
+			realtimeConnections.add(1);
 			new EmbedRealtimeConnection({
 				ws,
 				requestOrigin: request.headers.origin,
 				claims,
 				services: conversationRealtimeServices(conversationService),
 				principal,
+				limits,
+				observability,
 				onClose: (reason) => log(`realtime connection closed: ${reason}`),
 			});
 		},
@@ -293,6 +435,8 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		conversationsHandler: services.handlers[3],
 		realtimeUpgrade,
 		accessTokens: config.accessTokens,
+		metrics,
+		ttsQueue: services.ttsQueue,
 		close: async () => {
 			await services.close();
 			await redis.close();
