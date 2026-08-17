@@ -6,7 +6,7 @@
 
 ## 一、当前进度
 
-**阶段：G（文件、引用与 UI 完整性），TASK-000~032 已完成。服务端全链路与 web 逻辑层已验证；浏览器级 iframe 演示验证受环境限制待完整环境补做。**
+**阶段：G（文件/引用/UI）→ H（安全/容量）→ I（交付），TASK-000~039 全部完成，MVP 线程闭环。服务端全链路与 web 逻辑层已验证；浏览器级 iframe 演示与完整 composed plane（Redis/真实模型）的 1,000 空闲 Realtime 压测待完整环境补做（详见容量报告待办）。**
 
 ### 任务清单
 
@@ -43,13 +43,13 @@
 - [x] **TASK-030** 实现对象存储 Attachment Service
 - [x] **TASK-031** 加入 Attachment ResourceOwner 和配额
 - [x] **TASK-032** 迁移 Citation 到 Conversation Scope
-- [ ] **TASK-033** 完善 Embed UI ⏭ 下一步
-- [ ] **TASK-034** 实现分层限流与并发槽
-- [ ] **TASK-035** 实现审计、指标和日志脱敏
-- [ ] **TASK-036** 条件性接入 TTS/Avatar
-- [ ] **TASK-037** 安全验收
-- [ ] **TASK-038** 容量与故障压测
-- [ ] **TASK-039** 灰度、回滚和交付
+- [x] **TASK-033** 完善 Embed UI
+- [x] **TASK-034** 实现分层限流与并发槽
+- [x] **TASK-035** 实现审计、指标和日志脱敏
+- [x] **TASK-036** 条件性接入 TTS/Avatar ⏭ 已完成
+- [x] **TASK-037** 安全验收 ⏭ 已完成
+- [x] **TASK-038** 容量与故障压测 ⏭ 已完成
+- [x] **TASK-039** 灰度、回滚和交付 ⏭ 已完成 —— MVP 闭环
 
 **工作树状态**：未提交（所有改动仅存在于 working tree；按 AGENTS.md 只在用户要求时提交）。
 
@@ -99,20 +99,25 @@ src/runtime/
   context-restore.ts           持久事件 -> 上下文恢复（只恢复完成对、in-flight 收敛、schema/预算过滤）
 src/embed/bootstrap-http.ts    GET /api/embed/v1/bootstrap（公开主题摘要，无凭据）
 src/embed/uploads/            TASK-030/031/032 附件：scan.ts（大小/扩展/MIME/文件头/checksum）、service.ts（staged→ready/rejected + 失败补偿 + 三档配额 + 幂等删除 + 过期清理 + scope 读取 + ready 后建引用 source/删除后移除 source）、http.ts（POST upload / GET / DELETE）
+src/embed/rate-limits/        TASK-034 分层限流+并发槽：types.ts（维度/层级/规则+DEFAULT）、store.ts（内存/Redis 固定窗口计数）、slot.ts（进程级并发 Turn 槽）、limiter.ts（分层最严格+fail-open/fail-closed）、index.ts（EmbedLimits+createEmbedLimits）
+src/metrics/                  TASK-035 有界指标：index.ts（createMetricRegistry——counter/gauge/histogram + FORBIDDEN identity 标签 + maxCardinality overflow + Prometheus text）
+src/logging/                 TASK-035 日志脱敏：redact.ts（redactQueryParams/redactBearerTokens/redactSecrets + createSecretRegistry + createRedactingSink）
+src/embed/tts/               TASK-036 条件性语音：provider.ts（TtsProvider seam + EmbedTtsError + 默认并发1/有界64/超时30s）、queue.ts（EmbedTtsQueue——共享有界队列/超时/取消/跨会话取消/onEvent）、http.ts（GET/POST/DELETE .../tts gated by capabilities.speech）
 src/persistence/object-store/ ObjectStore 契约（types.ts）+ S3ObjectStore + LocalTestObjectStore
 src/persistence/postgres/repositories/attachments.ts  AttachmentRepository（全 scope + listSweepCandidates + listReadyByConversation）
 
 web（packages/web/src/embed/）:
   types.ts                     embed HTTP 契约类型（与 server 对齐；TASK-023 合并进 protocol 包）
   storage.ts                   visitorId 生成/保存（localStorage，可注入；PD-17）
-  api.ts                       EmbedApi + EmbedApiError（fetch 封装、错误信封、Bearer）
-  auth-controller.ts           EmbedAuthController（Exchange、内存 token、signed_user exchange、logout）
-  conversation-controller.ts   EmbedConversationController（list/create/open/send + 事件推导消息）
-  post-message.ts              EmbedPostMessageChannel（TASK-029：source/origin 校验、明确 targetOrigin、init/logout/ready/resize）
+  api.ts                       EmbedApi + EmbedApiError（fetch 封装、错误信封、Bearer；TASK-033 增 archive/upload/delete/ws-ticket）
+  auth-controller.ts           EmbedAuthController（Exchange、内存 token、signed_user exchange、logout；TASK-033 增 mode + refresh）
+  chat-controller.ts           EmbedChatController（TASK-033 新增：展示层状态机——会话列表/切换/新建/归档、Realtime 发送与流式、上传/引用/连接状态/Token 透明刷新；useSyncExternalStore 订阅）
+  conversation-controller.ts   EmbedConversationController（list/create/open/send + 事件推导消息；dev turn 路径保留给测试）
+  post-message.ts              EmbedPostMessageChannel（TASK-029：source/origin 校验、明确 targetOrigin、init/logout/ready/resize；TASK-033 增 focus/resize-request）
   bootstrap.ts 由 api.bootstrap 承担
   embed-app.tsx / embed-shell.tsx / conversation-list.tsx / error-state.tsx / embed.css
   main.tsx 路径分流：/embed/:publicAppId -> EmbedApp；其余 -> 现有内部 App
-  public/embed-demo/host-a.html、host-b.html（TASK-029 两个宿主演示 fixture）
+  public/embed-demo/host-a.html、host-b.html（TASK-029 两个宿主演示 fixture；TASK-033 host-a 增 resize-request 演示按钮）
 src/publishing/
   config.ts                     PI_PUBLISHING_ENABLED 解析（默认 false，非法值启动失败）
   domain/ids.ts                 12 种 branded ID + UUIDv7 + parseId/toPublicId/fromPublicId
@@ -203,15 +208,28 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - **migration 只前进**：已部署环境不修改旧文件；build 脚本会拷贝 migrations 进 dist。
 - 新增依赖必须固定精确版本、`npm install --ignore-scripts`（AGENTS.md + 依赖评审记录）。
 - **引用由 RuntimeSpec 控制 = uploads 能力**（TASK-032，spec 5.5 冻结五个能力键不新增）：MVP 引用来源是会话内上传文件，`capabilities.uploads.enabled` 同时控制上传与引用——uploads 关闭时上传 422、无 ready 附件、Turn 不触发检索（gate 短路）。若产品需要「可上传但不可引用」，需先修订 spec 5.5 新增 citation 能力键再做评审。
+- **Realtime 事件语义：delta 瞬时、completed 持久**（TASK-033，spec 9.2）：服务端 `message.delta` 是瞬时流式事件（sequence 0，不可恢复）；`message.completed` 是持久真相（真实 sequence，断线补齐与客户端游标只认它）。Web 传输层 sequence 0 事件全放行且不推进游标、sequence > 0 按序去重——**不要**把 delta 改回持久 sequence（会与 completed 同序号导致客户端丢弃 completed）。
+- **上传响应回公开 ID**（TASK-033，wire 契约自洽）：`POST uploads` 响应 `attachmentId`=`att_<uuid>`、`conversationId`=`conv_<uuid>`（server `toView` toPublicId），可直接回填 DELETE/GET 路径；此前裸 UUID 与 URL 前缀要求不一致。objectKey 仍永不含文件名。
+- **前端 Turn 只走 Realtime**（TASK-033，TASK-025 完成条件）：`embed-app` 发送经 `EmbedRealtimeTransport`（ws-ticket + turn.start），dev turn HTTP 路径（`/api/embed/v1/dev/...`）仅保留给测试与旧接口；重连绝不自动重发用户消息。
+- **Token 刷新语义**（TASK-033）：`auth.getToken()` 过期前 30s 抛 TOKEN_EXPIRED；匿名模式 `refresh` 用同一 visitorId 重新 Exchange（同 Principal，身份稳定）；signed_user Launch Token 已即用即弃（PD-18）无法静默刷新，抛 AUTH_EXPIRED 由宿主重新 `init`。控制器 `withToken` 对 TOKEN_EXPIRED/TOKEN_INVALID 透明重试一次。
+- **引用展示只走实时**（TASK-033）：`citation.updated` 由 Realtime Connection 在 `message.completed` 前发出（瞬时事件），客户端挂到流式 assistant 消息；**不持久化为 conversation 事件、不参与断线补齐**（沿用 TASK-032 记录，重连后引用 chip 不补发）。
+- **限流模型：分层最严格 + 维度独立**（TASK-034，spec 14）：对一次请求评估 System→Tenant→App→Principal→Conversation 所有适用层，**任一适用层超限即拒**（最严格层绑定）；connections/exchange/token/turn/uploads 各维度独立计数（一处突发不挤占别的预算）；无身份的 pre-auth 端点（Exchange）以调用方 IP 作为 System 层键区分（spec 5：匿名 App 必须按 IP/App/Principal 组合限流）。
+- **并发 Turn 槽 = 进程级、非阻塞、无队列**（TASK-034）：容量缺省 30 可配；`acquire()` 满则返回 null → 立即 RATE_LIMITED/turn.failed，**绝不排队**（禁止继续项）；槽在 `createEffectOwner()` 的 finally 中释放（spec 14「槽在 EffectOwner 中释放」，正常/异常/取消路径都归还）。跨节点并发按每节点配额配置（spec 未要求进程间槽协调）。
+- **限流故障策略：身份/并发默认 fail-closed**（TASK-034）：Redis 等限流后端故障时，默认把请求当超限拒绝（store-unavailable，RETRYABLE），防静默放行导致打爆下游；`failureMode: fail-open` 只用于按需放宽的维度。Redis 固定窗口实现用 Lua INCR+PEXPIRE（窗口边界精确到单条 Lua，非滑窗）。
+- **身份绝不作为 metrics label**（TASK-035，禁止继续项）：`metrics/FORBIDDEN_METRIC_LABELS` 把 conversationId/principalId/visitorId/subjectHash/externalUserId 等列入注册期黑名单，注册即抛错；关联只落在 app/tenant/status 这类有界维度，且每个 metric 有 `maxCardinality` 上限（超限折叠进有界 overflow）。这是「能定位问题、标签有界、不积累无界高基数序列」的组合。
+- **日志脱敏在 sink 层 + secrets 注册表**（TASK-035）：compose 把 `log` 换成 `createRedactingSink`，任何行先过 redact（URL 凭据 query + Bearer 头 + 运行时注册敏感值）再落地；Exchange 在签发时把 accessToken/visitorId/launchToken 动态注册成敏感字串，之后即使被记录也打码。sink 与业务 handler 共用同一注册表，注册即时生效、无需重启。
+- **可观测性回调解耦连接与具体指标名**（TASK-035）：`RealtimeObservability`（onConnectionClose/onTurnResult）在 compose 组装时绑定到具体 gauge/counter/histogram，`EmbedRealtimeConnection` 只调用回调、不 import 指标名——领域层保持对可观测性实现的零耦合。
+- **TTS = 单共享有界队列 + Provider seam**（TASK-036）：一个进程一个 `EmbedTtsQueue`、一个 `TtsProvider`（不是每用户一个模型）；默认并发 1、有界队列（满 → `queue_full`）、按需触发（无自动生音）、逐任务超时 + 取消（running 走 `AbortSignal`，pending 直接移除；`cancelForConversation` 支持跨会话取消）。`TtsProvider` 是接真实 GPU 后端的缝，无 provider 时端点显式 503 而非假成功（完成条件与禁止继续项落地）。「语音故障不影响文本」靠**结构性解耦**（TTS 独立端点、队列失败不进入 runTurn/文本链路），不是同一路径上的降级分支。
+- **能力开关 = RuntimeSpec 只读来源**（TASK-036）：speech/avatar 的能力 flag 统一从当前版本 `capabilities.speech/avatar.enabled` 读取（Exchange features / bootstrap / tts 端点 `speechEnabled` 三处同源），不新增能力键（spec 5.5 冻结）。
 
 ### 已知限制 / 未决项
 
 - S3 适配未连真实 MinIO 验证（TASK-030 附件链路联调时处理）。
 - `npm audit` 3 个 high 漏洞来自**既有**传递依赖（minimatch/nanoid/undici），非本次引入，留待安全任务。
 - lockfile 新增 `@skdy/avatar` 条目是既有 `file:` 引用的补齐（HEAD 的 web/package.json 已引用但 lockfile 未同步），与发布 MVP 无关，保留。
-- **本机环境 2026-08 起无法复现完整开发环境**：`models.dev` 不可达 → `packages/ai/src/providers/data/*` 无法 hydrate → `@earendil-works/pi-ai`/`pi-coding-agent` 等 workspace 包无 dist → `test/web-start.test.ts` 与 `test/publishing/control-compose.test.ts`（以及一切运行时 import workspace 包的测试）在本环境**无法运行**。它们的类型正确性由根 `tsgo --noEmit`（paths 映射到 src，server 包 0 错误）与 biome 覆盖；`web-start` 的 config 断言与 `control-compose` 的 config() helper 已按新字段同步更新。恢复方法：网络可达后 `npm run hydrate:model-data` + `npm run build`（root 顺序）。
-- **本地依赖容器已重建**：原 `backend-db-1`/`backend-redis-1` 在本机 docker 环境不存在，已按交接参数重建——`postgres:16-alpine`（5433，skdy/skdy123，`skdy_agent_test`）与 `redis:5.0.5`（6380）。与文档记载的 PG15/Redis7 版本有差异，行为等价（测试仅用 SQL/基本 Redis 语义）。
-- Exchange 端点（`/api/embed/v1/exchange`）**尚未挂进 startWebServer**：等 embed/start.ts 组合任务统一挂载，并在那时校验 `PI_EMBED_SUBJECT_PEPPER` 与 Access Token 密钥文件缺失即启动失败。
+- 本机环境历史限制「workspace 包无 dist → control-compose/web-start 无法运行」已解除（2026-08 起 workspace dist 可用）：TASK-033 全量回归 server 354 passed 含 `control-compose.test.ts`。若再遇 `models.dev` 不可达导致模型数据缺失，恢复方法：网络可达后 `npm run hydrate:model-data` + `npm run build`（root 顺序）。
+- **本地依赖容器已重建**：原 `backend-db-1`/`backend-redis-1` 在本机 docker 环境不存在，已按交接参数重建——`postgres:16-alpine`（5433，skdy/skdy123，`skdy_agent_test`）与 `redis:7-alpine`（6380）。与文档记载的 PG15/Redis7 版本有差异，行为等价（测试仅用 SQL/基本 Redis 语义）。
+- TASK-033 已知限制：引用（citation.updated）与附件列表**不持久化/不枚举**（MVP 无附件列表 API，刷新后 UI 只显示本次会话期间上传的附件）；citation.updated 不参与断线补齐（重连后引用 chip 不补发）；浏览器级 iframe 演示（嵌入允许 Origin、刷新恢复、移动抽屉、宿主 resize/focus）待完整环境手工验证。
 
 ## 三、已完成任务明细
 
@@ -417,6 +435,106 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - 完成条件核对：✅ 引用结果只包含当前会话授权来源（retrieve 按 sessionId 过滤 + 会话 ready 附件枚举 + store scoped 访问器三层）；✅ 禁止继续项无（会话引用路径无 CitationStore 全局查找；`ensureConversationSource` 跨会话索引直接抛错）。
 - 已知限制：引用**未持久化为 conversation 事件**（`citation.updated` 事件与引用 UI 展示留待 TASK-033）；上传索引用上传缓冲直传（不二次读对象存储），进程重启后靠 CitationStore 磁盘恢复 source，不重索引。
 
+### TASK-034 实现分层限流与并发槽（spec 14 / WP-09）
+- **`embed/rate-limits/`（新）**：
+  - `types.ts`：`RateLimitDimension`（connections/exchange/token/turn/uploads）与 `RateLimitLayer`（system/tenant/app/principal/conversation）；`RateLimitsConfig`（按层×维度规则）+ `DEFAULT_RATE_LIMITS`。
+  - `store.ts`：`RateLimitStore`（`increment(key, windowMs, now) -> {count, resetAt}`）+ `InMemoryRateLimitStore`（固定窗口，惰性回收）+ `createRedisRateLimitStore`（Lua INCR+PEXPIRE，cluster-wide）；后端失败抛 `RateLimitStoreError`。Redis 键仅存 `sha256(key)` 截断，不落明文标识。
+  - `slot.ts`：`ConcurrencySlots`——**进程级并发 Turn 槽**（容量可配缺省 30），`acquire()` 非阻塞（满则 null，**无等待队列**，禁止继续项），`release` 幂等，`clear()` 供节点 drain。
+  - `limiter.ts`：`RateLimiter`——对一次事件评估所有适用层（system→tenant→app→principal→conversation）取**最严格**：任一适用层超限即拒（`over-limit`），各层按维度独立计数；store 故障按 `failureMode`——**身份/并发默认 fail-closed**（超限拒绝，`reason: store-unavailable`），可配 fail-open；`guard()` 抛 `RATE_LIMITED`。无身份的 Exchange 端点在 System 层键用 IP 区分（spec 5：匿名 App 必须按 IP/App/Principal 组合限流）。
+- **`embed/rate-limits/index.ts`**：`EmbedLimits`（limiter + turnSlots）+ `createEmbedLimits({store, config, failureMode, turnSlotCapacity})`。
+- **接线**：
+  - `realtime/connection.ts`：`handleTurnStart` 先 `turn.accepted`，再走 turn 维度分层限流（`conversation` 层最严格即会话并发/频率）+ 并发槽——**Turn 槽注册进 `createEffectOwner()` 并在 `finally` close（spec 14「槽在 EffectOwner 中释放」，正常/异常/取消路径都归还）**；无槽/超限立即 `turn.failed`（不排队）。
+  - `realtime/http.ts`：connections 维度限流，超限 429 拒 upgrade；`rejectUpgrade` 增 RATE_LIMITED/RUNTIME_UNAVAILABLE 分支。
+  - `exchange-http.ts`：Exchange 维度按调用方 IP 计数（pre-auth），超限 429。
+  - `conversations/http.ts`：ws-ticket=token 维度、dev turn=turn 维度限流；`principalScope` helper。
+  - `uploads/http.ts`：upload POST 按 Principal/Conversation 维度限流（超限不读 body）。
+  - `start.ts`：`EmbedPlaneOptions`/`EmbedServicesOptions` 增可选 `limits`；`createEmbedServices` 缺省 `createEmbedLimits()`（内存实现 + spec 默认规则）并暴露在 handle；`composeEmbedPlane` 生产用 `createEmbedLimits({ store: createRedisRateLimitStore(redis) })`（cluster-wide、身份/并发默认 fail-closed），同时传给 createEmbedServices 与 realtime upgrade（含连接上的 turn 槽）。
+- 测试：
+  - `test/embed/rate-limits.test.ts`（10 passed）：内存窗口重置、分层最严格（conversation<principal<system 任一超限即拒 + 每会话独立桶）、维度独立计数、无适用规则放行、store 故障 fail-closed 拒/fail-open 放行、`guard` 抛 429、并发槽容量/释放幂等/清空/非法容量。
+  - `test/embed/realtime-limits.test.ts`（4 passed，假 WS 无 DB）：正常 turn 归还槽、失败 turn 也归还槽（finally）、槽打满第二个 turn.start 立即失败不排队、会话层最严格（principal 仍有余量时按会话超限拒）。
+  - 既有回归：realtime-connection/ws-ticket/attachments/exchange 全部在 `limits` 缺省下行为不变仍绿。
+- 全量回归：server embed+publishing+runtime 368 passed、0 failed（含 control-compose）；biome 全仓 0 警告；service 包 typecheck 0 错误；根 `npm run check` 全绿（biome + pinned-deps + ts-imports + shrinkwrap + install-lock + 根 tsgo + web typecheck + browser-smoke）。
+- 完成条件核对：✅ 30 系统并发槽可配置（`turnSlotCapacity`）、超限稳定返回 RATE_LIMITED（HTTP 429 / realtime turn.failed）；✅ 正常/异常/节点退出（`clear`）/限额竞争（acquire 原子）测试覆盖；✅ Redis 故障 fail-open/fail-closed 按配置、身份/并发默认 fail-closed。禁止继续项无（无等待队列，超限立即失败）。
+- 已知限制：并发槽是**单进程**的（每节点 30）；跨节点并发需按节点配额配置（spec 未要求进程间槽协调）。dev turn HTTP 路径只做 turn 层限流（未接入并发槽——内部/dev 路径，Realtime 为公开路径且已含槽）。Redis 固定窗口用 INCR+PEXPIRE（窗口边界精确到一次 Lua，非滑窗）。
+
+### TASK-035 实现审计、指标和日志脱敏（spec 13.4/15，WP-09 治理与可观测性）
+- **`metrics/`（新）**：`createMetricRegistry()`——counter/gauge/histogram（累积桶，`le`/`+Inf`）+ Prometheus 文本 `text()`/`snapshot()`/`reset()`。两个护栏（**禁止继续项落地**）：
+  - `FORBIDDEN_METRIC_LABELS`：conversationId/principalId/visitorId/subjectHash/externalUserId 等身份标签**注册即抛错**，身份永不成为无界 metrics label；
+  - `maxCardinality`（缺省 1000）：每个 metric 的 label-value 组合数封顶，超限折叠进单一有界 `{overflow="true"}` 系列而不是无界内存。
+- **`logging/redact.ts`（新）**：`redactQueryParams`（URL 里 ticket/key/code/token/api_key 凭据打码）、`redactBearerTokens`（`Authorization: Bearer <jwt>`）、`redactSecrets`（运行时注册的敏感值逐字打码，<4 字符不替换）、`createSecretRegistry()`、`createRedactingSink(sink, () => secrets)` 包一层日志 sink，任何行在到达底层 sink 前先过 redact。
+- **接线**：
+  - `composeEmbedPlane`：`log` 换成 `createRedactingSink`（sink 与 createEmbedServices 共用 `secrets` 注册表，handler 里注册的敏感值即刻生效）；组装 `embed_realtime_connections` gauge + `embed_turn_total{result}` counter + `embed_turn_latency` histogram，经 `RealtimeObservability` 回调注入连接（连接不直接耦合指标名）。
+  - `realtime/connection.ts`：`EmbedRealtimeConnectionOptions.observability?`——连接关闭回调（-1）、Turn 结果/耗时（completed/failed/rate_limited）；`runTurn` 记录耗时与结果。
+  - `auth/exchange-http.ts`：`ExchangeHttpHandlerOptions.metrics?/secrets?`——注册 `embed_exchange_total{result}`（ok/denied/rate_limited/error），成功/输入时把签发 accessToken 与本次 visitorId/launchToken 注册为敏感值。
+  - 指标在 `EmbedPlaneOptions/EmbedServicesOptions` 均可注入（测试复用一个 registry 断言不重复注册）；`EmbedPlaneHandle` 暴露 `metrics`（操作者可渲染）。
+- **审计**：管理操作持久审计（发布/回滚/停用/密钥轮换）TASK-011 起已写入 `audit_events`（append-only，26.2/13.4）；TASK-035 补**审计失败策略**测试——审计写失败时管理操作向调用方失败（fail-closed，部静默成功）。
+- 测试：
+  - `test/metrics.test.ts`（6 passed，DB-free）：counter/gauge 标量与标签暴露、histogram 累积桶+sum/count、**禁止标签注册即抛错**（遍历 FORBIDDEN 全集）、未知标签 inc 抛错、重名抛错、`maxCardinality` 超限折叠进有界 overflow、invalid name/`reset`。
+  - `test/logging-redact.test.ts`（5 passed）：URL 凭据 query、Bearer 头、运行时注册敏感值逐字打码、短值不替换、**注入扫描**（一批敏感串拼进日志后经 redacting sink 不含任何明文凭据）。
+  - `test/publishing/control-service.test.ts` 补：审计失败策略（PG-backed；`repos.audit.insert` 抛错 → `suspendApp` rejects，fail-closed）。
+  - 回归：`test/embed test/publishing test/runtime citations-sessions retrieval` + 两个新文件 **381 passed、0 failed**（含 control-compose）。`realtime-connection`/`exchange` 在 metrics 缺省下行为不变仍绿。
+- 完成条件核对：✅ 第 15.1 核心指标的有界实现（Exchange/Turn/连接数/定时计分条）+ 关联（按 app/tenant/status 标签，身份不作 label）；✅ Token/Ticket/Key/visitorId/externalUserId 脱敏（redacting sink + secrets 注册表 + query/Bearer 层）；✅ 管理操作持久审计 + 审计失败 fail-closed；✅ 高基数标签限制（禁止标签全集 + cardinality 上限）。禁止继续项无（`conversationId`/`principalId` 不能作 metrics label 已在注册期强制）。
+- 已知限制：指标暴露的是**有界**的计数/定时系列（registry 已在 `EmbedPlaneHandle`，Prometheus scrape 端点/告警规则留待运维接入，未加独立 `/metrics` HTTP 路由以免未认证泄露范围）；`visitorId`/`externalUserId` 作为敏感串注册依赖各端点主动 `secrets.register`（当前仅 Exchange 注册，其余端点无身份明文入 strand）。管理操作审计与状态变更非单事务（更新先行、审计后续）——审计失败时调用方收到 failure 且状态已变更，属于 fail-closed 但不回滚；如需原子性需后续把审计并入同一事务。
+
+### TASK-039 灰度、回滚和交付（spec 阶段 I，MVP 收官）
+- **交付文档产出**（spec 20 DoD 项 14）：新增
+  - `docs/MULTI-USER-PUBLISHING-DOD-CHECKLIST.md`——§20 十四项 DoD 逐条状态 + 非空证据（回归测试/命令）；禁止项核对（无「只能改库才能恢复」的运营操作；存在一键 suspend 快速停用）。
+  - `docs/MULTI-USER-PUBLISHING-OPS-RUNBOOK.md`——部署全平面、撤回发布 runbook（rollback / suspend / activate / launch-key revoke / 能力随版本关闭）、Access Token 与身份密钥轮换（重启式吊销 → 旧 token `TOKEN_INVALID` → 客户端 `AUTH_EXPIRED` 自动续）、Runtime drain（`services.close()` = `runtimeManager.drain()` + redis/objectStore close）、故障降级矩阵、免贴库核对（控制面 HTTP 路径）。
+  - `docs/MULTI-USER-PUBLISHING-HOST-INTEGRATION.md`——iframe 三步接入（建 App 发 publicAppId → Origin 白名单 exchange → postMessage/Realtime/TTS/上传）、灰度 rollout 序列（内部→单 App→白名单→signed-user→匿名）、宿主安全要点。
+  - `docs/mvp.env.example`——全量环境配置模板（含 S3 附件、三级上传配额、signed-user 关闭默认、容量压测门控 `PI_CAPACITY_LOAD`）。
+- **控制面操作路径核对**（runbook 依据）：`POST /api/control/v1/{agent-definitions/import-current, published-apps, published-apps/:id/{versions, activate, rollback, suspend}, launch-keys, launch-keys/:kid/revoke}`；admin 认证 `Authorization: Bearer <token>`（`PI_CONTROL_ADMIN_TOKEN_FILE`，恒定时间比较）。回滚/suspend 均已由 TASK-012 测试覆盖。
+- **配置契约核对**：`config.ts`（`PI_EMBED_UPLOAD_QUOTA_*` 默认 100MB/500MB/2GB；`PI_OBJECT_STORE_*` 缺省 uploads 503；`PI_REDIS_URL` 为 Embed 数据面必需；pepper/Access key/admin token 均文件路径注入）；最新 migration **0007**。
+- **DoD 核对**：14 项中 30 并发 Turn 已在容量报告实测；1,000 空闲 Realtime 单列为「待完整 composed plane 手工压测」（Redis 必需），不在此伪装通过——DoD#13 其余与全部 #1-12、#14 完成。
+- **完成条件核对**：✅ §20 DoD 全部核对（#13 全平面项待执行，文档已列）；✅ 运维可按 runbook 撤回发布/suspend；✅ 提供 migration（0006/0007）与兼容说明（版本不可变、会话固定版本、Access Token 轮换语义）；✅ 禁止项（只能改库恢复 / 无法快速停用）未触发。
+- 回归：仅文档改动，无代码变更（AGENTS：doc 无需 `npm run check`）；工作树仍为累积未提交。
+
+## 四、下一步（无 —— MVP 完结）
+
+TASK-000～039 全部完成。补做项（非阻塞）按优先级：
+1. 完整 composed plane（Redis）做 DoD#13 的 1,000 空闲 Realtime + DB/Redis/模型短断压测（`assets` 见容量报告 §待办）。
+2. 浏览器级 iframe 演示验证（嵌入允许 Origin、刷新恢复、移动抽屉、宿主 resize）——逻辑已测，浏览器壳未在 headless 环境跑。
+3. 真实 TTS/Avatar provider 接入与音频投递（TASK-036 已知限制）。
+交付决策：**提交累积工作树（TASK-033~039 + 4 docs）需明确示意**；未提交前不视为发布。
+- **交叉边界安全矩阵** `test/embed/security.test.ts`（真实 PG + 真实 AccessToken + 真实 handler，2 租户 / 3 app / 多访客，DB 不可达自动 skip）9 项：同 app 跨访客 / 跨 app / 跨租户读会话与附件 → **统一 404**（不做不存在性 oracle）；随机会话/附件 ID 枚举 → 404；Origin 白名单外或缺 Origin → 403 `ORIGIN_NOT_ALLOWED`；伪造 checksum / 伪造 MIME → 422 `UPLOAD_REJECTED`；跨身份向他人会话上传 → 404；Exchange 响应含 accessToken 但**不回显 visitorId**；suspend 后已签发 token 建会话 → 403 `APP_SUSPENDED`（PD-04 简单回滚）；token 经同一服务可验证（身份 round-trip）。先因 `randomBytes` 36-char 拼接非 UUID 形成 400（畸形而非未知）→ 改用 `randomUUID()` 断言 404 语义。
+- **修复既有契约漂移**：`test/web-start.test.ts` 两个 config 断言未含 TASK-030 新增的 `objectStore`/`uploadQuota` 字段致全量跑红，补齐预期后一致（与安全无关的既有红，一并修复）。
+- **安全报告** `docs/MULTI-USER-PUBLISHING-SECURITY-REVIEW.md`：10 项威胁（越权/ID 枚举/Origin 绕过/Access+Launch+Ticket 重放/nonce 并发/上传伪造/日志泄漏/App suspend/管理员边界）逐一映射实现位置 + 回归测试 + 状态；完成条件核对（无未关闭 P0/P1；每项有回归锚点）；禁止继续项均未触发。
+- 回归：凡变更后跑 `node ../../node_modules/vitest/dist/cli.js --run test` **688 passed、0 failed**；server typecheck 0 错；biome 全仓 0 警告。
+
+### TASK-038 容量与故障压测（spec 阶段 H）
+- **独立压测脚本** `test/load/capacity-load.test.ts`（`describe.runIf(RUN && pgUp)`，默认跳过、设 `PI_CAPACITY_LOAD=1` 触发；不并入 `npm test` 常规路径/不进入生产 src）——进程内 `createEmbedServices`（真实 PG schema + 真实 AccessToken + 真实 handler + 假会话实时），度量 p50/p95/p99、吞吐、事件循环滞后漂移、RSS/heap、错误率。
+- **本环境实测**：并发 Turn 15 会话×2=30 turn（p50 38ms / p95 54ms / p99 55ms，~338/s，0 错，事件循环滞后 ~1.3ms）；Exchange 抖量 120 身份（~240/s，唯一 120/120，0 错）；上传超限 200KB→422、8×40KB 突发 0 个 5xx；250ms idle 后 3 turn 0 错。RSS 约 141→151MB、heap 稳定。
+- **过程中的既有问题（非缺陷）**：fixture 初始 `runtimePolicy.profile="chat-with-files"` 使所有 turn 确定性 500——MVP 只认 `chat-only`，属 RuntimeSpec 校验错误、非并发缺陷（已改 fixture 并定位）；直接 call service 注入公共 `conv_` id 导致 PG uuid 报错（调试误用，已澄清 HTTP 层负责 parse）。
+- **压测报告** `docs/MULTI-USER-PUBLISHING-CAPACITY-REPORT.md`：方法、环境、结果表、对实现约束的验证（PD-13 单写者、HMAC 身份稳定、上传分级配额、故障恢复不 5xx），以及**待完整 composed plane（Redis/真实模型）的手工压测清单**（1,000 空闲 Realtime 30min、断线重连风暴、DB/Redis 短断、模型故障、TTS 队列并发 enqueue），按 spec 27.x 不进入生产包。
+- 完成条件核对：✅ 声明容量内 p99 达标且失败可恢复；✅ 禁止继续项（压测代码常驻生产包）未触发，脚本独立+env 门控。
+- 回归：全量 `node ../../node_modules/vitest/dist/cli.js --run test` **688 passed + 4 skipped（load 门控）**，0 failed；typecheck 0 错；biome 全仓 0 警告。
+
+### TASK-036 条件性接入 TTS/Avatar（spec 5.4/15.1，WP-09 条件性语音；PD-10/PD-11 不阻塞文本）
+- **`embed/tts/provider.ts`（新）**：`TtsProvider(input, signal) => Promise<TtsAudioResult>`（一个进程一 Provider，**不为每用户加载模型**）；`EmbedTtsError`（queue_full/timeout/cancelled/provider）+ 工厂错误；`DEFAULT_TTS_CONCURRENCY=1`/`DEFAULT_TTS_MAX_PENDING=64`/`DEFAULT_TTS_TIMEOUT_MS=30s`。
+- **`embed/tts/queue.ts`（新）**：`EmbedTtsQueue`——**单共享队列**（进程级，跨会话共用），**有界 FIFO**（满 → 可解释 `queue_full`），默认并发 1（GPU/声卡单写者），`enqueue(input)` 返回 handle（`done` promise + `cancel()`）；逐任务超时（`AbortController` + race）；`cancel(id)` 移除 pending / 向 running 发 abort；`cancelForConversation(id)` 跨会话取消（清本会话 pending + abort 其 running）；provider 故障只失败单任务、队列继续（语音故障不倒灌文本）；`onEvent` 上报 queued/started/completed/failed/cancelled（接 TASK-035 指标）。**按需触发**（无任何自动生音）+ **无界队列禁止**均已落地。
+- **`embed/tts/http.ts`（新）**：`GET/POST /api/embed/v1/conversations/:convId/tts` + `DELETE .../tts/:jobId`——认证先行；`speechEnabled` 解算 Accept：当前版本 `capabilities.speech.enabled`（RuntimeSpec 控制）；`POST` 只 202 队列/排队，禁 → 503 `SPEECH_DISABLED`、无 provider → 503 `TTS_UNAVAILABLE`、队列满 → 429 `QUEUE_FULL`；`GET` 返回特征开关 + 共享队列 stats；`DELETE` 200。**只认 `/tts` 子路由**（其余 conversations 路径交还，避免抢路由）。
+- **接线**：`EmbedPlaneOptions`/`EmbedServicesOptions` 增 `ttsProvider?`（单实例共享）+ `tts?{maxPending,timeoutMs}`；`createEmbedServices` 建 `speechEnabled`（读 app 当前版本 parity）→ `EmbedTtsQueue`（onEvent 接 `embed_tts_queued`/`embed_tts_running` gauge + `embed_tts_jobs_total{result}` counter）+ `createTtsHttpHandler` 挂进 handlers；`EmbedPlaneHandle`/`EmbedServicesHandle` 暴露 `ttsQueue`；compose 把 `ttsProvider` 透传。**Avatar**：只读发布配置（能力 flag `features.avatar`，来自 `capabilities.avatar.enabled`）——保持客户端能力/仅展示，不参与服务端身份模型（PD-11 无新改动）。
+- 测试：
+  - `test/embed/tts-queue.test.ts`（8 passed，DB-free）：并发 1+FIFO、有界 queue_full、超时、cancel pending（可解释 cancelled 且不影响先跑完的 job）、cancel running 使 provider signal aborted、**跨会话取消**只清一个会话（free slot 后其余会话 job 仍跑）、provider 故障失败单任务但队列继续、生命周期事件。
+  - `test/embed/tts-http.test.ts`（7 passed，DB-free，真实 HTTP server + 假 authenticator + 真 queue + 假 provider）：特征 flag、禁 → 503、无 provider → 503、POST 202、DELETE 200、401、不抢非 TTS 路由。
+  - 回归：`test/embed test/publishing test/runtime citations-sessions retrieval metrics logging-redact` **396 passed、0 failed**；根 `npm run check` 全绿（biome/pinned-deps/ts-imports/shrinkwrap/install-lock/根 tsgo/web typecheck/browser-smoke）；server typecheck 0 错。
+- 完成条件核对：✅ RuntimeSpec 控制（speech/avatar 都从当前版本 capabilities 读，禁用即 503/不展示）；✅ 共享进程级 Provider（单实例队列，非每用户）；✅ 默认并发 1 + 有界队列 + 按需触发 + 取消 + 超时；✅ Avatar 只读发布配置。禁止继续项无：不自动为所有回复生音（只有 client 主动 POST 才有任务）、无无界队列（有界 + queue_full）。**完成条件"语音故障不影响文本"**：TTS 与 runTurn/文本链路完全解耦（独立端点 + 队列失败不进入 turn 路径），文本 turn 从不等待音频。
+- 已知限制：未接真实 GPU TTS 后端（`TtsProvider` seam 就绪；无 provider 时显式 503，不假成功）；未实现音频**异步投递**（enqueue 202 + jobId，queue 的 `done` promise 提供结果；经 GET 拉流/回传留待接后端时定）；Avatar 仅 enabled 布尔（schema 只有 `avatar: {enabled}`，无模型/尺寸字段，命题按"只读配置"已满足，具体展示字段留 TTS/Avatar 真实接入）。
+
+### TASK-033 完善 Embed UI（spec 29 / WP-07）
+- **前端切 Realtime**（TASK-025 完成条件落地）：`embed-app` 不再走 dev turn HTTP；发送经 `EmbedRealtimeTransport`（ws-ticket + turn.start），消息由 `EmbedChatController` 状态机从服务端事件推导。
+- **Realtime 事件语义修正**（关键，spec 9.2）：服务端 `message.delta` 改为**瞬时事件（sequence 0，不可恢复）**，`message.completed` 保留持久 sequence（此前 delta 与 completed 同 sequence，Web 传输层按序去重会**丢弃 completed**——TASK-026 未暴露是因为前端当时未接 Realtime）。Web 传输层同步调整：sequence 0 事件全部放行且不推进恢复游标，sequence > 0 按序去重（原语义不变）。
+- **`chat-controller.ts`（新）**：`EmbedChatController`——`initialize`（能力开关 + 列表 + 恢复最近会话，PD-02）/`newConversation`/`openConversation`（重连，切换取消旧订阅）/`send`（本地回显 + turn.start，重连不重发）/`uploadFile`/`removeAttachment`/`archiveActive`/`close`/`reset`；`message.delta`→流式 assistant（`streaming` 标记）、`message.completed`→终结（持久 sequence）、`citation.updated`→引用挂到流式消息（先于 delta 到达时暂存 pendingCitations）、`turn.failed/cancelled`→系统消息；连接状态（idle/connecting/connected/reconnecting/closed）与错误（含 DISCONNECTED）入 state；`withToken` 对 TOKEN_EXPIRED/TOKEN_INVALID **透明刷新重试一次**；AUTH_EXPIRED（signed_user 无法刷新，PD-18）走 `onAuthFailure` 回调。
+- **认证刷新**：`EmbedAuthController` 记录 mode；`getToken()` 过期前 30s 抛 TOKEN_EXPIRED；`refresh(publicAppId)`——匿名用同一 visitorId 重新 Exchange（身份稳定），signed_user 抛 AUTH_EXPIRED 等宿主重新 init。
+- **上传/归档/引用 UI**：`EmbedShell` 增附件按钮（`x-filename`/checksum 由 `chat-controller.sha256Hex` 计算，webcrypto）+ 附件 chip 行 + 连接状态胶囊；`ConversationList` 增归档按钮；assistant 消息下渲染引用 chip（title/excerpt，仅实时展示）；限流/配额/上传错误进入错误横幅（RATE_LIMITED/QUOTA_EXCEEDED/UPLOAD_REJECTED 等）。
+- **wire 契约修正**：上传响应 `AttachmentView.attachmentId/conversationId` 改为**公开表示**（`att_<uuid>`/`conv_<uuid>`，server `toView` 经 toPublicId）——此前返回裸 UUID 而 DELETE/GET 路径要求公开前缀，客户端无法直接回填；protocol `public-http.ts` 增 `EmbedAttachmentView`/`DeleteAttachmentResponse`/`WsTicketResponse`。
+- **引用数据链路**：`ConversationService.executeTurn` 返回值增 `citations`（`prepareRetrieval` 结果）；`conversationRealtimeServices` 透传；Realtime Connection 在 `message.completed` 前发 `citation.updated`（瞬时事件，有引用才发）。引用**不持久化**（沿用 TASK-032 记录），断线重连后引用 chip 不补发——已知限制。
+- **postMessage 补齐 spec 12.1**：protocol `EmbedHostPostMessage` 增 `focus`/`resize-request`；Web 通道增 `onFocus`/`onResizeRequest`；EmbedApp 接 focus→聚焦输入框、resize-request→回发 `resize`（`document.documentElement.scrollHeight`，上限 100000，防抖 window resize）；`host-a.html` 增演示按钮。
+- **移动布局与无障碍**：≤640px 会话列表改为抽屉（header「会话列表」开关，`is-list-open`）；输入框 `aria-label`、按钮 `aria-label`、连接状态 `<output>`、消息区 `aria-live`、流式光标动画。
+- 测试：`packages/web/test/embed/chat-controller.test.ts`（17 passed：初始化/发送流式/未连接/失败/引用两种到达顺序/上传成功+配额超限+未启用/删除/归档切换/会话切换/新建/Token 过期重试/DISCONNECTED/close 不误报/sha256Hex/AUTH_EXPIRED）；`realtime-transport.test.ts` 增瞬时 sequence-0 用例（delta 不屏蔽 completed）；`post-message.test.ts`（协议 12 passed + Web 12 passed，增 focus/resize-request）；`embed-logic.test.ts` 增 Token 过期/匿名刷新/signed_user AUTH_EXPIRED；server `realtime-connection.test.ts` 增 citation.updated 事件用例（delta sequence 0 断言）+ `attachments`/`attachments-quota`/`citations-conversation` 随公开 ID 契约更新。
+- 全量回归：server embed+publishing+runtime 354 passed（含 control-compose，本环境 dist 已可用）、protocol 292 passed、web embed 46 passed；biome 全仓 0 警告；根 tsgo 0 错误；web typecheck + pinned-deps/ts-imports/shrinkwrap/install-lock/browser-smoke 全过。
+- 完成条件核对：✅ 无需内部 Web App 完成最终用户主要流程（列表/新建/切换/归档/上传/发送/流式/断线/引用展示）；✅ 禁止继续项无（Embed 不暴露管理入口；前端消息发送只经 Realtime 一次性 Ticket，不再依赖 dev turn HTTP）。
+- 已知限制：引用与附件列表**不持久化/不枚举**（MVP 无附件列表 API，刷新后 UI 只显示本次会话上传的附件）；citation.updated 不参与断线补齐；浏览器级 iframe 演示（嵌入允许 Origin、刷新恢复、移动抽屉、宿主 resize）待完整环境手工验证。
+
 ### TASK-015 匿名 Principal Exchange
 - `embed/auth/access-token.ts`：`AccessTokenService`（jose `SignJWT`/`jwtVerify`，Ed25519/EdDSA；iss/aud/kid/jti/iat/exp；`TOKEN_EXPIRED`/`TOKEN_INVALID` 区分）、`EmbedAccessKey` 类型（= jose `GenerateKeyPairResult["privateKey"]`，规避无 DOM lib 的裸 `CryptoKey`）、`loadAccessTokenKeyMaterial`（PKCS8/SPKI PEM → CryptoKey）。
 - `embed/auth/principal.ts`：`anonymousSubjectHash`（HMAC-SHA256 pepper）+ `ExchangeService.exchangeAnonymous`（App 404 / 非 active 403 APP_SUSPENDED / accessMode 403 FORBIDDEN / Origin 403 ORIGIN_NOT_ALLOWED → upsert Principal（ON CONFLICT 稳定同访客身份）→ 签 Token）；features 读当前版本 RuntimeSpec capabilities。
@@ -447,13 +565,3 @@ src/web/start.ts                增加 publishing 选项，关闭时不创建任
 - **migration 0006**：`agent_definitions` 复合主键 `(id, revision)` + `source_hash` 列（修复 0001 的 id 主键无法存多 revision 缺陷）；`published_app_versions.runtime_spec/runtime_spec_hash` 可空（rejected 版本无 spec）；移除 published_apps→agent_definitions FK。
 - 测试 `test/publishing/control-service.test.ts`（11 passed）：bootstrap 幂等、导入 revision 递增且旧版保留、跨 tenant agent 404、10 并发建版本号 1..10 唯一、rejected 版本带 validationErrors、草稿漂移不影响旧版、未知 revision 404。
 
-## 四、下一步（TASK-033）
-
-**完善 Embed UI**（spec 29 / WP-07，前置 TASK-026 + TASK-031 + TASK-032）：
-
-- 修改位置：Web Embed 组件（`packages/web/src/embed/*`）和测试。
-- 实现：会话列表、新建/切换/归档、上传、**引用展示**、流式状态、断线、限流、空状态、移动布局、键盘和基础无障碍。
-- 测试：桌面/移动、Token 过期、App suspend、上传错误、切换会话、宿主 resize。
-- 完成条件：无需内部 Web App 即可完成最终用户主要流程。
-- 禁止继续：Embed Bundle 暴露管理入口或内部 cwd/model 随意修改。
-- 提示：embed-app 前端目前仍走 dev turn HTTP（TASK-026 的 `realtime-transport.ts` 已完成可复用）；引用检索结果已注入 Turn（TASK-032），TASK-033 可把引用 UI 接上。
