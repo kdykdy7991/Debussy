@@ -17,6 +17,10 @@ export default defineConfig({
 			process.env.PI_EMBED_DEV_PROXY_TARGET === undefined
 				? undefined
 				: {
+						"/api/control": {
+							target: process.env.PI_EMBED_DEV_PROXY_TARGET,
+							changeOrigin: false,
+						},
 						"/api/embed": {
 							target: process.env.PI_EMBED_DEV_PROXY_TARGET,
 							changeOrigin: false,

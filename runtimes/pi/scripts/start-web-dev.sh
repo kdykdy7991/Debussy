@@ -22,6 +22,7 @@ web_ui_port="${PI_WEB_UI_PORT:-5173}"
 server_port="${PI_WEB_SERVER_PORT:-8765}"
 allowed_origin="${PI_WEB_ALLOWED_ORIGIN:-http://127.0.0.1:${web_ui_port}}"
 export VITE_PI_WS_URL="${VITE_PI_WS_URL:-ws://127.0.0.1:${server_port}/api/pi/v1/ws}"
+export PI_EMBED_DEV_PROXY_TARGET="${PI_EMBED_DEV_PROXY_TARGET:-http://127.0.0.1:${server_port}}"
 generated_web_token=$(node -p "require(\"node:crypto\").randomBytes(32).toString(\"hex\")")
 export PI_WEB_TOKEN="${PI_WEB_TOKEN:-$generated_web_token}"
 export VITE_PI_WEB_TOKEN="${VITE_PI_WEB_TOKEN:-$PI_WEB_TOKEN}"
