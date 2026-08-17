@@ -5,7 +5,10 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "tsgo --noEmit -p tsconfig.json && vite build",
+		"dev:embed": "PI_WEB_TARGET=embed vite",
+		"build:admin": "tsgo --noEmit -p tsconfig.json && PI_WEB_TARGET=admin vite build",
+		"build:embed": "tsgo --noEmit -p tsconfig.json && PI_WEB_TARGET=embed vite build",
+		"build": "npm run build:admin && npm run build:embed",
 		"test": "vitest --run",
 		"typecheck": "tsgo --noEmit -p tsconfig.json"
 	},

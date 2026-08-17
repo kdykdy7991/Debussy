@@ -22,6 +22,16 @@
  * the constructor (never implicit global settings).
  */
 
+import type {
+	AgentCapabilities,
+	AgentConfigSnapshot,
+	AgentDefinitionAssociatedApp,
+	AgentDefinitionDetail,
+	AgentDefinitionRevision,
+	AgentDefinitionRevisionListResponse,
+	SaveAgentRevisionRequest,
+	SaveAgentRevisionResponse,
+} from "@earendil-works/pi-protocol";
 import { importSPKI } from "jose";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import type {
@@ -165,6 +175,8 @@ export interface ControlServiceOptions {
 export type ControlErrorCode =
 	| "BOOTSTRAP_MISMATCH" // tenant exists with different name/status (409)
 	| "AGENT_NOT_FOUND" // agent/revision not visible in the tenant scope (404)
+	| "AGENT_REVISION_NOT_FOUND" // specific agent revision not visible (404)
+	| "AGENT_SAVE_FAILED" // saving a new revision failed (500)
 	| "SOURCE_HASH_MISMATCH" // expectedSourceHash differs from current (409)
 	| "APP_NOT_FOUND" // app not visible in the tenant scope (404)
 	| "VERSION_NOT_FOUND" // source agent revision not found (404)
@@ -615,6 +627,291 @@ export class ControlService {
 				})),
 				nextCursor,
 			},
+		};
+	}
+
+	/**
+	 * WB-003: Get the latest saved AgentDefinition for the detail page.
+	 *
+	 * Returns null (404) when the agent is not found in this tenant scope.
+	 * Cross-tenant lookup is rejected by the repository's `scope.tenantId`
+	 * filter; this method never reads from another tenant.
+	 */
+	async getAgentDefinitionDetail(input: {
+		readonly tenantId: TenantId;
+		readonly agentDefinitionId: AgentDefinitionId;
+	}): Promise<ControlResult<AgentDefinitionDetail>> {
+		const latest = await this.repos.agentDefinitions.getLatest({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (latest === undefined) {
+			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		}
+		const associatedApps = await this.repos.publishedApps.list({
+			scope: { tenantId: input.tenantId },
+			limit: 200,
+		});
+		const filteredApps = associatedApps.filter((row) => row.agentDefinitionId === input.agentDefinitionId);
+		return {
+			ok: true,
+			data: this.agentDetailView(latest, filteredApps.length),
+		};
+	}
+
+	/** WB-003: list all immutable revisions of an agent, newest first. */
+	async listAgentDefinitionRevisions(input: {
+		readonly tenantId: TenantId;
+		readonly agentDefinitionId: AgentDefinitionId;
+		readonly limit: number;
+		readonly cursor?: string;
+	}): Promise<ControlResult<AgentDefinitionRevisionListResponse>> {
+		// First verify the agent exists in tenant scope; if not, return 404 to
+		// match the detail endpoint and avoid leaking IDs from other tenants.
+		const latest = await this.repos.agentDefinitions.getLatest({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (latest === undefined) {
+			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		}
+		const rows = await this.repos.agentDefinitions.list({
+			scope: { tenantId: input.tenantId },
+			limit: input.limit,
+			cursor: input.cursor,
+			includeRevisions: true,
+		});
+		const revisions = rows
+			.filter((row) => row.agentDefinitionId === input.agentDefinitionId)
+			.sort((a, b) => b.revision - a.revision);
+		const { page, nextCursor } = sliceCursorPage(revisions, input.limit);
+		// List returns metadata only; per-revision configSnapshot and diff are
+		// fetched on demand via `getAgentDefinitionRevision` (N+1 avoidance).
+		const items: AgentDefinitionRevision[] = page.map((row) => this.revisionView(row, undefined));
+		return { ok: true, data: { items, nextCursor } };
+	}
+
+	/** WB-003: get a single revision (with configSnapshot) for the detail page. */
+	async getAgentDefinitionRevision(input: {
+		readonly tenantId: TenantId;
+		readonly agentDefinitionId: AgentDefinitionId;
+		readonly revision: number;
+	}): Promise<ControlResult<AgentDefinitionRevision>> {
+		const record = await this.repos.agentDefinitions.getRevision(
+			{ tenantId: input.tenantId },
+			input.agentDefinitionId,
+			input.revision,
+		);
+		if (record === undefined) {
+			return fail("AGENT_REVISION_NOT_FOUND", 404, "agent revision not found in tenant scope");
+		}
+		const previous =
+			input.revision > 1
+				? await this.repos.agentDefinitions.getRevision(
+						{ tenantId: input.tenantId },
+						input.agentDefinitionId,
+						input.revision - 1,
+					)
+				: undefined;
+		return { ok: true, data: this.revisionView(record, previous) };
+	}
+
+	/** WB-003: create a new immutable revision from the client's draft. */
+	async saveAgentRevision(input: {
+		readonly tenantId: TenantId;
+		readonly agentDefinitionId: AgentDefinitionId;
+		readonly request: SaveAgentRevisionRequest;
+	}): Promise<ControlResult<SaveAgentRevisionResponse>> {
+		const latest = await this.repos.agentDefinitions.getLatest({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (latest === undefined) {
+			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		}
+		const nextRevision = latest.revision + 1;
+		const draft = this.requestToDraft(input.request);
+		const sourceHash = sha256Hex(canonicalJson(draft));
+		const now = new Date();
+		await this.repos.agentDefinitions.insert({
+			agentDefinitionId: input.agentDefinitionId,
+			tenantId: input.tenantId,
+			name: latest.name,
+			revision: nextRevision,
+			draftConfig: draft,
+			sourceHash,
+			createdAt: now,
+			updatedAt: now,
+		});
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("AgentDefinitionId", input.agentDefinitionId) as SaveAgentRevisionResponse["id"],
+				revision: nextRevision,
+				sourceHash,
+				createdAt: now.toISOString(),
+			},
+		};
+	}
+
+	/** WB-003: list PublishedApps that use the given AgentDefinition. */
+	async listAgentDefinitionApps(input: {
+		readonly tenantId: TenantId;
+		readonly agentDefinitionId: AgentDefinitionId;
+	}): Promise<ControlResult<{ readonly items: readonly AgentDefinitionAssociatedApp[] }>> {
+		const latest = await this.repos.agentDefinitions.getLatest({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (latest === undefined) {
+			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		}
+		const rows = await this.repos.publishedApps.list({
+			scope: { tenantId: input.tenantId },
+			limit: 200,
+		});
+		const filtered = rows.filter((row) => row.agentDefinitionId === input.agentDefinitionId);
+		return {
+			ok: true,
+			data: {
+				items: filtered.map((row) => ({
+					appId: toPublicId("PublishedAppId", row.publishedAppId) as AgentDefinitionAssociatedApp["appId"],
+					publicAppId: row.publicAppId as AgentDefinitionAssociatedApp["publicAppId"],
+					name: row.name,
+					status: row.status as string,
+					currentVersionId:
+						row.currentVersionId === null
+							? null
+							: (toPublicId(
+									"PublishedAppVersionId",
+									row.currentVersionId,
+								) as AgentDefinitionAssociatedApp["currentVersionId"]),
+				})),
+			},
+		};
+	}
+
+	/** Internal: project a repository record into the wire-format detail DTO. */
+	private agentDetailView(
+		record: {
+			readonly agentDefinitionId: AgentDefinitionId;
+			readonly name: string;
+			readonly revision: number;
+			readonly draftConfig: unknown;
+			readonly updatedAt: Date;
+		},
+		associatedAppCount: number,
+	): AgentDefinitionDetail {
+		const snapshot = this.draftToSnapshot(record.draftConfig);
+		return {
+			id: toPublicId("AgentDefinitionId", record.agentDefinitionId) as AgentDefinitionDetail["id"],
+			name: record.name,
+			description: null,
+			currentRevision: record.revision,
+			modelId: snapshot.modelId,
+			systemPrompt: snapshot.systemPrompt,
+			parameters: snapshot.parameters,
+			toolIds: snapshot.toolIds,
+			knowledgeBaseIds: snapshot.knowledgeBaseIds,
+			capabilities: snapshot.capabilities,
+			hasDraft: false,
+			updatedAt: record.updatedAt.toISOString(),
+			updatedBy: "system",
+			changeSummary: null,
+			associatedAppCount,
+		};
+	}
+
+	/** Internal: project a single revision into the wire-format revision DTO. */
+	private revisionView(
+		row: {
+			readonly agentDefinitionId: AgentDefinitionId;
+			readonly revision: number;
+			readonly sourceHash: string;
+			readonly createdAt: Date;
+			readonly draftConfig?: unknown;
+		},
+		previousRow: { readonly draftConfig: unknown; readonly revision: number } | undefined = undefined,
+	): AgentDefinitionRevision {
+		const draftConfig = row.draftConfig ?? {};
+		const snapshot = this.draftToSnapshot(draftConfig);
+		const diff = previousRow === undefined ? null : this.computeDiff(previousRow.draftConfig, draftConfig);
+		return {
+			id: toPublicId("AgentDefinitionId", row.agentDefinitionId) as AgentDefinitionRevision["id"],
+			revision: row.revision,
+			sourceHash: row.sourceHash,
+			changeSummary: null,
+			createdBy: "system",
+			createdAt: row.createdAt.toISOString(),
+			configSnapshot: snapshot,
+			diffFromPrevious: diff,
+			associatedVersionIds: [],
+		};
+	}
+
+	/** Internal: convert the persisted `AgentDraftConfig` shape to a flat `AgentConfigSnapshot`. */
+	private draftToSnapshot(draft: unknown): AgentConfigSnapshot {
+		const d = (draft ?? {}) as Partial<AgentDraftConfig>;
+		const toolIds = Array.isArray(d.tools) ? d.tools.map((t) => t.id) : [];
+		const knowledgeBaseIds = Array.isArray(d.knowledgeBases) ? d.knowledgeBases.map((k) => k.id) : [];
+		const capabilities: AgentCapabilities = {
+			liveSpeech: d.speech?.enabled === true,
+			avatar: d.avatar?.enabled === true,
+			attachments: d.uploads?.enabled === true,
+			citations: false,
+			realtime: false,
+			webSearch: false,
+		};
+		return {
+			modelId: d.model?.modelId ?? null,
+			systemPrompt: d.prompt ?? "",
+			parameters: (d.model?.params ?? {}) as Readonly<Record<string, unknown>>,
+			toolIds,
+			knowledgeBaseIds,
+			capabilities,
+		};
+	}
+
+	/** Internal: convert a save request to the persisted `AgentDraftConfig` shape. */
+	private requestToDraft(request: SaveAgentRevisionRequest): AgentDraftConfig {
+		return {
+			prompt: request.systemPrompt,
+			model: {
+				provider: "platform",
+				modelId: request.modelId ?? "",
+				params: request.parameters,
+			},
+			tools: request.toolIds.map((id) => ({ id })),
+			knowledgeBases: request.knowledgeBaseIds.map((id) => ({ id })),
+			uploads: { enabled: request.capabilities.attachments },
+			speech: { enabled: request.capabilities.liveSpeech },
+			avatar: { enabled: request.capabilities.avatar },
+		};
+	}
+
+	/** Internal: compute a structural diff between two consecutive revisions' draft configs. */
+	private computeDiff(previous: unknown, current: unknown): AgentDefinitionRevision["diffFromPrevious"] {
+		if (previous === null || previous === undefined || current === null || current === undefined) return null;
+		const p = previous as Partial<AgentDraftConfig>;
+		const c = current as Partial<AgentDraftConfig>;
+		const fields: ("modelId" | "systemPrompt" | "parameters" | "toolIds" | "knowledgeBaseIds" | "capabilities")[] =
+			[];
+		if ((p.model?.modelId ?? null) !== (c.model?.modelId ?? null)) fields.push("modelId");
+		if ((p.prompt ?? "") !== (c.prompt ?? "")) fields.push("systemPrompt");
+		const pTools = new Set((p.tools ?? []).map((t) => t.id));
+		const cTools = new Set((c.tools ?? []).map((t) => t.id));
+		const pKb = new Set((p.knowledgeBases ?? []).map((k) => k.id));
+		const cKb = new Set((c.knowledgeBases ?? []).map((k) => k.id));
+		if (
+			JSON.stringify(p.model?.params ?? {}) !== JSON.stringify(c.model?.params ?? {}) ||
+			(p.model?.provider ?? "") !== (c.model?.provider ?? "")
+		)
+			fields.push("parameters");
+		if (pTools.size !== cTools.size || ![...pTools].every((id) => cTools.has(id))) fields.push("toolIds");
+		if (pKb.size !== cKb.size || ![...pKb].every((id) => cKb.has(id))) fields.push("knowledgeBaseIds");
+		if (
+			(p.speech?.enabled ?? false) !== (c.speech?.enabled ?? false) ||
+			(p.avatar?.enabled ?? false) !== (c.avatar?.enabled ?? false) ||
+			(p.uploads?.enabled ?? false) !== (c.uploads?.enabled ?? false)
+		)
+			fields.push("capabilities");
+		return {
+			changedFields: fields,
+			promptDelta: (p.prompt ?? "") === (c.prompt ?? "") ? null : (c.prompt ?? ""),
+			parametersDelta: {},
+			toolsAdded: [...cTools].filter((id) => !pTools.has(id)),
+			toolsRemoved: [...pTools].filter((id) => !cTools.has(id)),
+			knowledgeAdded: [...cKb].filter((id) => !pKb.has(id)),
+			knowledgeRemoved: [...pKb].filter((id) => !cKb.has(id)),
+			capabilitiesChanged: [],
 		};
 	}
 

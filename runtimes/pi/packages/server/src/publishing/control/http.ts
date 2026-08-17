@@ -22,7 +22,7 @@ import type { IncomingMessage } from "node:http";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
-import type { PrincipalId, PublishedAppId, TenantId } from "../domain/ids.ts";
+import type { AgentDefinitionId, PrincipalId, PublishedAppId, TenantId } from "../domain/ids.ts";
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
 import type { IdempotencyScope, PublishedAppRecord, PublishingRepositories } from "../repositories.ts";
@@ -432,6 +432,99 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return { status: 200, body: { data: listed.data, requestId } };
 			},
 		},
+		// ---- AgentDefinition detail (WB-003 / SPEC §5.2 / §15.1). ----
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)$/,
+			operation: "agent-definitions.get",
+			handler: async ({ requestId, params }) => {
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				const detail = await service.getAgentDefinitionDetail({ tenantId, agentDefinitionId });
+				if (!detail.ok) return serviceError(detail.error, requestId);
+				return { status: 200, body: { data: detail.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)\/revisions$/,
+			operation: "agent-definitions.list-revisions",
+			handler: async ({ requestId, query, params }) => {
+				const parsed = parseListQuery(query, {});
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				const listed = await service.listAgentDefinitionRevisions({
+					tenantId,
+					agentDefinitionId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)\/revisions\/(\d+)$/,
+			operation: "agent-definitions.get-revision",
+			handler: async ({ requestId, params }) => {
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				const revision = Number.parseInt(params[1] ?? "", 10);
+				if (!Number.isInteger(revision) || revision < 1)
+					return badRequest("revision must be a positive integer", requestId);
+				const detail = await service.getAgentDefinitionRevision({
+					tenantId,
+					agentDefinitionId,
+					revision,
+				});
+				if (!detail.ok) return serviceError(detail.error, requestId);
+				return { status: 200, body: { data: detail.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)\/revisions$/,
+			operation: "agent-definitions.save-revision",
+			handler: async ({ requestId, body, params }) => {
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				if (body === undefined || typeof body !== "object" || body === null)
+					return badRequest("body must be a JSON object", requestId);
+				const draft = body as Record<string, unknown>;
+				const result = await service.saveAgentRevision({
+					tenantId,
+					agentDefinitionId,
+					request: {
+						modelId: typeof draft.modelId === "string" ? draft.modelId : null,
+						systemPrompt: typeof draft.systemPrompt === "string" ? draft.systemPrompt : "",
+						parameters:
+							draft.parameters !== null && typeof draft.parameters === "object"
+								? (draft.parameters as Record<string, unknown>)
+								: {},
+						toolIds: Array.isArray(draft.toolIds) ? (draft.toolIds as string[]) : [],
+						knowledgeBaseIds: Array.isArray(draft.knowledgeBaseIds) ? (draft.knowledgeBaseIds as string[]) : [],
+						capabilities: parseCapabilities(draft.capabilities),
+						changeSummary: typeof draft.changeSummary === "string" ? draft.changeSummary : "",
+					},
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)\/apps$/,
+			operation: "agent-definitions.list-apps",
+			handler: async ({ requestId, params }) => {
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				const listed = await service.listAgentDefinitionApps({ tenantId, agentDefinitionId });
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
 	];
 
 	async function transition(
@@ -592,6 +685,26 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 function parseAppId(appId: string | undefined): PublishedAppId | null {
 	if (appId === undefined) return null;
 	return fromPublicId("PublishedAppId", appId);
+}
+
+/** Parse a bare `agent_<uuid>` public id from a path segment. */
+function parseAgentId(agentId: string | undefined): AgentDefinitionId | null {
+	if (agentId === undefined) return null;
+	return fromPublicId("AgentDefinitionId", agentId);
+}
+
+/** Narrow an arbitrary JSON value to `AgentCapabilities`; missing keys default to false. */
+function parseCapabilities(value: unknown): import("@earendil-works/pi-protocol").AgentCapabilities {
+	const obj = (value !== null && typeof value === "object" ? value : {}) as Record<string, unknown>;
+	const asBool = (v: unknown): boolean => v === true;
+	return {
+		liveSpeech: asBool(obj.liveSpeech),
+		avatar: asBool(obj.avatar),
+		attachments: asBool(obj.attachments),
+		citations: asBool(obj.citations),
+		realtime: asBool(obj.realtime),
+		webSearch: asBool(obj.webSearch),
+	};
 }
 
 /** Parse shared list query params, validating limit/status for the console. */
