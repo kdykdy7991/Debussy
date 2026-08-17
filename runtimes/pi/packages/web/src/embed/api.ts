@@ -10,6 +10,7 @@ import type {
 	ConversationDetailResponse,
 	ConversationListResponse,
 	ConversationSummary,
+	CreateConversationResponse,
 	DeleteAttachmentResponse,
 	DevTurnResponse,
 	EmbedAttachmentView,
@@ -69,8 +70,8 @@ export class EmbedApi {
 		});
 	}
 
-	async createConversation(token: string, title = ""): Promise<ConversationSummary> {
-		return this.request<ConversationSummary>("/api/embed/v1/conversations", {
+	async createConversation(token: string, title = ""): Promise<CreateConversationResponse> {
+		return this.request<CreateConversationResponse>("/api/embed/v1/conversations", {
 			method: "POST",
 			token,
 			headers: { "content-type": "application/json" },

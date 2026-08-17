@@ -56,6 +56,22 @@ export interface ConversationSummary {
 	readonly createdAt: string;
 }
 
+/**
+ * WB-008: response envelope for `POST /api/embed/v1/conversations`. Always
+ * returns both the created `conversation` and a `rollover` descriptor so
+ * the client never has to infer rollover from error text or guess.
+ */
+export interface CreateConversationResponse {
+	readonly conversation: ConversationSummary;
+	readonly rollover: {
+		readonly conversationId: string;
+		readonly rolledOver: boolean;
+		readonly previousConversationId: string | null;
+		readonly rolledOverAtSequence: number | null;
+		readonly rolloverSummaryId: string | null;
+	};
+}
+
 export interface ConversationListResponse {
 	readonly items: readonly ConversationSummary[];
 	readonly nextCursor: string | null;

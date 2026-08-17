@@ -214,3 +214,91 @@ export function shouldPersistAssistantChunk(
 export function shouldInlineToolInput(level: SessionLogLevel): boolean {
 	return level === "full";
 }
+
+/**
+ * WB-008: summary / rollover envelope shared by Admin and Embed planes.
+ *
+ * A `Summary` is the frozen snapshot of a conversation at the `throughSequence`
+ * boundary; `throughSequence` MUST point at the last sequence of a complete
+ * Turn (the next event in the log is either a new `turn/start` or the
+ * conversation itself is over). The Runtime uses the latest summary plus all
+ * events with `sequence > throughSequence` to rebuild model context, so the
+ * full log remains the only authoritative truth source.
+ */
+
+/** Free-text summary body. Always JSON-serialisable; sensitive fields forbidden. */
+export interface ConversationEventSummaryBody {
+	readonly text: string;
+	/** Short bullet list of facts the model must remember verbatim. */
+	readonly keyFacts: readonly string[];
+	/** Open user goals / unfinished items the model must not lose. */
+	readonly openItems: readonly string[];
+	/** Last user message referenced by the summary; empty string when unknown. */
+	readonly lastUserMessage: string;
+}
+
+/**
+ * Named `ConversationEventSummary` (not `ConversationSummary`) to avoid
+ * collision with the existing `ConversationSummary` admin list-row DTO in
+ * `embed/public-http.ts`. They are distinct shapes: list rows carry
+ * metadata only; this type carries the actual summary content used by
+ * Runtime context restore and rollover.
+ */
+export interface ConversationEventSummary {
+	readonly id: string;
+	readonly conversationId: string;
+	readonly throughSequence: number;
+	readonly modelId: string;
+	readonly sourceEventCount: number;
+	readonly sourceBytes: number;
+	readonly body: ConversationEventSummaryBody;
+	readonly createdAt: string;
+}
+
+/** Rollover response returned by `createConversation` (WB-008 / spec §12.3). */
+export interface ConversationRollover {
+	readonly conversationId: string;
+	/** True when an existing conversation was sealed and this is the new one. */
+	readonly rolledOver: boolean;
+	/** ID of the conversation that was sealed (always present when rolledOver). */
+	readonly previousConversationId: string | null;
+	/** Through-sequence at which the rollover happened (always present when rolledOver). */
+	readonly rolledOverAtSequence: number | null;
+	/** ID of the summary that anchored the rollover (always present when rolledOver). */
+	readonly rolloverSummaryId: string | null;
+}
+
+/**
+ * WB-008: hard limits applied to a single conversation. Operator-tunable.
+ * Defaults match spec §12.3. Exceeding any limit triggers rollover to a new
+ * conversation (preserving full history; never silent deletion).
+ */
+export interface ConversationLimits {
+	readonly maxConversationEvents: number;
+	readonly maxConversationEventBytes: number;
+	readonly maxConversationTurns: number;
+}
+
+export const DEFAULT_CONVERSATION_LIMITS: ConversationLimits = {
+	maxConversationEvents: 5_000,
+	maxConversationEventBytes: 20 * 1024 * 1024, // 20 MiB
+	maxConversationTurns: 500,
+} as const;
+
+/**
+ * Pure decision: should this conversation roll over given its latest counters?
+ *
+ * Pure / no side-effects; callers run it after every append and decide whether
+ * to seal the conversation on the next complete turn. The function deliberately
+ * does NOT consider in-flight turns: rollover happens only at a complete-turn
+ * boundary (spec §12.3 — "current turn not hard-cut").
+ */
+export function shouldRolloverConversation(
+	counters: { readonly eventCount: number; readonly eventBytes: number; readonly turnCount: number },
+	limits: ConversationLimits,
+): boolean {
+	if (counters.eventCount >= limits.maxConversationEvents) return true;
+	if (counters.eventBytes >= limits.maxConversationEventBytes) return true;
+	if (counters.turnCount >= limits.maxConversationTurns) return true;
+	return false;
+}

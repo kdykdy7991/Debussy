@@ -37,6 +37,15 @@ export interface EmbedChatState {
 	/** 来自 bootstrap 的 uploads 能力开关（RuntimeSpec 控制，spec 5.5）。 */
 	readonly uploadsEnabled: boolean;
 	readonly error: EmbedChatError | null;
+	/** WB-008: last rollover notice surfaced to the embed UI. */
+	readonly rolloverNotice: EmbedRolloverNotice | null;
+}
+
+/** WB-008: lightweight rollover descriptor consumed by the embed banner. */
+export interface EmbedRolloverNotice {
+	readonly previousConversationId: string | null;
+	readonly rolledOverAtSequence: number | null;
+	readonly summaryId: string | null;
 }
 
 export interface EmbedChatControllerOptions {
@@ -102,6 +111,7 @@ export class EmbedChatController {
 			attachments: [],
 			uploadsEnabled: false,
 			error: null,
+			rolloverNotice: null,
 		};
 		this.transport = new EmbedRealtimeTransport({
 			getTicket: (conversationId) => this.withToken((token) => this.options.api.getWsTicket(token, conversationId)),
@@ -141,8 +151,19 @@ export class EmbedChatController {
 	async newConversation(): Promise<void> {
 		try {
 			const created = await this.withToken((token) => this.options.api.createConversation(token));
-			this.setState({ conversations: [created, ...this.state.conversations] });
-			await this.openConversation(created.id);
+			this.setState({ conversations: [created.conversation, ...this.state.conversations] });
+			await this.openConversation(created.conversation.id);
+			// WB-008: surface rollover to the embed UI so the user knows the
+			// previous conversation was sealed and this one continues it.
+			if (created.rollover.rolledOver) {
+				this.setState({
+					rolloverNotice: {
+						previousConversationId: created.rollover.previousConversationId,
+						rolledOverAtSequence: created.rollover.rolledOverAtSequence,
+						summaryId: created.rollover.rolloverSummaryId,
+					},
+				});
+			}
 		} catch (error) {
 			this.handleError(error);
 		}

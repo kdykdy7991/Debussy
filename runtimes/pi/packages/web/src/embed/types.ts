@@ -16,6 +16,7 @@ export type {
 	ConversationEvent,
 	ConversationListResponse,
 	ConversationSummary,
+	CreateConversationResponse,
 	DeleteAttachmentResponse,
 	DevTurnResponse,
 	EMBED_PROTOCOL_NAME,

@@ -1,6 +1,6 @@
 # WB-008：Summary 与自动续接
 
-状态：Blocked by WB-007
+状态：Complete（handoff 见 `handoffs/WB-008-summary-and-rollover.md`）
 
 ## 目标
 

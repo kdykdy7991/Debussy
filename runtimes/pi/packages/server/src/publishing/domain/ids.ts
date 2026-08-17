@@ -30,6 +30,7 @@ export type PrincipalId = string & Brand<"PrincipalId">;
 export type ConversationId = string & Brand<"ConversationId">;
 export type AttachmentId = string & Brand<"AttachmentId">;
 export type ConversationEventId = string & Brand<"ConversationEventId">;
+export type ConversationSummaryId = string & Brand<"ConversationSummaryId">;
 export type TurnId = string & Brand<"TurnId">;
 export type RequestId = string & Brand<"RequestId">;
 export type IdempotencyKey = string & Brand<"IdempotencyKey">;
@@ -46,6 +47,7 @@ export type IdKind =
 	| "ConversationId"
 	| "AttachmentId"
 	| "ConversationEventId"
+	| "ConversationSummaryId"
 	| "TurnId"
 	| "RequestId"
 	| "IdempotencyKey"
@@ -61,6 +63,7 @@ const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	ConversationId: "conv_",
 	AttachmentId: "att_",
 	ConversationEventId: "evt_",
+	ConversationSummaryId: "csum_",
 	TurnId: "turn_",
 	RequestId: "req_",
 	IdempotencyKey: "idem_",
@@ -149,6 +152,9 @@ export function newAttachmentId(): AttachmentId {
 }
 export function newConversationEventId(): ConversationEventId {
 	return buildId("ConversationEventId") as ConversationEventId;
+}
+export function newConversationSummaryId(): ConversationSummaryId {
+	return buildId("ConversationSummaryId") as ConversationSummaryId;
 }
 export function newTurnId(): TurnId {
 	return buildId("TurnId") as TurnId;

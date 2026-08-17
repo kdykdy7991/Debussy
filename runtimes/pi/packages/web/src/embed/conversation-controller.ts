@@ -6,7 +6,7 @@
  * 补齐」，失败保留 user 消息并标记错误（后续 Realtime 替换该路径）。
  */
 import type { EmbedApi } from "./api.ts";
-import type { ChatMessage, ConversationEvent, ConversationSummary } from "./types.ts";
+import type { ChatMessage, ConversationEvent, ConversationSummary, CreateConversationResponse } from "./types.ts";
 
 export class EmbedConversationController {
 	private readonly api: EmbedApi;
@@ -20,7 +20,7 @@ export class EmbedConversationController {
 		return response.items;
 	}
 
-	async create(token: string, title = ""): Promise<ConversationSummary> {
+	async create(token: string, title = ""): Promise<CreateConversationResponse> {
 		return this.api.createConversation(token, title);
 	}
 

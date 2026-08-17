@@ -221,7 +221,16 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 				body: errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
 			};
 		}
-		return { status: 201, body: { data: conversationView(result.data), requestId: ctx.requestId } };
+		return {
+			status: 201,
+			body: {
+				data: {
+					conversation: conversationView(result.data.conversation),
+					rollover: result.data.rollover,
+				},
+				requestId: ctx.requestId,
+			},
+		};
 	}
 
 	async function listRoute(ctx: RouteContext): Promise<void> {

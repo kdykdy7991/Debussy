@@ -191,6 +191,12 @@ export interface ConversationRecord {
 	readonly eventCount: number;
 	readonly eventBytes: number;
 	readonly turnCount: number;
+	/** WB-008: latest summary sequence applied to this conversation (0 = none). */
+	readonly latestSummarySequence: number;
+	/** WB-008: rollover chain (NULL = root conversation). */
+	readonly previousConversationId: ConversationId | null;
+	readonly nextConversationId: ConversationId | null;
+	readonly rolledOverAt: Date | null;
 	readonly createdAt: Date;
 	readonly updatedAt: Date;
 	readonly lastActiveAt: Date;
@@ -401,6 +407,29 @@ export interface ConversationRepository {
 	nextEventSequence(scope: OwnerScope, conversationId: ConversationId): Promise<number | undefined>;
 	/** Count active conversations in the tenant (dashboard, across all apps/principals). */
 	countActive(scope: TenantScope): Promise<number>;
+	/**
+	 * WB-008: seal the conversation as read-only and link it to the next
+	 * conversation in the rollover chain. Returns `false` when the
+	 * conversation is missing / out of scope / not currently `active`. The
+	 * caller is responsible for inserting the new conversation and updating
+	 * `latest_summary_sequence` in the same transaction.
+	 */
+	sealForRollover(
+		scope: OwnerScope,
+		conversationId: ConversationId,
+		fields: {
+			readonly nextConversationId: ConversationId;
+			readonly atSequence: number;
+		},
+	): Promise<boolean>;
+	/**
+	 * WB-008: stamp the latest summary sequence on a conversation so the
+	 * Runtime can quickly check "do I have a fresh summary to load?".
+	 * Returns `false` when the conversation is missing / out of scope. The
+	 * caller MUST enforce that `atSequence` is monotonic against
+	 * `latest_summary_sequence` (server-side: `>=` only on insert).
+	 */
+	updateLatestSummarySequence(scope: OwnerScope, conversationId: ConversationId, atSequence: number): Promise<boolean>;
 }
 
 /** Expired/aged-out attachment selection for the background sweep (TASK-030). */
@@ -553,6 +582,8 @@ export interface PublishingRepositories {
 	readonly principals: PrincipalRepository;
 	readonly conversations: ConversationRepository;
 	readonly events: ConversationEventRepository;
+	/** WB-008: conversation event-log summary snapshot repository. */
+	readonly summaries: ConversationSummaryRepository;
 	readonly idempotency: IdempotencyRepository;
 	readonly audit: AuditEventRepository;
 	readonly launchKeys: LaunchKeyRepository;
@@ -621,6 +652,42 @@ export interface ConversationEventRepository {
 	): Promise<ConversationEventRecord[]>;
 	/** Count error-type events in the tenant (dashboard). */
 	countErrors(scope: TenantScope): Promise<number>;
+}
+
+/** WB-008: frozen summary record persisted at complete-Turn boundaries. */
+export interface ConversationSummaryRecord {
+	readonly id: string;
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	readonly ownerPrincipalId: PrincipalId;
+	readonly conversationId: ConversationId;
+	readonly throughSequence: number;
+	readonly modelId: string;
+	readonly sourceEventCount: number;
+	readonly sourceBytes: number;
+	readonly body: unknown;
+	readonly createdAt: Date;
+}
+
+export interface ConversationSummaryRepository {
+	/**
+	 * Insert a summary. `(conversation_id, through_sequence)` is unique; a
+	 * conflict (re-running for the same boundary) returns `duplicate`.
+	 * Summary creation MUST run inside a transaction with the
+	 * `latest_summary_sequence` update on `conversations`; this method
+	 * does NOT touch the conversation counter itself.
+	 */
+	insert(
+		scope: OwnerScope,
+		record: ConversationSummaryRecord,
+	): Promise<{ readonly outcome: "inserted" } | { readonly outcome: "duplicate" }>;
+	/**
+	 * Return the latest summary for the conversation (highest
+	 * `through_sequence`), or `undefined` when no summary exists yet.
+	 */
+	getLatest(scope: OwnerScope, conversationId: ConversationId): Promise<ConversationSummaryRecord | undefined>;
+	/** All summaries for the conversation, newest first. */
+	list(scope: OwnerScope, conversationId: ConversationId): Promise<ConversationSummaryRecord[]>;
 }
 
 /** Scope for idempotency records: the table keys on (tenant, principal). */

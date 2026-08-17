@@ -14,8 +14,13 @@
  * `turn.failed` / `turn.interrupted` 等结构化事件；流式 chunk / 工具调用 /
  * 附件 / 引用 按 RuntimeSpec.contextPolicy.logLevel 决定是否持久化。
  */
-import type { Citation, SessionLogLevel } from "@earendil-works/pi-protocol";
-import { assertEventPayloadSafe, shouldPersistAssistantChunk } from "@earendil-works/pi-protocol";
+import type { Citation, ConversationRollover, SessionLogLevel } from "@earendil-works/pi-protocol";
+import {
+	assertEventPayloadSafe,
+	DEFAULT_CONVERSATION_LIMITS,
+	shouldPersistAssistantChunk,
+	shouldRolloverConversation,
+} from "@earendil-works/pi-protocol";
 import {
 	appNotFound,
 	appSuspended,
@@ -25,7 +30,13 @@ import {
 	turnAlreadyRunning,
 	versionUnavailable,
 } from "../../publishing/domain/errors.ts";
-import { type ConversationId, newConversationId, newTurnId, type TurnId } from "../../publishing/domain/ids.ts";
+import {
+	type ConversationId,
+	newConversationId,
+	newConversationSummaryId,
+	newTurnId,
+	type TurnId,
+} from "../../publishing/domain/ids.ts";
 import type {
 	ConversationEventInput,
 	ConversationEventRecord,
@@ -39,6 +50,7 @@ import { canonicalJson, sha256Hex } from "../../publishing/runtime-spec/hash.ts"
 import { parseRuntimeSpec, type RuntimeSpec } from "../../publishing/runtime-spec/schema.ts";
 import { type RestoredContext, restoreContext } from "../../runtime/context-restore.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
+import { buildSummary } from "../../runtime/summary-builder.ts";
 import type { TurnExecutor } from "../../runtime/turn-executor.ts";
 import type { RetrievalInput } from "../../types.ts";
 import type { ConversationCitationService } from "../citations/service.ts";
@@ -62,6 +74,19 @@ export interface ConversationServiceOptions {
 export interface CreateConversationInput {
 	readonly principal: EmbedAuthContext;
 	readonly title: string;
+	/**
+	 * WB-008: optional caller-supplied conversation id (from the
+	 * rollover response of a previous create). When set, the new conversation
+	 * is anchored to the previous one and inherits its app/version/owner.
+	 * Server-side validation enforces that the previous conversation is
+	 * owned by the same principal and currently `archived`.
+	 */
+	readonly previousConversationId?: ConversationId;
+}
+
+export interface CreateConversationResult {
+	readonly conversation: ConversationRecord;
+	readonly rollover: ConversationRollover;
 }
 
 export interface ListConversationsInput {
@@ -97,13 +122,19 @@ export class ConversationService {
 	}
 
 	/**
-	 * 创建 Conversation 并固定到 Token claim 里的版本（spec 27.5 / WB-005）。
+	 * 创建 Conversation 并固定到 Token claim 里的版本（spec 27.5 / WB-005 + WB-008）。
+	 *
 	 * 对于普通 principal, `principal.publishedAppVersionId` 等于
 	 * `app.currentVersionId`（签 token 时填的）；对于
 	 * `platform_admin_preview` principal, 它是 admin 想要预览的待上线版本。
 	 * 这样 preview 会话**绝不会**跟 current 版本混用。
+	 *
+	 * WB-008: 当调用方传入 `previousConversationId` 时，服务端验证它是同一
+	 * principal 当前已归档（rollover sealed）的会话，然后链上
+	 * `previous_conversation_id`，并在返回里显式给出 `rollover` 信封，让
+	 * 客户端不再靠错误文案判断是否发生续接。
 	 */
-	async createConversation(input: CreateConversationInput): Promise<ConversationResult<ConversationRecord>> {
+	async createConversation(input: CreateConversationInput): Promise<ConversationResult<CreateConversationResult>> {
 		const scope = ownerScope(input.principal);
 		const app = await this.repos.publishedApps.get(
 			{ tenantId: input.principal.tenantId, publishedAppId: input.principal.publishedAppId },
@@ -114,6 +145,25 @@ export class ConversationService {
 		const pinnedVersionId = input.principal.publishedAppVersionId;
 		const version = await this.repos.publishedAppVersions.get(scope, pinnedVersionId);
 		if (version === undefined || version.status !== "ready") return { ok: false, error: versionUnavailable() };
+
+		// WB-008: validate the rollover anchor when supplied. The previous
+		// conversation must belong to the same principal, be already sealed
+		// (`archived`), and not have a successor yet. Cross-principal /
+		// cross-app attempts are indistinguishable from "not found".
+		let rolloverAnchor: {
+			readonly previous: ConversationRecord;
+			readonly summaryThroughSequence: number | null;
+		} | null = null;
+		if (input.previousConversationId !== undefined) {
+			const previous = await this.repos.conversations.get(scope, input.previousConversationId);
+			if (previous === undefined || previous.status !== "archived" || previous.nextConversationId !== null) {
+				return { ok: false, error: conversationNotFound() };
+			}
+			rolloverAnchor = {
+				previous,
+				summaryThroughSequence: previous.latestSummarySequence > 0 ? previous.latestSummarySequence : null,
+			};
+		}
 
 		const now = new Date();
 		const record: ConversationRecord = {
@@ -128,12 +178,54 @@ export class ConversationService {
 			eventCount: 0,
 			eventBytes: 0,
 			turnCount: 0,
+			latestSummarySequence: 0,
+			previousConversationId: rolloverAnchor?.previous.conversationId ?? null,
+			nextConversationId: null,
+			rolledOverAt: null,
 			createdAt: now,
 			updatedAt: now,
 			lastActiveAt: now,
 		};
 		await this.repos.conversations.insert(record);
-		return { ok: true, data: record };
+
+		if (rolloverAnchor !== null) {
+			const sealed = await this.repos.conversations.sealForRollover(scope, rolloverAnchor.previous.conversationId, {
+				nextConversationId: record.conversationId,
+				atSequence: rolloverAnchor.previous.lastEventSequence,
+			});
+			if (!sealed) {
+				// Concurrent rollover attempt by another request; surface the
+				// same uniform "not found" error to the caller.
+				return { ok: false, error: conversationNotFound() };
+			}
+			return {
+				ok: true,
+				data: {
+					conversation: record,
+					rollover: {
+						conversationId: record.conversationId,
+						rolledOver: true,
+						previousConversationId: rolloverAnchor.previous.conversationId,
+						rolledOverAtSequence: rolloverAnchor.previous.lastEventSequence,
+						rolloverSummaryId: null,
+					},
+				},
+			};
+		}
+
+		return {
+			ok: true,
+			data: {
+				conversation: record,
+				rollover: {
+					conversationId: record.conversationId,
+					rolledOver: false,
+					previousConversationId: null,
+					rolledOverAtSequence: null,
+					rolloverSummaryId: null,
+				},
+			},
+		};
 	}
 
 	/** 当前 Principal 的会话列表（opaque cursor 分页，仅 active）。 */
@@ -217,15 +309,44 @@ export class ConversationService {
 		conversationId: ConversationId,
 		spec: RuntimeSpec,
 	): Promise<RestoredContext> {
-		// WB-007: pass the configured log level so restoreContext can report
-		// dropped chunks accurately. `eventCount` is already bounded by
-		// summary/rollover (WB-008); here we just read a safe page.
-		const events = await this.repos.events.list(scope, conversationId, { limit: 10_000, afterSequence: 0 });
+		// WB-007 + WB-008: pass the configured log level so restoreContext
+		// can report dropped chunks accurately. When a summary exists, we
+		// only replay events after `throughSequence` so the rebuilt context
+		// window is bounded (spec §12.1).
+		const summary = await this.repos.summaries.getLatest(scope, conversationId);
+		const afterSequence = summary?.throughSequence ?? 0;
+		const events = await this.repos.events.list(scope, conversationId, {
+			limit: 10_000,
+			afterSequence,
+		});
 		const restored = restoreContext(
 			events,
 			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
 			spec.contextPolicy.logLevel,
 		);
+		// Prepend the summary body as a synthetic system-style message so the
+		// next Turn sees the condensed history without burning tokens on the
+		// raw events we've already collapsed.
+		if (summary !== undefined) {
+			const summaryMessage = {
+				messages: [
+					{
+						role: "user" as const,
+						text: `[prior conversation summary through sequence ${summary.throughSequence}]\n${(summary.body as { text?: string }).text ?? ""}`,
+					},
+					{
+						role: "assistant" as const,
+						text: `Understood. I will continue from summary ${summary.id}.`,
+					},
+				],
+				interruptedTurnIds: [] as string[],
+				skippedEvents: 0,
+				droppedChunks: 0,
+				errorEventCount: 0,
+				observedLogLevel: spec.contextPolicy.logLevel,
+			};
+			return mergeRestored(summaryMessage, restored);
+		}
 		for (const turnId of restored.interruptedTurnIds) {
 			await this.safeAppend(scope, conversationId, {
 				eventType: "turn/interrupted",
@@ -377,6 +498,26 @@ export class ConversationService {
 					turnId,
 					payload: { ok: true },
 				});
+				// WB-008: post-turn rollover check. Re-read the conversation
+				// row so the freshly-advanced counters reflect the events we
+				// just appended (turn_start..turn_end). The rollover itself
+				// is not performed in-line — callers observe the next
+				// `createConversation` call's `rolledOver: true` response.
+				const updated = await this.repos.conversations.get(scope, input.conversationId);
+				if (updated !== undefined) {
+					const decision = await tryRolloverIfNeeded(this.repos, scope, updated);
+					if (decision.shouldRollover) {
+						await this.safeAppend(scope, input.conversationId, {
+							eventType: "conversation/rollover",
+							turnId: null,
+							payload: {
+								atSequence: decision.atSequence,
+								summaryId: decision.summaryId,
+								reason: "limits_reached",
+							},
+						});
+					}
+				}
 				return {
 					ok: true,
 					data: {
@@ -422,5 +563,76 @@ function ownerScope(principal: EmbedAuthContext) {
 		tenantId: principal.tenantId,
 		publishedAppId: principal.publishedAppId,
 		principalId: principal.principalId,
+	};
+}
+
+/** WB-008: merge the synthetic summary header with the post-summary events. */
+function mergeRestored(summary: RestoredContext, recent: RestoredContext): RestoredContext {
+	return {
+		messages: [...summary.messages, ...recent.messages],
+		interruptedTurnIds: [...summary.interruptedTurnIds, ...recent.interruptedTurnIds],
+		skippedEvents: summary.skippedEvents + recent.skippedEvents,
+		droppedChunks: summary.droppedChunks + recent.droppedChunks,
+		errorEventCount: summary.errorEventCount + recent.errorEventCount,
+		observedLogLevel: recent.observedLogLevel === "standard" ? summary.observedLogLevel : recent.observedLogLevel,
+	};
+}
+
+/** WB-008: hard limit evaluator (operator-tunable defaults). */
+function resolveLimits(): typeof DEFAULT_CONVERSATION_LIMITS {
+	return DEFAULT_CONVERSATION_LIMITS;
+}
+
+/** WB-008: maybe rollover helper used after a successful turn end. */
+async function tryRolloverIfNeeded(
+	repos: PublishingRepositories,
+	scope: OwnerScope,
+	record: ConversationRecord,
+): Promise<{
+	readonly shouldRollover: boolean;
+	readonly summaryId: string | null;
+	readonly atSequence: number;
+}> {
+	if (
+		!shouldRolloverConversation(
+			{
+				eventCount: record.eventCount,
+				eventBytes: record.eventBytes,
+				turnCount: record.turnCount,
+			},
+			resolveLimits(),
+		)
+	) {
+		return { shouldRollover: false, summaryId: null, atSequence: record.lastEventSequence };
+	}
+	// Build + persist summary at the current tail; we use the same events
+	// the next conversation will need to seed itself.
+	const events = await repos.events.list(scope, record.conversationId, {
+		limit: 10_000,
+		afterSequence: 0,
+	});
+	const built = buildSummary(events);
+	const summaryRecord = {
+		id: newConversationSummaryId(),
+		tenantId: record.tenantId,
+		publishedAppId: record.publishedAppId,
+		ownerPrincipalId: record.ownerPrincipalId,
+		conversationId: record.conversationId,
+		throughSequence: built.throughSequence,
+		modelId: "(deterministic-summary)",
+		sourceEventCount: built.sourceEventCount,
+		sourceBytes: built.sourceBytes,
+		body: built.body,
+		createdAt: new Date(),
+	};
+	const inserted = await repos.summaries.insert(scope, summaryRecord);
+	const summaryId = inserted.outcome === "inserted" ? summaryRecord.id : null;
+	if (inserted.outcome === "inserted") {
+		await repos.conversations.updateLatestSummarySequence(scope, record.conversationId, built.throughSequence);
+	}
+	return {
+		shouldRollover: true,
+		summaryId,
+		atSequence: record.lastEventSequence,
 	};
 }

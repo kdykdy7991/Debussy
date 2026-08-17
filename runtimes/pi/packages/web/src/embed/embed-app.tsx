@@ -32,6 +32,7 @@ const EMPTY_STATE: EmbedChatState = {
 	messages: [],
 	sending: false,
 	uploading: false,
+	rolloverNotice: null,
 	connectionStatus: "idle",
 	attachments: [],
 	uploadsEnabled: false,

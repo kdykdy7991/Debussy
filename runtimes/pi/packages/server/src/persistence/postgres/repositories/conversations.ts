@@ -27,6 +27,10 @@ function rowToRecord(row: Record<string, unknown>): ConversationRecord {
 		eventCount: Number(row.event_count ?? 0),
 		eventBytes: Number(row.event_bytes ?? 0),
 		turnCount: Number(row.turn_count ?? 0),
+		latestSummarySequence: Number(row.latest_summary_sequence ?? 0),
+		previousConversationId: (row.previous_conversation_id as ConversationId | null) ?? null,
+		nextConversationId: (row.next_conversation_id as ConversationId | null) ?? null,
+		rolledOverAt: (row.rolled_over_at as Date | null) ?? null,
 		createdAt: row.created_at as Date,
 		updatedAt: row.updated_at as Date,
 		lastActiveAt: row.last_active_at as Date,
@@ -139,6 +143,45 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				scope.tenantId,
 			);
 			return Number(rows[0]?.cnt ?? 0);
+		},
+		async sealForRollover(scope: OwnerScope, conversationId, fields) {
+			// Conditional update: only flips a conversation that is currently
+			// active and inside the same scope; otherwise returns 0 rows and we
+			// surface `false` to the caller so the rollover can be aborted.
+			const rows = await client.run(
+				`update conversations
+				 set status = 'archived',
+				     next_conversation_id = $5,
+				     rolled_over_at = now(),
+				     updated_at = now()
+				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				   and deleted_at is null and status = 'active'
+				 returning id`,
+				conversationId,
+				scope.tenantId,
+				scope.publishedAppId,
+				scope.principalId,
+				fields.nextConversationId,
+			);
+			return rows.length === 1;
+		},
+		async updateLatestSummarySequence(scope: OwnerScope, conversationId, atSequence) {
+			// Monotonic: only advances. A regression attempt returns 0 rows.
+			const rows = await client.run(
+				`update conversations
+				 set latest_summary_sequence = $5,
+				     updated_at = now()
+				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				   and deleted_at is null
+				   and latest_summary_sequence < $5
+				 returning id`,
+				conversationId,
+				scope.tenantId,
+				scope.publishedAppId,
+				scope.principalId,
+				atSequence,
+			);
+			return rows.length === 1;
 		},
 	};
 }

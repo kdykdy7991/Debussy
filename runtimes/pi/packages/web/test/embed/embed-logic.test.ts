@@ -230,11 +230,20 @@ describe("embed conversation controller", () => {
 			if (path.endsWith("/conversations") && _init?.method === "POST") {
 				return jsonResponse(
 					{
-						id: "conv_2",
-						publishedAppVersionId: "pav_1",
-						status: "active",
-						lastEventSequence: 0,
-						createdAt: "2026-01-01T00:00:00Z",
+						conversation: {
+							id: "conv_2",
+							publishedAppVersionId: "pav_1",
+							status: "active",
+							lastEventSequence: 0,
+							createdAt: "2026-01-01T00:00:00Z",
+						},
+						rollover: {
+							conversationId: "conv_2",
+							rolledOver: false,
+							previousConversationId: null,
+							rolledOverAtSequence: null,
+							rolloverSummaryId: null,
+						},
 					},
 					201,
 				);
@@ -275,7 +284,7 @@ describe("embed conversation controller", () => {
 		const list = await controller.list("tok");
 		expect(list[0]?.id).toBe("conv_1");
 		const created = await controller.create("tok", "t");
-		expect(created.id).toBe("conv_2");
+		expect(created.conversation.id).toBe("conv_2");
 		const opened = await controller.open("tok", "conv_1");
 		expect(opened.messages).toHaveLength(2);
 		expect(opened.messages[1]?.text).toBe("hello");

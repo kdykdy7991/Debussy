@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
 	assertEventPayloadSafe,
+	DEFAULT_CONVERSATION_LIMITS,
 	SESSION_EVENT_PAYLOAD_BYTE_LIMIT,
 	SESSION_EVENT_TYPES,
 	SESSION_LOG_LEVELS,
 	SessionEventPayloadError,
 	shouldInlineToolInput,
 	shouldPersistAssistantChunk,
+	shouldRolloverConversation,
 } from "../src/index.ts";
 
 describe("session event envelope (WB-007)", () => {
@@ -105,5 +107,53 @@ describe("session log level policies (WB-007)", () => {
 
 	test("log level catalogue is frozen", () => {
 		expect(SESSION_LOG_LEVELS).toEqual(["standard", "diagnostic", "full"]);
+	});
+});
+
+describe("conversation rollover (WB-008)", () => {
+	test("does not roll over below any limit", () => {
+		const counters = { eventCount: 100, eventBytes: 1000, turnCount: 10 };
+		expect(shouldRolloverConversation(counters, DEFAULT_CONVERSATION_LIMITS)).toBe(false);
+	});
+
+	test("rolls over when eventCount reaches the limit", () => {
+		const counters = {
+			eventCount: DEFAULT_CONVERSATION_LIMITS.maxConversationEvents,
+			eventBytes: 100,
+			turnCount: 10,
+		};
+		expect(shouldRolloverConversation(counters, DEFAULT_CONVERSATION_LIMITS)).toBe(true);
+	});
+
+	test("rolls over when eventBytes reaches the limit", () => {
+		const counters = {
+			eventCount: 100,
+			eventBytes: DEFAULT_CONVERSATION_LIMITS.maxConversationEventBytes,
+			turnCount: 10,
+		};
+		expect(shouldRolloverConversation(counters, DEFAULT_CONVERSATION_LIMITS)).toBe(true);
+	});
+
+	test("rolls over when turnCount reaches the limit", () => {
+		const counters = {
+			eventCount: 100,
+			eventBytes: 100,
+			turnCount: DEFAULT_CONVERSATION_LIMITS.maxConversationTurns,
+		};
+		expect(shouldRolloverConversation(counters, DEFAULT_CONVERSATION_LIMITS)).toBe(true);
+	});
+
+	test("custom limits apply", () => {
+		const limits = { maxConversationEvents: 5, maxConversationEventBytes: 100, maxConversationTurns: 2 };
+		expect(shouldRolloverConversation({ eventCount: 5, eventBytes: 99, turnCount: 1 }, limits)).toBe(true);
+		expect(shouldRolloverConversation({ eventCount: 4, eventBytes: 99, turnCount: 1 }, limits)).toBe(false);
+	});
+
+	test("default limits match spec §12.3 baseline", () => {
+		expect(DEFAULT_CONVERSATION_LIMITS).toEqual({
+			maxConversationEvents: 5_000,
+			maxConversationEventBytes: 20 * 1024 * 1024,
+			maxConversationTurns: 500,
+		});
 	});
 });
