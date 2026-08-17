@@ -157,6 +157,35 @@ describe("embed realtime transport", () => {
 		harness.transport.close();
 	});
 
+	test("TASK-033: transient sequence-0 events pass through and do not block the completed event", async () => {
+		const harness = makeHarness();
+		harness.transport.connect("conv_1", 0);
+		await Promise.resolve();
+		const ws = harness.sockets[0]!;
+		// turn.accepted / message.delta 是瞬时事件（sequence 0），全部放行。
+		ws.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "turn.accepted", sequence: 0 })),
+		});
+		ws.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "message.delta", text: "hello", sequence: 0 })),
+		});
+		// completed 与 delta 同 turn（不同 sequence）：不得被 delta 屏蔽。
+		ws.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "message.completed", text: "hello", sequence: 2 })),
+		});
+		expect(harness.events.map((event) => event.type)).toEqual([
+			"turn.accepted",
+			"message.delta",
+			"message.completed",
+		]);
+		// completed(2) 推进恢复游标：重复的 completed(2) 被丢弃。
+		ws.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "message.completed", text: "dup", sequence: 2 })),
+		});
+		expect(harness.events).toHaveLength(3);
+		harness.transport.close();
+	});
+
 	test("ignores events for other conversations and invalid frames", async () => {
 		const harness = makeHarness();
 		harness.transport.connect("conv_1", 0);

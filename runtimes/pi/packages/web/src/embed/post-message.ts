@@ -46,6 +46,10 @@ export interface EmbedPostMessageChannelOptions {
 	readonly onInit: (launchToken: string | undefined) => void;
 	/** 收到合法 `logout`：宿主登出，iframe 清理凭据并停止访问。 */
 	readonly onLogout: () => void;
+	/** 收到 `focus`（TASK-033，spec 12.1）：聚焦输入框。 */
+	readonly onFocus?: () => void;
+	/** 收到 `resize-request`（TASK-033，spec 12.1）：重新上报尺寸。 */
+	readonly onResizeRequest?: () => void;
 }
 
 /** 校验 `origin` 是否属于 App 的宿主 Origin 白名单（spec 13.1 同源策略）。 */
@@ -59,6 +63,8 @@ export class EmbedPostMessageChannel {
 	private readonly allowedOrigins: readonly string[];
 	private readonly onInit: (launchToken: string | undefined) => void;
 	private readonly onLogout: () => void;
+	private readonly onFocus: (() => void) | undefined;
+	private readonly onResizeRequest: (() => void) | undefined;
 	/** 最近一次合法宿主消息的 Origin；未收到前不向宿主发送任何消息。 */
 	private targetOrigin: string | null = null;
 	private started = false;
@@ -69,6 +75,8 @@ export class EmbedPostMessageChannel {
 		this.allowedOrigins = options.allowedOrigins;
 		this.onInit = options.onInit;
 		this.onLogout = options.onLogout;
+		this.onFocus = options.onFocus;
+		this.onResizeRequest = options.onResizeRequest;
 	}
 
 	start(): void {
@@ -105,6 +113,12 @@ export class EmbedPostMessageChannel {
 				break;
 			case "logout":
 				this.onLogout();
+				break;
+			case "focus":
+				this.onFocus?.();
+				break;
+			case "resize-request":
+				this.onResizeRequest?.();
 				break;
 		}
 	};

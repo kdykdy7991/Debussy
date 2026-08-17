@@ -134,7 +134,7 @@ describe("embed auth controller", () => {
 		const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
 			jsonResponse({
 				accessToken: "jwt-1",
-				expiresAt: "2026-01-01T00:00:00Z",
+				expiresAt: new Date(Date.now() + 600_000).toISOString(),
 				principal: { id: "prn_1", type: "anonymous_visitor" },
 				app: {
 					publicAppId: "pub_x",
@@ -155,6 +155,37 @@ describe("embed auth controller", () => {
 		await auth.logout();
 		expect(auth.hasToken).toBe(false);
 		expect(() => auth.getToken()).toThrow(EmbedApiError);
+	});
+
+	test("TASK-033: getToken throws TOKEN_EXPIRED near expiry and refresh re-signs in anonymously", async () => {
+		const storage = memoryStorage();
+		let expiresAt = new Date(Date.now() + 10_000).toISOString();
+		const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+			jsonResponse({
+				accessToken: "jwt-expiring",
+				expiresAt,
+				principal: { id: "prn_1", type: "anonymous_visitor" },
+				app: {
+					publicAppId: "pub_x",
+					name: "X",
+					currentVersionId: null,
+					features: { uploads: false, speech: false, avatar: false },
+				},
+			}),
+		);
+		const api = new EmbedApi({ fetchImpl: fetchImpl as unknown as typeof fetch });
+		const auth = new EmbedAuthController(api, storage);
+		await auth.signIn("pub_x");
+		// 30 秒余量内视为过期：近过期 token 不可直接取用。
+		expect(() => auth.getToken()).toThrow(EmbedApiError);
+		// 匿名模式 refresh = 用同一 visitorId 重新 Exchange（身份稳定）。
+		expiresAt = new Date(Date.now() + 600_000).toISOString();
+		const refreshed = await auth.refresh("pub_x");
+		expect(refreshed.accessToken).toBe("jwt-expiring");
+		expect(fetchImpl.mock.calls.length).toBe(2); // signIn + refresh
+		// signed_user 无法静默刷新（Launch Token 已即用即弃，PD-18）。
+		await auth.signInWithLaunchToken("pub_x", "host-signed-jws");
+		await expect(auth.refresh("pub_x")).rejects.toMatchObject({ code: "AUTH_EXPIRED" });
 	});
 });
 

@@ -146,9 +146,13 @@ export class EmbedRealtimeTransport {
 		const serverEvent = decoded.value;
 		// 只接受本会话事件。
 		if (this.conversationId !== null && serverEvent.conversationId !== this.conversationId) return;
-		// 乱序/重复保护：只处理 sequence 递增的事件。
-		if (serverEvent.sequence <= this.lastSeenSequence) return;
-		this.lastSeenSequence = serverEvent.sequence;
+		// TASK-033：sequence 0 的事件是瞬时流式事件（turn.accepted / message.delta /
+		// citation.updated / turn.failed 等，不可恢复），全部放行且不推进恢复游标；
+		// sequence > 0 的是持久事件（message.completed），按 sequence 去重/乱序保护。
+		if (serverEvent.sequence > 0) {
+			if (serverEvent.sequence <= this.lastSeenSequence) return;
+			this.lastSeenSequence = serverEvent.sequence;
+		}
 		this.options.onEvent(serverEvent);
 	}
 

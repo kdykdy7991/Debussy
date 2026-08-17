@@ -25,6 +25,8 @@ export interface EmbedAuthState {
 export class EmbedAuthController {
 	private token: string | null = null;
 	private principalId: string | null = null;
+	private expiresAt: string | null = null;
+	private mode: "anonymous" | "signed_user" | null = null;
 	private readonly storage: ReturnType<typeof createVisitorStorage>;
 	private readonly api: EmbedApi;
 
@@ -45,6 +47,7 @@ export class EmbedAuthController {
 			mode: "anonymous",
 			anonymousVisitorId: visitorId,
 		});
+		this.mode = "anonymous";
 		return this.accept(response);
 	}
 
@@ -58,12 +61,29 @@ export class EmbedAuthController {
 			mode: "signed_user",
 			launchToken,
 		});
+		this.mode = "signed_user";
 		return this.accept(response);
+	}
+
+	/**
+	 * TASK-033：Token 刷新。匿名模式用同一 visitorId 重新 Exchange（服务端收敛
+	 * 到同一 Principal，身份稳定）；signed_user 模式 Launch Token 已即用即弃
+	 * （PD-18），无法静默刷新，抛 `AUTH_EXPIRED` 由宿主重新 `init`。
+	 */
+	async refresh(publicAppId: string): Promise<EmbedAuthState> {
+		if (this.mode === "signed_user") {
+			throw new EmbedApiError("AUTH_EXPIRED", "登录已过期，请刷新页面或由宿主重新初始化", false);
+		}
+		if (this.mode === "anonymous") {
+			return this.signIn(publicAppId);
+		}
+		throw new EmbedApiError("NOT_SIGNED_IN", "尚未完成身份交换", false);
 	}
 
 	private accept(response: ExchangeResponse): EmbedAuthState {
 		this.token = response.accessToken;
 		this.principalId = response.principal.id;
+		this.expiresAt = response.expiresAt;
 		return {
 			accessToken: response.accessToken,
 			expiresAt: response.expiresAt,
@@ -73,9 +93,15 @@ export class EmbedAuthController {
 		};
 	}
 
-	/** 取当前 token；无则抛 EmbedApiError（调用方应触发 signIn）。 */
+	/**
+	 * 取当前 token；无 token 或即将过期（30 秒余量）抛 EmbedApiError
+	 * （调用方应 refresh 后重试）。
+	 */
 	getToken(): string {
 		if (this.token === null) throw new EmbedApiError("NOT_SIGNED_IN", "尚未完成身份交换", false);
+		if (this.expiresAt !== null && Date.parse(this.expiresAt) - 30_000 <= Date.now()) {
+			throw new EmbedApiError("TOKEN_EXPIRED", "Access token expired", false);
+		}
 		return this.token;
 	}
 

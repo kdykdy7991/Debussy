@@ -1,4 +1,4 @@
-/* Embed 壳样式（TASK-019）：独立打开与 iframe 内自适应，响应式、最小无障碍。 */
+/* Embed 壳样式（TASK-019/033）：独立打开与 iframe 内自适应，响应式、基础无障碍。 */
 
 .embed-shell {
 	display: flex;
@@ -6,15 +6,44 @@
 	height: 100%;
 	min-height: 0;
 	--embed-primary: #2563eb;
+	--embed-border: #e5e7eb;
+	--embed-hover: #f3f4f6;
 }
 
 .embed-header {
 	display: flex;
 	align-items: center;
+	gap: 0.5rem;
 	padding: 0.625rem 1rem;
 	border-bottom: 1px solid var(--embed-border, #e5e7eb);
 	font-weight: 600;
 	color: var(--embed-primary);
+}
+
+.embed-title {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.embed-status {
+	font-size: 0.75rem;
+	font-weight: 500;
+	padding: 0.125rem 0.5rem;
+	border-radius: 999px;
+	background: var(--embed-hover, #f3f4f6);
+	color: #6b7280;
+}
+
+.embed-status-reconnecting {
+	background: #fef3c7;
+	color: #92400e;
+}
+
+.embed-status-closed {
+	background: #fee2e2;
+	color: #b91c1c;
 }
 
 .embed-body {
@@ -26,6 +55,7 @@
 .embed-layout {
 	display: flex;
 	height: 100%;
+	position: relative;
 }
 
 .embed-conversations {
@@ -42,8 +72,16 @@
 	padding: 0;
 }
 
+.embed-conversation-li {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	margin-bottom: 0.125rem;
+}
+
 .embed-conversation-item {
-	width: 100%;
+	flex: 1;
+	min-width: 0;
 	text-align: left;
 	background: none;
 	border: none;
@@ -69,6 +107,22 @@
 	display: block;
 }
 
+.embed-conversation-archive {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: #9ca3af;
+	font-size: 0.75rem;
+	cursor: pointer;
+	padding: 0.25rem 0.375rem;
+	border-radius: 4px;
+}
+
+.embed-conversation-archive:hover {
+	color: #b91c1c;
+	background: #fee2e2;
+}
+
 .embed-chat {
 	flex: 1;
 	overflow-y: auto;
@@ -88,6 +142,18 @@
 	line-height: 1.45;
 }
 
+.embed-message.is-streaming::after {
+	content: "▍";
+	animation: embed-blink 1s steps(2, start) infinite;
+	color: var(--embed-primary);
+}
+
+@keyframes embed-blink {
+	to {
+		visibility: hidden;
+	}
+}
+
 .embed-user {
 	align-self: flex-end;
 	background: var(--embed-primary);
@@ -105,6 +171,40 @@
 	color: #6b7280;
 }
 
+.embed-message-text {
+	display: block;
+}
+
+.embed-citations {
+	list-style: none;
+	margin: 0.5rem 0 0;
+	padding: 0.5rem 0 0;
+	border-top: 1px dashed var(--embed-border, #d1d5db);
+	display: flex;
+	flex-direction: column;
+	gap: 0.375rem;
+}
+
+.embed-citation {
+	font-size: 0.8125rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.125rem;
+}
+
+.embed-citation-title {
+	font-weight: 600;
+}
+
+.embed-citation-excerpt {
+	color: #4b5563;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+
 .embed-empty {
 	color: #9ca3af;
 	text-align: center;
@@ -114,6 +214,9 @@
 .embed-inline-error {
 	color: #b91c1c;
 	font-size: 0.8125rem;
+	background: #fef2f2;
+	border-radius: 6px;
+	padding: 0.375rem 0.625rem;
 }
 
 .embed-error {
@@ -133,9 +236,80 @@
 	padding: 0.625rem 1rem;
 }
 
+.embed-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.375rem;
+	padding-bottom: 0.5rem;
+}
+
+.embed-attachment {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	font-size: 0.75rem;
+	background: var(--embed-hover, #f3f4f6);
+	border: 1px solid var(--embed-border, #d1d5db);
+	border-radius: 999px;
+	padding: 0.125rem 0.5rem;
+	max-width: 100%;
+}
+
+.embed-attachment-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.embed-attachment-remove {
+	background: none;
+	border: none;
+	color: #6b7280;
+	cursor: pointer;
+	font-size: 0.875rem;
+	line-height: 1;
+	padding: 0.125rem;
+}
+
+.embed-attachment-remove:hover {
+	color: #b91c1c;
+}
+
 .embed-composer-form {
 	display: flex;
 	gap: 0.5rem;
+}
+
+.embed-upload {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.25rem;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	cursor: pointer;
+	flex-shrink: 0;
+	color: #6b7280;
+}
+
+.embed-upload:hover {
+	border-color: var(--embed-primary);
+	color: var(--embed-primary);
+}
+
+.embed-file-input {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	opacity: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+.embed-upload-icon {
+	font-size: 1.25rem;
+	line-height: 1;
 }
 
 .embed-input {
@@ -169,9 +343,36 @@
 	margin-bottom: 0.25rem;
 }
 
-/* 移动端：隐藏会话列表，仅聊天。 */
+.embed-list-toggle {
+	display: none;
+	background: transparent;
+	color: var(--embed-primary);
+	font-size: 0.8125rem;
+	padding: 0.25rem 0.625rem;
+}
+
+/* 移动端：会话列表默认隐藏，经 header 开关以抽屉形式展开。 */
 @media (max-width: 640px) {
+	.embed-list-toggle {
+		display: inline-flex;
+	}
+
 	.embed-conversations {
 		display: none;
+	}
+
+	.embed-layout.is-list-open .embed-conversations {
+		display: flex;
+		flex-direction: column;
+		position: absolute;
+		inset: 0 auto 0 0;
+		z-index: 10;
+		width: 220px;
+		background: #fff;
+		box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+	}
+
+	.embed-message {
+		max-width: 92%;
 	}
 }

@@ -184,6 +184,34 @@ describe("EmbedPostMessageChannel", () => {
 		expect(onLogout).toHaveBeenCalledTimes(1);
 	});
 
+	test("TASK-033: focus and resize-request are dispatched", () => {
+		const win = new FakeWindow();
+		const parent = new FakeParent();
+		const onFocus = vi.fn();
+		const onResizeRequest = vi.fn();
+		const channel = new EmbedPostMessageChannel({
+			window: win,
+			parent,
+			allowedOrigins: [ALLOWED_ORIGIN],
+			onInit: vi.fn(),
+			onLogout: vi.fn(),
+			onFocus,
+			onResizeRequest,
+		});
+		channel.start();
+		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("focus") });
+		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("resize-request") });
+		expect(onFocus).toHaveBeenCalledTimes(1);
+		expect(onResizeRequest).toHaveBeenCalledTimes(1);
+		// 来源/Origin 校验仍然生效：错误来源的 focus 不触发。
+		win.dispatch({ source: {}, origin: ALLOWED_ORIGIN, data: envelope("focus") });
+		win.dispatch({ source: parent, origin: OTHER_ORIGIN, data: envelope("focus") });
+		expect(onFocus).toHaveBeenCalledTimes(1);
+		// 合法 focus 之后可回发（resize 等）。
+		channel.send({ type: "resize", height: 480 });
+		expect(parent.posted[0]!.targetOrigin).toBe(ALLOWED_ORIGIN);
+	});
+
 	test("send uses an explicit targetOrigin, never '*'", () => {
 		const win = new FakeWindow();
 		const parent = new FakeParent();

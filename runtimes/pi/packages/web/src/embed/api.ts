@@ -10,10 +10,13 @@ import type {
 	ConversationDetailResponse,
 	ConversationListResponse,
 	ConversationSummary,
+	DeleteAttachmentResponse,
 	DevTurnResponse,
+	EmbedAttachmentView,
 	EmbedErrorEnvelope,
 	ExchangeRequest,
 	ExchangeResponse,
+	WsTicketResponse,
 } from "./types.ts";
 
 export class EmbedApiError extends Error {
@@ -82,6 +85,61 @@ export class EmbedApi {
 		});
 	}
 
+	/** 归档本人会话（spec 8.2）。 */
+	async archiveConversation(token: string, conversationId: string): Promise<ConversationSummary> {
+		return this.request<ConversationSummary>(`/api/embed/v1/conversations/${conversationId}/archive`, {
+			method: "POST",
+			token,
+		});
+	}
+
+	/**
+	 * 上传附件（spec 8.2 / 27.5）：raw body + `x-filename` 头；响应直接回公开
+	 * `att_<uuid>`/`conv_<uuid>` id（TASK-033），可回填 DELETE/GET 路径。
+	 */
+	async uploadAttachment(
+		token: string,
+		conversationId: string,
+		input: {
+			readonly filename: string;
+			readonly contentType: string;
+			readonly checksumSha256?: string;
+			readonly data: Uint8Array;
+		},
+	): Promise<EmbedAttachmentView> {
+		const headers: Record<string, string> = {
+			"content-type": input.contentType,
+			"x-filename": input.filename,
+		};
+		if (input.checksumSha256 !== undefined) headers["x-checksum-sha256"] = input.checksumSha256;
+		return this.request<EmbedAttachmentView>(`/api/embed/v1/conversations/${conversationId}/uploads`, {
+			method: "POST",
+			token,
+			headers,
+			body: input.data,
+		});
+	}
+
+	/** 删除本人附件（幂等）。 */
+	async deleteAttachment(
+		token: string,
+		conversationId: string,
+		attachmentId: string,
+	): Promise<DeleteAttachmentResponse> {
+		return this.request<DeleteAttachmentResponse>(
+			`/api/embed/v1/conversations/${conversationId}/uploads/${attachmentId}`,
+			{ method: "DELETE", token },
+		);
+	}
+
+	/** 申请一次性 WebSocket Ticket（spec 27.6；TASK-026）。 */
+	async getWsTicket(token: string, conversationId: string): Promise<WsTicketResponse> {
+		return this.request<WsTicketResponse>(`/api/embed/v1/conversations/${conversationId}/ws-ticket`, {
+			method: "POST",
+			token,
+		});
+	}
+
 	/** TASK-018 临时文本 Turn 路径（最终由 Realtime 取代）。 */
 	async sendTurn(token: string, conversationId: string, text: string): Promise<DevTurnResponse> {
 		return this.request<DevTurnResponse>(`/api/embed/v1/dev/conversations/${conversationId}/turn`, {
@@ -94,13 +152,17 @@ export class EmbedApi {
 
 	private async request<T>(
 		path: string,
-		init: { method: string; token?: string; headers?: Record<string, string>; body?: string },
+		init: { method: string; token?: string; headers?: Record<string, string>; body?: string | Uint8Array },
 	): Promise<T> {
 		const headers: Record<string, string> = { ...(init.headers ?? {}) };
 		if (init.token !== undefined) headers.authorization = `Bearer ${init.token}`;
 		let response: Response;
 		try {
-			response = await this.fetchImpl(`${this.baseUrl}${path}`, { method: init.method, headers, body: init.body });
+			response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+				method: init.method,
+				headers,
+				body: init.body as BodyInit | undefined,
+			});
 		} catch {
 			throw new EmbedApiError("NETWORK_ERROR", "无法连接服务器", true);
 		}

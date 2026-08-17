@@ -1,10 +1,14 @@
 /**
- * Embed Web 端类型（TASK-023）。
+ * Embed Web 端类型（TASK-023/033）。
  *
  * Wire 契约类型统一来自协议包（spec 25.3）：`@earendil-works/pi-protocol` 的
  * embed 子模块（common/realtime/public-http），Web 与 Server 不各自复制。
- * 仅保留 Web 展示层专用类型（ChatMessage）。
+ * 仅保留 Web 展示层专用类型（ChatMessage/ChatAttachment）。
  */
+import type { Citation } from "@earendil-works/pi-protocol";
+
+export type { Citation };
+
 export type {
 	BootstrapResponse,
 	ClientCommand,
@@ -12,9 +16,11 @@ export type {
 	ConversationEvent,
 	ConversationListResponse,
 	ConversationSummary,
+	DeleteAttachmentResponse,
 	DevTurnResponse,
 	EMBED_PROTOCOL_NAME,
 	EMBED_PROTOCOL_VERSION,
+	EmbedAttachmentView,
 	EmbedErrorEnvelope,
 	EmbedServerEvent,
 	ExchangeRequest,
@@ -22,11 +28,27 @@ export type {
 	RealtimeDecodeError,
 	RealtimeDecodeResult,
 	RecoverableEventBase,
+	WsTicketResponse,
 } from "@earendil-works/pi-protocol";
+
+/** 会话内展示用附件（上传响应视图；公开 att_/conv_ id）。 */
+export interface ChatAttachment {
+	readonly attachmentId: string;
+	readonly filename: string;
+	readonly contentType: string;
+	readonly sizeBytes: number;
+	readonly status: string;
+}
 
 /** 会话内展示用消息（由事件推导；Web 展示层专用）。 */
 export interface ChatMessage {
 	readonly role: "user" | "assistant" | "system";
 	readonly text: string;
 	readonly sequence: number;
+	/** React key 与流式更新定位；由控制器生成，事件推导消息为 `evt-<sequence>`。 */
+	readonly id?: string;
+	/** 流式进行中的 assistant 消息（message.delta 未终结）。 */
+	readonly streaming?: boolean;
+	/** 本 turn 实际使用的引用（citation.updated；仅实时展示，不持久化）。 */
+	readonly citations?: readonly Citation[];
 }

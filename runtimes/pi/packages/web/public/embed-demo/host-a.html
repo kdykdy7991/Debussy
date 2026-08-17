@@ -28,6 +28,7 @@
       <button id="init">发送 init（匿名）</button>
       <button id="initSigned">发送 init（signed_user）</button>
       <button id="logout">发送 logout</button>
+      <button id="resizeRequest">请求上报尺寸（resize-request）</button>
     </p>
     <iframe id="frame" title="Embed App"></iframe>
     <script>
@@ -53,6 +54,10 @@
       });
       document.getElementById("logout").addEventListener("click", function () {
         frame.contentWindow.postMessage(envelope("logout"), frameOrigin);
+      });
+      document.getElementById("resizeRequest").addEventListener("click", function () {
+        // TASK-033：宿主请求 iframe 重新上报尺寸（iframe 回发 resize）。
+        frame.contentWindow.postMessage(envelope("resize-request"), frameOrigin);
       });
       window.addEventListener("message", function (event) {
         // 校验来源：只接受 iframe 的 origin 与协议信封。
