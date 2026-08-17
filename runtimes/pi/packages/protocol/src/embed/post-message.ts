@@ -26,14 +26,18 @@ export const POST_MESSAGE_LAUNCH_TOKEN_MAX_CHARS = 16384;
 /** resize 高度上限（像素），防止恶意宿主/iframe 注入任意值。 */
 export const POST_MESSAGE_RESIZE_MAX_HEIGHT = 100000;
 
-/** host -> iframe 消息。 */
+/** host -> iframe 消息（spec 12.1；TASK-033 补 focus/resize-request）。 */
 export type EmbedHostPostMessage =
 	| {
 			readonly type: "init";
 			/** signed_user：宿主后端签发的 Launch Token；匿名 init 省略。 */
 			readonly launchToken?: string;
 	  }
-	| { readonly type: "logout" };
+	| { readonly type: "logout" }
+	/** 宿主请求 iframe 聚焦输入框。 */
+	| { readonly type: "focus" }
+	/** 宿主请求 iframe 重新上报尺寸（iframe 回发 `resize`）。 */
+	| { readonly type: "resize-request" };
 
 /** iframe -> host 消息。 */
 export type EmbedIframePostMessage =
@@ -93,6 +97,12 @@ export function decodeEmbedHostMessage(raw: unknown): PostMessageDecodeResult {
 	}
 	if (type === "logout") {
 		return { ok: true, message: { type: "logout" } };
+	}
+	if (type === "focus") {
+		return { ok: true, message: { type: "focus" } };
+	}
+	if (type === "resize-request") {
+		return { ok: true, message: { type: "resize-request" } };
 	}
 	return { ok: false, reason: "UNKNOWN_TYPE" };
 }

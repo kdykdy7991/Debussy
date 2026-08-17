@@ -41,6 +41,20 @@ describe("decodeEmbedHostMessage", () => {
 		expect(result).toEqual({ ok: true, message: { type: "logout" } });
 	});
 
+	test("decodes focus and resize-request (TASK-033)", () => {
+		const base = { protocol: POST_MESSAGE_PROTOCOL, version: POST_MESSAGE_VERSION };
+		expect(decodeEmbedHostMessage({ ...base, type: "focus" })).toEqual({ ok: true, message: { type: "focus" } });
+		expect(decodeEmbedHostMessage({ ...base, type: "resize-request" })).toEqual({
+			ok: true,
+			message: { type: "resize-request" },
+		});
+		// payload 被忽略（这两个消息无载荷语义）。
+		expect(decodeEmbedHostMessage({ ...base, type: "focus", payload: { x: 1 } })).toEqual({
+			ok: true,
+			message: { type: "focus" },
+		});
+	});
+
 	test("rejects non-object, wrong protocol, wrong version", () => {
 		expect(decodeEmbedHostMessage("nope")).toEqual({ ok: false, reason: "NOT_OBJECT" });
 		expect(decodeEmbedHostMessage([1, 2])).toEqual({ ok: false, reason: "NOT_OBJECT" });

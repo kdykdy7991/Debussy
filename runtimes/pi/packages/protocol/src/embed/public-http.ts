@@ -76,3 +76,32 @@ export interface DevTurnResponse {
 	readonly assistantSequence: number | null;
 	readonly outputText: string;
 }
+
+/**
+ * `POST /api/embed/v1/conversations/:id/uploads` 响应（TASK-030/033）。
+ * `attachmentId`/`conversationId` 为公开表示（`att_<uuid>` / `conv_<uuid>`），
+ * 可直接回填到 DELETE/GET 路径；对象存储路径对客户端透明（不回显 objectKey）。
+ */
+export interface EmbedAttachmentView {
+	readonly attachmentId: string;
+	readonly conversationId: string;
+	readonly status: string;
+	readonly filename: string;
+	readonly contentType: string;
+	readonly sizeBytes: number;
+	readonly checksumSha256: string;
+	readonly createdAt: string;
+}
+
+/** `DELETE /api/embed/v1/conversations/:id/uploads/:attachmentId` 响应（幂等）。 */
+export interface DeleteAttachmentResponse {
+	readonly attachmentId: string;
+	readonly deleted: boolean;
+}
+
+/** `POST /api/embed/v1/conversations/:id/ws-ticket` 响应（spec 27.6）。 */
+export interface WsTicketResponse {
+	readonly ticket: string;
+	readonly expiresAt: string;
+	readonly realtimeUrl: string;
+}
