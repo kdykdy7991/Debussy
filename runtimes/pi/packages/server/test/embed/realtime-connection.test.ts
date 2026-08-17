@@ -12,6 +12,7 @@ import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
 import { createWsTicketService, type WsTicketService } from "../../src/embed/auth/ws-ticket.ts";
+import type { ConversationCitationService } from "../../src/embed/citations/service.ts";
 import { ConversationService } from "../../src/embed/conversations/service.ts";
 import type { EmbedAuthContext } from "../../src/embed/middleware/authenticate.ts";
 import { EmbedRealtimeConnection } from "../../src/embed/realtime/connection.ts";
@@ -108,12 +109,37 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 	let conversationId: ConversationId;
 	let principal: EmbedAuthContext;
 	let turnDelayMs = 0;
+	let citationMode = false;
 	const failNext = false;
 	const executor: TurnExecutor = async ({ text }) => {
 		if (turnDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, turnDelayMs));
 		if (failNext) return { ok: false, error: "model exploded" };
 		return { ok: true, outputText: `echo: ${text}` };
 	};
+	// TASK-033：会话级引用 stub —— citationMode 开启时返回固定引用（citation.updated 事件来源）。
+	const conversationCitations = {
+		citationsEnabled: () => true,
+		retrieveForTurn: async (_scope: unknown, _query: string, turnId: string) =>
+			citationMode
+				? {
+						citations: [
+							{
+								id: "cit_1",
+								sessionId: String(conversationId),
+								turnId: String(turnId),
+								sourceId: "src_1",
+								chunkId: "chunk_1",
+								ordinal: 0,
+								title: "doc.txt",
+								excerpt: "relevant line",
+							},
+						],
+						context: '<source id="src_1">relevant line</source>',
+						reference: "doc.txt",
+						coveredAttachmentIds: [],
+					}
+				: { citations: [], context: "", reference: "", coveredAttachmentIds: [] },
+	} as unknown as ConversationCitationService;
 	const closedReasons: string[] = [];
 
 	function connect(ticket: string): Promise<WebSocket> {
@@ -249,7 +275,11 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 			lastActiveAt: now,
 		});
 
-		const conversationService = new ConversationService({ repositories: repos, turnExecutor: executor });
+		const conversationService = new ConversationService({
+			repositories: repos,
+			turnExecutor: executor,
+			citations: conversationCitations,
+		});
 		principal = {
 			tokenId: "tok-rt",
 			tenantId,
@@ -309,9 +339,13 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 		const events = await received;
 		const types = events.map((event) => event.type);
 		expect(types).toEqual(["turn.accepted", "message.delta", "message.completed"]);
-		expect(events[2].text).toBe("echo: hi");
-		expect(events[2].sequence).toBe(2);
-		expect(events[2].conversationId).toBe(`conv_${conversationId}`);
+		// TASK-033：delta 是瞬时流式事件（sequence 0，不可恢复）；completed 来自
+		// 持久事件（sequence = 持久序号，客户端用它推进 lastSeenSequence）。
+		expect(events[1]?.type).toBe("message.delta");
+		expect(events[1]?.sequence).toBe(0);
+		expect(events[2]?.text).toBe("echo: hi");
+		expect(events[2]?.sequence).toBe(2);
+		expect(events[2]?.conversationId).toBe(`conv_${conversationId}`);
 		ws.close();
 		// 持久化已完成（TASK-025 禁止条件：completed 必须入库）。
 		const rows = await client.run(
@@ -319,6 +353,36 @@ describe.skipIf(!ready)("embed realtime connection", () => {
 			conversationId,
 		);
 		expect(rows.map((row) => row.event_type)).toEqual(["user.message", "assistant.completed"]);
+	});
+
+	test("TASK-033: a turn with citations emits citation.updated before the completion", async () => {
+		citationMode = true;
+		try {
+			const ws = await connect(await newTicket());
+			const received = collect(ws, (event) => event.type === "message.completed");
+			ws.send(
+				JSON.stringify({
+					type: "turn.start",
+					requestId: "r-cite",
+					conversationId: `conv_${conversationId}`,
+					message: { text: "cite me", attachmentIds: [] },
+					lastSeenSequence: 0,
+				}),
+			);
+			const events = await received;
+			const types = events.map((event) => event.type);
+			expect(types).toEqual(["turn.accepted", "citation.updated", "message.delta", "message.completed"]);
+			const citations = (events.find((event) => event.type === "citation.updated") as any)?.citations;
+			expect(citations).toHaveLength(1);
+			expect(citations[0]?.title).toBe("doc.txt");
+			expect(citations[0]?.excerpt).toBe("relevant line");
+			// citation.updated 与 delta 一样是瞬时事件（sequence 0）。
+			expect((events.find((event) => event.type === "citation.updated") as any)?.sequence).toBe(0);
+			expect((events.find((event) => event.type === "message.completed") as any)?.sequence).toBeGreaterThan(0);
+			ws.close();
+		} finally {
+			citationMode = false;
+		}
 	});
 
 	test("a second concurrent turn on the same conversation fails with TURN_ALREADY_RUNNING", async () => {

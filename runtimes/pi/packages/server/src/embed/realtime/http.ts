@@ -13,6 +13,7 @@ import type { Duplex } from "node:stream";
 import { type WebSocket, WebSocketServer } from "ws";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { TicketClaims, WsTicketService } from "../auth/ws-ticket.ts";
+import type { EmbedLimits } from "../rate-limits/index.ts";
 
 export const REALTIME_UPGRADE_PATH = "/api/embed/v1/realtime";
 
@@ -26,6 +27,8 @@ export interface RealtimeUpgradeHandlerOptions {
 	}) => void;
 	readonly maxPayload?: number;
 	readonly onError?: (error: unknown) => void;
+	/** 分层限流 + 并发槽（TASK-034）：连接维度计数，超限拒绝 upgrade。 */
+	readonly limits?: EmbedLimits;
 }
 
 export type UpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer) => boolean;
@@ -45,7 +48,7 @@ export function createRealtimeUpgradeHandler(options: RealtimeUpgradeHandlerOpti
 		const query = new URL(request.url ?? "/", "http://embed.invalid").searchParams;
 		const ticket = query.get("ticket");
 		if (ticket === null || ticket === "") {
-			rejectUpgrade(socket, 401, "missing ticket");
+			rejectUpgrade(socket, 401, "TOKEN_INVALID", "missing ticket");
 			return;
 		}
 		let claims: TicketClaims | null;
@@ -53,12 +56,27 @@ export function createRealtimeUpgradeHandler(options: RealtimeUpgradeHandlerOpti
 			claims = await options.wsTickets.consume(ticket, { origin: request.headers.origin });
 		} catch (error) {
 			options.onError?.(error);
-			rejectUpgrade(socket, 503, "ticket store unavailable");
+			rejectUpgrade(socket, 503, "RUNTIME_UNAVAILABLE", "ticket store unavailable");
 			return;
 		}
 		if (claims === null) {
-			rejectUpgrade(socket, 403, "ticket invalid, expired or already used");
+			rejectUpgrade(socket, 403, "TOKEN_REPLAYED", "ticket invalid, expired or already used");
 			return;
+		}
+		// TASK-034：连接维度分层限流——超限拒绝 upgrade（不占用宝贵连接）。
+		if (options.limits !== undefined) {
+			const allowed = await options.limits.limiter.check({
+				dimension: "connections",
+				scope: {
+					tenantId: claims.tenantId,
+					publishedAppId: claims.publishedAppId,
+					principalId: claims.principalId,
+				},
+			});
+			if (!allowed.allowed) {
+				rejectUpgrade(socket, 429, "RATE_LIMITED", "too many connections");
+				return;
+			}
 		}
 		try {
 			wss.handleUpgrade(request, socket, head, (webSocket) => {
@@ -72,12 +90,14 @@ export function createRealtimeUpgradeHandler(options: RealtimeUpgradeHandlerOpti
 }
 
 /** 拒绝 upgrade：写 HTTP 响应后销毁 socket。 */
-function rejectUpgrade(socket: Duplex, status: number, message: string): void {
+function rejectUpgrade(socket: Duplex, status: number, code: string, message: string): void {
+	const reason =
+		status === 401 ? "Unauthorized" : status === 403 ? "Forbidden" : status === 429 ? "Too Many Requests" : "Error";
 	const body = JSON.stringify({
-		error: { code: status === 401 ? "TOKEN_INVALID" : "TOKEN_REPLAYED", message, requestId: "", retryable: false },
+		error: { code, message, requestId: "", retryable: status === 429 },
 	});
 	socket.write(
-		`HTTP/1.1 ${status} ${status === 401 ? "Unauthorized" : "Forbidden"}\r\n` +
+		`HTTP/1.1 ${status} ${reason}\r\n` +
 			"Content-Type: application/json\r\n" +
 			`Content-Length: ${Buffer.byteLength(body)}\r\n` +
 			"Connection: close\r\n\r\n" +

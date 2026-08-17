@@ -10,6 +10,7 @@
  * App 停用（PD-04）：suspended 后禁止新建 Conversation，已建会话仍可按
  * 策略读取/归档（读取由外层策略决定，MVP 允许本人读取历史）。
  */
+import type { Citation } from "@earendil-works/pi-protocol";
 import {
 	appNotFound,
 	appSuspended,
@@ -272,6 +273,9 @@ export class ConversationService {
 						userMessageSequence: userEvent.sequence,
 						assistantSequence: completed?.sequence ?? null,
 						outputText: result.outputText,
+						// TASK-033：本 turn 实际使用的引用（citation.updated 事件的
+						// 数据来源；无检索时为 []）。仅传输，不持久化（HANDOFF 记录）。
+						citations: retrieval?.citations ?? [],
 					},
 				};
 			}
@@ -299,6 +303,8 @@ export interface ExecuteTurnData {
 	readonly userMessageSequence: number;
 	readonly assistantSequence: number | null;
 	readonly outputText: string;
+	/** 本 turn 实际使用的引用（TASK-033；无检索为空数组）。 */
+	readonly citations: readonly Citation[];
 }
 
 function ownerScope(principal: EmbedAuthContext) {

@@ -26,6 +26,8 @@ export function conversationRealtimeServices(service: ConversationService): Real
 				userMessageSequence: result.data.userMessageSequence,
 				assistantSequence: result.data.assistantSequence,
 				outputText: result.data.outputText,
+				// TASK-033：本 turn 实际使用的引用（citation.updated 事件来源）。
+				citations: result.data.citations,
 			};
 		},
 		async getConversation({ principal, conversationId }) {

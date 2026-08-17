@@ -33,6 +33,7 @@ import {
 	setEmbedCorsHeaders,
 } from "../http-shared.ts";
 import type { EmbedAuthContext, EmbedAuthenticator } from "../middleware/authenticate.ts";
+import type { RateLimiter } from "../rate-limits/limiter.ts";
 import type { ConversationService } from "./service.ts";
 
 export const EMBED_CONVERSATIONS_PATH = "/api/embed/v1/conversations";
@@ -56,6 +57,8 @@ export interface ConversationsHttpHandlerOptions {
 	readonly idempotencyTtlMs?: number;
 	readonly maxBodyBytes?: number;
 	readonly onError?: (error: unknown) => void;
+	/** 分层限流（TASK-034）：ws-ticket=token 维度，dev turn=turn 维度。 */
+	readonly limiter?: RateLimiter;
 }
 
 /** 请求体/查询参数校验失败（映射 400）。 */
@@ -374,6 +377,17 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 	async function wsTicketRoute(ctx: RouteContext): Promise<void> {
 		const conversationId = parseConversationId(ctx);
 		if (conversationId === null) return;
+		// TASK-034：Token 维度限流（按 Principal；超限 429）。
+		if (options.limiter !== undefined) {
+			const allowed = await options.limiter.check({
+				dimension: "token",
+				scope: principalScope(ctx.principal),
+			});
+			if (!allowed.allowed) {
+				jsonBody(ctx.response, 429, errorEnvelope("RATE_LIMITED", "Rate limit exceeded", ctx.requestId, true));
+				return;
+			}
+		}
 		if (options.wsTickets === undefined) {
 			const error: EmbedError = runtimeUnavailable("WebSocket tickets are not configured");
 			jsonBody(
@@ -422,6 +436,19 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		conversationId: ConversationId,
 		text: string,
 	): Promise<{ status: number; body: unknown }> {
+		// TASK-034：dev turn 的 turn 维度分层限流（并发槽在 Realtime 连接路径）。
+		if (options.limiter !== undefined) {
+			const allowed = await options.limiter.check({
+				dimension: "turn",
+				scope: { ...principalScope(ctx.principal), conversationId },
+			});
+			if (!allowed.allowed) {
+				return {
+					status: 429,
+					body: errorEnvelope("RATE_LIMITED", "Rate limit exceeded", ctx.requestId, true),
+				};
+			}
+		}
 		const result = await service.executeTurn({ principal: ctx.principal, conversationId, text });
 		if (!result.ok) {
 			return {
@@ -559,6 +586,19 @@ function parseQuery(url: string | undefined): Map<string, string> {
 	const out = new Map<string, string>();
 	for (const [key, value] of query) out.set(key, value);
 	return out;
+}
+
+/** 限流 scope：Principal 标识（conversationId 由调用方按需叠加）。 */
+function principalScope(principal: EmbedAuthContext): {
+	readonly tenantId: string;
+	readonly publishedAppId: string;
+	readonly principalId: string;
+} {
+	return {
+		tenantId: principal.tenantId,
+		publishedAppId: principal.publishedAppId,
+		principalId: principal.principalId,
+	};
 }
 
 function readIdempotencyKey(request: IncomingMessage): string | undefined {

@@ -36,6 +36,7 @@ import { createPublishingRepositories } from "../../src/persistence/postgres/rep
 import {
 	type AttachmentId,
 	type ConversationId,
+	fromPublicId,
 	newAgentDefinitionId,
 	newPrincipalId,
 	newPublicAppId,
@@ -527,7 +528,12 @@ describe.skipIf(!pgUp)("conversation-scoped citations (TASK-032)", () => {
 		};
 		expect(conversationCitations.listSources(scope).length).toBe(1);
 
-		const del = await attachmentsService.delete(p1, conv.conversationId, uploaded.attachmentId as AttachmentId);
+		const del = await attachmentsService.delete(
+			p1,
+			conv.conversationId,
+			// 上传响应是公开 att_ id；service 层需要裸 UUID。
+			fromPublicId("AttachmentId", uploaded.attachmentId) as AttachmentId,
+		);
 		expect(del.ok).toBe(true);
 		if (del.ok) expect(del.data.deleted).toBe(true);
 

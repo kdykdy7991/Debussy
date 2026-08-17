@@ -11,13 +11,21 @@
  * 背压：MVP 依赖 ws 库的 maxPayload/缓冲；pending bytes 限额留待 TASK-034。
  */
 
-import { decodeClientCommand, type EmbedServerEvent, type RealtimeDecodeError } from "@earendil-works/pi-protocol";
+import {
+	type Citation,
+	decodeClientCommand,
+	type EmbedServerEvent,
+	type RealtimeDecodeError,
+} from "@earendil-works/pi-protocol";
 import { WebSocket } from "ws";
 import type { ConversationId, TurnId } from "../../publishing/domain/ids.ts";
 import { newConversationEventId, toPublicId } from "../../publishing/domain/ids.ts";
 import type { ConversationEventRecord, ConversationRecord } from "../../publishing/repositories.ts";
+import { createEffectOwner } from "../../runtime/effect-owner.ts";
 import type { TicketClaims } from "../auth/ws-ticket.ts";
 import type { EmbedAuthContext } from "../middleware/authenticate.ts";
+import type { EmbedLimits } from "../rate-limits/index.ts";
+import type { RateLimitScope } from "../rate-limits/limiter.ts";
 
 export type TurnOutcome =
 	| {
@@ -26,6 +34,8 @@ export type TurnOutcome =
 			readonly userMessageSequence: number;
 			readonly assistantSequence: number | null;
 			readonly outputText: string;
+			/** 本 turn 实际使用的引用（TASK-033；无检索为空数组）。 */
+			readonly citations: readonly Citation[];
 	  }
 	| { readonly ok: false; readonly code: string; readonly message: string; readonly retryable: boolean };
 
@@ -57,6 +67,16 @@ export interface EmbedRealtimeConnectionOptions {
 	readonly principal: EmbedAuthContext;
 	/** 连接关闭/异常回调（测试/日志）。 */
 	readonly onClose?: (reason: string) => void;
+	/** 分层限流 + 并发 Turn 槽（TASK-034）；未提供 = 不限流。 */
+	readonly limits?: EmbedLimits;
+	/** 指标回调（spec 15.1，TASK-035）：连接关闭 + Turn 结果/耗时。 */
+	readonly observability?: RealtimeObservability;
+}
+
+/** 连接级指标回调（compose 组装，避免连接直接耦合具体指标名）。 */
+export interface RealtimeObservability {
+	readonly onConnectionClose: () => void;
+	readonly onTurnResult: (result: "completed" | "failed" | "rate_limited", latencyMs: number) => void;
 }
 
 export const REALTIME_CLOSE_CODES = {
@@ -70,6 +90,8 @@ export class EmbedRealtimeConnection {
 	private readonly services: RealtimeServices;
 	private readonly principal: EmbedAuthContext;
 	private readonly onClose: ((reason: string) => void) | undefined;
+	private readonly limits: EmbedLimits | undefined;
+	private readonly observability: RealtimeObservability | undefined;
 	private readonly conversationId: ConversationId;
 	/** 协议消息使用 public 形式（`conv_<uuid>`），claims 存裸 UUID。 */
 	private readonly publicConversationId: string;
@@ -81,6 +103,8 @@ export class EmbedRealtimeConnection {
 		this.services = options.services;
 		this.principal = options.principal;
 		this.onClose = options.onClose;
+		this.limits = options.limits;
+		this.observability = options.observability;
 		this.conversationId = options.claims.conversationId;
 		this.publicConversationId = toPublicId("ConversationId", this.conversationId);
 
@@ -151,7 +175,45 @@ export class EmbedRealtimeConnection {
 	}
 
 	private async handleTurnStart(_requestId: string, text: string): Promise<void> {
+		// TASK-034：先发 accepted（客户端用于回显/loading），再走限流与并发槽。
 		this.send({ type: "turn.accepted", ...this.eventBase(0) });
+		if (this.limits !== undefined) {
+			// turn 维度分层限流（System/Tenant/App/Principal/Conversation 最严格）。
+			const limited = await this.limits.limiter.check({
+				dimension: "turn",
+				scope: this.rateScope(),
+			});
+			if (!limited.allowed) {
+				this.observability?.onTurnResult("rate_limited", 0);
+				this.send({ type: "turn.failed", ...this.eventBase(0), error: "turn rate limit exceeded" });
+				return;
+			}
+			// 并发槽：进程级上限；超限立即失败，不排队（禁止继续条件）。
+			const slot = this.limits.turnSlots.acquire();
+			if (slot === null) {
+				this.observability?.onTurnResult("rate_limited", 0);
+				this.send({ type: "turn.failed", ...this.eventBase(0), error: "too many concurrent turns" });
+				return;
+			}
+			// Turn 槽必须在 EffectOwner 中释放（spec 14）：注册为 effect，LIFO
+			// 在 finally 中 close，保证正常/异常/取消路径都归还槽。
+			const owner = createEffectOwner();
+			owner.register(() => slot.release());
+			try {
+				await this.runTurn(text);
+			} finally {
+				await owner.close();
+			}
+			return;
+		}
+		await this.runTurn(text);
+	}
+
+	private async runTurn(text: string): Promise<void> {
+		const startedAt = Date.now();
+		const report = (result: "completed" | "failed"): void => {
+			if (this.observability !== undefined) this.observability.onTurnResult(result, Date.now() - startedAt);
+		};
 		const outcome = await this.services.executeTurn({
 			principal: this.principal,
 			conversationId: this.conversationId,
@@ -160,15 +222,34 @@ export class EmbedRealtimeConnection {
 		if (this.closed) return;
 		if (!outcome.ok) {
 			this.send({ type: "turn.failed", ...this.eventBase(0), error: outcome.message });
+			report("failed");
 			return;
 		}
 		if (outcome.assistantSequence === null) {
 			this.send({ type: "turn.failed", ...this.eventBase(0), error: "turn produced no completion" });
+			report("failed");
 			return;
 		}
-		// MVP：delta 单帧全文；completed 来自持久事件（sequence = 持久序号）。
-		this.send({ type: "message.delta", ...this.eventBase(outcome.assistantSequence), text: outcome.outputText });
+		// TASK-033：引用展示 —— 有引用先发 citation.updated（瞬时事件，sequence 0）。
+		if (outcome.citations.length > 0) {
+			this.send({ type: "citation.updated", ...this.eventBase(0), citations: outcome.citations });
+		}
+		// MVP：delta 为瞬时流式事件（sequence 0，不可恢复；spec 9.2 中 delta 不是
+		// 持久真相）；completed 来自持久事件（sequence = 持久序号，客户端用它
+		// 推进 lastSeenSequence 并做断线补齐）。
+		this.send({ type: "message.delta", ...this.eventBase(0), text: outcome.outputText });
 		this.send({ type: "message.completed", ...this.eventBase(outcome.assistantSequence), text: outcome.outputText });
+		report("completed");
+	}
+
+	/** 分层限流 scope：Principal 标识 + 当前会话（conversation 层适用）。 */
+	private rateScope(): RateLimitScope {
+		return {
+			tenantId: this.principal.tenantId,
+			publishedAppId: this.principal.publishedAppId,
+			principalId: this.principal.principalId,
+			conversationId: this.conversationId,
+		};
 	}
 
 	private async handleSync(lastSeenSequence: number): Promise<void> {
@@ -236,6 +317,7 @@ export class EmbedRealtimeConnection {
 			this.ws.terminate();
 		}
 		this.onClose?.(reason);
+		this.observability?.onConnectionClose();
 	}
 }
 
