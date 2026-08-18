@@ -119,7 +119,20 @@ function createRouter(
 		if (method === "POST" && path === "/api/embed/v1/conversations") {
 			const created = { ...SUMMARY_2, id: "conv_new", title: "" };
 			state.details.set("conv_new", detail(created, []));
-			return jsonResponse(created, 201);
+			// WB-008: the endpoint always returns { conversation, rollover }.
+			return jsonResponse(
+				{
+					conversation: created,
+					rollover: {
+						conversationId: "conv_new",
+						rolledOver: false,
+						previousConversationId: null,
+						rolledOverAtSequence: null,
+						rolloverSummaryId: null,
+					},
+				},
+				201,
+			);
 		}
 		const detailMatch = path.match(/^\/api\/embed\/v1\/conversations\/([^/]+)$/);
 		if (method === "GET" && detailMatch !== null) {

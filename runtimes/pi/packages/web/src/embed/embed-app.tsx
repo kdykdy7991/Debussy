@@ -129,6 +129,14 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 				// signed_user 无法静默刷新：清理凭据，等待宿主重新 init。
 				void handleLogout("signed_user").then(() => setError(authError.message));
 			},
+			onConversationCreated: () => {
+				// WB-010: 会话新建后回发宿主（仅非 preview 场景；preview 无宿主）。
+				if (props.previewTicket !== undefined) return;
+				const conv = chat.getState().activeId;
+				if (conv !== null) {
+					channel?.send({ type: "conversation-created", publicAppId: props.publicAppId, conversationId: conv });
+				}
+			},
 			wsFactory: props.wsFactory,
 		});
 		controllersRef.current = { auth, chat };

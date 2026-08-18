@@ -47,7 +47,13 @@ export type EmbedIframePostMessage =
 			readonly mode: "anonymous" | "signed_user";
 	  }
 	| { readonly type: "error"; readonly code: string; readonly message: string }
-	| { readonly type: "resize"; readonly height: number };
+	| { readonly type: "resize"; readonly height: number }
+	/** iframe 报告 `publicAppId` 下已新建会话（WB-010 宿主事件）。 */
+	| {
+			readonly type: "conversation-created";
+			readonly publicAppId: string;
+			readonly conversationId: string;
+	  };
 
 /** 统一信封（双方收发都使用）。 */
 export interface EmbedPostMessageEnvelope {
@@ -114,11 +120,78 @@ export function encodeEmbedIframeMessage(message: EmbedIframePostMessage): Embed
 			? { publicAppId: message.publicAppId, mode: message.mode }
 			: message.type === "error"
 				? { code: message.code, message: message.message }
-				: { height: message.height };
+				: message.type === "conversation-created"
+					? { publicAppId: message.publicAppId, conversationId: message.conversationId }
+					: { height: message.height };
 	return {
 		protocol: POST_MESSAGE_PROTOCOL,
 		version: POST_MESSAGE_VERSION,
 		type: message.type,
 		payload,
 	};
+}
+
+/** iframe -> host 校验结果。 */
+export type EmbedPayloadDecodeResult =
+	| { readonly ok: true; readonly message: EmbedIframePostMessage }
+	| { readonly ok: false; readonly reason: PostMessageRejectReason };
+
+/**
+ * 宿主端校验 iframe 消息的 `event.data`：协议/版本/类型/payload 任一不合法即
+ * 拒绝。宿主仍须在调用前自校验 `event.source == iframe.contentWindow` 与
+ * `event.origin` 属于 App allowlist（WB-010 #5）。
+ */
+export function decodeEmbedIframeMessage(raw: unknown): EmbedPayloadDecodeResult {
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		return { ok: false, reason: "NOT_OBJECT" };
+	}
+	const envelope = raw as Record<string, unknown>;
+	if (envelope.protocol !== POST_MESSAGE_PROTOCOL) return { ok: false, reason: "WRONG_PROTOCOL" };
+	if (envelope.version !== POST_MESSAGE_VERSION) return { ok: false, reason: "WRONG_VERSION" };
+	const type = envelope.type;
+	const payload = envelope.payload;
+	if (type === "ready") {
+		if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+			return { ok: false, reason: "INVALID_PAYLOAD" };
+		const { publicAppId, mode } = payload as Record<string, unknown>;
+		if (typeof publicAppId !== "string" || publicAppId === "") return { ok: false, reason: "INVALID_PAYLOAD" };
+		if (mode !== "anonymous" && mode !== "signed_user") return { ok: false, reason: "INVALID_PAYLOAD" };
+		return { ok: true, message: { type: "ready", publicAppId, mode } };
+	}
+	if (type === "error") {
+		if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+			return { ok: false, reason: "INVALID_PAYLOAD" };
+		const { code, message } = payload as Record<string, unknown>;
+		if (typeof code !== "string" || typeof message !== "string") return { ok: false, reason: "INVALID_PAYLOAD" };
+		return { ok: true, message: { type: "error", code, message } };
+	}
+	if (type === "resize") {
+		if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+			return { ok: false, reason: "INVALID_PAYLOAD" };
+		const { height } = payload as Record<string, unknown>;
+		if (
+			typeof height !== "number" ||
+			!Number.isInteger(height) ||
+			height < 0 ||
+			height > POST_MESSAGE_RESIZE_MAX_HEIGHT
+		) {
+			return { ok: false, reason: "INVALID_PAYLOAD" };
+		}
+		return { ok: true, message: { type: "resize", height } };
+	}
+	if (type === "conversation-created") {
+		if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+			return { ok: false, reason: "INVALID_PAYLOAD" };
+		const { publicAppId, conversationId } = payload as Record<string, unknown>;
+		if (
+			typeof publicAppId !== "string" ||
+			publicAppId === "" ||
+			typeof conversationId !== "string" ||
+			conversationId === ""
+		) {
+			return { ok: false, reason: "INVALID_PAYLOAD" };
+		}
+		return { ok: true, message: { type: "conversation-created", publicAppId, conversationId } };
+	}
+	return { ok: false, reason: "UNKNOWN_TYPE" };
 }

@@ -1,6 +1,6 @@
 # WB-010：企业 Embed SDK
 
-状态：Blocked by WB-001/WB-005
+状态：Complete（handoff 见 `handoffs/WB-010-enterprise-embed-sdk.md`）
 
 ## 目标
 

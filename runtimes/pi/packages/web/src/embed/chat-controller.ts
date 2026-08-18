@@ -52,8 +52,10 @@ export interface EmbedChatControllerOptions {
 	readonly api: EmbedApi;
 	/** 返回有效 Access Token；匿名模式可透明刷新（同 visitor 同 Principal）。 */
 	readonly getToken: () => Promise<string>;
-	/** 认证不可恢复（signed_user 过期，PD-18 无法静默刷新）时回调：宿主需重新 init。 */
+	/** 认证不可恢复（signed_user 过期，PD-18 无法静默刷新)时回调：宿主需重新 init。 */
 	readonly onAuthFailure?: (error: EmbedApiError) => void;
+	/** WB-010: 内嵌聊天可把「新会话已建立」上报给宿主（conversation-created）。 */
+	readonly onConversationCreated?: (conversationId: string) => void;
 	/** 测试注入 WebSocket 工厂（TASK-026）。 */
 	readonly wsFactory?: (url: string) => WebSocketLike;
 	readonly maxRetries?: number;
@@ -153,6 +155,7 @@ export class EmbedChatController {
 			const created = await this.withToken((token) => this.options.api.createConversation(token));
 			this.setState({ conversations: [created.conversation, ...this.state.conversations] });
 			await this.openConversation(created.conversation.id);
+			this.options.onConversationCreated?.(created.conversation.id);
 			// WB-008: surface rollover to the embed UI so the user knows the
 			// previous conversation was sealed and this one continues it.
 			if (created.rollover.rolledOver) {
