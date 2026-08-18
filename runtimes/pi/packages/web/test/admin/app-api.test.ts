@@ -103,4 +103,69 @@ describe("AppApi", () => {
 			expect(appErr.httpStatus).toBe(422);
 		}
 	});
+
+	it("createPublishedApp POSTs to /published-apps with an Idempotency-Key (MVP-03)", async () => {
+		controller.connect("tok");
+		let captured: { url: string; init: RequestInit } | undefined;
+		const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+			captured = { url, init };
+			return new Response(
+				JSON.stringify({
+					data: {
+						id: "app_new",
+						publicAppId: "pub_xyz",
+						status: "draft",
+						currentVersionId: null,
+						embedUrl: "http://127.0.0.1:8765/embed/pub_xyz",
+					},
+					requestId: "r1",
+				}),
+				{ status: 201, headers: { "content-type": "application/json" } },
+			);
+		});
+		const client = new AppApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+		const result = await client.createPublishedApp({
+			agentDefinitionId: "agent_aaa",
+			name: "Demo App",
+			accessMode: "anonymous",
+			allowedOrigins: ["https://app.example.com"],
+		});
+		expect(result.id).toBe("app_new");
+		expect(result.publicAppId).toBe("pub_xyz");
+		expect(captured).toBeDefined();
+		if (captured === undefined) throw new Error("captured missing");
+		expect(captured.url).toBe("http://localhost/api/control/v1/published-apps");
+		expect(captured.init.method).toBe("POST");
+		const headers = captured.init.headers as Record<string, string>;
+		expect(headers["Idempotency-Key"]).toBeTruthy();
+		expect(headers["Idempotency-Key"].startsWith("op_app-create_")).toBe(true);
+		const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+		expect(body["name"]).toBe("Demo App");
+		expect(body["accessMode"]).toBe("anonymous");
+		expect(body["allowedOrigins"]).toEqual(["https://app.example.com"]);
+	});
+
+	it("createPublishedApp rejects INVALID_ORIGINS without sending an Idempotency-Key replay", async () => {
+		controller.connect("tok");
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						error: { code: "INVALID_ORIGINS", message: "bad origin", requestId: "r2" },
+					}),
+					{ status: 400, headers: { "content-type": "application/json" } },
+				),
+		);
+		const client = new AppApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+		await expect(
+			client.createPublishedApp({
+				agentDefinitionId: "agent_aaa",
+				name: "Demo App",
+				accessMode: "mixed",
+				allowedOrigins: ["not-a-url"],
+			}),
+		).rejects.toMatchObject({ code: "INVALID_ORIGINS", httpStatus: 400 });
+		// Token must remain set: only 401 transitions to lock state.
+		expect(controller.getToken()).toBe("tok");
+	});
 });

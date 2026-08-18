@@ -110,6 +110,19 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(snap.tenant).toBeNull();
 		expect(ctrl.getToken()).toBeNull();
 	});
+
+	it("AdminAuthProvider never invents a tenant id or display name", async () => {
+		// MVP-01 regression: the previous WB-002 wiring hardcoded a
+		// `ten_placeholder`/`默认租户` pair on any non-empty token. After the
+		// real session wiring, an unresolved controller must not advance to
+		// `connected` without a server response.
+		const { AdminAuthController } = await import("../../src/publishing/auth-controller.ts");
+		const ctrl = new AdminAuthController({ initialBaseUrl: "http://localhost" });
+		ctrl.connect("placeholder");
+		const snap = ctrl.getSnapshot();
+		expect(snap.state).toBe("connecting");
+		expect(snap.tenant).toBeNull();
+	});
 });
 
 describe("Admin shell CSS layout (WB-002)", () => {
