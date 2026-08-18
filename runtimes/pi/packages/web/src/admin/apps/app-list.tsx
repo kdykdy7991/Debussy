@@ -1,19 +1,16 @@
 /**
- * App List — redesigned (mock-data preview).
+ * App List — 设计收口（设计稿基于 mock data 锁定信息架构）。
  *
- * 本组件用于锁定应用列表页的视觉与信息架构（说明：本轮先以 Mock Data 落地
- * 「名称 / 绑定 Agent / Revision / 访问类型 / 状态 / 更新时间 / 操作」
- * 七列），不实现发布流程、域名配置、使用情况统计等深度页面。
- * 点击应用名仍可进入 `AdminAppDetail`，保留与既有路由的衔接。
- *
- * 关键概念（与 Agent 列表的差异）：
- *   - 一个应用绑定某个 Agent 的某一个 Revision，发布给最终用户使用
- *   - 同一个 Agent 可以被发布成多个不同应用（不同访问模式 / 状态）
- *   - Mock Data 中刻意让「客服 Agent」对应三个应用（官网客服、内部工作台、
- *     测试环境预览）来演示这种 1:N 关系
+ * 字段结构沿用既有约定：name / boundAgent / boundAgentRevision / accessMode /
+ * status / updatedAt / updatedBy。
  */
-
 import { useMemo, useState } from "react";
+import { Badge } from "../components/Badge.tsx";
+import { Button } from "../components/Button.tsx";
+import { FilterBar, FilterSearch, FilterSelect } from "../components/FilterBar.tsx";
+import { PageHeader } from "../components/PageHeader.tsx";
+import { Pagination } from "../components/Pagination.tsx";
+import { Table, type TableColumn } from "../components/Table.tsx";
 import { navigate } from "../router.ts";
 
 type AppStatus = "active" | "draft" | "suspended" | "archived";
@@ -25,7 +22,6 @@ interface AppRow {
 	readonly publicAppId: string;
 	readonly boundAgentName: string;
 	readonly boundAgentId: string;
-	/** Which revision of the bound agent this app is currently pinned to. */
 	readonly boundAgentRevision: number;
 	readonly accessMode: AccessMode;
 	readonly status: AppStatus;
@@ -106,6 +102,30 @@ const MOCK_APPS: readonly AppRow[] = [
 		updatedAt: "2026-08-10 14:48",
 		updatedBy: "alice@example.com",
 	},
+	{
+		id: "app_demo_007",
+		name: "销售助手嵌入",
+		publicAppId: "app_pub_a2b7c4f1",
+		boundAgentName: "销售助手",
+		boundAgentId: "agent_demo_sales",
+		boundAgentRevision: 9,
+		accessMode: "mixed",
+		status: "active",
+		updatedAt: "2026-08-09 16:22",
+		updatedBy: "dave@example.com",
+	},
+	{
+		id: "app_demo_008",
+		name: "内部知识助手（停用）",
+		publicAppId: "app_pub_4d8e2a17",
+		boundAgentName: "内部知识助手",
+		boundAgentId: "agent_demo_internal_assistant",
+		boundAgentRevision: 3,
+		accessMode: "signed_user",
+		status: "archived",
+		updatedAt: "2026-06-30 11:11",
+		updatedBy: "alice@example.com",
+	},
 ];
 
 const STATUS_LABEL: Record<AppStatus, string> = {
@@ -129,55 +149,72 @@ const STATUS_FILTER_OPTIONS: readonly { value: AppStatus | "all"; label: string 
 	{ value: "archived", label: "已归档" },
 ];
 
-interface AppMoreMenuProps {
-	readonly row: AppRow;
+const monoStyle: React.CSSProperties = {
+	fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+	fontSize: 12,
+	color: "var(--admin-text-secondary)",
+};
+
+function NameCell({ row }: { row: AppRow }): React.ReactElement {
+	const initial = row.name.charAt(0);
+	return (
+		<div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+			<span
+				aria-hidden="true"
+				style={{
+					width: 32,
+					height: 32,
+					borderRadius: 8,
+					background: "var(--admin-info-soft)",
+					color: "var(--admin-info)",
+					display: "grid",
+					placeItems: "center",
+					fontWeight: 600,
+					fontSize: 13,
+					flexShrink: 0,
+				}}
+			>
+				{initial}
+			</span>
+			<div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+				<button
+					type="button"
+					style={{
+						background: "transparent",
+						border: 0,
+						padding: 0,
+						color: "var(--admin-text-primary)",
+						fontWeight: 600,
+						fontSize: 14,
+						textAlign: "left",
+						cursor: "pointer",
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						whiteSpace: "nowrap",
+					}}
+					onClick={() => navigate(`/apps/${row.id}`)}
+				>
+					{row.name}
+				</button>
+				<span
+					style={{
+						fontSize: 11,
+						color: "var(--admin-text-faint)",
+						fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+					}}
+				>
+					{row.publicAppId}
+				</span>
+			</div>
+		</div>
+	);
 }
 
-function AppMoreMenu({ row }: AppMoreMenuProps): React.ReactElement {
-	const [open, setOpen] = useState(false);
+function UpdatedCell({ row }: { row: AppRow }): React.ReactElement {
 	return (
-		<div className="actions-popover">
-			<button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-				更多
-			</button>
-			{open && (
-				<>
-					<div className="actions-popover__backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
-					<div className="actions-popover__menu" role="menu">
-						<button
-							type="button"
-							role="menuitem"
-							onClick={() => {
-								setOpen(false);
-								window.alert(`复制应用 Embed 代码（占位）: ${row.publicAppId}`);
-							}}
-						>
-							复制 Embed 代码
-						</button>
-						<button
-							type="button"
-							role="menuitem"
-							onClick={() => {
-								setOpen(false);
-								window.alert(`复制应用 ID（占位）: ${row.id}`);
-							}}
-						>
-							复制应用 ID
-						</button>
-						<button
-							type="button"
-							role="menuitem"
-							className="danger"
-							onClick={() => {
-								setOpen(false);
-								window.alert(`归档应用「${row.name}」（占位动作）`);
-							}}
-						>
-							归档应用
-						</button>
-					</div>
-				</>
-			)}
+		<div style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 13 }}>
+			<span>{row.updatedAt}</span>
+			<span style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>by {row.updatedBy}</span>
 		</div>
 	);
 }
@@ -185,6 +222,8 @@ function AppMoreMenu({ row }: AppMoreMenuProps): React.ReactElement {
 export function AppListView(): React.ReactElement {
 	const [query, setQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState<AppStatus | "all">("all");
+	const [page, setPage] = useState(1);
+	const [pageSize, setPageSize] = useState(10);
 
 	const filtered = useMemo(() => {
 		const needle = query.trim().toLowerCase();
@@ -201,150 +240,182 @@ export function AppListView(): React.ReactElement {
 
 	const totalCount = MOCK_APPS.length;
 	const activeCount = MOCK_APPS.filter((r) => r.status === "active").length;
-	// 按绑定 Agent 名称统计去重，展示「多少个 Agent 被发布到了多少个应用」
 	const agentCount = new Set(MOCK_APPS.map((r) => r.boundAgentId)).size;
-	// 同一 Agent 的不同 Revision 也可以被不同应用绑定 — 统计去重的 (agent, revision) 对
 	const revisionBindingCount = new Set(MOCK_APPS.map((r) => `${r.boundAgentId}#${r.boundAgentRevision}`)).size;
+
+	const columns: readonly TableColumn<AppRow>[] = [
+		{
+			key: "name",
+			header: "名称",
+			render: (row) => <NameCell row={row} />,
+			width: 280,
+		},
+		{
+			key: "agent",
+			header: "绑定 Agent",
+			render: (row) => (
+				<button
+					type="button"
+					style={{
+						background: "transparent",
+						border: 0,
+						padding: 0,
+						color: "var(--admin-text-primary)",
+						fontWeight: 500,
+						cursor: "pointer",
+					}}
+					onClick={() => navigate(`/agents/${row.boundAgentId}`)}
+				>
+					{row.boundAgentName}
+				</button>
+			),
+		},
+		{
+			key: "revision",
+			header: "Revision",
+			render: (row) => <span style={monoStyle}>v{row.boundAgentRevision}</span>,
+		},
+		{
+			key: "access",
+			header: "访问类型",
+			render: (row) => <Badge variant="info">{ACCESS_LABEL[row.accessMode]}</Badge>,
+		},
+		{
+			key: "status",
+			header: "状态",
+			render: (row) => (
+				<Badge
+					variant={
+						row.status === "active"
+							? "active"
+							: row.status === "draft"
+								? "draft"
+								: row.status === "suspended"
+									? "suspended"
+									: "archived"
+					}
+					dot={row.status === "active"}
+				>
+					{STATUS_LABEL[row.status]}
+				</Badge>
+			),
+		},
+		{
+			key: "updated",
+			header: "更新时间",
+			render: (row) => <UpdatedCell row={row} />,
+		},
+		{
+			key: "actions",
+			header: "操作",
+			render: (row) => (
+				<div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+					<Button size="sm" variant="ghost" disabled={row.status !== "active"}>
+						预览
+					</Button>
+					<Button size="sm" variant="ghost">
+						设置
+					</Button>
+				</div>
+			),
+			align: "right",
+		},
+	];
 
 	return (
 		<section aria-label="应用列表">
-			<header className="list-page-header">
-				<div className="list-page-header__lead">
-					<h1>应用</h1>
-					<p>
-						应用把某个 Agent 的某个 Revision 交付给最终用户，每个应用拥有独立的访问模式与发布状态。 同一个 Agent
-						可以被发布为多个应用，覆盖官网、内部工作台、外部合作方等不同场景。
-					</p>
-				</div>
-				<button type="button" className="primary" onClick={() => navigate("/apps")}>
-					+ 创建应用
-				</button>
-			</header>
+			<PageHeader
+				title="应用"
+				subtitle="应用把某个 Agent 的某个 Revision 交付给最终用户，每个应用拥有独立的访问模式与发布状态。同一个 Agent 可以被发布为多个应用，覆盖官网、内部工作台、外部合作方等不同场景。"
+				actions={
+					<Button variant="primary" onClick={() => navigate("/apps")}>
+						+ 创建应用
+					</Button>
+				}
+			/>
 
-			<div className="mock-data-banner" role="note">
-				<span>当前为 Mock Data 预览，字段结构用于锁定设计与信息架构，下一步接入 Control API。</span>
+			<FilterBar
+				left={
+					<>
+						<FilterSearch
+							placeholder="按名称 / 绑定 Agent / Public ID 搜索"
+							value={query}
+							onChange={setQuery}
+						/>
+						<FilterSelect
+							ariaLabel="状态筛选"
+							value={statusFilter}
+							onChange={(v) => setStatusFilter(v as AppStatus | "all")}
+							options={STATUS_FILTER_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+						/>
+					</>
+				}
+				right={
+					<>
+						<Button variant="ghost" size="sm" onClick={() => { setQuery(""); setStatusFilter("all"); }}>
+							重置
+						</Button>
+						<Button variant="secondary" size="sm">
+							导出
+						</Button>
+					</>
+				}
+			/>
+
+			<div
+				style={{
+					display: "flex",
+					gap: 24,
+					padding: "0 4px",
+					margin: "0 0 12px",
+					color: "var(--admin-text-secondary)",
+					fontSize: 13,
+				}}
+			>
+				<span>
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{totalCount}
+					</strong>
+					个应用
+				</span>
+				<span>
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{activeCount}
+					</strong>
+					个已发布
+				</span>
+				<span>
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{agentCount}
+					</strong>
+					个 Agent 被发布
+				</span>
+				<span>
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{revisionBindingCount}
+					</strong>
+					条 Agent × Revision 绑定
+				</span>
 			</div>
 
-			<div className="list-toolbar">
-				<div className="list-toolbar__search">
-					<input
-						type="search"
-						placeholder="按名称 / 绑定 Agent 搜索"
-						aria-label="搜索应用"
-						value={query}
-						onChange={(e) => setQuery(e.currentTarget.value)}
-					/>
-				</div>
-				<select
-					aria-label="状态筛选"
-					value={statusFilter}
-					onChange={(e) => setStatusFilter(e.currentTarget.value as AppStatus | "all")}
-				>
-					{STATUS_FILTER_OPTIONS.map((opt) => (
-						<option key={opt.value} value={opt.value}>
-							{opt.label}
-						</option>
-					))}
-				</select>
-			</div>
+			<Table<AppRow>
+				columns={columns}
+				rows={filtered}
+				rowKey={(row) => row.id}
+				emptyTitle="没有匹配的应用"
+				emptyDescription="尝试调整搜索关键词或筛选条件。"
+			/>
 
-			<div className="list-stats">
-				<span>
-					<strong>{totalCount}</strong>个应用
-				</span>
-				<span>
-					<strong>{activeCount}</strong>个已发布
-				</span>
-				<span>
-					<strong>{agentCount}</strong>个 Agent 被发布
-				</span>
-				<span>
-					<strong>{revisionBindingCount}</strong>条 Agent × Revision 绑定
-				</span>
-			</div>
-
-			{filtered.length === 0 ? (
-				<div className="data-table-empty">
-					<h3>没有匹配的应用</h3>
-					<p>尝试调整搜索关键词或筛选条件。</p>
-				</div>
-			) : (
-				<table className="data-table">
-					<thead>
-						<tr>
-							<th className="col-name">名称</th>
-							<th>绑定 Agent</th>
-							<th>Revision</th>
-							<th>访问类型</th>
-							<th>状态</th>
-							<th>更新时间</th>
-							<th className="col-actions">操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						{filtered.map((row) => (
-							<tr key={row.id}>
-								<td>
-									<div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-										<span className="list-row-glyph app" aria-hidden="true">
-											{row.name.slice(0, 1)}
-										</span>
-										<div className="list-title-block">
-											<button
-												type="button"
-												className="agent-name"
-												onClick={() => navigate(`/apps/${row.id}`)}
-											>
-												{row.name}
-											</button>
-											<span className="list-title-sub">{row.publicAppId}</span>
-											<span className="list-title-id">id: {row.id}</span>
-										</div>
-									</div>
-								</td>
-								<td>
-									<button
-										type="button"
-										className="agent-name"
-										onClick={() => navigate(`/agents/${row.boundAgentId}`)}
-									>
-										{row.boundAgentName}
-									</button>
-								</td>
-								<td>
-									<span className="col-mono">v{row.boundAgentRevision}</span>
-								</td>
-								<td>
-									<span className="badge status-draft">{ACCESS_LABEL[row.accessMode]}</span>
-								</td>
-								<td>
-									<span className={`badge status-${row.status}`}>{STATUS_LABEL[row.status]}</span>
-								</td>
-								<td>
-									<div className="list-title-block">
-										<span>{row.updatedAt}</span>
-										<span className="list-title-sub">by {row.updatedBy}</span>
-									</div>
-								</td>
-								<td>
-									<div className="row-actions">
-										<button type="button" title="在新窗口预览" disabled={row.status !== "active"}>
-											预览
-										</button>
-										<button type="button" title="访问设置">
-											设置
-										</button>
-										<button type="button" title="查看使用情况">
-											分析
-										</button>
-										<AppMoreMenu row={row} />
-									</div>
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
+			<Pagination
+				total={filtered.length}
+				page={page}
+				pageSize={pageSize}
+				onPageChange={setPage}
+				onPageSizeChange={(s) => {
+					setPageSize(s);
+					setPage(1);
+				}}
+			/>
 		</section>
 	);
 }

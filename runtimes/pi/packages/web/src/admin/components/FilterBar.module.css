@@ -1,0 +1,124 @@
+.bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--admin-space-2);
+	align-items: center;
+	padding: var(--admin-space-3);
+	background: var(--admin-bg-surface);
+	border: 1px solid var(--admin-border-soft);
+	border-radius: var(--admin-radius-lg);
+	margin-bottom: var(--admin-space-4);
+}
+
+.left {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--admin-space-2);
+	align-items: center;
+	flex: 1;
+	min-width: 0;
+}
+
+.right {
+	display: flex;
+	gap: var(--admin-space-2);
+	align-items: center;
+	flex-shrink: 0;
+}
+
+/* search */
+.search {
+	position: relative;
+	flex: 1;
+	min-width: 220px;
+	max-width: 360px;
+}
+
+.searchIcon {
+	position: absolute;
+	left: 10px;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--admin-text-muted);
+	display: inline-flex;
+}
+
+.searchInput {
+	width: 100%;
+	padding: 7px 10px 7px 32px;
+	border: 1px solid var(--admin-border-default);
+	border-radius: var(--admin-radius-md);
+	background: var(--admin-bg-surface);
+	color: var(--admin-text-primary);
+	font: inherit;
+	font-size: var(--admin-text-base);
+	box-sizing: border-box;
+	transition:
+		border-color var(--admin-motion-fast) var(--admin-ease-standard),
+		box-shadow var(--admin-motion-fast) var(--admin-ease-standard);
+}
+
+.searchInput::placeholder {
+	color: var(--admin-text-faint);
+}
+
+.searchInput:focus {
+	outline: none;
+	border-color: var(--admin-accent);
+	box-shadow: 0 0 0 3px var(--admin-accent-glow);
+}
+
+/* select */
+.select {
+	padding: 7px 28px 7px 12px;
+	border: 1px solid var(--admin-border-default);
+	border-radius: var(--admin-radius-md);
+	background: var(--admin-bg-surface)
+		url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238a857a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>")
+		no-repeat right 10px center;
+	background-size: 10px 10px;
+	color: var(--admin-text-primary);
+	font: inherit;
+	font-size: var(--admin-text-base);
+	appearance: none;
+	-webkit-appearance: none;
+	cursor: pointer;
+	min-width: 120px;
+}
+
+.select:focus {
+	outline: none;
+	border-color: var(--admin-accent);
+	box-shadow: 0 0 0 3px var(--admin-accent-glow);
+}
+
+/* date range */
+.dateRange {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--admin-space-2);
+	padding: 4px 8px 4px 12px;
+	border: 1px solid var(--admin-border-default);
+	border-radius: var(--admin-radius-md);
+	background: var(--admin-bg-surface);
+}
+
+.dateInput {
+	border: 0;
+	background: transparent;
+	font: inherit;
+	font-size: var(--admin-text-base);
+	color: var(--admin-text-primary);
+	padding: 4px 0;
+	outline: none;
+}
+
+.dateInput::-webkit-calendar-picker-indicator {
+	opacity: 0.5;
+	cursor: pointer;
+}
+
+.dateArrow {
+	color: var(--admin-text-muted);
+	font-size: 12px;
+}

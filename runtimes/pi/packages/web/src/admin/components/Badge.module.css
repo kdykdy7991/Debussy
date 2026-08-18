@@ -1,0 +1,109 @@
+.badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 8px;
+	border-radius: var(--admin-radius-pill);
+	font-size: var(--admin-text-sm);
+	font-weight: var(--admin-weight-medium);
+	line-height: 1.5;
+	white-space: nowrap;
+	border: 1px solid transparent;
+}
+
+.dot {
+	width: 6px;
+	height: 6px;
+	border-radius: var(--admin-radius-pill);
+	background: currentColor;
+}
+
+/* soft tone（默认） */
+.tone_soft.v_active {
+	background: var(--admin-success-soft);
+	color: var(--admin-success);
+}
+.tone_soft.v_running {
+	background: var(--admin-success-soft);
+	color: var(--admin-success);
+}
+.tone_soft.v_ended {
+	background: var(--admin-neutral-soft);
+	color: var(--admin-neutral);
+}
+.tone_soft.v_up {
+	background: var(--admin-success-soft);
+	color: var(--admin-trend-up);
+}
+.tone_soft.v_success {
+	background: var(--admin-success-soft);
+	color: var(--admin-success);
+}
+.tone_soft.v_draft {
+	background: var(--admin-accent-soft);
+	color: var(--admin-accent-strong);
+}
+.tone_soft.v_suspended {
+	background: var(--admin-warning-soft);
+	color: var(--admin-warning);
+}
+.tone_soft.v_warning {
+	background: var(--admin-warning-soft);
+	color: var(--admin-warning);
+}
+.tone_soft.v_archived {
+	background: var(--admin-neutral-soft);
+	color: var(--admin-text-muted);
+}
+.tone_soft.v_down {
+	background: var(--admin-danger-soft);
+	color: var(--admin-danger);
+}
+.tone_soft.v_danger {
+	background: var(--admin-danger-soft);
+	color: var(--admin-danger);
+}
+.tone_soft.v_info {
+	background: var(--admin-info-soft);
+	color: var(--admin-info);
+}
+.tone_soft.v_neutral {
+	background: var(--admin-neutral-soft);
+	color: var(--admin-text-secondary);
+}
+
+/* solid tone（更饱和，谨慎使用） */
+.tone_solid.v_active,
+.tone_solid.v_running,
+.tone_solid.v_success {
+	background: var(--admin-success);
+	color: var(--admin-text-inverse);
+}
+.tone_solid.v_draft {
+	background: var(--admin-accent);
+	color: var(--admin-text-inverse);
+}
+.tone_solid.v_suspended,
+.tone_solid.v_warning {
+	background: var(--admin-warning);
+	color: var(--admin-text-inverse);
+}
+.tone_solid.v_archived,
+.tone_solid.v_ended,
+.tone_solid.v_neutral {
+	background: var(--admin-neutral);
+	color: var(--admin-text-inverse);
+}
+.tone_solid.v_down,
+.tone_solid.v_danger {
+	background: var(--admin-danger);
+	color: var(--admin-text-inverse);
+}
+.tone_solid.v_up {
+	background: var(--admin-trend-up);
+	color: var(--admin-text-inverse);
+}
+.tone_solid.v_info {
+	background: var(--admin-info);
+	color: var(--admin-text-inverse);
+}

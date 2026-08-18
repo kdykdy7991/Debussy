@@ -1,0 +1,177 @@
+.sidebar {
+	width: var(--admin-sidebar-width);
+	flex: 0 0 var(--admin-sidebar-width);
+	height: 100vh;
+	background: var(--admin-bg-sidebar);
+	border-right: 1px solid var(--admin-border-soft);
+	display: flex;
+	flex-direction: column;
+	padding: var(--admin-space-5) 0;
+	box-sizing: border-box;
+}
+
+.brand {
+	display: flex;
+	align-items: center;
+	gap: var(--admin-space-2);
+	padding: 0 var(--admin-space-5) var(--admin-space-6);
+}
+
+.brandMark {
+	width: 28px;
+	height: 28px;
+	border-radius: var(--admin-radius-md);
+	background: var(--admin-text-primary);
+	color: var(--admin-bg-sidebar);
+	display: grid;
+	place-items: center;
+	font-size: 14px;
+	font-weight: var(--admin-weight-semibold);
+}
+
+.brandText {
+	font-size: var(--admin-text-xl);
+	font-weight: var(--admin-weight-semibold);
+	letter-spacing: -0.01em;
+	color: var(--admin-text-primary);
+}
+
+.nav {
+	flex: 1;
+	overflow-y: auto;
+	padding: 0 var(--admin-space-3);
+}
+
+.section + .section {
+	margin-top: var(--admin-space-5);
+}
+
+.sectionTitle {
+	font-size: var(--admin-text-xs);
+	font-weight: var(--admin-weight-medium);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--admin-text-faint);
+	margin: 0 var(--admin-space-3) var(--admin-space-2);
+}
+
+.sectionList {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.item {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	gap: var(--admin-space-3);
+	padding: 8px 12px;
+	border: 0;
+	background: transparent;
+	border-radius: var(--admin-radius-md);
+	color: var(--admin-text-secondary);
+	font: inherit;
+	font-size: var(--admin-text-base);
+	cursor: pointer;
+	text-align: left;
+	position: relative;
+	transition:
+		background var(--admin-motion-fast) var(--admin-ease-standard),
+		color var(--admin-motion-fast) var(--admin-ease-standard);
+}
+
+.item:hover {
+	background: var(--admin-bg-hover);
+	color: var(--admin-text-primary);
+}
+
+.item:focus-visible {
+	outline: 2px solid var(--admin-accent);
+	outline-offset: -2px;
+}
+
+.itemActive {
+	background: var(--admin-accent-softer);
+	color: var(--admin-text-primary);
+	font-weight: var(--admin-weight-medium);
+}
+
+.itemActive::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 8px;
+	bottom: 8px;
+	width: 2px;
+	border-radius: 0 2px 2px 0;
+	background: var(--admin-accent);
+}
+
+.itemIcon {
+	width: 18px;
+	display: inline-flex;
+	justify-content: center;
+	font-size: 15px;
+	line-height: 1;
+}
+
+.itemLabel {
+	flex: 1;
+}
+
+.tenant {
+	margin: 0 var(--admin-space-3);
+	padding: var(--admin-space-3);
+	border-top: 1px solid var(--admin-border-soft);
+	display: flex;
+	align-items: center;
+	gap: var(--admin-space-3);
+	cursor: pointer;
+	transition: background var(--admin-motion-fast) var(--admin-ease-standard);
+	border-radius: var(--admin-radius-md);
+}
+
+.tenant:hover {
+	background: var(--admin-bg-hover);
+}
+
+.tenantAvatar {
+	width: 32px;
+	height: 32px;
+	border-radius: var(--admin-radius-pill);
+	background: var(--admin-accent-soft);
+	color: var(--admin-accent-strong);
+	font-size: var(--admin-text-base);
+	font-weight: var(--admin-weight-semibold);
+	display: grid;
+	place-items: center;
+}
+
+.tenantInfo {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.tenantName {
+	font-size: var(--admin-text-base);
+	font-weight: var(--admin-weight-medium);
+	color: var(--admin-text-primary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tenantRole {
+	font-size: var(--admin-text-xs);
+	color: var(--admin-text-muted);
+}
+
+.tenantChevron {
+	color: var(--admin-text-muted);
+	font-size: 12px;
+}

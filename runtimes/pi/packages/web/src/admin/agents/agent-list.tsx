@@ -1,26 +1,20 @@
 /**
- * Agent List — redesigned (mock-data preview).
+ * Agent List — 设计收口（设计稿基于 mock data 锁定信息架构）。
  *
- * 本组件用于锁定 Agent 列表页的视觉与信息架构（说明：本轮先以 Mock Data
- * 落地「名称 / 描述 / 模型 / Tools / Revision / 状态 / 更新时间 / 操作」
- * 八列），不实现编辑、Revision 管理、发布等深度页面。点击行名仍可进入
- * AgentWorkspace 详情页，以保留与既有路由的衔接。
- *
- * 字段来源（MVP-15 占位）：
- *   - name / description：管理员录入
- *   - modelId：AgentDefinitionDetail.modelId
- *   - tools / toolCount：AgentConfigSnapshot.toolIds（按 toolId 数组）
- *   - revision：AgentDefinitionDetail.currentRevision
- *   - status：active = 当前最新 revision 已发布；draft = 有未保存草稿；
- *             archived = 已废弃
- *   - updatedAt：AgentDefinitionDetail.updatedAt
+ * 字段结构沿用既有约定：
+ *   name / description / modelId / tools / revision / status / updatedAt / updatedBy
  *
  * 后续接入 Control API 时，把 MOCK_AGENTS 替换为对 AgentApi.listAgents
- * + AgentApi.getAgentDetail 的并发请求即可，列表行结构保持稳定。
+ * + AgentApi.getAgentDetail 的并发请求即可，行结构保持稳定。
  */
-
 import type { AgentPublicId } from "@earendil-works/pi-protocol";
 import { useMemo, useState } from "react";
+import { Badge } from "../components/Badge.tsx";
+import { Button } from "../components/Button.tsx";
+import { FilterBar, FilterSearch, FilterSelect } from "../components/FilterBar.tsx";
+import { PageHeader } from "../components/PageHeader.tsx";
+import { Pagination } from "../components/Pagination.tsx";
+import { Table, type TableColumn } from "../components/Table.tsx";
 import { navigate } from "../router.ts";
 
 type AgentStatus = "active" | "draft" | "archived";
@@ -30,7 +24,6 @@ interface AgentRow {
 	readonly name: string;
 	readonly description: string;
 	readonly modelId: string;
-	/** Tool names resolved from AgentConfigSnapshot.toolIds against the tool registry. */
 	readonly tools: readonly string[];
 	readonly revision: number;
 	readonly status: AgentStatus;
@@ -83,6 +76,28 @@ const MOCK_AGENTS: readonly AgentRow[] = [
 		updatedAt: "2026-08-10 14:48",
 		updatedBy: "alice@example.com",
 	},
+	{
+		id: "agent_demo_sales" as AgentPublicId,
+		name: "销售助手",
+		description: "辅助销售跟进客户、生成报价与会议纪要。",
+		modelId: "claude-sonnet-4.5",
+		tools: ["客户画像", "报价生成", "会议纪要", "邮件草稿"],
+		revision: 9,
+		status: "active",
+		updatedAt: "2026-08-09 16:22",
+		updatedBy: "dave@example.com",
+	},
+	{
+		id: "agent_demo_internal_assistant" as AgentPublicId,
+		name: "内部知识助手",
+		description: "面向员工，集成 wiki / 工单 / 表单检索。",
+		modelId: "claude-haiku-4.5",
+		tools: ["Wiki 检索", "工单创建", "日历读取"],
+		revision: 3,
+		status: "archived",
+		updatedAt: "2026-06-30 11:11",
+		updatedBy: "alice@example.com",
+	},
 ];
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -98,53 +113,158 @@ const STATUS_FILTER_OPTIONS: readonly { value: AgentStatus | "all"; label: strin
 	{ value: "archived", label: "已归档" },
 ];
 
-interface AgentMoreMenuProps {
-	readonly onExport: () => void;
-	readonly onArchive: () => void;
+function statusToBadgeVariant(status: AgentStatus): "active" | "draft" | "archived" {
+	return status;
 }
 
-function AgentMoreMenu({ onExport, onArchive }: AgentMoreMenuProps): React.ReactElement {
-	const [open, setOpen] = useState(false);
+function ModelCell({ modelId }: { modelId: string }): React.ReactElement {
+	return <span style={modelCellStyle}>{modelId}</span>;
+}
+
+const modelCellStyle: React.CSSProperties = {
+	fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+	fontSize: 12,
+	color: "var(--admin-text-secondary)",
+};
+
+function NameCell({ row }: { row: AgentRow }): React.ReactElement {
+	const initial = row.name.charAt(0);
 	return (
-		<div className="actions-popover">
-			<button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-				更多
-			</button>
-			{open && (
-				<>
-					<div className="actions-popover__backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
-					<div className="actions-popover__menu" role="menu">
-						<button
-							type="button"
-							role="menuitem"
-							onClick={() => {
-								setOpen(false);
-								onExport();
-							}}
-						>
-							导出配置
-						</button>
-						<button
-							type="button"
-							role="menuitem"
-							className="danger"
-							onClick={() => {
-								setOpen(false);
-								onArchive();
-							}}
-						>
-							归档 Agent
-						</button>
-					</div>
-				</>
-			)}
+		<div style={nameCellWrap}>
+			<span style={glyphStyle} aria-hidden="true">
+				{initial}
+			</span>
+			<div style={nameBlockStyle}>
+				<button
+					type="button"
+					style={nameButtonStyle}
+					onClick={(e) => {
+						e.stopPropagation();
+						navigate(`/agents/${row.id}`);
+					}}
+				>
+					{row.name}
+				</button>
+				<span style={idSubStyle}>id: {row.id}</span>
+			</div>
 		</div>
 	);
 }
 
+const nameCellWrap: React.CSSProperties = {
+	display: "flex",
+	alignItems: "center",
+	gap: 12,
+	minWidth: 0,
+};
+
+const glyphStyle: React.CSSProperties = {
+	width: 32,
+	height: 32,
+	borderRadius: 8,
+	background: "var(--admin-accent-soft)",
+	color: "var(--admin-accent-strong)",
+	display: "grid",
+	placeItems: "center",
+	fontWeight: 600,
+	fontSize: 13,
+	flexShrink: 0,
+};
+
+const nameBlockStyle: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: 2,
+	minWidth: 0,
+};
+
+const nameButtonStyle: React.CSSProperties = {
+	background: "transparent",
+	border: 0,
+	padding: 0,
+	color: "var(--admin-text-primary)",
+	fontWeight: 600,
+	fontSize: 14,
+	textAlign: "left",
+	cursor: "pointer",
+	overflow: "hidden",
+	textOverflow: "ellipsis",
+	whiteSpace: "nowrap",
+};
+
+const idSubStyle: React.CSSProperties = {
+	fontSize: 11,
+	color: "var(--admin-text-faint)",
+	fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+	overflow: "hidden",
+	textOverflow: "ellipsis",
+	whiteSpace: "nowrap",
+};
+
+function ToolsCell({ tools }: { tools: readonly string[] }): React.ReactElement {
+	if (tools.length === 0) return <span style={{ color: "var(--admin-text-muted)" }}>未配置</span>;
+	const visible = tools.slice(0, 3);
+	const extra = tools.length - visible.length;
+	return (
+		<div style={toolsWrap}>
+			{visible.map((tool) => (
+				<span key={tool} style={chipStyle} title={tool}>
+					{tool}
+				</span>
+			))}
+			{extra > 0 ? <span style={chipMoreStyle}>+{extra}</span> : null}
+		</div>
+	);
+}
+
+const toolsWrap: React.CSSProperties = {
+	display: "flex",
+	flexWrap: "wrap",
+	gap: 4,
+	maxWidth: 280,
+};
+
+const chipStyle: React.CSSProperties = {
+	fontSize: 11,
+	padding: "2px 8px",
+	borderRadius: 999,
+	background: "var(--admin-bg-inset)",
+	color: "var(--admin-text-secondary)",
+	lineHeight: 1.5,
+};
+
+const chipMoreStyle: React.CSSProperties = {
+	...chipStyle,
+	background: "transparent",
+	color: "var(--admin-text-muted)",
+};
+
+function UpdatedCell({ row }: { row: AgentRow }): React.ReactElement {
+	return (
+		<div style={updatedWrap}>
+			<span>{row.updatedAt}</span>
+			<span style={updatedByStyle}>by {row.updatedBy}</span>
+		</div>
+	);
+}
+
+const updatedWrap: React.CSSProperties = {
+	display: "flex",
+	flexDirection: "column",
+	gap: 2,
+	fontSize: 13,
+};
+
+const updatedByStyle: React.CSSProperties = {
+	fontSize: 12,
+	color: "var(--admin-text-muted)",
+};
+
 export function AgentListView(): React.ReactElement {
 	const [query, setQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState<AgentStatus | "all">("all");
+	const [page, setPage] = useState(1);
+	const [pageSize, setPageSize] = useState(10);
 
 	const filtered = useMemo(() => {
 		const needle = query.trim().toLowerCase();
@@ -164,165 +284,167 @@ export function AgentListView(): React.ReactElement {
 	const draftCount = MOCK_AGENTS.filter((r) => r.status === "draft").length;
 	const totalTools = MOCK_AGENTS.reduce((sum, r) => sum + r.tools.length, 0);
 
+	const columns: readonly TableColumn<AgentRow>[] = [
+		{
+			key: "name",
+			header: "名称",
+			render: (row) => <NameCell row={row} />,
+			width: 260,
+		},
+		{
+			key: "description",
+			header: "描述",
+			render: (row) => (
+				<span
+					style={{
+						display: "-webkit-box",
+						WebkitLineClamp: 2,
+						WebkitBoxOrient: "vertical",
+						overflow: "hidden",
+						color: "var(--admin-text-secondary)",
+						lineHeight: 1.5,
+						maxWidth: 320,
+					}}
+				>
+					{row.description}
+				</span>
+			),
+		},
+		{
+			key: "model",
+			header: "模型",
+			render: (row) => <ModelCell modelId={row.modelId} />,
+		},
+		{
+			key: "tools",
+			header: "Tools",
+			render: (row) => <ToolsCell tools={row.tools} />,
+		},
+		{
+			key: "revision",
+			header: "Revision",
+			render: (row) => <span style={modelCellStyle}>v{row.revision}</span>,
+		},
+		{
+			key: "status",
+			header: "状态",
+			render: (row) => (
+				<Badge variant={statusToBadgeVariant(row.status)} dot={row.status === "active"}>
+					{STATUS_LABEL[row.status]}
+				</Badge>
+			),
+		},
+		{
+			key: "updated",
+			header: "更新时间",
+			render: (row) => <UpdatedCell row={row} />,
+		},
+		{
+			key: "actions",
+			header: "操作",
+			render: (row) => (
+				<div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+					<Button size="sm" variant="ghost" onClick={() => navigate(`/agents/${row.id}`)}>
+						编辑
+					</Button>
+					<Button size="sm" variant="ghost">
+						修订
+					</Button>
+				</div>
+			),
+			cellClassName: "col-actions",
+			align: "right",
+		},
+	];
+
 	return (
 		<section aria-label="Agent 列表">
-			<header className="list-page-header">
-				<div className="list-page-header__lead">
-					<h1>Agent</h1>
-					<p>
-						一个 Agent 代表可复用、可版本化的 AI 能力单元：模型、提示词、工具、知识库与运行参数。
-						每次保存都会生成不可变的 Revision，发布给用户时再绑定到具体的应用。
-					</p>
-				</div>
-				<button type="button" className="primary" onClick={() => navigate("/agents")}>
-					+ 创建 Agent
-				</button>
-			</header>
+			<PageHeader
+				title="Agent"
+				subtitle="一个 Agent 代表可复用、可版本化的 AI 能力单元：模型、提示词、工具、知识库与运行参数。每次保存都会生成不可变的 Revision，发布给用户时再绑定到具体的应用。"
+				actions={
+					<Button variant="primary" onClick={() => navigate("/agents")}>
+						+ 创建 Agent
+					</Button>
+				}
+			/>
 
-			<div className="mock-data-banner" role="note">
-				<span>当前为 Mock Data 预览，字段结构用于锁定设计与信息架构，下一步接入 Control API。</span>
-			</div>
+			<FilterBar
+				left={
+					<>
+						<FilterSearch
+							placeholder="按名称 / 描述 / 模型 / 工具搜索"
+							value={query}
+							onChange={setQuery}
+						/>
+						<FilterSelect
+							ariaLabel="状态筛选"
+							value={statusFilter}
+							onChange={(v) => setStatusFilter(v as AgentStatus | "all")}
+							options={STATUS_FILTER_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+						/>
+					</>
+				}
+				right={
+					<>
+						<Button variant="ghost" size="sm" onClick={() => { setQuery(""); setStatusFilter("all"); }}>
+							重置
+						</Button>
+						<Button variant="secondary" size="sm">
+							导出
+						</Button>
+					</>
+				}
+			/>
 
-			<div className="list-toolbar">
-				<div className="list-toolbar__search">
-					<input
-						type="search"
-						placeholder="按名称 / 描述 / 模型 / 工具搜索"
-						aria-label="搜索 Agent"
-						value={query}
-						onChange={(e) => setQuery(e.currentTarget.value)}
-					/>
-				</div>
-				<select
-					aria-label="状态筛选"
-					value={statusFilter}
-					onChange={(e) => setStatusFilter(e.currentTarget.value as AgentStatus | "all")}
-				>
-					{STATUS_FILTER_OPTIONS.map((opt) => (
-						<option key={opt.value} value={opt.value}>
-							{opt.label}
-						</option>
-					))}
-				</select>
-			</div>
-
-			<div className="list-stats">
+			<div
+				style={{
+					display: "flex",
+					gap: 24,
+					padding: "0 4px",
+					margin: "0 0 12px",
+					color: "var(--admin-text-secondary)",
+					fontSize: 13,
+				}}
+			>
 				<span>
-					<strong>{totalCount}</strong>个 Agent
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{totalCount}
+					</strong>
+					个 Agent
 				</span>
 				<span>
-					<strong>{draftCount}</strong>个有未保存草稿
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{draftCount}
+					</strong>
+					个有未保存草稿
 				</span>
 				<span>
-					<strong>{totalTools}</strong>个 Tool 总数
+					<strong style={{ color: "var(--admin-text-primary)", fontWeight: 600, marginRight: 4 }}>
+						{totalTools}
+					</strong>
+					个 Tool 总数
 				</span>
 			</div>
 
-			{filtered.length === 0 ? (
-				<div className="data-table-empty">
-					<h3>没有匹配的 Agent</h3>
-					<p>尝试调整搜索关键词或筛选条件。</p>
-				</div>
-			) : (
-				<table className="data-table">
-					<thead>
-						<tr>
-							<th className="col-name">名称</th>
-							<th className="col-description">描述</th>
-							<th>模型</th>
-							<th className="col-tools">Tools</th>
-							<th>Revision</th>
-							<th>状态</th>
-							<th>更新时间</th>
-							<th className="col-actions">操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						{filtered.map((row) => (
-							<tr key={row.id}>
-								<td>
-									<div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-										<span className="list-row-glyph agent" aria-hidden="true">
-											{row.name.slice(0, 1)}
-										</span>
-										<div className="list-title-block">
-											<button
-												type="button"
-												className="agent-name"
-												onClick={() => navigate(`/agents/${row.id}`)}
-											>
-												{row.name}
-											</button>
-											<span className="list-title-id">id: {row.id}</span>
-										</div>
-									</div>
-								</td>
-								<td className="col-description">
-									<span className="list-description-text">{row.description}</span>
-								</td>
-								<td>
-									<span className="col-mono">{row.modelId}</span>
-								</td>
-								<td className="col-tools">
-									<ul className="tool-chip-list" aria-label={`${row.name} 包含的工具`}>
-										{row.tools.map((tool) => (
-											<li key={tool} className="tool-chip" title={tool}>
-												{tool}
-											</li>
-										))}
-										{row.tools.length === 0 && <li className="tool-chip tool-chip--empty">未配置</li>}
-									</ul>
-								</td>
-								<td>
-									<span className="col-mono">v{row.revision}</span>
-								</td>
-								<td>
-									<span
-										className={`badge status-${row.status === "active" ? "active" : row.status === "draft" ? "draft" : "archived"}`}
-									>
-										{STATUS_LABEL[row.status]}
-									</span>
-								</td>
-								<td>
-									<div className="list-title-block">
-										<span>{row.updatedAt}</span>
-										<span className="list-title-sub">by {row.updatedBy}</span>
-									</div>
-								</td>
-								<td>
-									<div className="row-actions">
-										<button type="button" title="编辑 Agent 配置">
-											编辑
-										</button>
-										<button type="button" title="查看 Revision 历史">
-											修订
-										</button>
-										<button
-											type="button"
-											title="复制 Agent ID"
-											onClick={() => {
-												if (typeof navigator !== "undefined" && navigator.clipboard !== undefined) {
-													void navigator.clipboard.writeText(row.id);
-												}
-											}}
-										>
-											复制
-										</button>
-										<AgentMoreMenu
-											onExport={() => {
-												window.alert(`导出 Agent「${row.name}」的配置（占位动作）`);
-											}}
-											onArchive={() => {
-												window.alert(`归档 Agent「${row.name}」（占位动作）`);
-											}}
-										/>
-									</div>
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
+			<Table<AgentRow>
+				columns={columns}
+				rows={filtered}
+				rowKey={(row) => row.id}
+				emptyTitle="没有匹配的 Agent"
+				emptyDescription="尝试调整搜索关键词或筛选条件。"
+			/>
+
+			<Pagination
+				total={filtered.length}
+				page={page}
+				pageSize={pageSize}
+				onPageChange={setPage}
+				onPageSizeChange={(s) => {
+					setPageSize(s);
+					setPage(1);
+				}}
+			/>
 		</section>
 	);
 }
