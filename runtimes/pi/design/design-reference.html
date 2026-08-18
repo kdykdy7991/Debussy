@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Atelier — Concept C</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FAF9F6;        /* warm white ground */
+    --paper-2:#FFFFFF;      /* cards */
+    --paper-3:#F3F1EC;      /* recessed */
+    --ink:#171512;
+    --ink-2:#5C574E;
+    --ink-3:#9A9488;
+    --line:#E7E3DA;
+    --line-2:#D8D2C5;
+    --verm:#E2422D;         /* vermilion */
+    --verm-soft:#FBE7E2;
+    --teal:#1F7A6D;         /* secondary — data / tools */
+    --teal-soft:#E3F0EC;
+    --sans:"Archivo",system-ui,sans-serif;
+    --body:"Instrument Sans",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --ease:cubic-bezier(0.23,1,0.32,1);
+    --sh:0 1px 2px rgba(23,21,18,.04),0 8px 24px -12px rgba(23,21,18,.14);
+    --sh-lg:0 2px 6px rgba(23,21,18,.05),0 24px 48px -20px rgba(23,21,18,.22);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:var(--body);
+    background:var(--paper);
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    font-size:15px;line-height:1.5;
+    display:grid;
+    grid-template-columns:264px minmax(0,1fr);
+    grid-template-rows:1fr auto;
+    grid-template-areas:"left center" "left composer";
+    height:100vh;overflow:hidden;position:relative;
+  }
+  a{color:inherit;text-decoration:none}
+
+  /* ============ LEFT — conversations + identity ============ */
+  .left{grid-area:left;border-right:1px solid var(--line);background:var(--paper-2);
+    padding:24px 18px;overflow-y:auto;position:relative;z-index:4;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;justify-content:space-between}
+  .back{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.03em}
+  .back:hover{color:var(--verm)}
+  .mark{font-family:var(--sans);font-weight:900;font-size:21px;letter-spacing:-.03em;margin-top:16px;color:var(--ink)}
+  .mark span{color:var(--verm)}
+  .mark-sub{font-size:12.5px;color:var(--ink-3);margin:3px 0 22px}
+  .new{display:flex;align-items:center;gap:8px;background:var(--ink);color:var(--paper-2);
+    font-family:var(--sans);font-weight:600;font-size:13.5px;padding:10px 14px;border-radius:8px;
+    cursor:pointer;margin-bottom:22px;transition:transform .12s var(--ease),box-shadow .15s;box-shadow:var(--sh)}
+  .new:hover{transform:translateY(-1px);box-shadow:var(--sh-lg)}
+  .new:active{transform:translateY(0)}
+  .new .p{width:18px;height:18px;border-radius:5px;background:var(--verm);display:grid;place-items:center;font-size:14px}
+  .rail-cap{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-3);margin:0 0 10px 6px}
+  .conv{list-style:none}
+  .conv li{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;
+    font-size:13.5px;color:var(--ink-2);transition:background .15s;font-weight:500;
+    white-space:nowrap;overflow:hidden}
+  .conv li .i{font-size:15px;flex-shrink:0;opacity:.7}
+  .conv li span.t{overflow:hidden;text-overflow:ellipsis}
+  .conv li:hover{background:var(--paper-3)}
+  .conv li.on{background:var(--verm-soft);color:var(--ink)}
+  .conv li.on .i{opacity:1}
+  .left-foot{margin-top:auto;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3);line-height:1.7}
+  .left-foot b{color:var(--ink-2);font-weight:600}
+
+  /* ============ CENTER ============ */
+  .center{grid-area:center;overflow-y:auto;background:var(--paper);position:relative;z-index:1}
+  .col{max-width:720px;margin:0 auto;padding:40px 36px 40px}
+  .page-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:26px}
+  .page-h .t{font-family:var(--sans);font-weight:800;font-size:24px;letter-spacing:-.02em}
+  .page-h .d{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+
+  .turn{margin-bottom:34px}
+  .turn:last-child{margin-bottom:0}
+
+  /* user message — light, right-anchored pill */
+  .q{display:flex;justify-content:flex-end;margin-bottom:16px}
+  .q .bub{background:var(--ink);color:var(--paper-2);font-size:14.5px;line-height:1.5;
+    padding:11px 16px;border-radius:16px 16px 4px 16px;max-width:74%}
+
+  /* answer — the adaptive canvas */
+  .ans{position:relative}
+  .ans .badge{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.04em;color:var(--ink-2);background:var(--paper-2);border:1px solid var(--line);
+    padding:4px 10px 4px 8px;border-radius:20px;margin-bottom:12px;box-shadow:var(--sh)}
+  .ans .badge .d{width:7px;height:7px;border-radius:50%;background:var(--teal)}
+  .ans .badge .ms{color:var(--ink-3)}
+
+  /* ADAPTIVE LAYOUT 1: prose (reading) */
+  .prose{font-size:16.5px;line-height:1.62;color:var(--ink)}
+  .prose p{margin:0 0 14px}
+  .prose .lead{font-family:var(--sans);font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--ink);line-height:1.4}
+  .prose b{font-weight:600}
+  .prose h3{font-family:var(--sans);font-weight:700;font-size:15px;letter-spacing:-.01em;margin:20px 0 9px}
+  .cite{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--verm);cursor:pointer;
+    vertical-align:super;margin-left:2px;padding:0 3px;border-radius:3px;transition:background .15s;line-height:0}
+  .cite::before{content:""}
+  .cite:hover{background:var(--verm-soft)}
+  .callout{display:flex;gap:12px;padding:14px 16px;background:var(--teal-soft);border-radius:10px;
+    border-left:3px solid var(--teal);margin:4px 0 14px}
+  .callout .i{font-size:16px;color:var(--teal);flex-shrink:0}
+  .callout p{font-size:14.5px;color:var(--ink-2);margin:0}
+  .callout b{color:var(--ink)}
+
+  /* ADAPTIVE LAYOUT 2: metric / stat cards */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:4px 0 16px}
+  .stat-c{background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:15px 16px;
+    box-shadow:var(--sh);transition:transform .15s var(--ease),box-shadow .15s}
+  .stat-c:hover{transform:translateY(-2px);box-shadow:var(--sh-lg)}
+  .stat-c .l{font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;color:var(--ink-3);text-transform:uppercase}
+  .stat-c .v{font-family:var(--sans);font-weight:800;font-size:30px;letter-spacing:-.03em;margin-top:5px;line-height:1}
+  .stat-c .v .u{font-size:15px;color:var(--ink-3);font-weight:600}
+  .stat-c .d{font-size:12px;margin-top:7px;display:flex;align-items:center;gap:5px}
+  .stat-c .d.up{color:var(--teal)}.stat-c .d.down{color:var(--verm)}
+  .stat-c .d .sp{width:8px;height:8px}
+
+  /* chart (clean, modern) */
+  .chart{background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:18px;margin:4px 0 16px;box-shadow:var(--sh)}
+  .chart .cap{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-bottom:14px;display:flex;justify-content:space-between}
+  .chart .leg{display:flex;gap:14px}
+  .chart .leg i{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:baseline}
+  .insight{background:var(--verm-soft);border-radius:10px;padding:13px 15px;display:flex;gap:11px;margin-bottom:14px}
+  .insight .i{font-size:15px;color:var(--verm)}
+  .insight p{font-size:14px;color:var(--ink-2);margin:0}
+  .insight b{color:var(--ink)}
+  .tbl{width:100%;border-collapse:collapse;margin:4px 0 16px;font-size:14px}
+  .tbl th{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);
+    font-weight:500;text-align:left;padding:9px 10px;border-bottom:2px solid var(--ink)}
+  .tbl td{padding:11px 10px;border-bottom:1px solid var(--line);color:var(--ink-2)}
+  .tbl td.num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:13px}
+  .tbl .pos{color:var(--teal);font-weight:600}.tbl .neg{color:var(--verm);font-weight:600}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl tr{transition:background .12s}.tbl tbody tr:hover{background:var(--paper-3)}
+
+  /* ADAPTIVE LAYOUT 3: the report artifact (confident document) */
+  .doc{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;margin:4px 0;box-shadow:var(--sh-lg);overflow:hidden}
+  .doc .dh{padding:20px 22px 16px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .doc .dh .kt{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--verm);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .doc .dh .kt .i{width:20px;height:20px;border-radius:6px;background:var(--verm);color:#fff;display:grid;place-items:center;font-size:12px}
+  .doc .dh .tt{font-family:var(--sans);font-weight:800;font-size:22px;letter-spacing:-.02em;line-height:1.15}
+  .doc .dh .sub{font-size:13px;color:var(--ink-3);margin-top:5px}
+  .doc .dh .acts{display:flex;gap:8px;flex-shrink:0}
+  .doc .db{padding:20px 22px}
+  .doc h4{font-family:var(--sans);font-weight:700;font-size:15px;margin:20px 0 9px;display:flex;align-items:center;gap:9px}
+  .doc h4 .n{width:22px;height:22px;border-radius:6px;background:var(--paper-3);color:var(--ink-2);
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:500}
+  .doc h4:first-child{margin-top:0}
+  .doc p{font-size:15px;line-height:1.6;color:var(--ink-2);margin:0 0 11px}
+  .doc p b{color:var(--ink);font-weight:600}
+  .doc ul{list-style:none;margin:2px 0 11px}
+  .doc ul li{font-size:14.5px;color:var(--ink-2);line-height:1.5;padding:9px 0 9px 26px;position:relative;
+    border-bottom:1px solid var(--line)}
+  .doc ul li:last-child{border-bottom:none}
+  .doc ul li::before{content:"";position:absolute;left:4px;top:14px;width:6px;height:6px;border-radius:2px;background:var(--verm);transform:rotate(45deg)}
+  .doc ul li b{color:var(--ink);font-weight:600}
+  .doc .df{padding:14px 22px;border-top:1px solid var(--line);background:var(--paper-3);display:flex;justify-content:space-between;font-size:12px;color:var(--ink-3)}
+  .btn{font-family:var(--sans);font-weight:600;font-size:12.5px;color:var(--ink-2);background:var(--paper-2);
+    border:1px solid var(--line-2);padding:7px 13px;border-radius:8px;cursor:pointer;
+    transition:border-color .15s,color .15s,background .15s,transform .12s}
+  .btn:hover{border-color:var(--ink);color:var(--ink)}
+  .btn:active{transform:scale(.97)}
+  .btn.solid{background:var(--ink);color:var(--paper-2);border-color:var(--ink)}
+  .btn.solid:hover{background:#000}
+  .btn.verm{background:var(--verm);color:#fff;border-color:var(--verm)}
+  .btn.verm:hover{background:#c8341f}
+
+  /* process line — subtle, modern (opt-in depth) */
+  .proc{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-2);margin:0 0 14px;
+    padding:10px 14px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh)}
+  .proc .sp{width:8px;height:8px;border-radius:50%;background:var(--teal);flex-shrink:0}
+  .proc.busy .sp{animation:pulse 1.1s var(--ease) infinite}
+  .proc b{color:var(--ink);font-weight:600;font-family:var(--sans)}
+  .proc .stt{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+  .proc .stt.live{color:var(--teal)}
+  .proc .stt.live::after{content:"…";animation:dd 1.2s steps(4) infinite}
+  @keyframes dd{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+  @keyframes pulse{50%{opacity:.3;transform:scale(.8)}}
+  .work{margin-top:2px;font-size:13px}
+  .work summary{cursor:pointer;color:var(--ink-3);font-family:var(--mono);font-size:11.5px;list-style:none;
+    padding:8px 0;transition:color .15s;display:inline-flex;align-items:center;gap:7px}
+  .work summary::-webkit-details-marker{display:none}
+  .work summary:hover{color:var(--teal)}
+  .work summary .chev{transition:transform .2s var(--ease);font-size:10px}
+  .work[open] summary .chev{transform:rotate(90deg)}
+  .work pre{font-family:var(--mono);font-size:11.5px;line-height:1.7;color:var(--ink-2);
+    background:var(--paper-3);border-radius:8px;padding:13px 15px;margin:8px 0 0;overflow-x:auto;white-space:pre;border-left:3px solid var(--teal)}
+
+  /* ============ COMPOSER ============ */
+  .composer{grid-area:composer;background:var(--paper-2);border-top:1px solid var(--line);
+    padding:16px 36px 20px;position:relative;z-index:5}
+  .cwrap{max-width:720px;margin:0 auto}
+  .cline{border:1.5px solid var(--line-2);background:var(--paper);border-radius:14px;padding:13px 16px;
+    display:flex;align-items:flex-start;gap:12px;transition:border-color .15s,box-shadow .15s}
+  .cline:focus-within{border-color:var(--ink);box-shadow:0 0 0 4px rgba(23,21,18,.05)}
+  .cline .ico{font-size:17px;color:var(--ink-3);margin-top:2px}
+  #ta{flex:1;border:none;outline:none;resize:none;background:transparent;font-family:var(--body);
+    font-size:15px;line-height:1.5;color:var(--ink);max-height:140px;min-height:24px}
+  #ta::placeholder{color:var(--ink-3)}
+  .send{display:flex;align-items:center;margin-top:11px;gap:10px}
+  .send .ut{display:flex;gap:6px}
+  .send .ut button{font-family:var(--body);font-weight:500;font-size:12.5px;color:var(--ink-2);
+    background:var(--paper);border:1px solid var(--line);padding:6px 12px;border-radius:8px;cursor:pointer;
+    display:flex;align-items:center;gap:6px;transition:all .15s}
+  .send .ut button .i{font-size:13px}
+  .send .ut button:hover{border-color:var(--line-2);color:var(--ink)}
+  .send .ut button.on{background:var(--verm-soft);border-color:var(--verm);color:var(--verm)}
+  .send .right{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .send .model{font-size:12.5px;color:var(--ink-3);font-weight:500}
+  .send .model b{color:var(--ink);font-weight:600}
+  .send .go{font-family:var(--sans);font-weight:700;font-size:13px;color:#fff;background:var(--ink);
+    border:none;padding:10px 20px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:7px;
+    transition:background .15s,transform .12s;box-shadow:var(--sh)}
+  .send .go:hover{background:#000}
+  .send .go:active{transform:scale(.97)}
+  .send .go.stop{background:var(--verm)}
+
+  /* streaming */
+  .caret{display:inline-block;width:2px;height:1em;background:var(--verm);vertical-align:-.1em;margin-left:2px;animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .chunk{opacity:0;transform:translateY(8px);transition:opacity .45s var(--ease),transform .45s var(--ease)}
+  .chunk.show{opacity:1;transform:none}
+
+  /* ============ DOCUMENT DRAWER (citations) ============ */
+  .drawer{position:fixed;top:0;right:0;height:100%;width:384px;max-width:90vw;background:var(--paper-2);
+    border-left:1px solid var(--line);box-shadow:var(--sh-lg);z-index:20;transform:translateX(100%);
+    transition:transform .38s var(--ease);display:flex;flex-direction:column}
+  .drawer.open{transform:translateX(0)}
+  .drawer .dh{padding:20px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .drawer .dh .i{width:30px;height:30px;border-radius:8px;background:var(--verm);color:#fff;display:grid;place-items:center;font-size:14px}
+  .drawer .dh .tt{font-family:var(--sans);font-weight:800;font-size:15px;letter-spacing:-.01em}
+  .drawer .dh .sub{font-size:12px;color:var(--ink-3)}
+  .drawer .dh .x{margin-left:auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);
+    background:var(--paper);cursor:pointer;font-size:16px;color:var(--ink-2);display:grid;place-items:center}
+  .drawer .dh .x:hover{border-color:var(--line-2);color:var(--ink)}
+  .drawer .db{padding:16px 22px;overflow-y:auto}
+  .dsrc{padding:16px 0;border-bottom:1px solid var(--line);cursor:pointer;transition:background .15s;border-radius:8px}
+  .dsrc:last-child{border-bottom:none}
+  .dsrc .sno{font-family:var(--mono);font-size:10.5px;color:var(--verm);letter-spacing:.04em;margin-bottom:5px;display:flex;align-items:center;gap:8px}
+  .dsrc .sno .kind{color:var(--ink-3);font-size:10px;border:1px solid var(--line);padding:1px 6px;border-radius:20px}
+  .dsrc .st{font-family:var(--sans);font-weight:700;font-size:15px;letter-spacing:-.01em;line-height:1.3;color:var(--ink)}
+  .dsrc .sm{font-size:12.5px;color:var(--ink-3);margin-top:4px}
+  .dsrc .snip{font-size:13.5px;color:var(--ink-2);line-height:1.55;margin-top:9px;padding:10px 12px;
+    background:var(--paper-3);border-radius:8px;border-left:2px solid var(--verm)}
+  .dsrc .sfoot{display:flex;gap:8px;margin-top:10px}
+  .dsrc .sfoot a{font-family:var(--mono);font-size:11px;color:var(--teal);cursor:pointer}
+  .dsrc .sfoot a:hover{color:var(--verm)}
+  .dnote{margin-top:6px;padding:14px 15px;background:var(--teal-soft);border-radius:10px;font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+  .dnote b{color:var(--ink);font-weight:600}
+  .dnote .cap{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--teal);margin-bottom:6px}
+  .scrim{position:fixed;inset:0;background:rgba(23,21,18,.28);z-index:19;opacity:0;visibility:hidden;
+    transition:opacity .3s var(--ease)}
+  .scrim.show{opacity:1;visibility:visible}
+
+  .center::-webkit-scrollbar,.left::-webkit-scrollbar{width:9px}
+  .center::-webkit-scrollbar-thumb,.left::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px}
+
+  @media(max-width:940px){
+    body{grid-template-columns:1fr;grid-template-areas:"center" "composer"}
+    .left{display:none}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .chunk{transition:none;opacity:1;transform:none}
+    .caret{animation:none}.proc.busy .sp{animation:none}.proc .stt.live::after{animation:none}
+    .drawer{transition:none}
+  }
+</style>
+</head>
+<body>
+
+  <!-- LEFT -->
+  <nav class="left">
+    <div class="top"><a class="back" href="index.html">◀ concepts</a></div>
+    <div class="mark">Atelier<span>.</span></div>
+    <div class="mark-sub">Your AI workroom</div>
+    <div class="new"><span class="p">+</span> New conversation</div>
+    <div class="rail-cap">Conversations</div>
+    <ul class="conv">
+      <li class="on"><span class="i">📊</span><span class="t">EMEA churn, Q2</span></li>
+      <li><span class="i">📋</span><span class="t">Board update — Atlas</span></li>
+      <li><span class="i">🗂</span><span class="t">Data-retention policy</span></li>
+      <li><span class="i">💰</span><span class="t">Vendor pricing</span></li>
+      <li><span class="i">📈</span><span class="t">Renewal-risk accounts</span></li>
+      <li><span class="i">📰</span><span class="t">Weekly market digest</span></li>
+      <li><span class="i">🤝</span><span class="t">Onboarding FAQ</span></li>
+    </ul>
+    <div class="left-foot">
+      <b>Knowledge</b> — 1,204 documents<br>
+      <b>Connected</b> — 3 vaults · 1 data lake<br>
+      <b>Model</b> — Fable 5
+    </div>
+  </nav>
+
+  <!-- CENTER -->
+  <main class="center">
+    <div class="col">
+      <div class="page-h"><span class="t">EMEA churn, Q2</span><span class="d">18 Aug 2026</span></div>
+
+      <!-- TURN 1 -->
+      <section class="turn">
+        <div class="q"><div class="bub">Hello — are you connected to our knowledge base?</div></div>
+        <div class="ans">
+          <div class="badge chunk"><span class="d"></span> Assistant <span class="ms">· 180ms</span></div>
+          <div class="prose">
+            <p class="chunk">Yes — all three knowledge vaults and the finance data lake are connected (1,204 documents indexed). Ask me anything, or drop a document in and I'll work from it.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- TURN 2 — knowledge Q&A (reading layout) -->
+      <section class="turn">
+        <div class="q"><div class="bub">What's our data-retention policy for customer PII, and does it differ by region?</div></div>
+        <div class="ans">
+          <div class="proc" id="pr2"><span class="sp"></span>
+            <span>Consulted the policy index — <b>3 documents</b></span>
+            <span class="stt live" id="st2">reading</span>
+          </div>
+          <div class="badge chunk"><span class="d"></span> Assistant · cited 3 sources <span class="ms" id="ms2"></span></div>
+          <div class="prose">
+            <p class="chunk lead">Your baseline retention ceiling is 24 months after the commercial relationship ends, unless a legal hold applies — regions with stricter law override it downward.</p>
+            <p class="chunk">Two regions matter most. For <b>EMEA</b>, GDPR erasure obligations bring effective retention closer to <b>12 months</b> for marketing-adjacent PII, and require a documented legal basis for any longer hold.<a class="cite" data-src="1">[1]</a> For <b>APAC</b>, the 24-month standard holds globally, but Singapore and South Korea carry shorter per-category windows for financial and health data.<a class="cite" data-src="2">[2]</a></p>
+            <div class="callout chunk"><span class="i">✎</span>
+              <p>Heads up: the EMEA addendum is a <b>living document</b> (revised six weeks ago), so the 12-month figure is current-but-moving. A legal-hold check found <b>no active holds</b> right now.<a class="cite" data-src="3">[3]</a></p></div>
+            <p class="chunk">The master policy is owned by Legal &amp; Privacy. The EMEA addendum is the one most likely to shift next quarter — worth a re-check before you rely on it externally.</p>
+          </div>
+          <details class="work chunk">
+            <summary><span class="chev">▸</span> Show the work — retrieval &amp; tool calls</summary>
+<pre>retrieve(policy_index, "PII retention regional") → 3 hits
+  [1] Data_Governance_Policy_v3.1.pdf  §7.2   · 0.94
+  [2] GDPR_EMEA_Addendum_2025.docx     §3.1   · 0.88
+  [3] APAC_Data_Locale_Schedule.xlsx   sheet:K · 0.79
+tool: legal_hold_check(scope=all) → none
+took 2.1s · 1,240 tokens</pre>
+          </details>
+        </div>
+      </section>
+
+      <!-- TURN 3 — data analysis (metric + chart layout) -->
+      <section class="turn">
+        <div class="q"><div class="bub">Summarize Q2 churn for the EMEA accounts.</div></div>
+        <div class="ans">
+          <div class="badge chunk"><span class="d"></span> Assistant · queried data lake <span class="ms">· 6.4s</span></div>
+          <div class="stats chunk">
+            <div class="stat-c"><div class="l">EMEA churn · Q2</div><div class="v">6.8<span class="u">%</span></div><div class="d up"><span class="sp" style="background:var(--teal)"></span>↓ 1.3 pt vs Q1</div></div>
+            <div class="stat-c"><div class="l">Best in 2 yrs</div><div class="v">#1</div><div class="d up"><span class="sp" style="background:var(--teal)"></span>regional record</div></div>
+            <div class="stat-c"><div class="l">Worst segment</div><div class="v" style="font-size:22px">New logos</div><div class="d down"><span class="sp" style="background:var(--verm)"></span>9.4% · +1.2</div></div>
+          </div>
+          <div class="insight chunk"><span class="i">★</span><p>The gain is real and specific: <b>mid-market renewals</b> drove the improvement. Enterprise was flat; the Q1 pricing fix stopped the mid-market bleeding.</p></div>
+          <div class="chart chunk">
+            <div class="cap"><span>EMEA churn by segment · Q2</span><span class="leg"><span><i style="background:var(--verm)"></i>Q2</span><span><i style="background:var(--line-2)"></i>Q1</span></span></div>
+            <svg viewBox="0 0 600 190" width="100%" role="img" aria-label="EMEA churn by segment">
+              <g stroke="rgba(23,21,18,.07)"><line x1="42" y1="24" x2="600" y2="24"/><line x1="42" y1="64" x2="600" y2="64"/><line x1="42" y1="104" x2="600" y2="104"/><line x1="42" y1="144" x2="600" y2="144"/></g>
+              <g font-family="IBM Plex Mono" font-size="10" fill="#9A9488"><text x="38" y="27" text-anchor="end">8%</text><text x="38" y="67" text-anchor="end">6%</text><text x="38" y="107" text-anchor="end">4%</text><text x="38" y="147" text-anchor="end">2%</text></g>
+              <g>
+                <rect x="92" y="71" width="30" height="73" rx="4" fill="#D8D2C5"/>
+                <rect x="128" y="83" width="30" height="61" rx="4" fill="#E2422D"/>
+                <text x="140" y="77" text-anchor="middle" font-family="Archivo" font-size="11" font-weight="700" fill="#171512">7.6%</text>
+              </g>
+              <g>
+                <rect x="222" y="83" width="30" height="61" rx="4" fill="#D8D2C5"/>
+                <rect x="258" y="90" width="30" height="54" rx="4" fill="#E2422D"/>
+                <text x="270" y="84" text-anchor="middle" font-family="Archivo" font-size="11" font-weight="700" fill="#171512">6.8%</text>
+              </g>
+              <g>
+                <rect x="352" y="95" width="30" height="49" rx="4" fill="#D8D2C5"/>
+                <rect x="388" y="103" width="30" height="41" rx="4" fill="#E2422D"/>
+                <text x="400" y="97" text-anchor="middle" font-family="Archivo" font-size="11" font-weight="700" fill="#171512">5.9%</text>
+              </g>
+              <g>
+                <rect x="482" y="58" width="30" height="86" rx="4" fill="#D8D2C5"/>
+                <rect x="518" y="46" width="30" height="98" rx="4" fill="#E2422D"/>
+                <text x="530" y="40" text-anchor="middle" font-family="Archivo" font-size="11" font-weight="700" fill="#171512">9.4%</text>
+              </g>
+              <g font-family="Archivo" font-size="11.5" fill="#5C574E" text-anchor="middle"><text x="150" y="164">Enterprise</text><text x="280" y="164">Mid-market</text><text x="410" y="164">SMB</text><text x="540" y="164">New logos</text></g>
+            </svg>
+          </div>
+          <h3 class="chunk" style="font-family:var(--sans);font-weight:700;font-size:15px">Three signals</h3>
+          <table class="tbl chunk">
+            <thead><tr><th>Segment</th><th class="num">Q1</th><th class="num">Q2</th><th class="num">Δ</th></tr></thead>
+            <tbody>
+              <tr><td>Enterprise</td><td class="num">7.9%</td><td class="num">7.6%</td><td class="num pos">−0.3</td></tr>
+              <tr><td>Mid-market</td><td class="num">8.4%</td><td class="num">6.8%</td><td class="num pos">−1.6</td></tr>
+              <tr><td>SMB</td><td class="num">6.1%</td><td class="num">5.9%</td><td class="num pos">−0.2</td></tr>
+              <tr><td>New logos</td><td class="num">8.2%</td><td class="num">9.4%</td><td class="num neg">+1.2</td></tr>
+            </tbody>
+          </table>
+          <p class="chunk prose">New-logo churn is now the highest of any segment at <b>9.4%</b> — that's where Q3 effort should go. And churn correlates most strongly with <b>time-to-first-success</b>: accounts without a working integration by week two churn at roughly double the rate.</p>
+        </div>
+      </section>
+
+      <!-- TURN 4 — report -->
+      <section class="turn">
+        <div class="q"><div class="bub">Draft the board update on the Atlas migration.</div></div>
+        <div class="ans">
+          <div class="proc busy" id="pr4"><span class="sp"></span>
+            <span>Reading <b>6 sources</b> · reconciling schedule vs actuals</span>
+            <span class="stt live" id="st4">compiling</span>
+          </div>
+          <div class="doc chunk" id="report">
+            <div class="dh">
+              <div>
+                <div class="kt"><span class="i">📄</span> Report · draft</div>
+                <div class="tt">Board Update — Atlas Migration</div>
+                <div class="sub">Compiled from 6 sources · Fable 5</div>
+              </div>
+              <div class="acts"><button class="btn">Copy</button><button class="btn verm">Download</button></div>
+            </div>
+            <div class="db">
+              <h4 class="chunk"><span class="n">1</span> Status</h4>
+              <p class="chunk">Atlas is <b>62% complete</b> against a plan that assumed 58% at this date — ahead of schedule. The legacy decommission milestone (Oct 12) is holding. Two workstreams are at risk: <b>reporting parity</b> and <b>cross-region failover</b>.</p>
+              <h4 class="chunk"><span class="n">2</span> Risks</h4>
+              <ul class="chunk">
+                <li>Reporting parity is the critical path — 4 of 11 board reports not yet reconciled within 1% of legacy.</li>
+                <li>Cross-region failover testing is blocked on the Frankfurt secondary (ETA two weeks).</li>
+                <li>Two vendor delivery dates slipped a week; contractually recoverable, but worth watching.</li>
+              </ul>
+              <h4 class="chunk"><span class="n">3</span> Asks of the board</h4>
+              <p class="chunk">No new budget required. We're asking for <b>approval to hold the Oct 12 decommission</b> and a <b>named executive sponsor</b> for reporting parity, so sign-off doesn't rest with engineering alone.</p>
+              <h4 class="chunk"><span class="n">4</span> Financial impact</h4>
+              <p class="chunk">On-track spend is <b>$4.2M of a $6.8M</b> budget. Projected final cost is <b>$6.9M</b> — a 1.5% overrun absorbed by contingency, requiring no board action.</p>
+            </div>
+            <div class="df"><span>6 sources · 41m</span><span>Auto-saved to Documents</span></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- DOCUMENT DRAWER -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer">
+    <div class="dh">
+      <div class="i">📚</div>
+      <div><div class="tt">Sources</div><div class="sub" id="dsub">4 documents</div></div>
+      <button class="x" id="drawerClose">✕</button>
+    </div>
+    <div class="db">
+      <div class="dsrc" data-src="1">
+        <div class="sno">1 <span class="kind">policy</span></div>
+        <div class="st">Data Governance Policy v3.1</div>
+        <div class="sm">Legal &amp; Privacy · updated 04 Aug 2026</div>
+        <div class="snip">§7.2 — Customer PII shall be retained no longer than 24 months following the end of the commercial relationship, unless a legal hold is in effect…</div>
+        <div class="sfoot"><a>Open §7.2</a><a>Copy</a></div>
+      </div>
+      <div class="dsrc" data-src="2">
+        <div class="sno">2 <span class="kind">addendum</span></div>
+        <div class="st">GDPR EMEA Addendum</div>
+        <div class="sm">Policy vault · updated 12 Jul 2026</div>
+        <div class="snip">§3.1 — For marketing-adjacent PII in EEA, erasure obligations reduce effective retention toward 12 months. A documented legal basis is required for any longer hold…</div>
+        <div class="sfoot"><a>Open §3.1</a><a>Copy</a></div>
+      </div>
+      <div class="dsrc" data-src="3">
+        <div class="sno">3 <span class="kind">schedule</span></div>
+        <div class="st">APAC Data-locale Schedule</div>
+        <div class="sm">Policy vault · updated 30 Jun 2026</div>
+        <div class="snip">Sheet K — Singapore &amp; South Korea: shorter per-category windows for financial (12 mo) and health-adjacent (24 mo) data classes.</div>
+        <div class="sfoot"><a>Open sheet K</a><a>Copy</a></div>
+      </div>
+      <div class="dsrc" data-src="4">
+        <div class="sno">4 <span class="kind">derivation</span></div>
+        <div class="st">EMEA Churn Cohort — Q2 2026</div>
+        <div class="sm">Finance data lake · 214 accounts</div>
+        <div class="snip">Computed, not sourced — a derivation over raw account data. Cohort churn by segment, Q1 vs Q2.</div>
+        <div class="sfoot"><a>View query</a><a>Export</a></div>
+      </div>
+      <div class="dnote">
+        <div class="cap">Assistant's note</div>
+        <b>The EMEA 12-month figure is current but moving</b> — the addendum is a living document, revised six weeks ago. I flagged it rather than stating it as settled. The churn answer is my own computation, so it's marked a derivation, not a cited fact.
+      </div>
+    </div>
+  </aside>
+
+  <!-- COMPOSER -->
+  <div class="composer">
+    <div class="cwrap">
+      <div class="cline">
+        <span class="ico">＋</span>
+        <textarea id="ta" rows="1" placeholder="Ask anything, or point me at a document…"></textarea>
+      </div>
+      <div class="send">
+        <div class="ut">
+          <button><span class="i">📎</span> Attach</button>
+          <button class="on"><span class="i">📚</span> Knowledge</button>
+          <button><span class="i">🔎</span> Search</button>
+          <button id="deep"><span class="i">✦</span> Deep dive</button>
+        </div>
+        <div class="right">
+          <span class="model">Fable 5</span>
+          <button class="go stop" id="stopBtn" style="display:none">Stop</button>
+          <button class="go" id="sendBtn">Send <span style="opacity:.7">↵</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const wait = ms => new Promise(r=>setTimeout(r,ms));
+
+  const report=document.getElementById('report');
+  const st4=document.getElementById('st4'), pr4=document.getElementById('pr4');
+
+  async function streamReport(){
+    const chunks=report.querySelectorAll('.chunk');
+    if(rm){ chunks.forEach(c=>c.classList.add('show')); report.classList.add('show');
+      st4.classList.remove('live'); st4.textContent='done · 41m'; pr4.classList.remove('busy'); return; }
+    report.classList.add('show');
+    for(const c of chunks){ c.classList.add('show'); await wait(300); }
+    st4.classList.remove('live'); st4.textContent='done · 41m'; pr4.classList.remove('busy');
+  }
+  const st2=document.getElementById('st2'), pr2=document.getElementById('pr2');
+  function done2(){ st2.classList.remove('live'); st2.textContent='· 2.1s'; pr2.classList.remove('busy'); }
+
+  async function revealRest(){
+    const turns=[...document.querySelectorAll('.turn')].slice(0,-1);
+    if(rm){ turns.forEach(t=>t.querySelectorAll('.chunk').forEach(c=>c.classList.add('show'))); return; }
+    for(const t of turns){ const cs=t.querySelectorAll('.chunk');
+      for(const c of cs){ c.classList.add('show'); await wait(80);} await wait(150); }
+  }
+
+  (async ()=>{ await wait(rm?0:280); revealRest(); done2(); await wait(rm?0:250); streamReport(); })();
+
+  /* ============ DOCUMENT DRAWER ============ */
+  const drawer=document.getElementById('drawer'), scrim=document.getElementById('scrim');
+  function openDrawer(n){
+    drawer.classList.add('open'); scrim.classList.add('show');
+    document.querySelectorAll('.dsrc').forEach(s=>s.style.background = (s.dataset.src===n)?'var(--paper-3)':'');
+    if(n){ const el=document.querySelector(`.dsrc[data-src="${n}"]`); el && el.scrollIntoView({behavior:rm?'auto':'smooth',block:'center'}); }
+  }
+  function closeDrawer(){ drawer.classList.remove('open'); scrim.classList.remove('show');
+    document.querySelectorAll('.dsrc').forEach(s=>s.style.background=''); }
+  document.querySelectorAll('.cite').forEach(c=>c.addEventListener('click',e=>{ e.stopPropagation(); openDrawer(c.dataset.src); }));
+  document.getElementById('drawerClose').addEventListener('click',closeDrawer);
+  scrim.addEventListener('click',closeDrawer);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+  /* composer */
+  const ta=document.getElementById('ta'), deep=document.getElementById('deep');
+  const sendBtn=document.getElementById('sendBtn'), stopBtn=document.getElementById('stopBtn');
+  ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px'; });
+  ta.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); }});
+  deep.addEventListener('click',()=>deep.classList.toggle('on'));
+  function doSend(){
+    const v=ta.value.trim(); if(!v) return;
+    const col=document.querySelector('.col');
+    const sec=document.createElement('section'); sec.className='turn';
+    sec.innerHTML=`<div class="q"><div class="bub"></div></div>
+      <div class="ans"><div class="badge chunk show"><span class="d"></span> Assistant <span class="ms">· now</span></div>
+      <div class="prose"><p class="chunk show"><span class="caret"></span></p></div></div>`;
+    sec.querySelector('.bub').textContent=v;
+    col.appendChild(sec);
+    const p=sec.querySelector('p'), caret=p.querySelector('.caret');
+    ta.value=''; ta.style.height='auto';
+    const reply="Noted — I'll work that up against the knowledge base and adapt the layout to what comes back. (Mock; live generation is simulated.)";
+    let i=0;
+    stopBtn.style.display=''; sendBtn.style.display='none';
+    function tick(){
+      if(i>=reply.length){ p.textContent=reply; stopBtn.style.display='none'; sendBtn.style.display=''; return; }
+      p.textContent=reply.slice(0,i++)+' '; p.appendChild(caret);
+      document.querySelector('.center').scrollTop=1e9;
+      setTimeout(tick, rm?12:20);
+    }
+    tick();
+  }
+  sendBtn.addEventListener('click',doSend);
+  stopBtn.addEventListener('click',()=>{ stopBtn.style.display='none'; sendBtn.style.display=''; });
+})();
+</script>
+</body>
+</html>

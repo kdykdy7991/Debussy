@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nocturne · Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#131215;
+  --coal:#1A191D;
+  --slab:#222126;
+  --edge:#2E2C33;
+  --edge-soft:#262429;
+  --mist:#A9A5B4;
+  --chalk:#EDEAE6;
+  --brass:#C89B4B;
+  --brass-soft:rgba(200,155,75,.14);
+  --sage:#8FA98F;
+  --rose:#C4695C;
+  --serif:'Instrument Serif',serif;
+  --sans:'Sora',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{background:var(--void)}
+body{
+  background:
+    radial-gradient(1200px 500px at 50% -10%,rgba(200,155,75,.06),transparent 60%),
+    var(--void);
+  color:var(--chalk);font-family:var(--sans);font-size:15px;font-weight:300;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:rgba(200,155,75,.3)}
+::-webkit-scrollbar{width:9px}::-webkit-scrollbar-thumb{background:var(--edge);border-radius:5px;border:2px solid var(--void)}
+
+/* ===== 顶栏：极简 ===== */
+.top{
+  position:sticky;top:0;z-index:20;
+  backdrop-filter:blur(14px);background:rgba(19,18,21,.72);
+  border-bottom:1px solid var(--edge-soft);
+}
+.top-in{
+  max-width:1240px;margin:0 auto;padding:0 32px;height:58px;
+  display:flex;align-items:center;gap:20px;
+}
+.mark{display:flex;align-items:center;gap:11px}
+.mark .orb{
+  width:22px;height:22px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#E8C583,#8A6320 70%);
+  box-shadow:0 0 0 1px rgba(200,155,75,.35);
+}
+.mark .nm{font-family:var(--serif);font-size:21px;letter-spacing:.02em}
+.top .hist{
+  margin-left:8px;font-size:12px;color:var(--mist);
+  border-left:1px solid var(--edge-soft);padding-left:20px;
+  display:flex;gap:6px;
+}
+.hist .h{
+  padding:6px 12px;border-radius:8px;cursor:pointer;transition:all .15s;
+  white-space:nowrap;font-weight:400;
+}
+.hist .h:hover{background:var(--slab);color:var(--chalk)}
+.hist .h.cur{background:var(--brass-soft);color:#E4C58C}
+.top .grow{flex:1}
+.avatar{
+  width:30px;height:30px;border-radius:50%;
+  background:linear-gradient(135deg,#3A3740,#26242A);
+  border:1px solid var(--edge);
+  display:grid;place-items:center;font-size:11px;color:var(--mist);font-weight:500;
+}
+
+/* ===== 主体 ===== */
+.flow{max-width:1240px;margin:0 auto;padding:48px 32px 220px}
+
+/* 会话题眉 */
+.eyebrow{
+  text-align:center;font-size:10.5px;letter-spacing:.32em;text-transform:uppercase;
+  color:var(--brass);font-weight:500;margin-bottom:14px;
+}
+.conv-title{
+  text-align:center;font-family:var(--serif);font-size:44px;font-weight:400;
+  line-height:1.15;letter-spacing:.005em;margin-bottom:10px;
+}
+.conv-sub{
+  text-align:center;color:var(--mist);font-size:12.5px;letter-spacing:.05em;margin-bottom:64px;
+}
+.conv-sub b{color:var(--chalk);font-weight:500}
+
+/* ===== 用户消息 ===== */
+.u{display:flex;justify-content:flex-end;margin:56px 0 0}
+.u .ub{
+  max-width:62%;background:var(--slab);
+  border:1px solid var(--edge-soft);
+  border-radius:14px 14px 4px 14px;
+  padding:14px 20px;font-size:14.5px;line-height:1.65;color:#DDD9D4;font-weight:300;
+}
+.u .ub .att{
+  display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#E4C58C;
+  background:var(--brass-soft);border-radius:6px;padding:3px 10px;margin-bottom:8px;
+}
+.u.plain .ub{background:transparent;border-color:var(--edge-soft);color:var(--mist);font-size:14px}
+
+/* ===== AI 回答区：正文 + 右侧活动轨 ===== */
+.turn{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:40px;margin:28px 0 0}
+.turn.no-rail{grid-template-columns:1fr}
+
+/* 正文 */
+.reading{min-width:0;padding-top:4px}
+.sig{
+  display:flex;align-items:center;gap:12px;margin-bottom:22px;
+  font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--mist);
+}
+.sig .dot{
+  width:8px;height:8px;border-radius:50%;background:var(--brass);
+  box-shadow:0 0 10px rgba(200,155,75,.5);
+}
+.sig .m{letter-spacing:.08em;color:#6F6A7A;text-transform:none;font-size:11px}
+
+.prose{font-size:16px;line-height:1.9;color:#D9D5D0;font-weight:300;letter-spacing:.005em}
+.prose p{margin-bottom:1.3em}
+.prose .lede{
+  font-family:var(--serif);font-size:29px;line-height:1.35;color:var(--chalk);
+  font-weight:400;margin-bottom:.75em;letter-spacing:.005em;
+}
+.prose .lede em{color:var(--brass);font-style:italic}
+.prose strong{color:var(--chalk);font-weight:500;border-bottom:1px solid rgba(200,155,75,.4);padding-bottom:1px}
+.prose code{
+  font-family:ui-monospace,monospace;font-size:.82em;color:#E4C58C;
+  background:var(--brass-soft);padding:2px 7px;border-radius:5px;
+}
+.prose h3{
+  font-family:var(--serif);font-size:23px;font-weight:400;color:var(--chalk);
+  margin:2em 0 .7em;display:flex;align-items:baseline;gap:12px;
+}
+.prose h3 .no{font-family:var(--sans);font-size:10px;color:var(--brass);letter-spacing:.2em;font-weight:500}
+
+/* 引用：黄铜数字 */
+.cite{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:17px;height:17px;border-radius:5px;margin:0 2px;vertical-align:-3px;
+  background:var(--brass-soft);color:#E4C58C;font-size:10px;font-weight:500;
+  cursor:pointer;transition:all .15s;font-family:var(--sans);letter-spacing:0;
+}
+.cite:hover{background:var(--brass);color:var(--void)}
+
+/* 表格 */
+.tblwrap{border:1px solid var(--edge-soft);border-radius:12px;overflow:hidden;margin:0 0 1.6em;background:var(--coal)}
+.tblwrap .cap{
+  padding:11px 18px;border-bottom:1px solid var(--edge-soft);
+  font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--mist);
+  display:flex;justify-content:space-between;
+}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{
+  text-align:left;font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:500;
+  color:#8B8694;padding:10px 18px;border-bottom:1px solid var(--edge-soft);
+}
+td{padding:11px 18px;border-bottom:1px solid var(--edge-soft);font-weight:300;color:#D9D5D0}
+tr:last-child td{border-bottom:none}
+td.n{font-family:ui-monospace,monospace;font-size:12px;text-align:right}
+.up{color:var(--sage)} .down{color:var(--rose)}
+
+/* 图 */
+.chart{
+  border:1px solid var(--edge-soft);border-radius:12px;background:var(--coal);
+  padding:20px 22px 14px;margin:0 0 1.7em;
+}
+.chart .cap{
+  font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--mist);
+  display:flex;justify-content:space-between;margin-bottom:16px;
+}
+.cbars{display:flex;align-items:flex-end;gap:14px;height:130px}
+.cbars .cb{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;gap:7px}
+.cbars .fill{
+  background:linear-gradient(180deg,#4A4550,#332F3A);border-radius:5px 5px 2px 2px;
+  position:relative;transition:height 1s cubic-bezier(.2,.7,.2,1);
+}
+.cbars .fill.hot{
+  background:linear-gradient(180deg,#E0B96A,#8A6320);
+  box-shadow:0 0 24px rgba(200,155,75,.25);
+}
+.cbars .fill::after{
+  content:attr(data-v);position:absolute;top:-19px;left:50%;transform:translateX(-50%);
+  font-size:10px;color:var(--mist);font-family:ui-monospace,monospace;
+}
+.cbars .fill.hot::after{color:#E4C58C}
+.cx{display:flex;gap:14px;margin-top:8px}
+.cx span{flex:1;text-align:center;font-size:10px;color:#6F6A7A;letter-spacing:.1em}
+
+/* Sources：细黄铜左线的暗卡 */
+.sources{margin-top:2em;display:grid;gap:10px}
+.sources .sl{font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--mist);margin-bottom:2px}
+.src{
+  display:grid;grid-template-columns:22px 1fr auto;gap:14px;align-items:center;
+  background:var(--coal);border:1px solid var(--edge-soft);border-left:2px solid var(--brass);
+  border-radius:10px;padding:12px 16px;cursor:pointer;transition:all .2s;
+}
+.src:hover{border-color:var(--edge);border-left-color:#E4C58C;background:var(--slab);transform:translateX(3px)}
+.src .n{font-size:11px;color:#E4C58C;font-weight:500}
+.src .t{font-size:13px;color:#DDD9D4;font-weight:400}
+.src .t span{display:block;font-size:11px;color:#7C7684;margin-top:2px;font-weight:300}
+.src .b{
+  font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sage);
+  border:1px solid rgba(143,169,143,.3);border-radius:20px;padding:3px 11px;white-space:nowrap;
+}
+.src .b.ext{color:var(--mist);border-color:var(--edge)}
+
+/* ===== 右侧：Agent 活动轨 ===== */
+.rail-l{position:relative;padding-left:26px}
+.rail-l::before{
+  content:"";position:absolute;left:7px;top:8px;bottom:12px;width:1px;
+  background:linear-gradient(var(--edge),transparent);
+}
+.evt{
+  position:relative;margin-bottom:18px;font-size:12px;line-height:1.5;
+  opacity:0;transform:translateX(6px);transition:all .5s;
+}
+.evt.shown{opacity:1;transform:none}
+.evt::before{
+  content:"";position:absolute;left:-24px;top:5px;width:9px;height:9px;border-radius:50%;
+  background:var(--void);border:1.5px solid var(--edge);transition:all .3s;
+}
+.evt.done::before{border-color:var(--sage);background:rgba(143,169,143,.25)}
+.evt.live::before{
+  border-color:var(--brass);background:var(--brass);
+  box-shadow:0 0 12px rgba(200,155,75,.6);
+  animation:breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe{50%{box-shadow:0 0 22px rgba(200,155,75,.9);transform:scale(1.15)}}
+.evt .et{color:var(--mist);font-weight:300}
+.evt .et b{color:var(--chalk);font-weight:500}
+.evt .ed{font-size:10.5px;color:#6F6A7A;margin-top:2px}
+.evt .ed a{color:#8A7A55;text-decoration:none;border-bottom:1px dotted #5A503C}
+.evt .ed a:hover{color:#E4C58C}
+.evt.live .et{color:#E4C58C}
+.rail-more{
+  font-size:11px;color:#6F6A7A;cursor:pointer;padding-left:2px;letter-spacing:.04em;
+}
+.rail-more:hover{color:var(--mist)}
+.rail-title{
+  font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:#5A5564;
+  margin-bottom:20px;padding-left:0;
+}
+
+/* 流式光标 */
+.quill{
+  display:inline-block;width:9px;height:17px;border-radius:2px;background:var(--brass);
+  vertical-align:-3px;margin-left:4px;animation:blink 1.1s steps(2) infinite;
+}
+@keyframes blink{50%{opacity:.15}}
+
+/* 简单回复 */
+.plain-reply{font-size:16px;color:#D9D5D0;line-height:1.8}
+
+/* 底部工具 */
+.afoot{
+  display:flex;gap:8px;margin-top:22px;
+  opacity:0;transition:opacity .6s;
+}
+.afoot.shown{opacity:1}
+.afoot span{
+  font-size:11px;color:#7C7684;padding:6px 13px;border-radius:8px;
+  border:1px solid transparent;cursor:pointer;transition:all .15s;letter-spacing:.03em;
+}
+.afoot span:hover{color:var(--chalk);border-color:var(--edge-soft);background:var(--coal)}
+.afoot span.key{color:#E4C58C}
+.afoot span.key:hover{background:var(--brass-soft);border-color:rgba(200,155,75,.3)}
+
+/* ===== 报告（复杂任务） ===== */
+.report{
+  border:1px solid var(--edge);border-radius:16px;overflow:hidden;
+  background:linear-gradient(180deg,var(--coal),var(--void));
+}
+.report .rh{
+  padding:26px 28px;border-bottom:1px solid var(--edge-soft);
+  display:flex;justify-content:space-between;align-items:flex-start;gap:20px;
+}
+.report .rh .k{font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--brass)}
+.report .rh h3{font-family:var(--serif);font-size:30px;font-weight:400;margin-top:10px;line-height:1.2}
+.report .rh .m{font-size:11.5px;color:#7C7684;margin-top:8px}
+.report .rh .badge{
+  font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#E4C58C;
+  border:1px solid rgba(200,155,75,.35);border-radius:20px;padding:5px 14px;white-space:nowrap;
+}
+.report .body{padding:8px 28px 20px}
+.report .sec{
+  display:grid;grid-template-columns:180px 1fr;gap:24px;
+  padding:16px 0;border-bottom:1px solid var(--edge-soft);
+}
+.report .sec:last-child{border-bottom:none}
+.report .sec .sn{font-size:11px;color:#8A7A55;letter-spacing:.1em;padding-top:2px}
+.report .sec .sn i{font-style:normal;color:var(--brass);margin-right:8px;font-size:10px}
+.report .sec .st{font-size:14px;color:#DDD9D4;font-weight:400}
+.report .sec .st span{display:block;color:#7C7684;font-size:12px;font-weight:300;margin-top:3px}
+.report .sec.risk .st{color:#E4B8A6}
+
+/* ===== Composer ===== */
+.dock{
+  position:fixed;bottom:0;left:0;right:0;
+  padding:0 32px 22px;
+  background:linear-gradient(transparent,var(--void) 62%);
+}
+.dock-in{max-width:820px;margin:0 auto}
+.dock-box{
+  background:var(--slab);border:1px solid var(--edge);border-radius:16px;
+  padding:16px 18px 10px;transition:border-color .2s,box-shadow .2s;
+}
+.dock-box:focus-within{
+  border-color:#5A5264;
+  box-shadow:0 8px 40px -12px rgba(0,0,0,.6),0 0 0 1px rgba(200,155,75,.15);
+}
+.dock textarea{
+  width:100%;background:none;border:none;outline:none;resize:none;
+  color:var(--chalk);font-family:var(--sans);font-size:15px;font-weight:300;line-height:1.6;
+  min-height:26px;max-height:150px;
+}
+.dock textarea::placeholder{color:#5A5564}
+.dock .drow{display:flex;align-items:center;margin-top:8px}
+.dock .dplus{
+  width:32px;height:32px;border-radius:9px;display:grid;place-items:center;
+  color:var(--mist);cursor:pointer;border:1px solid transparent;transition:all .15s;
+}
+.dock .dplus:hover{background:var(--coal);border-color:var(--edge-soft);color:var(--chalk)}
+.dock .modes{display:flex;gap:2px;margin-left:6px;background:var(--coal);border-radius:9px;padding:2px;border:1px solid var(--edge-soft)}
+.mode{
+  font-size:11px;color:#7C7684;padding:5px 12px;border-radius:7px;cursor:pointer;
+  transition:all .15s;letter-spacing:.03em;white-space:nowrap;
+}
+.mode:hover{color:var(--chalk)}
+.mode.on{background:var(--brass-soft);color:#E4C58C}
+.dock .grow{flex:1}
+.dock .go{
+  height:32px;padding:0 18px;border-radius:9px;display:flex;align-items:center;gap:8px;
+  background:linear-gradient(135deg,#E0B96A,#A87F35);color:#1A1508;font-weight:600;font-size:12px;
+  cursor:pointer;letter-spacing:.08em;border:none;font-family:var(--sans);
+  transition:filter .15s;
+}
+.dock .go:hover{filter:brightness(1.1)}
+/* 附件面板（＋ 展开） */
+.dock-menu{
+  display:none;margin-bottom:10px;padding:10px;border:1px solid var(--edge-soft);
+  border-radius:12px;background:var(--coal);
+}
+.dock-menu.open{display:flex;gap:8px;flex-wrap:wrap}
+.dock-menu span{
+  font-size:11.5px;color:var(--mist);padding:7px 13px;border-radius:8px;
+  border:1px solid var(--edge-soft);cursor:pointer;transition:all .15s;
+}
+.dock-menu span:hover{color:var(--chalk);border-color:var(--edge)}
+.dock-hint{
+  text-align:center;font-size:10.5px;color:#524D5C;margin-top:10px;letter-spacing:.1em;
+}
+.dock-hint b{color:#7C7684;font-weight:500}
+
+@media (max-width:1100px){.turn{grid-template-columns:1fr}.rail-l{display:none}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <div class="mark"><div class="orb"></div><div class="nm">Nocturne</div></div>
+    <nav class="hist">
+      <div class="h cur">Q3 增长复盘</div>
+      <div class="h">销售日报</div>
+      <div class="h">合同风险比对</div>
+      <div class="h">＋</div>
+    </nav>
+    <div class="grow"></div>
+    <div class="avatar">SL</div>
+  </div>
+</header>
+
+<main class="flow">
+  <div class="eyebrow">Session · 08 / 18</div>
+  <h1 class="conv-title">Q3 增长复盘</h1>
+  <div class="conv-sub">检索 <b>3 篇</b> 企业文档 · 分析 <b>48,221</b> 行订单 · <b>9</b> 次工具调用</div>
+
+  <!-- 1 简单问候 -->
+  <div class="u plain"><div class="ub">下午好</div></div>
+  <div class="turn no-rail">
+    <div class="reading">
+      <div class="sig"><span class="m">Nocturne · GLM-5</span></div>
+      <div class="plain-reply">下午好，Stride。我在。</div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="u">
+    <div class="ub">
+      <span class="att">📎 q3_orders.csv · growth_q3_export.xlsx</span><br>
+      结合上季度的增长复盘和这份订单数据，告诉我 Q3 增长主要来自哪里，运营侧有没有值得注意的风险。
+    </div>
+  </div>
+
+  <div class="turn">
+    <div class="reading">
+      <div class="sig"><span class="dot"></span>Nocturne <span class="m">GLM-5 · 深度思考 4.2s</span></div>
+
+      <div class="prose" id="prose2">
+        <p class="lede">Q3 的增长几乎全部由<em>老客复购与企业版升级</em>驱动——新客侧在悄悄失速。</p>
+        <p>综合你上传的订单明细与知识库复盘材料<span class="cite">1</span>，本季 GMV 同比 <strong>+18.4%</strong>，但拆开看，结构并不均衡：</p>
+
+        <div class="tblwrap">
+          <div class="cap"><span>Q3 增长分项</span><span>q3_orders.csv</span></div>
+          <table>
+            <thead><tr><th>分项</th><th style="text-align:right">GMV 占比</th><th style="text-align:right">同比</th><th>判断</th></tr></thead>
+            <tbody>
+              <tr><td>老客复购</td><td class="n">41.2%</td><td class="n up">+9.6 pt</td><td class="up">主引擎</td></tr>
+              <tr><td>企业版升级</td><td class="n">33.5%</td><td class="n up">+6.1 pt</td><td class="up">健康</td></tr>
+              <tr><td>新客首单</td><td class="n">18.0%</td><td class="n down">−4.3 pt</td><td class="down">连续两季下滑</td></tr>
+              <tr><td>渠道分销</td><td class="n">7.3%</td><td class="n up">+1.0 pt</td><td>持平</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="chart">
+          <div class="cap"><span>月度 GMV 走势</span><span>百万元</span></div>
+          <div class="cbars">
+            <div class="cb"><div class="fill" data-h="42%" data-v="38.1"></div></div>
+            <div class="cb"><div class="fill" data-h="51%" data-v="43.9"></div></div>
+            <div class="cb"><div class="fill" data-h="47%" data-v="41.5"></div></div>
+            <div class="cb"><div class="fill" data-h="58%" data-v="49.8"></div></div>
+            <div class="cb"><div class="fill" data-h="70%" data-v="58.6"></div></div>
+            <div class="cb"><div class="fill hot" data-h="92%" data-v="72.4"></div></div>
+          </div>
+          <div class="cx"><span>4月</span><span>5月</span><span>6月</span><span>7月</span><span>8月</span><span>9月</span></div>
+        </div>
+
+        <h3><span class="no">02</span>值得注意的风险</h3>
+        <p>新客首单占比已连续两季下滑，同期获客成本上升 22%<span class="cite">3</span>。运营周报将其归因于投放渠道结构变化<span class="cite">2</span>，但订单数据显示下滑集中在<strong>华东中小企业客群</strong>——与归因并不完全一致，建议为该客群单独做一次漏斗分析。</p>
+        <p>另外，企业版续约率为 <code>91.7%</code>，已低于 <code>93%</code> 的内部红线，属于需要提前介入的信号。</p>
+
+        <div class="sources">
+          <div class="sl">来源 · 3</div>
+          <div class="src"><span class="n">1</span><span class="t">2025 Q3 增长运营复盘（终版）<span>增长运营组 · 10/08 · 24 页 · 命中 4 段</span></span><span class="b">知识库</span></div>
+          <div class="src"><span class="n">2</span><span class="t">运营周报 2025-W33<span>运营组 · 命中 2 段</span></span><span class="b">知识库</span></div>
+          <div class="src"><span class="n">3</span><span class="t">市场投放成本月报 · 9 月<span>市场共享盘 · xlsx</span></span><span class="b ext">共享盘</span></div>
+        </div>
+      </div>
+
+      <div class="afoot" id="afoot2">
+        <span>复制</span><span>导出纪要</span><span class="key">追问：华东客群漏斗 →</span><span>转为正式报告</span>
+      </div>
+    </div>
+
+    <!-- 活动轨 -->
+    <aside class="rail-l">
+      <div class="rail-title">Agent 活动</div>
+      <div class="evt" data-d="200"><div class="et">解析附件</div><div class="ed">q3_orders.csv · 48,221 行</div></div>
+      <div class="evt" data-d="900"><div class="et">检索企业知识库</div><div class="ed">「Q3 增长复盘」· top_k=5</div></div>
+      <div class="evt" data-d="1800"><div class="et">找到 <b>3 篇</b>相关文档</div><div class="ed"><a href="#">增长运营复盘 Q3.pdf</a> 等</div></div>
+      <div class="evt" data-d="2500"><div class="et">MCP 调用完成</div><div class="ed">warehouse.query · 留存交叉验证</div></div>
+      <div class="evt" data-d="3200"><div class="et">正在综合分析…</div><div class="ed">正文流式输出中</div></div>
+      <div class="rail-more">查看 5 次调用的完整轨迹 →</div>
+    </aside>
+  </div>
+
+  <!-- 3 复杂任务 -->
+  <div class="u">
+    <div class="ub">把这些整理成一份可以直接发管理层的 Q3 纪要，风险部分单独成章。</div>
+  </div>
+
+  <div class="turn">
+    <div class="reading">
+      <div class="sig"><span class="dot" style="background:var(--sage);box-shadow:0 0 10px rgba(143,169,143,.4)"></span>Agent 运行完成 <span class="m">8 步 · 2m 14s</span></div>
+
+      <div class="report">
+        <div class="rh">
+          <div>
+            <div class="k">管理纪要 · 草稿</div>
+            <h3>2025 Q3 增长复盘纪要</h3>
+            <div class="m">供管理层参阅 · 基于 4 篇来源与上轮分析 · 数字校验 14 / 14</div>
+          </div>
+          <span class="badge">待审阅</span>
+        </div>
+        <div class="body">
+          <div class="sec"><div class="sn"><i>01</i>季度概览</div><div class="st">GMV +18.4% · 结构不均衡<span>增长集中于复购与企业版</span></div></div>
+          <div class="sec"><div class="sn"><i>02</i>增长分项</div><div class="st">复购 41.2% · 企业版 33.5%<span>含 2 幅图表与分项表格</span></div></div>
+          <div class="sec"><div class="sn"><i>03</i>渠道结构</div><div class="st">直营上升 · 分销持平</div></div>
+          <div class="sec risk"><div class="sn"><i>04</i>风险与预警</div><div class="st">独立成章 · 3 项<span>新客下滑 / 续约红线 / CAC +22%</span></div></div>
+          <div class="sec"><div class="sn"><i>05</i>建议动作</div><div class="st">4 条 · 已标注 owner</div></div>
+          <div class="sec"><div class="sn"><i>06</i>附录</div><div class="st">数据口径与来源清单</div></div>
+        </div>
+      </div>
+
+      <div class="afoot shown">
+        <span>阅读视图打开</span><span>导出 PDF</span><span>发送草稿 →</span><span class="key">编辑大纲</span>
+      </div>
+    </div>
+
+    <aside class="rail-l">
+      <div class="rail-title">运行轨迹</div>
+      <div class="evt shown done"><div class="et">任务规划</div><div class="ed">8 步 · 风险独立成章 ✓</div></div>
+      <div class="evt shown done"><div class="et">复用上轮分析</div><div class="ed">3 篇来源 + 1 篇新增</div></div>
+      <div class="evt shown done"><div class="et">渲染纪要</div><div class="ed">6 章 · 2 图 · 12.6s</div></div>
+      <div class="evt shown done"><div class="et">数字一致性校验</div><div class="ed">14 / 14 通过</div></div>
+      <div class="evt shown done"><div class="et">邮件草稿就绪</div><div class="ed">待你确认发送</div></div>
+    </aside>
+  </div>
+</main>
+
+<!-- Composer -->
+<div class="dock">
+  <div class="dock-in">
+    <div class="dock-menu" id="dmenu">
+      <span>📎 上传文件</span><span>🗂 引用知识库文档</span><span>🧩 选择 Agent 技能</span><span>🌐 联网搜索</span><span>📅 引用日程数据</span>
+    </div>
+    <div class="dock-box">
+      <textarea id="ta" rows="1" placeholder="问点什么，或把任务交给 Nocturne…"></textarea>
+      <div class="drow">
+        <div class="dplus" id="dplus">＋</div>
+        <div class="modes">
+          <span class="mode on">知识库</span>
+          <span class="mode">联网</span>
+          <span class="mode on">深思考</span>
+        </div>
+        <div class="grow"></div>
+        <span class="mode" style="padding:5px 12px">GLM-5 ▾</span>
+        <button class="go">发送 ⏎</button>
+      </div>
+    </div>
+    <div class="dock-hint"><b>⏎</b> 发送 · <b>⇧⏎</b> 换行 · <b>/</b> 唤起工具与知识源</div>
+  </div>
+</div>
+
+<script>
+/* 活动轨逐条浮现：先 running，再 done */
+document.querySelectorAll('.rail-l .evt[data-d]').forEach(el=>{
+  setTimeout(()=>{el.classList.add('shown','live')},+el.dataset.d);
+  setTimeout(()=>{el.classList.remove('live');el.classList.add('done')},+el.dataset.d+900);
+});
+/* 最后一个保持“正在分析”呼吸态直到正文结束 */
+const evts=document.querySelectorAll('.rail-l .evt[data-d]');
+const last=evts[evts.length-1];
+setTimeout(()=>{last.classList.remove('done');last.classList.add('live')},+last.dataset.d+900+400);
+setTimeout(()=>{last.classList.remove('live');last.classList.add('done')},+last.dataset.d+900+4800);
+
+/* 正文分块流式渐入 */
+(function(){
+  const body=document.getElementById('prose2');
+  const blocks=[...body.children];
+  blocks.forEach(b=>{b.style.opacity=0;b.style.transition='opacity .5s, transform .5s';b.style.transform='translateY(6px)'});
+  blocks.forEach((b,i)=>setTimeout(()=>{b.style.opacity=1;b.style.transform='none'},1400+i*640));
+  const foot=document.getElementById('afoot2');
+  setTimeout(()=>foot.classList.add('shown'),1400+blocks.length*640+300);
+  /* 光标：跟随最后一段 */
+  setTimeout(()=>{
+    const q=document.createElement('span');q.className='quill';
+    const host=document.createElement('p');host.appendChild(q);
+    const sources=body.querySelector('.sources');
+    body.insertBefore(host,sources);
+    setTimeout(()=>host.remove(),2000);
+  },1400+blocks.length*640-900);
+})();
+
+/* 图表生长 */
+setTimeout(()=>{
+  document.querySelectorAll('.cbars .fill').forEach(f=>f.style.height=f.dataset.h);
+},2400);
+
+/* ＋ 菜单 */
+document.getElementById('dplus').addEventListener('click',()=>{
+  document.getElementById('dmenu').classList.toggle('open');
+});
+/* textarea 自适应 */
+const ta=document.getElementById('ta');
+ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,150)+'px';});
+</script>
+</body>
+</html>

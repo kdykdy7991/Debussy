@@ -1,0 +1,29 @@
+/* Demo 用中性占位主题 —— 证明组件不依赖特定配色。
+   正式主题系统落地时：整段替换为真实 --app-* 值即可，组件与 kit 样式零改动。 */
+:root {
+	--app-font-display: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+	--app-font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--app-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+	--app-bg-page: #f6f5f2;
+	--app-bg-surface: #ffffff;
+	--app-bg-elevated: #faf9f7;
+	--app-bg-inset: #f0eee9;
+	--app-border-soft: #e4e1da;
+	--app-border-strong: #cfcbc2;
+	--app-border-focus: #8f8a80;
+	--app-text-primary: #26241f;
+	--app-text-secondary: #4f4c45;
+	--app-text-muted: #837f76;
+	--app-text-faint: #b0aca2;
+	--app-accent: #4a5a8f;
+	--app-accent-strong: #37466f;
+	--app-accent-soft: rgba(74, 90, 143, 0.1);
+	--app-accent-glow: rgba(74, 90, 143, 0.4);
+	--app-accent-contrast: #ffffff;
+	--app-success: #4d7c5c;
+	--app-success-soft: rgba(77, 124, 92, 0.2);
+	--app-danger: #a35248;
+	--app-danger-soft: rgba(163, 82, 72, 0.15);
+	--app-chart-bar: rgba(131, 127, 118, 0.32);
+}

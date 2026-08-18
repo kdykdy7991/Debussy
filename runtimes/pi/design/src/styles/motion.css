@@ -1,0 +1,147 @@
+/* ==========================================================================
+   AI UI Kit — Motion Primitives
+   来源：docs/ui-patterns/MOTION.md
+   只允许组件通过以下 class 获得 motion；禁止在组件内散落任意 transition。
+   ========================================================================== */
+
+/* ---- enter-soft：出现（水平语境 X / 垂直语境 Y） ---- */
+@keyframes ai-enter-soft-x {
+	from {
+		opacity: 0;
+		transform: translateX(6px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes ai-enter-soft-y {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.ai-enter-soft-x {
+	animation: ai-enter-soft-x var(--ai-motion-enter) var(--ai-ease-standard) both;
+}
+
+.ai-enter-soft-y {
+	animation: ai-enter-soft-y var(--ai-motion-enter) var(--ai-ease-standard) both;
+}
+
+/* ---- streaming-reveal：正文语义块逐块出现（块完成即挂载） ---- */
+.ai-prose.is-streaming > * {
+	animation: ai-enter-soft-y var(--ai-motion-enter) var(--ai-ease-standard) both;
+}
+
+/* ---- status-running：breathing pulse（仅限当前 running 的 node/状态点） ---- */
+@keyframes ai-breathe {
+	0%,
+	100% {
+		box-shadow: 0 0 12px var(--ai-accent-glow);
+		transform: scale(1);
+	}
+	50% {
+		box-shadow: 0 0 22px var(--ai-accent-glow);
+		transform: scale(1.15);
+	}
+}
+
+.ai-status-running {
+	animation: ai-breathe var(--ai-motion-pulse) var(--ai-ease-loop) infinite;
+}
+
+/* ---- data-enter：图表/指标首次渲染 ---- */
+.ai-chart-fill {
+	transition: height var(--ai-motion-data) var(--ai-ease-standard);
+}
+
+/* 指标计数由 useCountUp() 驱动（JS），时长与 ease 见 MOTION.md §2.4 */
+
+/* ---- actions-enter：actions 在完成后渐入 ---- */
+.ai-actions {
+	opacity: 0;
+	transition: opacity var(--ai-motion-actions) var(--ai-ease-standard);
+}
+
+.ai-actions.is-visible {
+	opacity: 1;
+}
+
+/* ---- streaming 光标 ---- */
+@keyframes ai-blink {
+	50% {
+		opacity: 0.15;
+	}
+}
+
+.ai-cursor {
+	display: inline-block;
+	width: var(--ai-cursor-w);
+	height: var(--ai-cursor-h);
+	border-radius: var(--ai-space-2xs);
+	background: var(--ai-accent);
+	vertical-align: -3px;
+	margin-left: var(--ai-space-xs);
+	animation: ai-blink var(--ai-motion-blink) steps(2) infinite;
+}
+
+/* ---- micro-interaction：hover / focus（150–200ms） ---- */
+.ai-hoverable {
+	transition:
+		background-color var(--ai-motion-fast) ease,
+		border-color var(--ai-motion-fast) ease,
+		color var(--ai-motion-fast) ease,
+		filter var(--ai-motion-fast) ease;
+}
+
+.ai-shiftable {
+	transition:
+		transform var(--ai-motion-base) ease,
+		background-color var(--ai-motion-base) ease,
+		border-color var(--ai-motion-base) ease;
+}
+
+/* ==========================================================================
+   Reduced Motion —— 所有非必要 motion 关闭或退化
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+	.ai-enter-soft-x,
+	.ai-enter-soft-y,
+	.ai-prose.is-streaming > *,
+	.ai-status-running,
+	.ai-cursor,
+	.ai-chart-fill,
+	.ai-actions,
+	.ai-hoverable,
+	.ai-shiftable,
+	.ai-trace-evt,
+	.ai-trace-evt .node,
+	.ai-source,
+	.ai-cite,
+	.ai-composer-box,
+	.ai-mode,
+	.ai-actions-item,
+	.ai-composer-menu-item,
+	.ai-composer-plus,
+	.ai-composer-go,
+	.ai-link {
+		animation: none !important;
+		transition: none !important;
+	}
+
+	.ai-cursor {
+		display: none;
+	}
+
+	/* running 态退化为静态实心 node，状态仍可通过颜色感知 */
+	.ai-trace-evt.is-running .node {
+		box-shadow: none;
+	}
+}
