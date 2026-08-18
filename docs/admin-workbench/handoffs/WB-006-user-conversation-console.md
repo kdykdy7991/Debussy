@@ -2,6 +2,11 @@
 
 状态：Complete
 
+> **MVP-08 状态校正（2026-08）**：本 handoff 的列表 / 详情 / 事件日志能力不变。
+> MVP-06 新增了从 App 详情「用户会话」tab 跳转到
+> `/conversations?appId=<appId>` 并预填 appId 筛选的收口（复用同一筛选组件），
+> 未改变 WB-006 交付的脱敏列表 / 事件日志语义。
+
 ## 完成范围
 
 实现保存了真实企业用户 Conversation 的全局检索与详情（spec §5.4）：

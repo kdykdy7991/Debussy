@@ -117,3 +117,31 @@ WB-000 已完成，请从 WB-001 开始。严格按 README 的“一次性执行
 - 修改代码后运行 `runtimes/pi/npm run check`；测试只运行任务单列出的专项文件，不直接运行完整 Vitest suite。
 - 每个任务完成后在 `docs/admin-workbench/handoffs/` 创建同 ID 交接文档，记录实际文件、接口偏差、测试结果和未关闭项。
 - 未完成真实 Chromium 或真实宿主验证时，只能标记自动化通过，不能宣称端到端完成。
+
+---
+
+## MVP 补全记录（MVP-COMPLETION-HANDOFF.md）
+
+管理员工作台在 WB-000~WB-010 基础上按 `ADMIN-WORKBENCH-MVP-COMPLETION-GUIDE.md`
+执行了 8 个补全 MVP（MVP-01~MVP-08），每个 MVP 的手续结果集中记录在
+`../handoffs/MVP-COMPLETION-HANDOFF.md`：
+
+| MVP | 批次 | 状态 | 手off |
+|---|---|---|---|
+| MVP-01 | Vite proxy + 真实 Token 解锁 + session endpoint | Complete | §1 |
+| MVP-02 | 列表 SQL 修复 + Postgres 回归 | Complete | §2 |
+| MVP-03 | 空 Tenant 首次使用闭环 | Complete | §3 |
+| MVP-04 | 管理员调试对话 + DebugSession 恢复 | Complete | §4 |
+| MVP-05 | Agent 工作区补全 | Complete | §5 |
+| MVP-06 | App 工作区补全 | Complete | §6 |
+| MVP-07 | Shell 与设置收口 | Complete | §7 |
+| MVP-08 | 真实浏览器验收与文档校正 | Complete | §8 |
+
+### MVP-08 验收结果（2026-08-18）
+
+- 当前源码 `dev:admin`：Vite 15175 / Control + Pi WebSocket 18765。
+- HTTP 主链路验收 20/20 PASS；期间修复 `import-current` P0。
+- 使用系统 Google Chrome + CDP + 仓库已有 `ws` 完成真实 UI 验收，无需新增浏览器依赖。
+- 真实 Token 解锁、五个一级模块、1440/960/720 响应式及管理员调试消息往返均通过；控制台错误与失败 HTTP 请求均为 0。
+- Chromium 验收发现并修复两项 P0：Admin API 默认 fetch 未绑定导致解锁失败；调试对话未接 Pi WebSocket、输入框永久禁用。
+- 详细命令、结果和代码范围见 `../handoffs/MVP-COMPLETION-HANDOFF.md` §8 / §10。

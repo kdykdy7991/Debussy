@@ -2,6 +2,12 @@
 
 状态：Complete
 
+> **MVP-08 状态校正（2026-08）**：本 handoff 已声明「未进行真实 Chromium / 真实
+> 企业宿主验证，因此不能宣称端到端验收完成」——该结论在 MVP 阶段保持不变。
+> MVP 的 Preview / Activate / Rollback / Suspend 二次确认与审计语义在
+> MVP-01~07 期间经 `npm run check` 与单元测试保障，但真实浏览器端到端验证仍在
+> MVP-08 由 Chromium 验收补齐（见 `MVP-COMPLETION-HANDOFF.md` §8）。
+
 ## 完成范围
 
 - 新增短期、一次性 Preview Ticket，绑定 tenant、应用、版本、publicAppId 与 Embed Origin。

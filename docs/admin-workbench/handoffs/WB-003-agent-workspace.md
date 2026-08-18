@@ -2,6 +2,13 @@
 
 状态：Complete
 
+> **MVP-08 状态校正（2026-08）**：本 handoff 撰写时「调试记录」页签仍是占位
+> （"由 WB-006 / WB-007 实施"）。MVP-05 已把 `DebugTab` 改为读取
+> `debug-session-store`（按 Agent 显示管理员自己的 DebugSession 映射，不展示
+> 企业用户会话）；MVP-05 还补齐了次级栏真实 Agent 选择器与 Agent 列表 cursor
+> 分页。下方涉及「调试记录占位」的表述已被 MVP-05 取代。Agent 配置表单 / 保存 /
+> Revision / 关联应用不变。
+
 ## 完成范围
 
 实现 Agent 选择、配置表单、dirty/saving/saved/error 状态机、保存生成不可变
