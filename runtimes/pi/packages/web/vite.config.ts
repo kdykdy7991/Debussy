@@ -28,6 +28,20 @@ function routeRewritePlugin(): PluginOption {
 		configureServer(server) {
 			server.middlewares.use((req, _res, next) => {
 				const url = req.url ?? "/";
+				// Backend / Vite internal traffic must never fall through to the
+				// SPA history fallback below — otherwise /api/control/*, WebSocket
+				// upgrades, and HMR requests all collapse into index.html (MVP-01).
+				if (
+					url.startsWith("/api/") ||
+					url.startsWith("/__vite") ||
+					url.startsWith("/@") ||
+					url.startsWith("/src/") ||
+					url.startsWith("/node_modules/") ||
+					url.startsWith("/ws")
+				) {
+					next();
+					return;
+				}
 				if (isEmbedOnly) {
 					if (url === "/" || url === "" || url === "/index.html") {
 						req.url = "/embed.html";
@@ -84,20 +98,7 @@ export default defineConfig({
 		host: "127.0.0.1",
 		port: isEmbedOnly ? 5174 : 5173,
 		strictPort: true,
-		proxy:
-			process.env.PI_EMBED_DEV_PROXY_TARGET === undefined
-				? undefined
-				: {
-						"/api/control": {
-							target: process.env.PI_EMBED_DEV_PROXY_TARGET,
-							changeOrigin: false,
-						},
-						"/api/embed": {
-							target: process.env.PI_EMBED_DEV_PROXY_TARGET,
-							changeOrigin: false,
-							ws: true,
-						},
-					},
+		proxy: buildProxyConfig(process.env.PI_EMBED_DEV_PROXY_TARGET, process.env.PI_ADMIN_DEV_PROXY_TARGET),
 	},
 	build: {
 		rollupOptions: {
@@ -117,3 +118,55 @@ export default defineConfig({
 		},
 	},
 });
+
+/**
+ * Build the dev-server proxy config.
+ *
+ * The proxy forwards `/api/control` and `/api/embed` to the loopback control
+ * server. Embed-mode uses `PI_EMBED_DEV_PROXY_TARGET`; admin-only mode uses
+ * `PI_ADMIN_DEV_PROXY_TARGET` (the workbench's normal target). When the
+ * expected env var is missing we print a single loud warning instead of
+ * silently serving 404s so dev:admin failures are obvious (MVP-01).
+ */
+function buildProxyConfig(
+	embedTarget: string | undefined,
+	adminTarget: string | undefined,
+): Record<string, { target: string; changeOrigin: boolean; ws?: boolean }> | undefined {
+	if (isEmbedOnly) {
+		if (embedTarget === undefined) {
+			console.warn(
+				"[pi-web] PI_EMBED_DEV_PROXY_TARGET is not set; /api/embed requests will 404 in dev.",
+			);
+			return undefined;
+		}
+		return {
+			"/api/control": { target: embedTarget, changeOrigin: false },
+			"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
+		};
+	}
+	if (isAdminOnly) {
+		if (adminTarget === undefined) {
+			console.warn(
+				"[pi-web] PI_ADMIN_DEV_PROXY_TARGET is not set; admin /api/control requests will return 404 in dev. " +
+					"Run via the repo-root `npm run dev:admin` which sets this automatically.",
+			);
+			return undefined;
+		}
+		return {
+			"/api/control": { target: adminTarget, changeOrigin: false },
+			"/api/embed": { target: adminTarget, changeOrigin: false, ws: true },
+		};
+	}
+	if (embedTarget === undefined) {
+		console.warn(
+			"[pi-web] PI_EMBED_DEV_PROXY_TARGET is not set; /api/embed requests will 404 in dev.",
+		);
+		return {
+			"/api/control": { target: adminTarget ?? "", changeOrigin: false },
+		};
+	}
+	return {
+		"/api/control": { target: embedTarget, changeOrigin: false },
+		"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
+	};
+}

@@ -4,6 +4,7 @@ import {
 	type ChangeEvent,
 	type FormEvent,
 	type KeyboardEvent,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -13,7 +14,9 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { LiveSpeechToggle } from "./features/voice/live-speech-toggle.tsx";
+import { ConversationComposer } from "./conversation/conversation-composer.tsx";
+import { ConversationSidebar } from "./conversation/conversation-sidebar.tsx";
+import { type VisualTheme, WorkspaceMasthead } from "./conversation/workspace-masthead.tsx";
 import { LiveStatusRow } from "./features/voice/live-status-row.tsx";
 import type { LivePlaybackState } from "./features/voice/live-types.ts";
 import { PlaybackArbiter } from "./features/voice/playback-arbiter.ts";
@@ -27,13 +30,10 @@ import type { SessionBrowserStore } from "./lib/session-controller.ts";
 export interface AppProps {
 	connection: PiConnectionStore;
 	sessions: SessionBrowserStore;
+	variant?: "standalone" | "admin";
+	contextHeader?: ReactNode;
+	enableVoice?: boolean;
 }
-
-const CONNECTION_LABELS = {
-	disconnected: "尚未连接",
-	connecting: "正在连接",
-	connected: "已连接",
-} as const;
 
 const EMPTY_PROMPTS = [
 	"梳理这个项目的核心架构",
@@ -42,11 +42,15 @@ const EMPTY_PROMPTS = [
 	"为下一阶段制定实施计划",
 ];
 
-type VisualTheme = "editorial" | "vision-glass";
-
 const THEME_STORAGE_KEY = "pi-web-theme";
 
-export function App({ connection, sessions }: AppProps) {
+export function ConversationWorkspace({
+	connection,
+	sessions,
+	variant = "standalone",
+	contextHeader,
+	enableVoice = true,
+}: AppProps) {
 	const connectionSnapshot = useSyncExternalStore(
 		connection.subscribe,
 		connection.getSnapshot,
@@ -74,7 +78,7 @@ export function App({ connection, sessions }: AppProps) {
 		});
 	}
 	const arbiter = arbiterRef.current;
-	const speech = arbiter?.manual;
+	const speech = enableVoice ? arbiter?.manual : undefined;
 	const [liveHint, setLiveHint] = useState<string | undefined>(undefined);
 	const live = useLiveSpeech({
 		snapshot: client?.snapshot,
@@ -145,7 +149,7 @@ export function App({ connection, sessions }: AppProps) {
 		// prompt leaves the page. The hook owns the AudioContext unlock and the
 		// persisted toggle; this layer only wires it through.
 		void (async () => {
-			const prep = await live.preparePrompt();
+			const prep = enableVoice ? await live.preparePrompt() : { attachSpeech: false };
 			const baseOptions = attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined;
 			const options =
 				prep.attachSpeech && baseOptions
@@ -255,140 +259,30 @@ export function App({ connection, sessions }: AppProps) {
 	}, [arbiter]);
 
 	return (
-		<div className="editorial-shell" data-theme={theme}>
-			<aside className={`chat-sidebar ${sidebarOpen ? "open" : ""}`} aria-label="会话导航">
-				<header className="brand-lockup">
-					<span className="brand-mark" aria-hidden="true">
-						π
-					</span>
-					<span>
-						<strong>PI</strong>
-						<small>EDITORIAL INTELLIGENCE</small>
-					</span>
-					<button
-						className="icon-button sidebar-close"
-						type="button"
-						onClick={() => setSidebarOpen(false)}
-						aria-label="关闭会话导航"
-					>
-						×
-					</button>
-				</header>
-
-				{!bootstrapping ? (
-					<button
-						className="new-chat-button"
-						type="button"
-						disabled={!connected || sessionSnapshot.loading}
-						onClick={createSession}
-					>
-						<span aria-hidden="true">＋</span>
-						<span>新建对话</span>
-						<kbd>NEW</kbd>
-					</button>
-				) : null}
-
-				<label className="conversation-search">
-					<span aria-hidden="true">⌕</span>
-					<input
-						value={sessionQuery}
-						onChange={(event) => setSessionQuery(event.target.value)}
-						placeholder="搜索会话"
-						aria-label="搜索会话"
-					/>
-				</label>
-
-				<div className="sidebar-section-label">
-					<span>最近会话</span>
-					<small>{visibleSessions.length}</small>
-				</div>
-				{visibleSessions.length > 0 ? (
-					<nav className="conversation-list" aria-label="已有会话">
-						{visibleSessions.map((session) => (
-							<button
-								className={session.id === sessionSnapshot.activeSessionId ? "active" : undefined}
-								type="button"
-								onClick={() => selectSession(session.id)}
-								disabled={!connected || sessionSnapshot.loading}
-								key={session.id}
-							>
-								<i
-									className={`session-state ${session.phase === "idle" ? "idle" : "running"}`}
-									aria-hidden="true"
-								/>
-								<span>
-									<strong>{session.name || "未命名对话"}</strong>
-									<small>{session.phase === "idle" ? "可继续对话" : "Agent 正在运行"}</small>
-								</span>
-								<time>{formatTime(session.updatedAt)}</time>
-							</button>
-						))}
-					</nav>
-				) : bootstrapping ? (
-					<div className="sidebar-empty">
-						<span>—</span>
-						<p>正在恢复最近会话…</p>
-					</div>
-				) : (
-					<div className="sidebar-empty">
-						<span>—</span>
-						<p>{connected ? "暂无匹配会话" : "连接后载入会话"}</p>
-					</div>
-				)}
-
-				<footer className="sidebar-footer">
-					<div className={`connection-dot ${connectionSnapshot.state}`} aria-hidden="true" />
-					<span>
-						<strong>LOCAL WORKSPACE</strong>
-						<small>{CONNECTION_LABELS[connectionSnapshot.state]}</small>
-					</span>
-				</footer>
-			</aside>
+		<div className={`editorial-shell conversation-workspace conversation-workspace--${variant}`} data-theme={theme}>
+			<ConversationSidebar
+				open={sidebarOpen}
+				connected={connected}
+				bootstrapping={bootstrapping}
+				query={sessionQuery}
+				connection={connectionSnapshot}
+				sessions={sessionSnapshot}
+				visibleSessions={visibleSessions}
+				onClose={() => setSidebarOpen(false)}
+				onCreate={createSession}
+				onQueryChange={setSessionQuery}
+				onSelect={selectSession}
+			/>
 
 			<main className="chat-workspace">
-				<header className="chat-masthead">
-					<div className="masthead-group">
-						<button
-							className="icon-button mobile-nav"
-							type="button"
-							onClick={() => setSidebarOpen(true)}
-							aria-label="打开会话导航"
-						>
-							☰
-						</button>
-						<span className="edition">
-							PI INTELLIGENCE <i>／</i> LOCAL DESK
-						</span>
-					</div>
-					<time className="masthead-date">{formatDate(Date.now())}</time>
-					<div className="masthead-actions">
-						<fieldset className="theme-switcher" aria-label="视觉主题">
-							<legend className="sr-only">视觉主题</legend>
-							<button
-								type="button"
-								className={theme === "editorial" ? "active" : undefined}
-								onClick={() => setTheme("editorial")}
-								aria-pressed={theme === "editorial"}
-							>
-								<span className="theme-swatch editorial-swatch" aria-hidden="true" />
-								Editorial
-							</button>
-							<button
-								type="button"
-								className={theme === "vision-glass" ? "active" : undefined}
-								onClick={() => setTheme("vision-glass")}
-								aria-pressed={theme === "vision-glass"}
-							>
-								<span className="theme-swatch glass-swatch" aria-hidden="true" />
-								Vision Glass
-							</button>
-						</fieldset>
-						<span className={`connection-badge ${connectionSnapshot.state}`}>
-							<i aria-hidden="true" />
-							{CONNECTION_LABELS[connectionSnapshot.state]}
-						</span>
-					</div>
-				</header>
+				<WorkspaceMasthead
+					connection={connectionSnapshot}
+					theme={theme}
+					onOpenNavigation={() => setSidebarOpen(true)}
+					onThemeChange={setTheme}
+				/>
+
+				{contextHeader ? <div className="workspace-context-header">{contextHeader}</div> : null}
 
 				{connectionSnapshot.error ? (
 					<div className="connection-error" role="alert">
@@ -424,116 +318,29 @@ export function App({ connection, sessions }: AppProps) {
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
 				</div>
-
-				<div className="composer-dock">
-					<form className={`editorial-composer ${running ? "running" : ""}`} onSubmit={submitMessage}>
-						{active && ((active.attachments?.length ?? 0) > 0 || sessionSnapshot.uploads.length > 0) ? (
-							<div className="composer-attachments">
-								{sessionSnapshot.uploads.map((upload) => (
-									<span className={`attachment-chip ${upload.status}`} key={upload.localId}>
-										{upload.name}
-										{upload.status === "uploading" ? (
-											<small>{upload.progress ?? 0}%</small>
-										) : (
-											<small title={upload.error}>{upload.error ?? "上传失败"}</small>
-										)}
-										{upload.status === "failed" ? (
-											<button
-												type="button"
-												onClick={() => sessions.dismissUpload(upload.localId)}
-												aria-label="移除失败项"
-											>
-												×
-											</button>
-										) : null}
-									</span>
-								))}
-								{active.attachments?.map((attachment) => (
-									<span className="attachment-chip ready" key={attachment.id}>
-										{attachment.name}
-										<button
-											type="button"
-											onClick={() => removeAttachment(attachment.id)}
-											aria-label={`移除 ${attachment.name}`}
-										>
-											×
-										</button>
-									</span>
-								))}
-							</div>
-						) : null}
-						<label className="sr-only" htmlFor="message">
-							消息
-						</label>
-						<textarea
-							ref={composerRef}
-							id="message"
-							rows={1}
-							placeholder={
-								active
-									? running
-										? "Agent 运行中，可停止后继续输入…"
-										: "继续追问、要求检查，或提出新的任务…"
-									: "选择或新建一个会话后开始…"
-							}
-							disabled={!connected || active === undefined || sessionSnapshot.loading || running}
-							value={message}
-							onChange={handleMessageChange}
-							onKeyDown={handleMessageKeyDown}
-						/>
-						<div className="composer-toolbar">
-							<div className="composer-context">
-								<button
-									className="composer-tool"
-									type="button"
-									onClick={() => fileInputRef.current?.click()}
-									disabled={!connected || active === undefined || running || sessionSnapshot.loading}
-									title="上传文件附件"
-									aria-label="上传文件附件"
-								>
-									＋
-								</button>
-								<input ref={fileInputRef} type="file" multiple hidden onChange={handleFilesSelected} />
-								<span className="context-chip">
-									<i>π</i> Pi Agent
-								</span>
-								{active ? (
-									<span className="context-chip muted">
-										{active.model.provider} / {active.model.id}
-									</span>
-								) : null}
-							</div>
-							{speech?.voice ? (
-								<div className="composer-voice">
-									<LiveSpeechToggle
-										voice={speech.voice}
-										enabled={live.enabled && live.available}
-										onChange={live.setEnabled}
-									/>
-								</div>
-							) : null}
-							<div className="composer-submit">
-								<span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
-								{running ? (
-									<button className="stop-button" type="button" onClick={abort}>
-										<i aria-hidden="true" />
-										停止
-									</button>
-								) : (
-									<button
-										className="send-button"
-										type="submit"
-										disabled={!canSend || !message.trim()}
-										aria-label="发送消息"
-									>
-										↑
-									</button>
-								)}
-							</div>
-						</div>
-					</form>
-				</div>
 			</main>
+
+			<ConversationComposer
+				active={active}
+				connected={connected}
+				running={running}
+				canSend={canSend}
+				message={message}
+				sessions={sessionSnapshot}
+				composerRef={composerRef}
+				fileInputRef={fileInputRef}
+				voice={enableVoice ? speech?.voice : undefined}
+				voiceEnabled={live.enabled}
+				voiceAvailable={live.available}
+				onVoiceChange={live.setEnabled}
+				onSubmit={submitMessage}
+				onMessageChange={handleMessageChange}
+				onMessageKeyDown={handleMessageKeyDown}
+				onFilesSelected={handleFilesSelected}
+				onDismissUpload={(localId) => sessions.dismissUpload(localId)}
+				onRemoveAttachment={removeAttachment}
+				onAbort={abort}
+			/>
 
 			<button
 				className={`scrim ${sidebarOpen ? "show" : ""}`}
@@ -545,6 +352,10 @@ export function App({ connection, sessions }: AppProps) {
 			/>
 		</div>
 	);
+}
+
+export function App(props: AppProps): React.ReactElement {
+	return <ConversationWorkspace {...props} />;
 }
 
 function Conversation({
@@ -606,7 +417,7 @@ function Conversation({
 			</header>
 
 			{running ? (
-				<section className="agent-run-strip" aria-label="Agent 运行状态">
+				<section className="agent-run-strip proc busy" aria-label="Agent 运行状态">
 					<span className="run-spinner" aria-hidden="true" />
 					<span>
 						<strong>{phaseLabel(active.phase)}</strong>
@@ -667,44 +478,47 @@ function TranscriptItemView({
 	if (item.role === "tool") {
 		const status = item.status === "running" ? "正在执行" : item.status === "error" ? "执行失败" : "执行完成";
 		return (
-			<details className={`tool-report ${item.status}`} open={item.status === "error"}>
-				<summary>
-					<span className="tool-status" aria-hidden="true">
-						{item.status === "complete" ? "✓" : item.status === "error" ? "!" : ""}
-					</span>
+			<section className={`tool-event ${item.status}`}>
+				<div className={`proc ${item.status === "running" ? "busy" : ""}`}>
+					<span className="proc-dot" aria-hidden="true" />
 					<span>
-						<small>调查过程 · TOOL CALL</small>
-						<strong>
-							{status}：{item.toolName}
-						</strong>
+						{status}：<b>{item.toolName}</b>
 					</span>
-					<span className="tool-toggle">详情⌄</span>
-				</summary>
-				<div className="tool-details">
-					<div>
-						<span>工具</span>
-						<code>{item.toolName}</code>
-					</div>
-					<div>
-						<span>输入</span>
-						<pre>{JSON.stringify(item.input, null, 2)}</pre>
-					</div>
-					<div>
-						<span>结果</span>
+					<span className={`proc-status ${item.status === "running" ? "live" : ""}`}>{status}</span>
+				</div>
+				<details className="work tool-report" open={item.status === "error"}>
+					<summary>
+						<span className="work-chevron" aria-hidden="true">
+							▸
+						</span>
+						查看工具输入与结果
+					</summary>
+					<div className="tool-details">
 						<div>
-							{item.content.length ? (
-								item.content.map((content, contentIndex) => (
-									<p key={`${item.id}-${contentIndex}`}>
-										{content.type === "text" ? content.text : "[图片结果]"}
-									</p>
-								))
-							) : (
-								<p>等待结果…</p>
-							)}
+							<span>工具</span>
+							<code>{item.toolName}</code>
+						</div>
+						<div>
+							<span>输入</span>
+							<pre>{JSON.stringify(item.input, null, 2)}</pre>
+						</div>
+						<div>
+							<span>结果</span>
+							<div>
+								{item.content.length ? (
+									item.content.map((content, contentIndex) => (
+										<p key={`${item.id}-${contentIndex}`}>
+											{content.type === "text" ? content.text : "[图片结果]"}
+										</p>
+									))
+								) : (
+									<p>等待结果…</p>
+								)}
+							</div>
 						</div>
 					</div>
-				</div>
-			</details>
+				</details>
+			</section>
 		);
 	}
 
@@ -739,16 +553,13 @@ function TranscriptItemView({
 	return (
 		<section className={`assistant-analysis ${item.status}`}>
 			<header className="answer-byline">
-				<span className="agent-avatar">π</span>
-				<span>
-					<strong>PI ANALYSIS</strong>
-					<small>
-						{item.model.provider} / {item.model.id} · {formatTime(item.timestamp)}
-					</small>
+				<span className="answer-dot" aria-hidden="true" />
+				<span>Assistant</span>
+				<span className="answer-meta">
+					· {item.model.provider} / {item.model.id} · {formatTime(item.timestamp)}
 				</span>
-				<span className={`answer-status ${item.status}`}>{assistantStatus(item.status)}</span>
 			</header>
-			<div className="answer-content">
+			<div className="answer-content prose">
 				{item.content.map((content, contentIndex) => {
 					if (content.type === "text")
 						return (
@@ -758,8 +569,11 @@ function TranscriptItemView({
 						);
 					if (content.type === "thinking")
 						return (
-							<details className="thinking-note" key={`${item.id}-${contentIndex}`}>
+							<details className="thinking-note work" key={`${item.id}-${contentIndex}`}>
 								<summary>
+									<span className="work-chevron" aria-hidden="true">
+										▸
+									</span>
 									<span>思考过程</span>
 									<span className="thinking-toggle">展开查看</span>
 								</summary>
@@ -767,7 +581,8 @@ function TranscriptItemView({
 							</details>
 						);
 					return (
-						<div className="inline-tool-call" key={`${item.id}-${contentIndex}`}>
+						<div className="inline-tool-call proc busy" key={`${item.id}-${contentIndex}`}>
+							<span className="proc-dot" aria-hidden="true" />
 							<span>准备调用工具</span>
 							<strong>{content.toolName}</strong>
 						</div>
@@ -852,12 +667,6 @@ function EmptyTranscript() {
 	);
 }
 
-function formatDate(timestamp: number): string {
-	return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(
-		timestamp,
-	);
-}
-
 function formatTime(timestamp: number): string {
 	return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(timestamp);
 }
@@ -868,13 +677,6 @@ function phaseLabel(phase: SessionSnapshot["phase"]): string {
 	if (phase === "retry") return "连接恢复后重试中";
 	if (phase === "turn") return "Pi 正在组织回答";
 	return "等待下一项任务";
-}
-
-function assistantStatus(status: Extract<TranscriptItem, { role: "assistant" }>["status"]): string {
-	if (status === "streaming") return "DRAFTING";
-	if (status === "error") return "FAILED";
-	if (status === "aborted") return "STOPPED";
-	return "COMPLETE";
 }
 
 function deriveSpeechHttpBaseUrl(): string {

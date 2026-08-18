@@ -81,6 +81,16 @@ export class AdminAuthController {
 	}
 
 	/**
+	 * Change the base URL (settings). Any live connection MUST be dropped:
+	 * the old token/tenant are bound to the previous origin, so the admin must
+	 * re-unlock against the new base URL. This clears token + tenant data.
+	 */
+	setBaseUrl(baseUrl: string): void {
+		this.token = null;
+		this.update({ state: "locked", error: null, tenant: null, baseUrl: baseUrl.replace(/\/+$/, "") });
+	}
+
+	/**
 	 * Reset every listener-visible field without retaining the token. Used by
 	 * the controller layer when a 401 comes back from any mutation.
 	 */
