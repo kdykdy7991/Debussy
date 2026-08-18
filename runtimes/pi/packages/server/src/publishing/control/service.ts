@@ -71,6 +71,7 @@ import {
 	toPublicId,
 } from "../domain/ids.ts";
 import type { AccessMode, PrincipalType } from "../domain/states.ts";
+import { exportSessionLines } from "../export/session-export.ts";
 import type { PreviewTicketService } from "../preview-ticket.ts";
 import type {
 	AdminConversationListRow,
@@ -296,6 +297,9 @@ export interface RevokeLaunchKeyInput {
 	readonly keyId: string;
 	readonly requestId?: RequestId;
 }
+
+/** WB-009: thrown when the export target conversation is not in tenant scope. */
+export class ConversationExportNotFound extends Error {}
 
 export interface RevokeLaunchKeyResult {
 	readonly key: LaunchKeyRecord;
@@ -1297,6 +1301,50 @@ export class ControlService {
 				},
 			},
 		};
+	}
+
+	/**
+	 * WB-009: stream a conversation export (gzip JSONL). Anchors the export at
+	 * the conversation's current `last_event_sequence` (freezing throughSequence),
+	 * validates tenant scope, writes a `conversation.exported` audit event, then
+	 * yields versioned JSONL lines with bounded-per-page memory.
+	 */
+	async *streamConversationExport(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly mode: import("@earendil-works/pi-protocol").ConversationExportMode;
+		readonly requestId?: string;
+	}): AsyncGenerator<string, void, unknown> {
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined) {
+			throw new ConversationExportNotFound();
+		}
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "conversation.exported",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: {
+				publishedAppId: conversation.publishedAppId,
+				mode: input.mode,
+				throughSequence: conversation.lastEventSequence,
+			},
+		});
+		yield* exportSessionLines({
+			conversation,
+			mode: input.mode,
+			page: (afterSequence, limit) =>
+				this.repos.events.listByConversation({
+					scope: { tenantId: input.tenantId },
+					conversationId: input.conversationId,
+					afterSequence,
+					limit,
+				}),
+		});
 	}
 
 	/** WB-006: list a conversation's attachments (metadata only) for the admin UI. */

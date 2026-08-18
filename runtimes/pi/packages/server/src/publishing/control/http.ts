@@ -18,7 +18,10 @@
  * business rules. The bootstrap tenant (33.1) is injected at construction and
  * every operation maps to it.
  */
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { pipeline, Readable } from "node:stream";
+import { createGzip } from "node:zlib";
+import type { ConversationExportMode } from "@earendil-works/pi-protocol";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
@@ -35,6 +38,7 @@ import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
 import type { IdempotencyScope, PublishedAppRecord, PublishingRepositories } from "../repositories.ts";
 import type { ControlService, CurrentAgentDefinitionSource } from "./service.ts";
+import { ConversationExportNotFound } from "./service.ts";
 import { secureEqual } from "./token.ts";
 
 export const CONTROL_API_PREFIX = "/api/control/v1";
@@ -74,7 +78,9 @@ interface Route {
 		query: URLSearchParams;
 		/** Regex capture groups from the path, e.g. `[appId]` or `[appId, keyId]`. */
 		params: readonly string[];
-	}) => Promise<{ status: number; body: unknown }>;
+		/** The raw HTTP response, exposed only for streaming routes (WB-009). */
+		response: ServerResponse;
+	}) => Promise<Envelope | { readonly kind: "stream" }>;
 }
 
 interface Envelope {
@@ -519,6 +525,86 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		},
 		{
 			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/export$/,
+			operation: "conversations.export",
+			handler: async ({ requestId, query, params, response }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) {
+					jsonBody(
+						response,
+						400,
+						errorEnvelope("INVALID_REQUEST", "conversationId must be a bare conv_<uuid> id", requestId, false),
+					);
+					return { kind: "stream" };
+				}
+				const modeRaw = query.get("mode") ?? "full";
+				if (modeRaw !== "full" && modeRaw !== "diagnostics" && modeRaw !== "transcript") {
+					jsonBody(
+						response,
+						400,
+						errorEnvelope("INVALID_REQUEST", "mode must be full | diagnostics | transcript", requestId, false),
+					);
+					return { kind: "stream" };
+				}
+				const mode = modeRaw as ConversationExportMode;
+				// 背压/取消 + 流式压缩：generator -> Readable -> gzip -> response。
+				response.statusCode = 200;
+				response.setHeader("Content-Type", "application/jsonl+gzip");
+				response.setHeader("Content-Disposition", `attachment; filename="${conversationId}.jsonl.gz"`);
+				response.setHeader("X-Request-Id", requestId);
+				response.setHeader("X-Tenant-Id", String(tenantId));
+
+				let generator: AsyncGenerator<string, void, unknown>;
+				try {
+					generator = service.streamConversationExport({ tenantId, conversationId, mode, requestId });
+					// Prime the generator once so not-found is detected before
+					// any bytes are written (uniform 404).
+					await generator.next();
+				} catch (error) {
+					if (error instanceof ConversationExportNotFound) {
+						if (!response.headersSent) {
+							response.statusCode = 404;
+							response.setHeader("Content-Type", "application/json");
+							response.end(
+								JSON.stringify(
+									errorEnvelope(
+										"CONVERSATION_NOT_FOUND",
+										"conversation not found in tenant scope",
+										requestId,
+										false,
+									),
+								),
+							);
+						}
+					} else {
+						options.onError?.(error);
+						if (!response.headersSent) {
+							response.statusCode = 500;
+							response.setHeader("Content-Type", "application/json");
+							response.end(JSON.stringify(errorEnvelope("INTERNAL", "Internal server error", requestId, true)));
+						}
+					}
+					return { kind: "stream" };
+				}
+
+				// Streaming pipeline with backpressure + client-cancel propagation.
+				const jsonl = Readable.from(generator, { objectMode: false });
+				const gzip = createGzip();
+				const pipelineDone = pipeline(jsonl, gzip, response, (err) => {
+					// err === undefined on clean end; on client abort (response
+					// destroyed) err is set, which stops the DB + compression work
+					// and propagates cancellation to the async generator below.
+					if (err !== undefined && !response.destroyed) {
+						options.onError?.(err);
+					}
+					if (!response.headersSent) response.end();
+				});
+				void pipelineDone;
+				return { kind: "stream" };
+			},
+		},
+		{
+			method: "GET",
 			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/summaries$/,
 			operation: "conversations.list-summaries",
 			handler: async ({ requestId, params }) => {
@@ -723,7 +809,11 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			// write idempotency records (spec review: read paths skip slots).
 			if (request.method === "GET") {
 				const query = new URL(request.url ?? "", "http://control.local").searchParams;
-				const envelope = await route.handler({ requestId, body: undefined, query, params });
+				const result = await route.handler({ requestId, body: undefined, query, params, response });
+				// Streaming routes (WB-009) write bytes + end the response
+				// themselves and return `{ kind: "stream" }`.
+				if ("kind" in result && result.kind === "stream") return true;
+				const envelope = result as Envelope;
 				jsonBody(response, envelope.status, envelope.body);
 				return true;
 			}
@@ -742,10 +832,21 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			}
 
 			const idempotencyKey = readIdempotencyKey(request);
-			const envelope =
+			const handlerResult =
 				idempotencyKey === undefined
-					? await route.handler({ requestId, body, query: emptyQuery, params })
-					: await withIdempotency(route, { requestId, body, query: emptyQuery, params, idempotencyKey });
+					? await route.handler({ requestId, body, query: emptyQuery, params, response })
+					: await withIdempotency(route, {
+							requestId,
+							body,
+							query: emptyQuery,
+							params,
+							idempotencyKey,
+							response,
+						});
+			// POST handlers never return { kind: "stream" }; the union is a static
+			// artifact of sharing the Route.handler signature with the single
+			// GET streaming route above.
+			const envelope = handlerResult as Envelope;
 			jsonBody(response, envelope.status, envelope.body);
 			return true;
 		} catch (error) {
@@ -769,6 +870,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			query: URLSearchParams;
 			params: readonly string[];
 			idempotencyKey: string;
+			response: ServerResponse;
 		},
 	): Promise<Envelope> {
 		const requestHash = hashRequest(route, ctx.body, ctx.params);
@@ -805,7 +907,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			};
 		}
 		try {
-			const result = await route.handler(ctx);
+			const result = (await route.handler(ctx)) as Envelope;
 			await repos.idempotency.complete(
 				idempotencyScope,
 				route.operation,

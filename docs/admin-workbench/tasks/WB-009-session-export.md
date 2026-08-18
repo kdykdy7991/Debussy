@@ -1,6 +1,6 @@
 # WB-009：会话日志流式导出
 
-状态：Backend blocked by WB-007; UI blocked by WB-006
+状态：Complete（handoff 见 `handoffs/WB-009-session-export.md`）
 
 ## 目标
 

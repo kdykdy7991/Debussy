@@ -150,3 +150,24 @@ export interface ConversationAdminAttachmentListResponse {
 	readonly conversationId: ConversationPublicId;
 	readonly items: readonly ConversationAdminAttachment[];
 }
+
+/**
+ * WB-009: conversation export modes. The archive is a single gzip-compressed
+ * JSONL stream (`session.jsonl.gz`); each line is a versioned object.
+ */
+export const CONVERSATION_EXPORT_MODES = ["full", "diagnostics", "transcript"] as const;
+export type ConversationExportMode = (typeof CONVERSATION_EXPORT_MODES)[number];
+
+/**
+ * First JSONL line of every export; freezes the export boundary so events
+ * appended after export starts are never included in this archive.
+ */
+export interface ConversationExportManifest {
+	readonly v: 1;
+	readonly kind: "manifest";
+	readonly exportVersion: "wb009-1";
+	readonly conversationId: ConversationPublicId;
+	readonly mode: ConversationExportMode;
+	readonly throughSequence: number;
+	readonly generatedAt: string;
+}
