@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { AgentApi } from "../api/agent-api.ts";
 import { AppApi, AppApiError } from "../api/app-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { navigate } from "../router.ts";
 
 export type PublishDrawerMode = "closed" | "open";
 
@@ -187,7 +188,20 @@ export function PublishDrawer({
 						{appsLoading ? (
 							<p>加载应用列表…</p>
 						) : apps.length === 0 ? (
-							<p>该 Agent 暂无关联应用。请先在应用列表创建应用。</p>
+							<div>
+								<p>该 Agent 暂无关联应用。请先到应用列表创建应用，再回来继续发布。</p>
+								<div className="actions">
+									<button
+										type="button"
+										onClick={() => {
+											onClose();
+											navigate("/apps");
+										}}
+									>
+										去创建应用
+									</button>
+								</div>
+							</div>
 						) : (
 							<div className="app-select-list">
 								{apps.map((app) => (

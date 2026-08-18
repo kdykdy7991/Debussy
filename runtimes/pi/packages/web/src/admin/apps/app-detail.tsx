@@ -9,12 +9,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppApi, AppApiError } from "../api/app-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { navigate } from "../router.ts";
+import { adminConversationsPath } from "../user-conversations/query-params.ts";
 
 type DetailTab = "overview" | "versions" | "config" | "embed" | "keys" | "audit" | "users" | "danger";
 
 type LoadState =
 	| { kind: "loading" }
 	| { kind: "loaded"; detail: PublishedAppDetail; versions: readonly PublishedAppVersionSummary[] }
+	| { kind: "error"; message: string };
+
+/** Lazy-tab section state (MVP-06): errors surface explicitly, never become empty arrays. */
+type SectionState<T> =
+	| { kind: "idle" }
+	| { kind: "loading" }
+	| { kind: "loaded"; items: readonly T[]; nextCursor: string | null }
 	| { kind: "error"; message: string };
 
 export function AdminAppDetail({ appId }: { readonly appId: string }): React.ReactElement {
@@ -24,21 +32,14 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 	const api = apiRef.current;
 	const [tab, setTab] = useState<DetailTab>("overview");
 	const [state, setState] = useState<LoadState>({ kind: "loading" });
-	const [launchKeys, setLaunchKeys] = useState<readonly LaunchKeySummary[]>([]);
-	const [audits, setAudits] = useState<readonly unknown[]>([]);
+	const [keySection, setKeySection] = useState<SectionState<LaunchKeySummary>>({ kind: "idle" });
+	const [auditSection, setAuditSection] = useState<SectionState<unknown>>({ kind: "idle" });
 
 	const load = useCallback(() => {
 		setState({ kind: "loading" });
-		void Promise.all([
-			api.getPublishedApp(appId),
-			api.listVersions(appId, { limit: 50 }),
-			api.listLaunchKeys(appId).catch(() => ({ items: [] })),
-			api.listAuditEvents({ appId, limit: 50 }).catch(() => ({ items: [] })),
-		]).then(
-			([detail, versions, keysRes, auditRes]) => {
+		void Promise.all([api.getPublishedApp(appId), api.listVersions(appId, { limit: 50 })]).then(
+			([detail, versions]) => {
 				setState({ kind: "loaded", detail, versions: versions.items });
-				setLaunchKeys(keysRes.items);
-				setAudits(auditRes.items);
 			},
 			(err: Error) => setState({ kind: "error", message: err.message }),
 		);
@@ -47,6 +48,43 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 	useEffect(() => {
 		void load();
 	}, [load]);
+
+	// MVP-06: Launch Keys / Audit load on tab enter, with explicit error state
+	// (previously the eager `.catch(() => ({ items: [] }))` silently turned any
+	// failure into an empty list, hiding outages).
+	useEffect(() => {
+		if (tab !== "keys" || keySection.kind !== "idle") return;
+		let cancelled = false;
+		setKeySection({ kind: "loading" });
+		void api.listLaunchKeys(appId).then(
+			(res) => {
+				if (!cancelled) setKeySection({ kind: "loaded", items: res.items, nextCursor: null });
+			},
+			(err: Error) => {
+				if (!cancelled) setKeySection({ kind: "error", message: err.message });
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [tab, keySection.kind, api, appId]);
+
+	useEffect(() => {
+		if (tab !== "audit" || auditSection.kind !== "idle") return;
+		let cancelled = false;
+		setAuditSection({ kind: "loading" });
+		void api.listAuditEvents({ appId, limit: 50 }).then(
+			(res) => {
+				if (!cancelled) setAuditSection({ kind: "loaded", items: res.items, nextCursor: res.nextCursor });
+			},
+			(err: Error) => {
+				if (!cancelled) setAuditSection({ kind: "error", message: err.message });
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [tab, auditSection.kind, api, appId]);
 
 	if (state.kind === "loading") return <output>加载应用详情…</output>;
 	if (state.kind === "error")
@@ -101,46 +139,31 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 				/>
 			)}
 			{tab === "config" && (
-				<div className="panel">
-					<p>应用配置编辑由 WB-004 实施；当前可在发布流程中创建版本。</p>
-					<dl>
-						<dt>名称</dt>
-						<dd>{detail.name}</dd>
-						<dt>访问模式</dt>
-						<dd>{detail.accessMode}</dd>
-						<dt>允许 Origin</dt>
-						<dd>{detail.allowedOrigins?.join(", ") ?? "—"}</dd>
-					</dl>
-				</div>
+				<ConfigPanel
+					name={detail.name}
+					accessMode={detail.accessMode}
+					allowedOrigins={detail.allowedOrigins ?? []}
+				/>
 			)}
 			{tab === "embed" && (
-				<div className="panel">
-					<p>嵌入方式由 WB-010 实施。</p>
-					<p>
-						Embed URL:{" "}
-						<code>{detail.publicAppId ? `${window.location.origin}/embed/${detail.publicAppId}` : "—"}</code>
-					</p>
-				</div>
+				<EmbedPanel publicAppId={detail.publicAppId} allowedOrigins={detail.allowedOrigins ?? []} />
 			)}
 			{tab === "keys" && (
 				<LaunchKeysPanel
 					appId={appId}
-					keys={launchKeys}
+					section={keySection}
 					api={api}
-					onChange={() => {
-						void api.listLaunchKeys(appId).then(
-							(res) => setLaunchKeys(res.items),
-							() => {},
+					onRefresh={() => {
+						setKeySection({ kind: "idle" });
+						api.listLaunchKeys(appId).then(
+							(res) => setKeySection({ kind: "loaded", items: res.items, nextCursor: null }),
+							(err: Error) => setKeySection({ kind: "error", message: err.message }),
 						);
 					}}
 				/>
 			)}
-			{tab === "audit" && <AuditPanel items={audits} />}
-			{tab === "users" && (
-				<div className="panel">
-					<p>用户会话管理由 WB-006 实施。</p>
-				</div>
-			)}
+			{tab === "audit" && <AuditPanel section={auditSection} />}
+			{tab === "users" && <UsersPanel appId={appId} publicAppId={detail.publicAppId} />}
 			{tab === "danger" && (
 				<DangerZonePanel
 					appId={appId}
@@ -154,6 +177,121 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 				/>
 			)}
 		</section>
+	);
+}
+
+/**
+ * 应用配置 tab（MVP-06）。
+ *
+ * Control API 没有"原地更新应用配置"的端点；配置的实际生效必须通过
+ * 新建 Version 完成。因此这里只读展示当前配置，并明确引导"修改配置 →
+ * 请在版本与上线里新建/上线"。（真实字段编辑若后续引入 update 端点，
+ * 再拆成保存/上线。）
+ */
+function ConfigPanel({
+	name,
+	accessMode,
+	allowedOrigins,
+}: {
+	readonly name: string;
+	readonly accessMode: string;
+	readonly allowedOrigins: readonly string[];
+}): React.ReactElement {
+	return (
+		<div className="panel">
+			<p>
+				<strong>只读</strong>：应用配置的修改必须通过新建 Version 生效（当前 Control API 不提供原地更新）。
+				请到「版本与上线」页创建并上线新版本。
+			</p>
+			<dl className="diff-summary">
+				<dt>名称</dt>
+				<dd>{name}</dd>
+				<dt>访问模式</dt>
+				<dd>{accessMode}</dd>
+				<dt>允许 Origin</dt>
+				<dd>{allowedOrigins.length === 0 ? "—" : allowedOrigins.join(", ")}</dd>
+			</dl>
+		</div>
+	);
+}
+
+/** 接入方式 tab（MVP-06）：可复制 iframe 与 WB-010 SDK 示例，用真实数据。 */
+function EmbedPanel({
+	publicAppId,
+	allowedOrigins,
+}: {
+	readonly publicAppId: string;
+	readonly allowedOrigins: readonly string[];
+}): React.ReactElement {
+	const origin = typeof window !== "undefined" ? window.location.origin : "";
+	const embedUrl = buildEmbedUrl(origin, publicAppId);
+	const iframeSnippet = buildIframeSnippet(origin, publicAppId);
+	const sdkSnippet = buildSdkSnippet(origin, publicAppId);
+
+	return (
+		<div className="panel">
+			<h3>iframe 接入</h3>
+			<p>
+				Embed URL：<code>{embedUrl}</code>
+			</p>
+			<p>允许 Origin：{allowedOrigins.length === 0 ? "（无，默认同源）" : allowedOrigins.join(", ")}</p>
+			<CopyBlock label="iframe 代码" text={iframeSnippet} />
+			<h3>SDK 接入（WB-010）</h3>
+			<CopyBlock label="SDK 示例" text={sdkSnippet} />
+		</div>
+	);
+}
+
+function CopyBlock({ label, text }: { readonly label: string; readonly text: string }): React.ReactElement {
+	const [copied, setCopied] = useState(false);
+	return (
+		<div className="embed-copy">
+			<button
+				type="button"
+				onClick={() => {
+					void navigator.clipboard?.writeText(text).then(() => {
+						setCopied(true);
+						window.setTimeout(() => setCopied(false), 1500);
+					});
+				}}
+			>
+				{copied ? "已复制" : `复制${label}`}
+			</button>
+			<pre className="code-block">{text}</pre>
+		</div>
+	);
+}
+
+export function buildEmbedUrl(origin: string, publicAppId: string): string {
+	return `${origin.replace(/\/+$/, "")}/embed/${publicAppId}`;
+}
+
+export function buildIframeSnippet(origin: string, publicAppId: string): string {
+	return `<iframe\n  src="${buildEmbedUrl(origin, publicAppId)}"\n  width="100%"\n  height="640"\n  allow="microphone; camera"\n  referrerpolicy="origin"\n  title="Pi Embed ${publicAppId}"\n></iframe>`;
+}
+
+export function buildSdkSnippet(origin: string, publicAppId: string): string {
+	return `import { createClient } from "@earendil-works/pi-embed-sdk";\n\nconst client = createClient({ publicAppId: "${publicAppId}", origin: "${origin}" });\nclient.mount("#host");`;
+}
+
+/** 用户会话 tab（MVP-06）：跳转到用户会话列表并预填 appId 筛选。 */
+function UsersPanel({
+	appId,
+	publicAppId,
+}: {
+	readonly appId: string;
+	readonly publicAppId: string;
+}): React.ReactElement {
+	return (
+		<div className="panel">
+			<p>查看该应用下的真实企业用户会话（脱敏列表，非管理员 DebugSession）。</p>
+			<p>
+				<code>publicAppId</code>：{publicAppId}
+			</p>
+			<button type="button" onClick={() => navigate(adminConversationsPath(appId))}>
+				查看该应用的用户会话 →
+			</button>
+		</div>
 	);
 }
 
@@ -525,14 +663,14 @@ function OperationConfirmation(props: {
 
 function LaunchKeysPanel({
 	appId,
-	keys,
+	section,
 	api,
-	onChange,
+	onRefresh,
 }: {
 	readonly appId: string;
-	readonly keys: readonly LaunchKeySummary[];
+	section: SectionState<LaunchKeySummary>;
 	readonly api: AppApi;
-	readonly onChange: () => void;
+	readonly onRefresh: () => void;
 }): React.ReactElement {
 	const [keyId, setKeyId] = useState("");
 	const [pem, setPem] = useState("");
@@ -555,7 +693,7 @@ function LaunchKeysPanel({
 			await api.createLaunchKey({ appId, keyId: trimmed, publicKeyPem: pem.trim() });
 			setKeyId("");
 			setPem("");
-			onChange();
+			onRefresh();
 		} catch (err) {
 			setError(err instanceof AppApiError ? err.message : String(err));
 		} finally {
@@ -567,7 +705,7 @@ function LaunchKeysPanel({
 		setBusy(true);
 		try {
 			await api.revokeLaunchKey({ appId, keyId: kId });
-			onChange();
+			onRefresh();
 		} catch (err) {
 			setError(err instanceof AppApiError ? err.message : String(err));
 		} finally {
@@ -595,107 +733,132 @@ function LaunchKeysPanel({
 			{error !== null && <p className="banner error">{error}</p>}
 
 			<h3>已登记 Key</h3>
-			<table className="key-table">
-				<thead>
-					<tr>
-						<th>keyId</th>
-						<th>算法</th>
-						<th>状态</th>
-						<th>notBefore</th>
-						<th>expiresAt</th>
-						<th>创建时间</th>
-						<th>操作</th>
-					</tr>
-				</thead>
-				<tbody>
-					{keys.map((k) => (
-						<tr key={k.id}>
-							<td>
-								<code>{k.keyId}</code>
-							</td>
-							<td>{k.algorithm}</td>
-							<td>
-								<span className={`badge status-${k.status}`}>{k.status}</span>
-							</td>
-							<td>{k.notBefore}</td>
-							<td>{k.expiresAt ?? "—"}</td>
-							<td>{k.createdAt}</td>
-							<td>
-								{k.status !== "revoked" && (
-									<button type="button" disabled={busy} onClick={() => doRevoke(k.keyId)}>
-										吊销
-									</button>
-								)}
-							</td>
-						</tr>
-					))}
-					{keys.length === 0 && (
+			{section.kind === "loading" && <p>加载中…</p>}
+			{section.kind === "error" && (
+				<div className="banner error" role="alert">
+					<span>加载失败：{section.message}</span>
+					<button type="button" onClick={onRefresh}>
+						重试
+					</button>
+				</div>
+			)}
+			{section.kind === "loaded" && (
+				<table className="key-table">
+					<thead>
 						<tr>
-							<td colSpan={7}>暂无 Key</td>
+							<th>keyId</th>
+							<th>算法</th>
+							<th>状态</th>
+							<th>notBefore</th>
+							<th>expiresAt</th>
+							<th>创建时间</th>
+							<th>操作</th>
 						</tr>
-					)}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{section.items.map((k) => (
+							<tr key={k.id}>
+								<td>
+									<code>{k.keyId}</code>
+								</td>
+								<td>{k.algorithm}</td>
+								<td>
+									<span className={`badge status-${k.status}`}>{k.status}</span>
+								</td>
+								<td>{k.notBefore}</td>
+								<td>{k.expiresAt ?? "—"}</td>
+								<td>{k.createdAt}</td>
+								<td>
+									{k.status !== "revoked" && (
+										<button type="button" disabled={busy} onClick={() => doRevoke(k.keyId)}>
+											吊销
+										</button>
+									)}
+								</td>
+							</tr>
+						))}
+						{section.items.length === 0 && (
+							<tr>
+								<td colSpan={7}>暂无 Key</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			)}
 		</div>
 	);
 }
 
-function AuditPanel({ items }: { readonly items: readonly unknown[] }): React.ReactElement {
-	const audits = items as ReadonlyArray<{
-		id: string;
-		createdAt: string;
-		action: string;
-		actorType: string;
-		actorId: string;
-		resourceType: string;
-		resourceId: string;
-		requestId: string;
-		metadata: unknown;
-	}>;
+interface AuditRow {
+	id: string;
+	createdAt: string;
+	action: string;
+	actorType: string;
+	actorId: string;
+	resourceType: string;
+	resourceId: string;
+	requestId: string;
+	metadata: unknown;
+}
+
+function AuditPanel({ section }: { section: SectionState<unknown> }): React.ReactElement {
 	return (
 		<div className="panel">
 			<h3>审计事件</h3>
-			<table className="audit-table">
-				<thead>
-					<tr>
-						<th>时间</th>
-						<th>操作</th>
-						<th>资源类型</th>
-						<th>发起人</th>
-						<th>requestId</th>
-						<th>详情</th>
-					</tr>
-				</thead>
-				<tbody>
-					{audits.map((a) => (
-						<tr key={a.id}>
-							<td>{a.createdAt}</td>
-							<td>{a.action}</td>
-							<td>
-								{a.resourceType}/{a.resourceId?.slice(0, 12)}
-							</td>
-							<td>
-								{a.actorType}/{a.actorId?.slice(0, 12)}
-							</td>
-							<td>
-								<code>{a.requestId?.slice(0, 12)}</code>
-							</td>
-							<td>
-								<details>
-									<summary>查看</summary>
-									<pre>{JSON.stringify(a.metadata, null, 2)}</pre>
-								</details>
-							</td>
-						</tr>
-					))}
-					{audits.length === 0 && (
-						<tr>
-							<td colSpan={6}>暂无审计事件</td>
-						</tr>
-					)}
-				</tbody>
-			</table>
+			{section.kind === "loading" && <p>加载中…</p>}
+			{section.kind === "error" && (
+				<div className="banner error" role="alert">
+					<span>加载失败：{section.message}</span>
+				</div>
+			)}
+			{section.kind === "loaded" && <AuditTable items={section.items as unknown as readonly AuditRow[]} />}
 		</div>
+	);
+}
+
+function AuditTable({ items }: { readonly items: readonly AuditRow[] }): React.ReactElement {
+	const audits = items;
+	return (
+		<table className="audit-table">
+			<thead>
+				<tr>
+					<th>时间</th>
+					<th>操作</th>
+					<th>资源类型</th>
+					<th>发起人</th>
+					<th>requestId</th>
+					<th>详情</th>
+				</tr>
+			</thead>
+			<tbody>
+				{audits.map((a) => (
+					<tr key={a.id}>
+						<td>{a.createdAt}</td>
+						<td>{a.action}</td>
+						<td>
+							{a.resourceType}/{a.resourceId?.slice(0, 12)}
+						</td>
+						<td>
+							{a.actorType}/{a.actorId?.slice(0, 12)}
+						</td>
+						<td>
+							<code>{a.requestId?.slice(0, 12)}</code>
+						</td>
+						<td>
+							<details>
+								<summary>查看</summary>
+								<pre>{JSON.stringify(a.metadata, null, 2)}</pre>
+							</details>
+						</td>
+					</tr>
+				))}
+				{audits.length === 0 && (
+					<tr>
+						<td colSpan={6}>暂无审计事件</td>
+					</tr>
+				)}
+			</tbody>
+		</table>
 	);
 }
 

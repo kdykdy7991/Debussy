@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
 import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { createDebugSessionStore } from "../conversation/debug-session-store.ts";
 import { AgentForm } from "./agent-form.tsx";
 import {
 	type AgentState,
@@ -164,7 +165,7 @@ export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.Rea
 			) : null}
 			{tab === "revisions" ? <RevisionTab agentId={agentId} api={resolvedApi} /> : null}
 			{tab === "apps" ? <AppsTab agentId={agentId} api={resolvedApi} /> : null}
-			{tab === "debug" ? <DebugTab /> : null}
+			{tab === "debug" ? <DebugTab agentId={agentId} /> : null}
 			<PublishDrawer
 				agentId={agentId}
 				hasDraft={state.status !== "saved"}
@@ -288,6 +289,40 @@ function AppsTab({ agentId, api }: { agentId: AgentPublicId; api: AgentApi }): R
 	);
 }
 
-function DebugTab(): React.ReactElement {
-	return <p className="admin-shell__placeholder">该 Agent 的 DebugSession 列表由 WB-006 / WB-007 实施。</p>;
+/**
+ * Debug records tab (MVP-05).
+ *
+ * Shows the administrator's own DebugSession mapping for this Agent, read
+ * from `debug-session-store` (the same per-agent source used by the admin
+ * chat page). It deliberately does NOT surface enterprise user sessions —
+ * those live under the "用户会话" module, never here.
+ *
+ * Because the real Pi debug WebSocket round-trip is gated until MVP-08, the
+ * tab reflects what the browser actually holds: a `agentId -> sessionId`
+ * mapping. When no debug session has been opened for this Agent, it shows an
+ * empty state with a link to the debug chat page.
+ */
+function DebugTab({ agentId }: { readonly agentId: AgentPublicId }): React.ReactElement {
+	const [sessionId, setSessionId] = useState<string | null>(null);
+	useEffect(() => {
+		const store = createDebugSessionStore();
+		setSessionId(store.get(agentId));
+		return () => {
+			// ephemeral store instance; no persistent handles to release.
+		};
+	}, [agentId]);
+	return (
+		<div className="debug-records">
+			<h3>管理员调试记录</h3>
+			{sessionId === null ? (
+				<p>该 Agent 还没有管理员调试会话。请到「对话」页为这个 Agent 开启一次调试。</p>
+			) : (
+				<ul>
+					<li>
+						<strong>最近 DebugSession</strong> · <code>{sessionId}</code>
+					</li>
+				</ul>
+			)}
+		</div>
+	);
 }

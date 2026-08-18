@@ -1,22 +1,27 @@
 /**
- * Admin Auth Context（WB-002 / SPEC §9.1）。
+ * Admin Auth Context（WB-002 / SPEC §9.1；MVP-01 真实解锁）。
  *
  * 把现有的 `AdminAuthController` 暴露为 React Context：状态从 controller
  * 读取，写入（解锁/锁定/401）调用 controller。Token 永远只在 controller
  * 内存里；React 层只持有 `state`、`baseUrl`、`tenant` 这些**不敏感**的
  * 投影。
  *
- * 不使用任何 Storage、URL、console 或异常文本持久化 token。
+ * 不使用任何 Storage、URL、console 或异常文本持久化 token。解锁流程必须
+ * 走 AdminSessionApi 调 `GET /api/control/v1/session` 验证；服务端返回
+ * 成功后才把状态推进到 `connected`。任何 401 或网络错误都会把 controller
+ * 推回 `error` 并清空内存 token。
  */
 
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useState } from "react";
 import { AdminAuthController, type AdminAuthSnapshot } from "../../publishing/auth-controller.ts";
+import { AdminSessionApi, AdminSessionApiError } from "../api/session-api.ts";
 
 export interface AdminAuthContextValue {
 	readonly snapshot: AdminAuthSnapshot;
 	readonly unlock: (token: string) => Promise<void>;
 	readonly lock: () => void;
+	readonly setBaseUrl: (baseUrl: string) => void;
 	readonly markApiError: (status: number, message: string) => void;
 	readonly controller: AdminAuthController;
 }
@@ -47,17 +52,33 @@ export function AdminAuthProvider({ controller, baseUrl, children }: AdminAuthPr
 			const trimmed = token.trim();
 			if (trimmed === "") return;
 			ctrl.connect(trimmed);
+			const api = new AdminSessionApi({ auth: ctrl });
 			try {
-				// 占位：真实 tenant 拉取由 PublishingApi 在 WB-004 接入。
-				// 当前只把状态推进到 connected 以演示解锁流程；后续 WB-004 替换。
-				await ctrl.completeConnection({ id: "ten_placeholder", name: "默认租户" });
+				const session = await api.fetchSession();
+				// Server-derived projection only; never fall back to a static
+				// placeholder if the endpoint succeeds.
+				await ctrl.completeConnection({
+					id: session.tenantId,
+					name: session.tenantName,
+				});
 			} catch (err) {
-				ctrl.failConnection(err instanceof Error ? err.message : "unlock failed");
-				throw err;
+				const message =
+					err instanceof AdminSessionApiError
+						? `Admin token rejected (HTTP ${err.httpStatus})`
+						: err instanceof Error
+							? err.message
+							: "Admin token verification failed";
+				// controller.failConnection wipes the in-memory token; listeners
+				// observe state=error and the workbench re-renders the lock UI.
+				ctrl.failConnection(message);
+				throw err instanceof Error ? err : new Error(message);
 			}
 		},
 		lock: () => {
 			ctrl.lock();
+		},
+		setBaseUrl: (baseUrl: string) => {
+			ctrl.setBaseUrl(baseUrl);
 		},
 		markApiError: (status: number, message: string) => {
 			if (status === 401) {

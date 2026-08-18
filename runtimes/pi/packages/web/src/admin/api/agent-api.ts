@@ -15,9 +15,11 @@ import type {
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
 	AgentPublicId,
+	ImportCurrentAgentResponse,
 	SaveAgentRevisionResponse,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
+import { newIdempotencyKey } from "./idempotency.ts";
 
 export interface AgentApiOptions {
 	readonly auth: AdminAuthController;
@@ -61,7 +63,7 @@ export class AgentApi {
 	constructor(options: AgentApiOptions) {
 		this.auth = options.auth;
 		this.baseUrl = (options.baseUrl ?? options.auth.getSnapshot().baseUrl).replace(/\/+$/, "");
-		this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+		this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	}
 
 	private async request<T>(opts: RequestOptions): Promise<T> {
@@ -163,5 +165,24 @@ export class AgentApi {
 
 	listAgentApps(agentId: AgentPublicId): Promise<{ readonly items: readonly AgentDefinitionAssociatedApp[] }> {
 		return this.request({ method: "GET", path: `/api/control/v1/agent-definitions/${agentId}/apps` });
+	}
+
+	/**
+	 * Freeze the current agent configuration into an AgentDefinition
+	 * (MVP-03 / spec 33.3). The server is naturally idempotent on the source
+	 * hash, but we still send an Idempotency-Key so a network retry does not
+	 * race against an in-flight import.
+	 */
+	importCurrentAgent(input?: { readonly expectedSourceHash?: string | null }): Promise<ImportCurrentAgentResponse> {
+		const body =
+			input?.expectedSourceHash === undefined || input.expectedSourceHash === null
+				? {}
+				: { expectedSourceHash: input.expectedSourceHash };
+		return this.request<ImportCurrentAgentResponse>({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions/import-current",
+			body,
+			idempotencyKey: newIdempotencyKey({ operation: "agent.import" }),
+		});
 	}
 }

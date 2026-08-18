@@ -10,6 +10,8 @@
 import type {
 	AuditEventListResponse,
 	CreatePreviewTicketRequest,
+	CreatePublishedAppRequest,
+	CreatePublishedAppResponse,
 	CreatePublishedAppVersionResponse,
 	CursorPage,
 	DashboardSummary,
@@ -20,6 +22,7 @@ import type {
 	PublishedAppVersionSummary,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
+import { newIdempotencyKey } from "./idempotency.ts";
 
 export class AppApiError extends Error {
 	readonly httpStatus: number;
@@ -63,7 +66,7 @@ export class AppApi {
 	constructor(options: AppApiOptions) {
 		this.auth = options.auth;
 		this.baseUrl = (options.baseUrl ?? options.auth.getSnapshot().baseUrl).replace(/\/+$/, "");
-		this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+		this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	}
 
 	private async request<T>(opts: RequestOptions): Promise<T> {
@@ -111,12 +114,26 @@ export class AppApi {
 	}
 
 	private randomKey(): string {
-		if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-		return `ik_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+		return newIdempotencyKey({ operation: "app.write" });
 	}
 
 	getDashboardSummary(): Promise<DashboardSummary> {
 		return this.request({ method: "GET", path: "/api/control/v1/dashboard/summary" });
+	}
+
+	/**
+	 * Create a draft PublishedApp pinned to an existing AgentDefinition
+	 * (MVP-03). Server rejects unknown access modes and bad allowedOrigins
+	 * with 400 INVALID_REQUEST / INVALID_ORIGINS. Private launch key
+	 * material never crosses this boundary.
+	 */
+	createPublishedApp(input: CreatePublishedAppRequest): Promise<CreatePublishedAppResponse> {
+		return this.request<CreatePublishedAppResponse>({
+			method: "POST",
+			path: "/api/control/v1/published-apps",
+			body: input,
+			idempotencyKey: newIdempotencyKey({ operation: "app.create" }),
+		});
 	}
 
 	listPublishedApps(input: {

@@ -1,18 +1,24 @@
 /**
- * 右侧抽屉容器（WB-002 / SPEC §4.1）。
+ * 右侧抽屉容器（WB-002 / SPEC §4.1；MVP-07 收口）。
  *
- * 抽屉当前为「通用上下文占位」，WB-003 实施时将根据 route 注入 Agent
- * 配置、发布管理或工具调用详情。组件接口稳定，避免后续模块改 Shell。
+ * MVP-07：抽屉只在有真实上下文内容时打开，默认不永久占用 360px 宽度。
+ * 当前各模块尚未注入抽屉上下文，因此本组件不渲染任何占位文案——只有
+ * 当 `hasContext` 表明存在真实内容时才挂载抽屉。所有占位已被移除。
  */
-
 import { ADMIN_WORKBENCH_TERMS } from "@earendil-works/pi-protocol";
 import type { AdminRoute } from "../router.ts";
 
 export interface RightDrawerProps {
 	readonly route: AdminRoute;
+	/** Whether the current module has real contextual content for the drawer. */
+	readonly hasContext?: boolean;
 }
 
-export function AdminRightDrawer({ route }: RightDrawerProps): React.ReactElement {
+export function AdminRightDrawer({ route, hasContext = false }: RightDrawerProps): React.ReactElement | null {
+	// No module injects drawer content yet; collapse instead of reserving
+	// 360px of permanent width with a placeholder (MVP-07).
+	if (!hasContext) return null;
+
 	const heading: string = (() => {
 		switch (route.id) {
 			case "chat":
@@ -33,7 +39,7 @@ export function AdminRightDrawer({ route }: RightDrawerProps): React.ReactElemen
 	return (
 		<aside className="admin-shell__right-drawer" aria-label="right drawer">
 			<h2 style={{ fontSize: 14, margin: "0 0 12px" }}>{heading}</h2>
-			<div className="admin-shell__placeholder">抽屉内容由对应模块填充。</div>
+			<p>上下文内容将在此显示。</p>
 		</aside>
 	);
 }

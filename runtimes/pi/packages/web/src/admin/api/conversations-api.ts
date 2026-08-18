@@ -14,6 +14,7 @@ import type {
 	ConversationAdminEventListResponse,
 	ConversationAdminListResponse,
 	ConversationAdminSummaryListResponse,
+	ConversationExportMode,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 
@@ -54,6 +55,8 @@ export interface ConversationListArgs {
 	readonly agentId?: string;
 	readonly principalType?: "external_user" | "anonymous_visitor" | "";
 	readonly publishedAppVersionId?: string;
+	readonly createdAfter?: string;
+	readonly createdBefore?: string;
 }
 
 export class ConversationsApi {
@@ -64,7 +67,7 @@ export class ConversationsApi {
 	constructor(options: ConversationsApiOptions) {
 		this.auth = options.auth;
 		this.baseUrl = (options.baseUrl ?? options.auth.getSnapshot().baseUrl).replace(/\/+$/, "");
-		this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+		this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	}
 
 	private async request<T>(path: string): Promise<T> {
@@ -115,7 +118,41 @@ export class ConversationsApi {
 		if (input.publishedAppVersionId !== undefined && input.publishedAppVersionId !== "") {
 			params.set("publishedAppVersionId", input.publishedAppVersionId);
 		}
+		if (input.createdAfter !== undefined && input.createdAfter !== "") params.set("createdAfter", input.createdAfter);
+		if (input.createdBefore !== undefined && input.createdBefore !== "")
+			params.set("createdBefore", input.createdBefore);
 		return this.request<ConversationAdminListResponse>(`/api/control/v1/conversations?${params.toString()}`);
+	}
+
+	async downloadExport(conversationId: string, mode: ConversationExportMode): Promise<Blob> {
+		const token = this.auth.getToken();
+		if (token === null || token === "") {
+			throw new ConversationsApiError("Admin token is not set", 401, null, "UNAUTHORIZED");
+		}
+		const params = new URLSearchParams({ mode });
+		const response = await this.fetchImpl(
+			`${this.baseUrl}/api/control/v1/conversations/${encodeURIComponent(conversationId)}/export?${params.toString()}`,
+			{ headers: { Authorization: `Bearer ${token}`, Accept: "application/jsonl+gzip" } },
+		);
+		if (!response.ok) {
+			const parsed = safeParse(await response.text()) as ErrorEnvelope | null;
+			const error = parsed?.error;
+			this.auth.handleApiError({
+				name: "ConversationsApiError",
+				code: error?.code ?? "HTTP_ERROR",
+				message: error?.message ?? `HTTP ${response.status}`,
+				requestId: error?.requestId ?? "",
+				retryable: false,
+				httpStatus: response.status,
+			});
+			throw new ConversationsApiError(
+				error?.message ?? `HTTP ${response.status}`,
+				response.status,
+				error?.requestId ?? null,
+				error?.code ?? null,
+			);
+		}
+		return response.blob();
 	}
 
 	getDetail(conversationId: string): Promise<{

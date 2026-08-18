@@ -21,10 +21,12 @@ import type {
 	ConversationAdminSummary,
 	ConversationAdminSummaryEntry,
 	ConversationAdminSummaryListResponse,
+	ConversationExportMode,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { ConfirmModal } from "../components/confirm-modal.tsx";
 import { navigate } from "../router.ts";
 
 type Tab = "overview" | "events" | "summary" | "attachments";
@@ -42,11 +44,13 @@ interface DetailData {
 type DetailState = { kind: "loading" } | { kind: "loaded"; data: DetailData } | { kind: "error"; message: string };
 
 type EventState =
+	| { kind: "idle" }
 	| { kind: "loading"; items: readonly ConversationAdminEvent[]; done: boolean }
 	| { kind: "loaded"; items: readonly ConversationAdminEvent[]; done: boolean }
 	| { kind: "error"; message: string };
 
 type SummaryState =
+	| { kind: "idle" }
 	| { kind: "loading" }
 	| { kind: "loaded"; data: ConversationAdminSummaryListResponse }
 	| { kind: "error"; message: string };
@@ -69,13 +73,17 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
 	const [tab, setTab] = useState<Tab>("overview");
 	const [detail, setDetail] = useState<DetailState>({ kind: "loading" });
-	const [events, setEvents] = useState<EventState>({ kind: "loading", items: [], done: false });
-	const [summaries, setSummaries] = useState<SummaryState>({ kind: "loading" });
+	const [events, setEvents] = useState<EventState>({ kind: "idle" });
+	const [summaries, setSummaries] = useState<SummaryState>({ kind: "idle" });
 	const [attachments, setAttachments] = useState<
+		| { kind: "idle" }
 		| { kind: "loading" }
 		| { kind: "loaded"; data: ConversationAdminAttachmentListResponse }
 		| { kind: "error"; message: string }
-	>({ kind: "loading" });
+	>({ kind: "idle" });
+	const [fullExportOpen, setFullExportOpen] = useState(false);
+	const [exporting, setExporting] = useState<ConversationExportMode | null>(null);
+	const [exportError, setExportError] = useState<string | null>(null);
 
 	const loadDetail = useCallback(() => {
 		setDetail({ kind: "loading" });
@@ -87,14 +95,19 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 
 	const loadEvents = useCallback(
 		(afterSequence: number, keep: boolean) => {
-			setEvents((prev) => (keep ? prev : { kind: "loading", items: [], done: false }));
+			setEvents((prev) =>
+				keep && prev.kind === "loaded"
+					? { kind: "loading", items: prev.items, done: prev.done }
+					: { kind: "loading", items: [], done: false },
+			);
 			void api.listEvents(conversationId, { limit: 50, afterSequence }).then(
-				(res) =>
+				(res) => {
 					setEvents((prev) => {
 						const base = prev.kind === "loaded" || prev.kind === "loading" ? prev.items : [];
 						const items = keep ? [...base, ...res.items] : res.items;
 						return { kind: "loaded", items, done: res.nextAfterSequence === null };
-					}),
+					});
+				},
 				(err: Error) => setEvents({ kind: "error", message: err.message }),
 			);
 		},
@@ -110,14 +123,47 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 	}, [api, conversationId]);
 
 	useEffect(() => {
+		setTab("overview");
+		setEvents({ kind: "idle" });
+		setSummaries({ kind: "idle" });
+		setAttachments({ kind: "idle" });
+		setExportError(null);
 		loadDetail();
-		loadEvents(0, false);
-		loadSummaries();
-		void api.listAttachments(conversationId).then(
-			(data) => setAttachments({ kind: "loaded", data }),
-			(err: Error) => setAttachments({ kind: "error", message: err.message }),
-		);
-	}, [api, conversationId, loadDetail, loadEvents, loadSummaries]);
+	}, [loadDetail]);
+
+	useEffect(() => {
+		if (tab === "events" && events.kind === "idle") loadEvents(0, false);
+		if (tab === "summary" && summaries.kind === "idle") loadSummaries();
+		if (tab === "attachments" && attachments.kind === "idle") {
+			setAttachments({ kind: "loading" });
+			void api.listAttachments(conversationId).then(
+				(data) => setAttachments({ kind: "loaded", data }),
+				(err: Error) => setAttachments({ kind: "error", message: err.message }),
+			);
+		}
+	}, [api, attachments.kind, conversationId, events.kind, loadEvents, loadSummaries, summaries.kind, tab]);
+
+	const downloadExport = useCallback(
+		async (mode: ConversationExportMode): Promise<void> => {
+			setExporting(mode);
+			setExportError(null);
+			try {
+				const blob = await api.downloadExport(conversationId, mode);
+				const url = URL.createObjectURL(blob);
+				const anchor = document.createElement("a");
+				anchor.href = url;
+				anchor.download = `conversation-${conversationId}-${mode}.jsonl.gz`;
+				anchor.click();
+				URL.revokeObjectURL(url);
+				setFullExportOpen(false);
+			} catch (error) {
+				setExportError(error instanceof Error ? error.message : String(error));
+			} finally {
+				setExporting(null);
+			}
+		},
+		[api, conversationId],
+	);
 
 	const onNextEvents = () => {
 		if (events.kind === "loaded" && events.items.length > 0) {
@@ -128,6 +174,15 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 
 	return (
 		<section>
+			<ConfirmModal
+				open={fullExportOpen}
+				title="确认完整导出"
+				body="完整包包含会话正文和工具载荷等敏感内容。导出操作会写入审计日志。"
+				confirmLabel={exporting === "full" ? "导出中…" : "确认并下载"}
+				typeToConfirm="完整导出"
+				onConfirm={() => downloadExport("full")}
+				onCancel={() => setFullExportOpen(false)}
+			/>
 			<nav className="detail-breadcrumb">
 				<button type="button" onClick={() => navigate("/conversations")}>
 					← 返回会话列表
@@ -144,7 +199,29 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 			)}
 			{detail.kind === "loaded" && (
 				<>
-					<h1>{detail.data.conversation.title || "（无标题）"}</h1>
+					<div className="conversation-detail-heading">
+						<h1>{detail.data.conversation.title || "（无标题）"}</h1>
+						<div className="conversation-export-actions">
+							<button
+								type="button"
+								disabled={exporting !== null}
+								onClick={() => void downloadExport("diagnostics")}
+							>
+								导出诊断包
+							</button>
+							<button
+								type="button"
+								disabled={exporting !== null}
+								onClick={() => void downloadExport("transcript")}
+							>
+								导出 Transcript
+							</button>
+							<button type="button" disabled={exporting !== null} onClick={() => setFullExportOpen(true)}>
+								完整导出…
+							</button>
+						</div>
+					</div>
+					{exportError !== null && <div className="banner error">导出失败：{exportError}</div>}
 					<p className="conversation-meta">
 						{detail.data.conversation.id} · {detail.data.conversation.appName} · 状态{" "}
 						{statusLabel(detail.data.conversation.status)} · 主体 {detail.data.conversation.principalDisplayId}
@@ -315,6 +392,7 @@ function AttachmentsTab({
 	state,
 }: {
 	readonly state:
+		| { kind: "idle" }
 		| { kind: "loading" }
 		| { kind: "loaded"; data: ConversationAdminAttachmentListResponse }
 		| { kind: "error"; message: string };

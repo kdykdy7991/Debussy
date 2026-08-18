@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite",
 		"dev:embed": "PI_WEB_TARGET=embed vite",
+		"dev:admin": "PI_WEB_TARGET=admin vite",
 		"build:admin": "tsgo --noEmit -p tsconfig.json && PI_WEB_TARGET=admin vite build",
 		"build:embed": "tsgo --noEmit -p tsconfig.json && PI_WEB_TARGET=embed vite build",
 		"build": "npm run build:admin && npm run build:embed",

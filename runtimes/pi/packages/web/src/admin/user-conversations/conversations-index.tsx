@@ -9,15 +9,17 @@
  */
 import type { ConversationAdminListResponse } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ConversationsApi } from "../api/conversations-api.ts";
+import { type ConversationListArgs, ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { navigate } from "../router.ts";
+import { readInitialQueryParam } from "./query-params.ts";
 
 type ListState =
 	| { kind: "loading" }
 	| { kind: "loaded"; data: ConversationAdminListResponse }
 	| { kind: "error"; message: string };
 
+/** Reads a query parameter from the current hash (e.g. `#/conversations?appId=...`). */
 function statusLabel(status: string): string {
 	switch (status) {
 		case "active":
@@ -49,33 +51,56 @@ function principalLabel(principalType: string): string {
 export function AdminConversationsIndex(): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
+	const requestSequence = useRef(0);
 	const [state, setState] = useState<ListState>({ kind: "loading" });
 	const [statusFilter, setStatusFilter] = useState("");
 	const [principalFilter, setPrincipalFilter] = useState("");
 	const [errorFilter, setErrorFilter] = useState(false);
 	const [query, setQuery] = useState("");
+	const [appId, setAppId] = useState(() => readInitialQueryParam("appId"));
+	const [agentId, setAgentId] = useState("");
+	const [versionId, setVersionId] = useState("");
+	const [createdAfter, setCreatedAfter] = useState("");
+	const [createdBefore, setCreatedBefore] = useState("");
+	const [cursor, setCursor] = useState<string | undefined>();
+	const [cursorHistory, setCursorHistory] = useState<readonly (string | undefined)[]>([]);
+
+	const filters = useMemo<ConversationListArgs>(
+		() => ({
+			limit: 50,
+			status: statusFilter as ConversationListArgs["status"],
+			principalType: principalFilter as ConversationListArgs["principalType"],
+			hasErrors: errorFilter || undefined,
+			appId,
+			agentId,
+			publishedAppVersionId: versionId,
+			createdAfter: createdAfter === "" ? undefined : new Date(createdAfter).toISOString(),
+			createdBefore: createdBefore === "" ? undefined : new Date(createdBefore).toISOString(),
+		}),
+		[agentId, appId, createdAfter, createdBefore, errorFilter, principalFilter, statusFilter, versionId],
+	);
 
 	const load = useCallback(
-		(status: string, principal: string, hasErrors: boolean) => {
+		(args: ConversationListArgs) => {
+			const request = ++requestSequence.current;
 			setState({ kind: "loading" });
-			void api
-				.list({
-					limit: 50,
-					status: status === "" ? undefined : (status as "active" | "archived" | "deleted"),
-					principalType: principal === "" ? undefined : (principal as "external_user" | "anonymous_visitor"),
-					hasErrors,
-				})
-				.then(
-					(data) => setState({ kind: "loaded", data }),
-					(err: Error) => setState({ kind: "error", message: err.message }),
-				);
+			void api.list(args).then(
+				(data) => {
+					if (request === requestSequence.current) setState({ kind: "loaded", data });
+				},
+				(err: Error) => {
+					if (request === requestSequence.current) setState({ kind: "error", message: err.message });
+				},
+			);
 		},
 		[api],
 	);
 
 	useEffect(() => {
-		load(statusFilter, principalFilter, errorFilter);
-	}, [load, statusFilter, principalFilter, errorFilter]);
+		setCursor(undefined);
+		setCursorHistory([]);
+		load(filters);
+	}, [filters, load]);
 
 	const rows = useMemo(() => {
 		if (state.kind !== "loaded") return [];
@@ -94,6 +119,9 @@ export function AdminConversationsIndex(): React.ReactElement {
 			<h1>用户会话</h1>
 			<div className="card">
 				<div className="conversation-filters">
+					<input placeholder="App ID" value={appId} onChange={(e) => setAppId(e.target.value)} />
+					<input placeholder="Agent ID" value={agentId} onChange={(e) => setAgentId(e.target.value)} />
+					<input placeholder="版本 ID" value={versionId} onChange={(e) => setVersionId(e.target.value)} />
 					<label>
 						状态
 						<select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -121,13 +149,25 @@ export function AdminConversationsIndex(): React.ReactElement {
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 					/>
+					<label>
+						开始时间
+						<input type="datetime-local" value={createdAfter} onChange={(e) => setCreatedAfter(e.target.value)} />
+					</label>
+					<label>
+						结束时间
+						<input
+							type="datetime-local"
+							value={createdBefore}
+							onChange={(e) => setCreatedBefore(e.target.value)}
+						/>
+					</label>
 				</div>
 
 				{state.kind === "loading" && <p>加载中…</p>}
 				{state.kind === "error" && (
 					<div className="banner error">
 						加载失败：{state.message}{" "}
-						<button type="button" onClick={() => load(statusFilter, principalFilter, errorFilter)}>
+						<button type="button" onClick={() => load({ ...filters, cursor })}>
 							重试
 						</button>
 					</div>
@@ -176,15 +216,28 @@ export function AdminConversationsIndex(): React.ReactElement {
 				)}
 			</div>
 			<nav className="conversation-pagination">
+				{state.kind === "loaded" && cursorHistory.length > 0 && (
+					<button
+						type="button"
+						onClick={() => {
+							const previous = cursorHistory[cursorHistory.length - 1];
+							setCursor(previous);
+							setCursorHistory((items) => items.slice(0, -1));
+							load({ ...filters, cursor: previous });
+						}}
+					>
+						上一页
+					</button>
+				)}
 				{state.kind === "loaded" &&
 					(state.data.nextCursor !== null ? (
 						<button
 							type="button"
 							onClick={() => {
-								void api.list({ limit: 50, cursor: state.data.nextCursor as string }).then(
-									(data) => setState({ kind: "loaded", data }),
-									(e: unknown) => setState({ kind: "error", message: (e as Error).message }),
-								);
+								const next = state.data.nextCursor as string;
+								setCursorHistory((items) => [...items, cursor]);
+								setCursor(next);
+								load({ ...filters, cursor: next });
 							}}
 						>
 							下一页
