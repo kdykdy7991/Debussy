@@ -51,6 +51,20 @@ export function AdminAuthProvider({ controller, baseUrl, children }: AdminAuthPr
 		unlock: async (token: string) => {
 			const trimmed = token.trim();
 			if (trimmed === "") return;
+			// Dev-only bypass: when VITE_PI_ADMIN_DEV_BYPASS=true, skip the
+			// server-side /api/control/v1/session roundtrip and synthesize a
+			// local tenant projection so the workbench UI is reachable without
+			// provisioning the full admin stack (Postgres + Redis + control
+			// server). Gated on the Vite env so production builds are
+			// unaffected.
+			if (import.meta.env.VITE_PI_ADMIN_DEV_BYPASS === "true") {
+				ctrl.connect(trimmed);
+				await ctrl.completeConnection({
+					id: "local-dev-bypass",
+					name: "Local Dev Bypass",
+				});
+				return;
+			}
 			ctrl.connect(trimmed);
 			const api = new AdminSessionApi({ auth: ctrl });
 			try {
