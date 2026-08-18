@@ -70,7 +70,7 @@ function chatOnlySpec(): RuntimeSpec {
 			speech: { enabled: false },
 			avatar: { enabled: false },
 		},
-		contextPolicy: { maxTurns: 100, maxContextTokens: 100000, toolResultMaxBytes: 65536 },
+		contextPolicy: { maxTurns: 100, maxContextTokens: 100000, toolResultMaxBytes: 65536, logLevel: "standard" },
 		runtimePolicy: {
 			profile: "chat-only",
 			turnTimeoutMs: 120000,

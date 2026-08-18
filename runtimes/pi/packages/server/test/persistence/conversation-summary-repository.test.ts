@@ -102,7 +102,7 @@ class FakeClient {
 			rows.sort((a, b) => b.through_sequence - a.through_sequence);
 			const isLimited = trimmed.includes("limit 1");
 			const out = isLimited ? rows.slice(0, 1) : rows;
-			return out.map((row) => FakeClient.clone(row) as Record<string, unknown>);
+			return out.map((row) => FakeClient.clone(row) as unknown as Record<string, unknown>);
 		}
 		if (trimmed.startsWith("update conversations")) {
 			const [conversationId, tenantId, publishedAppId, ownerPrincipalId, ...rest] = params as [

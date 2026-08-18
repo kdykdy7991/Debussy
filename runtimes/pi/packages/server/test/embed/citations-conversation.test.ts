@@ -309,7 +309,7 @@ describe.skipIf(!pgUp)("conversation-scoped citations (TASK-032)", () => {
 		const result = await conversationService.createConversation({ principal, title });
 		expect(result.ok).toBe(true);
 		if (!result.ok) throw new Error("createConversation failed");
-		return result.data;
+		return result.data.conversation;
 	}
 
 	async function uploadText(principal: EmbedAuthContext, convId: ConversationId, filename: string, content: string) {

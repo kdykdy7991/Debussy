@@ -16,6 +16,7 @@ import { newConversationId, newTenantId, toPublicId } from "../../src/publishing
 import type {
 	AdminConversationEventListParams,
 	AdminConversationListRow,
+	ConversationEventRecord,
 	PublishingRepositories,
 } from "../../src/publishing/repositories.ts";
 import type { CapabilityCatalog } from "../../src/publishing/runtime-spec/compiler.ts";
@@ -77,16 +78,18 @@ function buildService(overrides: {
 		cid: ConversationId,
 	) => Promise<AdminConversationListRow | undefined>;
 	readonly conversations?: unknown;
-	readonly listByConversation?: (params: AdminConversationEventListParams) => Promise<Record<string, unknown>[]>;
+	readonly listByConversation?: (params: AdminConversationEventListParams) => Promise<ConversationEventRecord[]>;
 	readonly summaries?: unknown;
 	readonly auditRows?: AuditRow[];
 }): { readonly service: ControlService; readonly auditRows: AuditRow[] } {
 	const auditRows = overrides.auditRows ?? [];
+	const conversations = {
+		listByTenant: overrides.listByTenant ?? (async () => []),
+		getByTenant: overrides.getByTenant ?? (async () => undefined),
+		...((overrides.conversations as object | undefined) ?? {}),
+	} as PublishingRepositories["conversations"];
 	const repos: PublishingRepositories = {
-		conversations: {
-			listByTenant: overrides.listByTenant ?? (async () => []),
-			getByTenant: overrides.getByTenant ?? (async () => undefined),
-		},
+		conversations,
 		events: {
 			listByConversation: overrides.listByConversation ?? (async () => []),
 		},
@@ -95,16 +98,12 @@ function buildService(overrides: {
 			list: (overrides.summaries as { list?: unknown } | undefined)?.list ?? (async () => []),
 		},
 		audit: {
-			insert: async (row) => {
+			insert: async (row: Parameters<PublishingRepositories["audit"]["insert"]>[0]) => {
 				const r = row as { action: string; resourceId: string };
 				auditRows.push({ action: r.action, resourceId: r.resourceId });
 			},
 		},
 	} as unknown as PublishingRepositories;
-	repos.conversations = {
-		...repos.conversations,
-		...((overrides.conversations as object | undefined) ?? {}),
-	} as PublishingRepositories["conversations"];
 	const service = new ControlService({
 		repositories: repos,
 		catalog: CATALOG,
@@ -152,9 +151,9 @@ describe("WB-006 ControlService.listConversationEvents", () => {
 				expect(params.scope.tenantId).toBe(TENANT_A);
 				return [
 					{
-						eventId: "evt_11111111-1111-1111-1111-111111111111",
+						eventId: "evt_11111111-1111-1111-1111-111111111111" as ConversationEventRecord["eventId"],
 						tenantId: TENANT_A,
-						publishedAppId: APP_A,
+						publishedAppId: APP_A as ConversationEventRecord["publishedAppId"],
 						conversationId: CONV_A,
 						sequence: 1,
 						eventType: "user/message",
@@ -165,9 +164,9 @@ describe("WB-006 ControlService.listConversationEvents", () => {
 						createdAt: new Date(),
 					},
 					{
-						eventId: "evt_22222222-2222-2222-2222-222222222222",
+						eventId: "evt_22222222-2222-2222-2222-222222222222" as ConversationEventRecord["eventId"],
 						tenantId: TENANT_A,
-						publishedAppId: APP_A,
+						publishedAppId: APP_A as ConversationEventRecord["publishedAppId"],
 						conversationId: CONV_A,
 						sequence: 2,
 						eventType: "future/unknown-thing",
@@ -253,7 +252,7 @@ describe("WB-006 ControlService summaries + detail", () => {
 		expect(result.data.latest?.lastUserMessage).toBe("latest user msg");
 		expect(result.data.latest?.keyFacts).toEqual(["fact a", "fact b"]);
 		expect(result.data.rollover.nextConversationId).toBe(
-			toPublicId("ConversationId", "conv_99999999-9999-9999-9999-999999999999"),
+			toPublicId("ConversationId", "conv_99999999-9999-9999-9999-999999999999" as ConversationId),
 		);
 		expect(auditRows.some((r) => r.action === "conversation.read-summary")).toBe(true);
 	});
