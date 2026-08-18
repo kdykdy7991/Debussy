@@ -59,6 +59,21 @@
     错误仅在非正常关闭且未破坏响应时上报 onError
   - 复用既有 `parseConversationId` / `errorEnvelope` / `jsonBody`
 
+### Web 端（`@earendil-works/pi-web`）
+
+- `packages/web/src/admin/api/conversations-api.ts` — 新增带管理员认证的 gzip
+  导出下载客户端；服务端 JSON 错误继续透传 requestId，并保持 401 锁定语义
+- `packages/web/src/admin/user-conversations/conversation-detail.tsx` — 会话详情接入
+  诊断包、Transcript 和完整包下载；完整包要求输入「完整导出」二次确认，并明确
+  提示正文/工具载荷敏感性和审计行为
+- 同页签读取改为懒加载：事件、Summary、附件只在实际进入对应页签时请求，避免
+  未查看内容却提前产生 `conversation.read-*` 审计
+- `packages/web/src/admin/user-conversations/conversations-index.tsx` — 补齐 App、
+  Agent、版本、时间筛选与保留筛选条件的前后 cursor 翻页；忽略过期响应，防止
+  快速切换筛选时旧请求覆盖新结果
+- `packages/web/test/admin/conversations-api.test.ts` — 高级筛选序列化、gzip 下载
+  认证与导出 401 错误专项测试
+
 ### 测试
 
 - `packages/server/test/publishing/session-export.test.ts`（新增，7 测试）—
@@ -92,6 +107,8 @@ node ../node_modules/vitest/dist/cli.js --run test/publishing/session-export.tes
 同文件回归：+ control-conversations(6) + summary-builder(5)                    → 18/18
 packages/protocol/test/session-events.test.ts                          → 19/19
 npx biome check .（整仓）                                               → no errors
+packages/web/test/admin/conversations-api.test.ts                      → 3/3
+packages/web tsgo --noEmit                                              → OK
 ```
 
 ## 未关闭项
@@ -99,9 +116,6 @@ npx biome check .（整仓）                                               → 
 - ZIP 多成员容器（manifest/transcript/diagnostics/附件分文件）未实现，按用户
   确认以单 gzip 流交付；如需多文件 ZIP，后续可加流式 ZIP 写入器（如
   fflate 的 streaming）+ 锁文件评审。
-- 导出内容二级确认 UI（spec 交付项 #5「完整导出二次确认」）未做：本任务完成
-  服务端流式端点 + 审计；管理面按钮/确认弹窗可并入 WB-010 或独立 UI 任务。
-  — 单称到 server 端点已可用 curl 直接验证。
 
 ## 对下一任务（WB-010 企业 Embed SDK）的约束
 
