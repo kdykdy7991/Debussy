@@ -50,3 +50,22 @@ export interface PreviewTicket {
 	/** Ticket-free preview page. The admin window passes `ticket` in memory by postMessage. */
 	readonly previewUrl: string;
 }
+
+/**
+ * `POST /api/control/v1/published-apps` request body (MVP-03). The server
+ * rejects unknown access modes (400 INVALID_REQUEST) and per-origin policy
+ * violations (400 INVALID_ORIGINS). Private launch key material is
+ * intentionally NOT part of this DTO — the browser must never see the
+ * server-side PEM.
+ *
+ * The response shape lives in `publishing/control-http.ts` as
+ * `CreatePublishedAppResponse` (re-exported from the protocol root) — we
+ * intentionally do not duplicate it here.
+ */
+export interface CreatePublishedAppRequest {
+	readonly agentDefinitionId: string;
+	readonly name: string;
+	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly allowedOrigins?: readonly string[];
+	readonly theme?: { readonly primaryColor?: string; readonly welcomeMessage?: string };
+}

@@ -139,3 +139,27 @@ export function resolvePublishedAppVersionStatus(value: string): StatusResolutio
 export function resolveConversationStatus(value: string): StatusResolution<KnownConversationStatus> {
 	return resolveStatus(KNOWN_CONVERSATION_STATUSES, value);
 }
+
+/**
+ * Administrator session projection returned by `GET /api/control/v1/session`
+ * (MVP-01). Always derived from the authenticated tenant record on the
+ * server; the Web side never invents a tenant id or display name. The token
+ * itself is never echoed back.
+ */
+export interface AdminSession {
+	readonly tenantId: TenantPublicId;
+	readonly tenantName: string;
+	readonly tenantStatus: "active" | "suspended" | "archived";
+	readonly baseUrl: string;
+	readonly capabilities: ReadonlySet<AdminCapability>;
+}
+
+/** Coarse capability flags advertised by the control plane. */
+export type AdminCapability =
+	| "agent.read"
+	| "agent.write"
+	| "app.read"
+	| "app.write"
+	| "conversation.read"
+	| "conversation.export"
+	| "audit.read";

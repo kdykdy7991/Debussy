@@ -158,3 +158,17 @@ export interface SaveAgentRevisionResponse {
 	readonly sourceHash: string;
 	readonly createdAt: string;
 }
+
+/**
+ * Response shape for `POST /api/control/v1/agent-definitions/import-current`
+ * (MVP-03). Server returns the freshly imported (or already-existing latest)
+ * AgentDefinition. Re-importing an unchanged source hash is a natural
+ * idempotent operation; clients should still send an Idempotency-Key so the
+ * server can dedupe network retries.
+ */
+export interface ImportCurrentAgentResponse {
+	readonly agentDefinitionId: AgentPublicId;
+	readonly revision: number;
+	readonly sourceHash: string;
+	readonly warnings: readonly { readonly code: string; readonly path: string; readonly message: string }[];
+}
