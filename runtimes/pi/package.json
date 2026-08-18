@@ -27,6 +27,8 @@
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"diff:model-catalog": "node scripts/diff-model-catalog.mjs",
 		"dev:web": "bash scripts/start-web-dev.sh",
+		"dev:admin": "bash scripts/start-admin-dev.sh",
+		"dev:admin:down": "docker compose --project-name pi-admin-dev --file scripts/admin-dev-compose.yml down",
 		"smoke:p0": "tsx scripts/smoke-p0.ts",
 		"eval": "npm run eval --workspace=@earendil-works/pi-evals --",
 		"check:model-catalog": "node scripts/publish-model-catalog.mjs --input .artifacts/model-catalog --dry-run",
