@@ -111,7 +111,11 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			pattern: /^\/api\/control\/v1\/agent-definitions\/import-current$/,
 			operation: "agent-definitions.import-current",
 			handler: async ({ requestId, body }) => {
-				const parsed = parseBody(body, { name: "string", expectedSourceHash: ["string", "null"] });
+				// NOTE: `expectedSourceHash` is optional end-to-end (the web client
+				// sends `{}` when absent); `undefined` must be an accepted shape or
+				// the import button 400s against the real route. Found by MVP-08
+				// live acceptance (import-current with empty body -> INVALID_REQUEST).
+				const parsed = parseBody(body, { expectedSourceHash: ["string", "null", "undefined"] });
 				const expectedSourceHash = parsed.expectedSourceHash;
 				const imported = await service.importAgent(
 					{
@@ -624,6 +628,30 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				const result = await service.getDashboardSummary({ tenantId });
 				if (!result.ok) return serviceError(result.error, requestId);
 				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		// ---- Session / whoami (MVP-01). ----
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/session$/,
+			operation: "session.get",
+			handler: async ({ requestId }) => {
+				const result = await service.getSession({ tenantId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				const session = result.data;
+				return {
+					status: 200,
+					body: {
+						data: {
+							tenantId: session.tenantId,
+							tenantName: session.tenantName,
+							tenantStatus: session.tenantStatus,
+							baseUrl: session.baseUrl,
+							capabilities: [...session.capabilities],
+						},
+						requestId,
+					},
+				};
 			},
 		},
 		// ---- Preview ticket (WB-005 / SPEC §6.3). ----

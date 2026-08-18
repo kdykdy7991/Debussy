@@ -23,6 +23,7 @@
  */
 
 import type {
+	AdminSession,
 	AgentCapabilities,
 	AgentConfigSnapshot,
 	AgentDefinitionAssociatedApp,
@@ -60,6 +61,7 @@ import type {
 	TenantId,
 } from "../domain/ids.ts";
 import {
+	idPrefix,
 	newAgentDefinitionId,
 	newAuditEventId,
 	newLaunchKeyId,
@@ -359,6 +361,38 @@ export class ControlService {
 		});
 		await this.repos.principals.upsertPlatform({ tenantId });
 		return { ok: true, data: { tenant, created: true } };
+	}
+
+	/**
+	 * MVP-01 / Batch 1: real session/whoami. Returns the authenticated tenant
+	 * display projection so the Web client never falls back to a static
+	 * placeholder. Token / secret material is never echoed back; capabilities
+	 * are coarse and intentionally non-secret.
+	 */
+	async getSession(input: { readonly tenantId: TenantId }): Promise<ControlResult<AdminSession>> {
+		const tenant = await this.repos.tenants.get(input.tenantId);
+		if (tenant === undefined) {
+			return fail("BOOTSTRAP_MISMATCH", 404, `tenant ${input.tenantId} not found`);
+		}
+		const capabilities = new Set([
+			"agent.read",
+			"agent.write",
+			"app.read",
+			"app.write",
+			"conversation.read",
+			"conversation.export",
+			"audit.read",
+		] as const);
+		return {
+			ok: true,
+			data: {
+				tenantId: `${idPrefix("TenantId")}${tenant.tenantId}` as AdminSession["tenantId"],
+				tenantName: tenant.name,
+				tenantStatus: tenant.status,
+				baseUrl: this.embedBaseUrl,
+				capabilities,
+			},
+		};
 	}
 
 	/**

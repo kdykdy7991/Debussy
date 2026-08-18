@@ -79,17 +79,22 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 		},
 		async list(params: AgentDefinitionListParams) {
 			const limit = Math.min(Math.max(params.limit, 1), 100);
+			// Bind every WHERE placeholder as $1..$N sequentially. The cursor
+			// clause, when present, contributes two extra placeholders so the
+			// limit placeholder index shifts; we compute it here rather than
+			// hard-coding non-contiguous $3/$5 which would crash with the
+			// postgres.js parameter binder (MVP-02 regression).
+			const values: (string | number)[] = [params.scope.tenantId];
 			let cursorWhere = "";
-			const cursorParams: (string | number)[] = [];
 			if (params.cursor !== undefined && params.cursor !== "") {
 				const [createdAt, id] = params.cursor.split("|");
 				if (createdAt !== undefined && id !== undefined) {
-					cursorWhere = "and (created_at, id) < ($3::timestamptz, $4::uuid)";
-					cursorParams.push(createdAt, id);
+					values.push(createdAt, id);
+					cursorWhere = `and (created_at, id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`;
 				}
 			}
-			// Cursor mode adds two parameters, so the limit placeholder shifts.
-			const limitIndex = cursorParams.length > 0 ? 5 : 3;
+			values.push(limit + 1);
+			const limitIndex = values.length;
 			const base = params.includeRevisions
 				? "select * from agent_definitions where tenant_id = $1"
 				: "select * from (select distinct on (id) * from agent_definitions where tenant_id = $1 order by id, revision desc) latest";
@@ -98,9 +103,7 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 				 ${cursorWhere}
 				 order by created_at desc, id desc
 				 limit $${limitIndex}`,
-				params.scope.tenantId,
-				...cursorParams,
-				limit + 1,
+				...values,
 			);
 			return rows.map((row) => toListRow(row));
 		},

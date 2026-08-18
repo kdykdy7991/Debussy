@@ -236,7 +236,10 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			}
 			if (params.agentId !== undefined) {
 				values.push(params.agentId);
-				conditions.push(`v.agent_definition_id = $${values.length}`);
+				// MVP-02 — the agent id lives on `published_apps`; the
+				// previous alias `v` (published_app_versions) has no such
+				// column, which crashed the admin list with a 500.
+				conditions.push(`a.agent_definition_id = $${values.length}`);
 			}
 			if (params.hasErrors === true) {
 				conditions.push(`exists (
@@ -262,7 +265,7 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				        p.subject_hash as principal_subject_hash,
 				        a.name as app_name,
 				        a.public_app_id as public_app_id,
-				        v.agent_definition_id as agent_definition_id,
+				        a.agent_definition_id as agent_definition_id,
 				        (select count(*)::int from conversation_events e
 				          where e.conversation_id = c.id
 				            and e.tenant_id = c.tenant_id
@@ -289,7 +292,7 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				        p.subject_hash as principal_subject_hash,
 				        a.name as app_name,
 				        a.public_app_id as public_app_id,
-				        v.agent_definition_id as agent_definition_id,
+				        a.agent_definition_id as agent_definition_id,
 				        (select count(*)::int from conversation_events e
 				          where e.conversation_id = c.id
 				            and e.tenant_id = c.tenant_id
