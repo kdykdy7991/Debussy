@@ -29,15 +29,31 @@ import type {
 	AgentDefinitionDetail,
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
+	AgentPublicId,
+	ConversationAdminEvent,
+	ConversationAdminEventListResponse,
+	ConversationAdminListResponse,
+	ConversationAdminSummary,
+	ConversationAdminSummaryEntry,
+	ConversationAdminSummaryListResponse,
+	ConversationEventPublicId,
+	ConversationPublicId,
 	PreviewTicket,
+	PublishedAppLocator,
+	PublishedAppPublicId,
+	PublishedAppVersionPublicId,
 	SaveAgentRevisionRequest,
 	SaveAgentRevisionResponse,
+	SessionEventType,
+	TurnPublicId,
 } from "@earendil-works/pi-protocol";
+import { SESSION_EVENT_TYPES } from "@earendil-works/pi-protocol";
 import { importSPKI } from "jose";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import type {
 	AgentDefinitionId,
 	AuditEventId,
+	ConversationId,
 	PublishedAppId,
 	PublishedAppVersionId,
 	RequestId,
@@ -54,10 +70,12 @@ import {
 	newTenantId,
 	toPublicId,
 } from "../domain/ids.ts";
-import type { AccessMode } from "../domain/states.ts";
+import type { AccessMode, PrincipalType } from "../domain/states.ts";
 import type { PreviewTicketService } from "../preview-ticket.ts";
 import type {
+	AdminConversationListRow,
 	AgentDefinitionRecord,
+	ConversationSummaryRecord,
 	LaunchKeyRecord,
 	PublishedAppRecord,
 	PublishedAppVersionRecord,
@@ -191,6 +209,7 @@ export type ControlErrorCode =
 	| "KEY_NOT_FOUND" // launch key not visible in the app scope (404)
 	| "KEY_ALREADY_REVOKED" // revoke target is already revoked (409)
 	| "PREVIEW_TICKET_FAILED" // preview ticket creation failed (500)
+	| "CONVERSATION_NOT_FOUND" // WB-006: conversation not visible in tenant scope (404)
 	| "CONFLICT"; // unexpected concurrent conflict (409)
 
 export interface ControlServiceError {
@@ -1076,6 +1095,243 @@ export class ControlService {
 		};
 	}
 
+	/**
+	 * WB-006: list administrator-facing conversations across all principals
+	 * in the tenant. The payload is redacted (no message bodies); the client
+	 * fetches events separately. Cross-owner (any principal in the tenant) is
+	 * permitted; filters are applied server-side, never leaking raw subject
+	 * data.
+	 */
+	async listConversations(input: {
+		readonly tenantId: TenantId;
+		readonly limit: number;
+		readonly cursor?: string;
+		readonly publishedAppId?: PublishedAppId;
+		readonly status?: "active" | "archived" | "deleted";
+		readonly agentId?: AgentDefinitionId;
+		readonly hasErrors?: boolean;
+		readonly principalType?: "external_user" | "anonymous_visitor";
+		readonly publishedAppVersionId?: PublishedAppVersionId;
+		readonly createdAfter?: Date;
+		readonly createdBefore?: Date;
+	}): Promise<ControlResult<ConversationAdminListResponse>> {
+		const rows = await this.repos.conversations.listByTenant({
+			scope: { tenantId: input.tenantId },
+			limit: input.limit,
+			cursor: input.cursor,
+			publishedAppId: input.publishedAppId,
+			status: input.status,
+			agentId: input.agentId,
+			hasErrors: input.hasErrors,
+			principalType: input.principalType,
+			publishedAppVersionId: input.publishedAppVersionId,
+			createdAfter: input.createdAfter,
+			createdBefore: input.createdBefore,
+		});
+		const { page, nextCursor } = sliceCursorPage(rows, input.limit);
+		return {
+			ok: true,
+			data: {
+				items: page.map(toConversationAdminSummary),
+				nextCursor,
+				redacted: true,
+			},
+		};
+	}
+
+	/**
+	 * WB-006: fetch one conversation's admin projection, its rollover chain
+	 * and — when a fresh latest summary exists — the latest summary body so
+	 * the Transcript header can render it without a second round-trip.
+	 * Reading the body/events triggers an audit event.
+	 */
+	async getConversationAdminDetail(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly requestId?: string;
+	}): Promise<
+		ControlResult<{
+			readonly conversation: ConversationAdminSummary;
+			readonly rollover: {
+				readonly previousConversationId: string | null;
+				readonly nextConversationId: string | null;
+				readonly rolledOverAt: string | null;
+			};
+			readonly latestSummary: ConversationAdminSummaryEntry | null;
+		}>
+	> {
+		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
+		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const ownerScope = {
+			tenantId: row.tenantId,
+			publishedAppId: row.publishedAppId,
+			principalId: row.ownerPrincipalId,
+		};
+		const latest = await this.repos.summaries.getLatest(ownerScope, row.conversationId);
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "conversation.read-transcript",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: { publishedAppId: row.publishedAppId, latestThroughSequence: latest?.throughSequence ?? null },
+		});
+		return {
+			ok: true,
+			data: {
+				conversation: toConversationAdminSummary(row),
+				rollover: {
+					previousConversationId:
+						row.previousConversationId === null ? null : toPublicId("ConversationId", row.previousConversationId),
+					nextConversationId:
+						row.nextConversationId === null ? null : toPublicId("ConversationId", row.nextConversationId),
+					rolledOverAt: row.rolledOverAt === null ? null : row.rolledOverAt.toISOString(),
+				},
+				latestSummary: latest === undefined ? null : toConversationAdminSummaryEntry(latest),
+			},
+		};
+	}
+
+	/**
+	 * WB-006: incrementally page a conversation's event log into the admin
+	 * UI. Unknown/new event types are surfaced read-only via `kind:
+	 * "unknown"`. Reading the log writes an audit event. Cross-owner is
+	 * allowed within the tenant; cross-tenant is a uniform 404.
+	 */
+	async listConversationEvents(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly limit: number;
+		readonly afterSequence?: number;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationAdminEventListResponse>> {
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const events = await this.repos.events.listByConversation({
+			scope: { tenantId: input.tenantId },
+			conversationId: input.conversationId,
+			limit: input.limit,
+			afterSequence: input.afterSequence ?? 0,
+		});
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "conversation.read-events",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: {
+				publishedAppId: conversation.publishedAppId,
+				afterSequence: input.afterSequence ?? 0,
+				eventCount: events.length,
+				lastSequence: events.length > 0 ? events[events.length - 1]!.sequence : null,
+			},
+		});
+		const items: ConversationAdminEvent[] = events.map((event) => ({
+			eventId: toPublicId("ConversationEventId", event.eventId) as ConversationEventPublicId,
+			conversationId: toPublicId("ConversationId", event.conversationId) as ConversationPublicId,
+			sequence: event.sequence,
+			eventType: event.eventType,
+			kind: isSessionEventType(event.eventType) ? event.eventType : "unknown",
+			schemaVersion: event.eventSchemaVersion,
+			turnId: event.turnId === null ? null : (toPublicId("TurnId", event.turnId) as TurnPublicId),
+			payload: event.payload,
+			createdAt: event.createdAt.toISOString(),
+			payloadBytes: event.payloadBytes,
+		}));
+		const lastSequence = conversation.lastEventSequence;
+		const throughSequence = items.length > 0 ? items[items.length - 1]!.sequence : 0;
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				items,
+				lastEventSequence: lastSequence,
+				throughSequence,
+				nextAfterSequence: items.length === input.limit && throughSequence < lastSequence ? throughSequence : null,
+			},
+		};
+	}
+
+	/**
+	 * WB-006: all persisted summaries for a conversation, newest first, plus
+	 * the rollover chain. Reading a summary writes an audit event.
+	 */
+	async listConversationSummaries(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationAdminSummaryListResponse>> {
+		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
+		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const ownerScope = {
+			tenantId: row.tenantId,
+			publishedAppId: row.publishedAppId,
+			principalId: row.ownerPrincipalId,
+		};
+		const summaries = await this.repos.summaries.list(ownerScope, row.conversationId);
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "conversation.read-summary",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: { publishedAppId: row.publishedAppId, summaryCount: summaries.length },
+		});
+		const items = summaries.map(toConversationAdminSummaryEntry);
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", row.conversationId) as ConversationPublicId,
+				items,
+				latest: items.length > 0 ? items[0]! : null,
+				rollover: {
+					previousConversationId:
+						row.previousConversationId === null ? null : toPublicId("ConversationId", row.previousConversationId),
+					nextConversationId:
+						row.nextConversationId === null ? null : toPublicId("ConversationId", row.nextConversationId),
+					rolledOverAt: row.rolledOverAt === null ? null : row.rolledOverAt.toISOString(),
+				},
+			},
+		};
+	}
+
+	/** WB-006: list a conversation's attachments (metadata only) for the admin UI. */
+	async listConversationAttachments(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly requestId?: string;
+	}): Promise<ControlResult<import("@earendil-works/pi-protocol").ConversationAdminAttachmentListResponse>> {
+		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
+		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const rows = await this.repos.attachments.listByConversationTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "conversation.read-attachments",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: { publishedAppId: row.publishedAppId, attachmentCount: rows.length },
+		});
+		const cid = toPublicId("ConversationId", input.conversationId) as ConversationPublicId;
+		const items: import("@earendil-works/pi-protocol").ConversationAdminAttachment[] = rows.map((a) => ({
+			attachmentId: toPublicId("AttachmentId", a.attachmentId),
+			conversationId: cid,
+			filename: a.filename,
+			contentType: a.contentType,
+			sizeBytes: a.sizeBytes,
+			status: a.status,
+			createdAt: a.createdAt.toISOString(),
+		}));
+		return { ok: true, data: { conversationId: cid, items } };
+	}
+
 	/** List recent management audit events (optionally app-scoped) for the console. */
 	async listAuditEvents(input: {
 		readonly tenantId: TenantId;
@@ -1388,4 +1644,62 @@ function summarizeCapabilities(runtimeSpec: unknown): PublishedAppDetail["capabi
 			avatar: { enabled: spec.capabilities.avatar.enabled },
 		},
 	};
+}
+
+/** WB-006: project an admin list row to its protocol summary (redacted). */
+function toConversationAdminSummary(row: AdminConversationListRow): ConversationAdminSummary {
+	const principalType = mapPrincipalType(row.principalType);
+	return {
+		id: toPublicId("ConversationId", row.conversationId) as ConversationPublicId,
+		appId: toPublicId("PublishedAppId", row.publishedAppId) as PublishedAppPublicId,
+		publicAppId: row.publicAppId as PublishedAppLocator,
+		appName: row.appName,
+		agentId:
+			row.agentId === null ? ("" as AgentPublicId) : (toPublicId("AgentDefinitionId", row.agentId) as AgentPublicId),
+		principalDisplayId: row.principalDisplayId,
+		principalType,
+		publishedAppVersionId: toPublicId(
+			"PublishedAppVersionId",
+			row.publishedAppVersionId,
+		) as PublishedAppVersionPublicId,
+		title: row.title,
+		status: row.status,
+		messageCount: row.messageCount,
+		errorCount: row.errorCount,
+		lastEventSequence: row.lastEventSequence,
+		createdAt: row.createdAt.toISOString(),
+		lastActiveAt: row.lastActiveAt.toISOString(),
+	};
+}
+
+/** WB-006: narrow a persisted principal type to the admin-facing 4-way union. */
+function mapPrincipalType(value: PrincipalType): ConversationAdminSummary["principalType"] {
+	if (value === "external_user" || value === "anonymous_visitor" || value === "platform_user" || value === "service") {
+		return value;
+	}
+	return "platform_user";
+}
+
+/** WB-006: project a persisted summary row to its admin entry. */
+function toConversationAdminSummaryEntry(row: ConversationSummaryRecord): ConversationAdminSummaryEntry {
+	const safeBody =
+		typeof row.body === "object" && row.body !== null
+			? (row.body as { text?: unknown; keyFacts?: unknown[]; openItems?: unknown[]; lastUserMessage?: unknown })
+			: { text: "", keyFacts: [], openItems: [], lastUserMessage: "" };
+	return {
+		summaryId: row.id,
+		throughSequence: row.throughSequence,
+		modelId: row.modelId,
+		sourceEventCount: row.sourceEventCount,
+		sourceBytes: row.sourceBytes,
+		lastUserMessage: typeof safeBody.lastUserMessage === "string" ? safeBody.lastUserMessage : "",
+		keyFacts: Array.isArray(safeBody.keyFacts) ? safeBody.keyFacts.filter((x) => typeof x === "string") : [],
+		openItems: Array.isArray(safeBody.openItems) ? safeBody.openItems.filter((x) => typeof x === "string") : [],
+		createdAt: row.createdAt.toISOString(),
+	};
+}
+
+/** WB-006: is the event type one of the known session event types? */
+function isSessionEventType(value: string): value is SessionEventType {
+	return (SESSION_EVENT_TYPES as readonly string[]).includes(value);
 }

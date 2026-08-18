@@ -1,11 +1,15 @@
 import type {
+	AgentDefinitionId,
 	ConversationId,
 	PrincipalId,
 	PublishedAppId,
 	PublishedAppVersionId,
 	TenantId,
 } from "../../../publishing/domain/ids.ts";
+import type { PrincipalType } from "../../../publishing/domain/states.ts";
 import type {
+	AdminConversationListParams,
+	AdminConversationListRow,
 	ConversationListRow,
 	ConversationRecord,
 	ConversationRepository,
@@ -41,6 +45,25 @@ function toListRow(record: ConversationRecord): ConversationListRow {
 	return {
 		...record,
 		cursor: `${record.lastActiveAt.toISOString()}|${record.conversationId}`,
+	};
+}
+
+function toAdminListRow(row: Record<string, unknown>): AdminConversationListRow {
+	const base = rowToRecord(row);
+	const subjectHash = String(row.principal_subject_hash ?? "");
+	const agentIdRaw = row.agent_definition_id;
+	return {
+		...base,
+		cursor: `${base.lastActiveAt.toISOString()}|${base.conversationId}`,
+		errorCount: Number(row.error_count ?? 0),
+		messageCount: Number(row.message_count ?? 0),
+		// Server-generated display id (subject hash truncated). NEVER expose
+		// the full visitorId / externalUserId / PEM. See WB-006 §18.1.
+		principalDisplayId: `prn_${subjectHash.slice(0, 8)}`,
+		principalType: row.principal_type as PrincipalType,
+		appName: String(row.app_name ?? ""),
+		publicAppId: String(row.public_app_id ?? ""),
+		agentId: agentIdRaw === null || agentIdRaw === undefined ? null : (agentIdRaw as AgentDefinitionId),
 	};
 }
 
@@ -182,6 +205,108 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				atSequence,
 			);
 			return rows.length === 1;
+		},
+		async listByTenant(params: AdminConversationListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 100);
+			const conditions: string[] = ["c.tenant_id = $1", "c.deleted_at is null"];
+			const values: (string | number | Date)[] = [params.scope.tenantId];
+			if (params.publishedAppId !== undefined) {
+				values.push(params.publishedAppId);
+				conditions.push(`c.published_app_id = $${values.length}`);
+			}
+			if (params.status !== undefined) {
+				values.push(params.status);
+				conditions.push(`c.status = $${values.length}`);
+			}
+			if (params.createdAfter !== undefined) {
+				values.push(params.createdAfter);
+				conditions.push(`c.created_at >= $${values.length}`);
+			}
+			if (params.createdBefore !== undefined) {
+				values.push(params.createdBefore);
+				conditions.push(`c.created_at <= $${values.length}`);
+			}
+			if (params.publishedAppVersionId !== undefined) {
+				values.push(params.publishedAppVersionId);
+				conditions.push(`c.published_app_version_id = $${values.length}`);
+			}
+			if (params.principalType !== undefined) {
+				values.push(params.principalType);
+				conditions.push(`p.principal_type = $${values.length}`);
+			}
+			if (params.agentId !== undefined) {
+				values.push(params.agentId);
+				conditions.push(`v.agent_definition_id = $${values.length}`);
+			}
+			if (params.hasErrors === true) {
+				conditions.push(`exists (
+					select 1 from conversation_events e
+					where e.conversation_id = c.id
+					  and e.tenant_id = c.tenant_id
+					  and e.event_type in ('turn/failed','tool.error','turn.failed','turn.interrupted')
+				)`);
+			}
+			if (params.cursor !== undefined && params.cursor !== "") {
+				const [lastActiveAt, id] = params.cursor.split("|");
+				if (lastActiveAt !== undefined && id !== undefined) {
+					values.push(lastActiveAt, id);
+					conditions.push(
+						`(c.last_active_at, c.id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`,
+					);
+				}
+			}
+			values.push(limit + 1);
+			const rows = await client.run(
+				`select c.*,
+				        p.principal_type as principal_type,
+				        p.subject_hash as principal_subject_hash,
+				        a.name as app_name,
+				        a.public_app_id as public_app_id,
+				        v.agent_definition_id as agent_definition_id,
+				        (select count(*)::int from conversation_events e
+				          where e.conversation_id = c.id
+				            and e.tenant_id = c.tenant_id
+				            and e.event_type in ('turn/failed','tool.error','turn.failed','turn.interrupted')) as error_count,
+				        (select count(*)::int from conversation_events e
+				          where e.conversation_id = c.id
+				            and e.tenant_id = c.tenant_id
+				            and e.event_type in ('user/message','assistant/message','user.message','assistant.completed')) as message_count
+				   from conversations c
+				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id = c.published_app_id
+				   join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
+				   join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
+				  where ${conditions.join(" and ")}
+				  order by c.last_active_at desc, c.id desc
+				  limit $${values.length}`,
+				...values,
+			);
+			return rows.slice(0, limit).map((row) => toAdminListRow(row));
+		},
+		async getByTenant(scope: TenantScope, conversationId: ConversationId) {
+			const rows = await client.run(
+				`select c.*,
+				        p.principal_type as principal_type,
+				        p.subject_hash as principal_subject_hash,
+				        a.name as app_name,
+				        a.public_app_id as public_app_id,
+				        v.agent_definition_id as agent_definition_id,
+				        (select count(*)::int from conversation_events e
+				          where e.conversation_id = c.id
+				            and e.tenant_id = c.tenant_id
+				            and e.event_type in ('turn/failed','tool.error','turn.failed','turn.interrupted')) as error_count,
+				        (select count(*)::int from conversation_events e
+				          where e.conversation_id = c.id
+				            and e.tenant_id = c.tenant_id
+				            and e.event_type in ('user/message','assistant/message','user.message','assistant.completed')) as message_count
+				   from conversations c
+				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id = c.published_app_id
+				   join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
+				   join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
+				  where c.id = $1 and c.tenant_id = $2 and c.deleted_at is null`,
+				conversationId,
+				scope.tenantId,
+			);
+			return rows.length === 1 ? toAdminListRow(rows[0]) : undefined;
 		},
 	};
 }

@@ -22,7 +22,15 @@ import type { IncomingMessage } from "node:http";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
-import type { AgentDefinitionId, PrincipalId, PublishedAppId, RequestId, TenantId } from "../domain/ids.ts";
+import type {
+	AgentDefinitionId,
+	ConversationId,
+	PrincipalId,
+	PublishedAppId,
+	PublishedAppVersionId,
+	RequestId,
+	TenantId,
+} from "../domain/ids.ts";
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
 import type { IdempotencyScope, PublishedAppRecord, PublishingRepositories } from "../repositories.ts";
@@ -432,6 +440,95 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return { status: 200, body: { data: listed.data, requestId } };
 			},
 		},
+		// ---- User conversations (WB-006 / SPEC §5.4). ----
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations$/,
+			operation: "conversations.list",
+			handler: async ({ requestId, query }) => {
+				const parsed = parseConversationListQuery(query);
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const listed = await service.listConversations({
+					tenantId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+					publishedAppId: parsed.data.publishedAppId,
+					status: parsed.data.status,
+					agentId: parsed.data.agentId,
+					hasErrors: parsed.data.hasErrors,
+					principalType: parsed.data.principalType,
+					publishedAppVersionId: parsed.data.publishedAppVersionId,
+					createdAfter: parsed.data.createdAfter,
+					createdBefore: parsed.data.createdBefore,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)$/,
+			operation: "conversations.get",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const detail = await service.getConversationAdminDetail({ tenantId, conversationId, requestId });
+				if (!detail.ok) return serviceError(detail.error, requestId);
+				return { status: 200, body: { data: detail.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/events$/,
+			operation: "conversations.list-events",
+			handler: async ({ requestId, query, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const limit = parsePositiveInt(query.get("limit"), 50, 500);
+				if (limit === null) return badRequest("limit must be a positive integer", requestId);
+				const afterRaw = query.get("afterSequence");
+				const afterSequence = (() => {
+					if (afterRaw === null || afterRaw.trim() === "") return undefined;
+					return parsePositiveInt(afterRaw, 0, 1e9);
+				})();
+				if (afterSequence === null) {
+					return badRequest("afterSequence must be a non-negative integer", requestId);
+				}
+				const listed = await service.listConversationEvents({
+					tenantId,
+					conversationId,
+					limit,
+					afterSequence,
+					requestId,
+				});
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/attachments$/,
+			operation: "conversations.list-attachments",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const listed = await service.listConversationAttachments({ tenantId, conversationId, requestId });
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/summaries$/,
+			operation: "conversations.list-summaries",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const listed = await service.listConversationSummaries({ tenantId, conversationId, requestId });
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
 		// ---- Dashboard summary (WB-004 / SPEC §5.3). ----
 		{
 			method: "GET",
@@ -729,6 +826,25 @@ function parseAppId(appId: string | undefined): PublishedAppId | null {
 	return fromPublicId("PublishedAppId", appId);
 }
 
+/** Parse a bare `conv_<uuid>` public id from a path segment. */
+function parseConversationId(cid: string | undefined): ConversationId | null {
+	if (cid === undefined) return null;
+	return fromPublicId("ConversationId", cid);
+}
+
+/** Parse an integer query param, clamped to [min, max]; null when invalid. */
+function parsePositiveInt(raw: string | null, min: number, max: number): number | null {
+	if (raw === null || raw.trim() === "") {
+		// A blank value is not an error when the route treats it as optional;
+		// callers pass min=0 and accept null as "unset".
+		return min === 0 ? null : min;
+	}
+	if (!/^\d+$/.test(raw.trim())) return null;
+	const value = Number(raw.trim());
+	if (!Number.isInteger(value) || value < min || value > max) return null;
+	return value;
+}
+
 /** Parse a bare `agent_<uuid>` public id from a path segment. */
 function parseAgentId(agentId: string | undefined): AgentDefinitionId | null {
 	if (agentId === undefined) return null;
@@ -788,6 +904,105 @@ function parseListQuery(
 	if (includeRevisions !== undefined) data.includeRevisions = includeRevisions;
 	if (status !== undefined) data.status = status;
 	return { ok: true, data };
+}
+
+/** WB-006: parse admin conversation list filters from query params. */
+function parseConversationListQuery(query: URLSearchParams):
+	| {
+			readonly ok: true;
+			readonly data: {
+				readonly limit: number;
+				readonly cursor?: string;
+				readonly publishedAppId?: PublishedAppId;
+				readonly status?: "active" | "archived" | "deleted";
+				readonly agentId?: AgentDefinitionId;
+				readonly hasErrors?: boolean;
+				readonly principalType?: "external_user" | "anonymous_visitor";
+				readonly publishedAppVersionId?: PublishedAppVersionId;
+				readonly createdAfter?: Date;
+				readonly createdBefore?: Date;
+			};
+	  }
+	| { readonly ok: false; readonly message: string } {
+	const rawLimit = query.get("limit") ?? "50";
+	if (!/^\d+$/.test(rawLimit)) return { ok: false, message: "limit must be a positive integer" };
+	const limit = Number(rawLimit);
+	if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+		return { ok: false, message: "limit must be an integer in [1, 100]" };
+	}
+	const cursorRaw = query.get("cursor") ?? "";
+	const cursor = cursorRaw.trim() === "" ? undefined : cursorRaw.trim();
+
+	const appRaw = query.get("appId") ?? "";
+	const publishedAppId =
+		appRaw.trim() === "" ? undefined : (fromPublicId("PublishedAppId", appRaw.trim()) ?? undefined);
+	if (appRaw.trim() !== "" && publishedAppId === undefined) {
+		return { ok: false, message: "appId must be a bare app_<uuid> id" };
+	}
+	const agentRaw = query.get("agentId") ?? "";
+	const agentId =
+		agentRaw.trim() === "" ? undefined : (fromPublicId("AgentDefinitionId", agentRaw.trim()) ?? undefined);
+	if (agentRaw.trim() !== "" && agentId === undefined) {
+		return { ok: false, message: "agentId must be a bare agent_<uuid> id" };
+	}
+	const verRaw = query.get("publishedAppVersionId") ?? "";
+	const publishedAppVersionId =
+		verRaw.trim() === "" ? undefined : (fromPublicId("PublishedAppVersionId", verRaw.trim()) ?? undefined);
+	if (verRaw.trim() !== "" && publishedAppVersionId === undefined) {
+		return { ok: false, message: "publishedAppVersionId must be a bare pav_<uuid> id" };
+	}
+
+	const statusRaw = query.get("status") ?? "";
+	const status = statusRaw.trim() === "" ? undefined : (statusRaw.trim() as "active" | "archived" | "deleted");
+	if (status !== undefined && !["active", "archived", "deleted"].includes(status)) {
+		return { ok: false, message: "status must be active | archived | deleted" };
+	}
+	const hasErrorsRaw = query.get("hasErrors") ?? "";
+	const hasErrors = hasErrorsRaw === "true" ? true : hasErrorsRaw === "false" ? false : undefined;
+	if (hasErrorsRaw !== "" && hasErrorsRaw !== "true" && hasErrorsRaw !== "false") {
+		return { ok: false, message: "hasErrors must be true | false" };
+	}
+	const principalRaw = query.get("principalType") ?? "";
+	const principalType = principalRaw === "" ? undefined : (principalRaw as "external_user" | "anonymous_visitor");
+	if (principalType !== undefined && !["external_user", "anonymous_visitor"].includes(principalType)) {
+		return { ok: false, message: "principalType must be external_user | anonymous_visitor" };
+	}
+
+	const createdAfter = parseIsoOrNull(query.get("createdAfter"));
+	if (createdAfter.invalid) return { ok: false, message: createdAfter.message };
+	const createdBefore = parseIsoOrNull(query.get("createdBefore"));
+	if (createdBefore.invalid) return { ok: false, message: createdBefore.message };
+
+	return {
+		ok: true,
+		data: {
+			limit,
+			cursor,
+			publishedAppId,
+			status,
+			agentId,
+			hasErrors,
+			principalType,
+			publishedAppVersionId,
+			createdAfter: createdAfter.value,
+			createdBefore: createdBefore.value,
+		},
+	};
+}
+
+/** Parse an optional ISO-8601 timestamp from a query param. */
+function parseIsoOrNull(raw: string | null):
+	| { readonly invalid: true; readonly message: string; readonly value?: undefined }
+	| {
+			readonly invalid: false;
+			readonly value: Date | undefined;
+	  } {
+	if (raw === null || raw.trim() === "") return { invalid: false, value: undefined };
+	const millis = Date.parse(raw.trim());
+	if (Number.isNaN(millis)) {
+		return { invalid: true, message: "timestamp params must be ISO-8601" };
+	}
+	return { invalid: false, value: new Date(millis) };
 }
 
 /** View of a published app for API responses (27.1/27.3). */

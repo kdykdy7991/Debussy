@@ -1,6 +1,6 @@
 # WB-006：用户会话控制台
 
-状态：Blocked by WB-002/WB-007/WB-008
+状态：Complete（handoff 见 `handoffs/WB-006-user-conversation-console.md`）
 
 ## 目标
 

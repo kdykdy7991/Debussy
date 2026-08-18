@@ -172,6 +172,18 @@ export function createAttachmentRepository(client: PostgresClient): AttachmentRe
 			);
 			return rows.map(rowToRecord);
 		},
+		async listByConversationTenant(scope, conversationId) {
+			const rows = await client.run(
+				`select * from attachments
+				 where tenant_id = $1 and conversation_id = $2
+				   and status in ('ready','staged')
+				   and deleted_at is null
+				 order by created_at`,
+				scope.tenantId,
+				conversationId,
+			);
+			return rows.map(rowToRecord);
+		},
 		async updateStatus(scope: ConversationScope, attachmentId, status) {
 			const rows = await client.run(
 				`update attachments

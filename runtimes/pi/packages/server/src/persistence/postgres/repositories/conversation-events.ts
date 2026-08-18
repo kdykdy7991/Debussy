@@ -20,6 +20,7 @@ import {
 	type TurnId,
 } from "../../../publishing/domain/ids.ts";
 import type {
+	AdminConversationEventListParams,
 	ConversationEventInput,
 	ConversationEventListParams,
 	ConversationEventRecord,
@@ -142,6 +143,28 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				scope.tenantId,
 				scope.publishedAppId,
 				scope.principalId,
+				params.afterSequence ?? 0,
+				limit,
+			);
+			return rows.map((row) => rowToRecord(row));
+		},
+		async listByConversation(params: AdminConversationEventListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 500);
+			// Tenant-scoped admin variant of `list`: a conversationId is
+			// globally unique, so tenant + conversation is sufficient scope —
+			// cross-owner (any principal in the tenant) is allowed,
+			// cross-tenant is not. Empty page = indistinguishable from no
+			// events (uniform 404).
+			const rows = await client.run(
+				`select e.* from conversation_events e
+				 join conversations c on c.id = e.conversation_id and c.published_app_id = e.published_app_id
+				 where e.conversation_id = $1 and e.tenant_id = $2
+				   and c.deleted_at is null
+				   and e.sequence > $3
+				 order by e.sequence asc
+				 limit $4`,
+				params.conversationId,
+				params.scope.tenantId,
 				params.afterSequence ?? 0,
 				limit,
 			);

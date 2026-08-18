@@ -387,6 +387,36 @@ export interface PrincipalRepository {
 	countActive(scope: TenantScope): Promise<number>;
 }
 
+/** WB-006: tenant-scoped cross-owner conversation listing for the Admin Console. */
+export interface AdminConversationListParams {
+	readonly scope: TenantScope;
+	readonly limit: number;
+	readonly cursor?: string;
+	readonly publishedAppId?: PublishedAppId;
+	readonly status?: ConversationStatus;
+	readonly createdAfter?: Date;
+	readonly createdBefore?: Date;
+	readonly publishedAppVersionId?: PublishedAppVersionId;
+	/** Only conversations produced by this agent (agentDefinitionId). */
+	readonly agentId?: AgentDefinitionId;
+	/** Only conversations whose error-event count > 0. */
+	readonly hasErrors?: boolean;
+	readonly principalType?: "external_user" | "anonymous_visitor";
+}
+
+/** WB-006: tenant-scoped admin row with display + scope fields joined from siblings. */
+export interface AdminConversationListRow extends ConversationRecord {
+	readonly cursor: string;
+	readonly errorCount: number;
+	readonly messageCount: number;
+	readonly principalDisplayId: string;
+	readonly principalType: PrincipalType;
+	readonly appName: string;
+	readonly publicAppId: string;
+	/** Agent (agentDefinitionId) that produced this conversation, if resolvable. */
+	readonly agentId: AgentDefinitionId | null;
+}
+
 export interface ConversationRepository {
 	/** Scoped insert; the conversation pins the given version at creation. */
 	insert(record: ConversationRecord): Promise<void>;
@@ -430,6 +460,20 @@ export interface ConversationRepository {
 	 * `latest_summary_sequence` (server-side: `>=` only on insert).
 	 */
 	updateLatestSummarySequence(scope: OwnerScope, conversationId: ConversationId, atSequence: number): Promise<boolean>;
+	/**
+	 * WB-006: tenant-scoped admin cross-owner listing. Every row carries
+	 * the full `AdminConversationListRow` projection (no message bodies).
+	 * `hasErrors` is honoured via a subselect on `conversation_events` to
+	 * avoid materialising the full event log on the dashboard path.
+	 */
+	listByTenant(params: AdminConversationListParams): Promise<AdminConversationListRow[]>;
+	/**
+	 * WB-006: tenant-scoped admin get. Returns the full record joined with
+	 * the principal + app display fields. A `conversationId` is globally
+	 * unique, so tenant + conversation is sufficient scope; cross-tenant
+	 * reads return `undefined` (uniform 404).
+	 */
+	getByTenant(scope: TenantScope, conversationId: ConversationId): Promise<AdminConversationListRow | undefined>;
 }
 
 /** Expired/aged-out attachment selection for the background sweep (TASK-030). */
@@ -476,6 +520,13 @@ export interface AttachmentRepository {
 	 * 全 scope SQL：只返回本会话、本 principal 的附件。
 	 */
 	listReadyByConversation(scope: ConversationScope): Promise<AttachmentRecord[]>;
+	/**
+	 * WB-006: tenant-scoped admin attachment listing for one conversation. A
+	 * `conversationId` is globally unique, so tenant + conversation is
+	 * sufficient scope; cross-owner (any principal in the tenant) is allowed,
+	 * cross-tenant returns `[]`. Returns ready + staged metadata rows.
+	 */
+	listByConversationTenant(scope: TenantScope, conversationId: ConversationId): Promise<AttachmentRecord[]>;
 	/**
 	 * Scoped status transition. Returns `false` when the row is missing or out
 	 * of scope (uniform unavailable; no ID enumeration).
@@ -635,6 +686,24 @@ export interface ConversationEventListParams {
 	readonly afterSequence?: number;
 }
 
+/**
+ * WB-006: tenant-scoped admin cross-owner event listing. Distinct from
+ * `ConversationEventRepository.list` (which is owner-scoped) so the admin
+ * console can browse any conversation in the tenant while still requiring
+ * the `(tenant, app, conversation)` triple to match.
+ */
+export interface AdminConversationEventListParams {
+	readonly scope: TenantScope;
+	readonly conversationId: ConversationId;
+	readonly limit: number;
+	readonly afterSequence?: number;
+}
+
+export interface AdminConversationEventRecord extends ConversationEventRecord {
+	/** Stable public id for the event. */
+	readonly eventId: ConversationEventId;
+}
+
 export interface ConversationEventRepository {
 	/**
 	 * Atomically append one event to the conversation (spec 26.3): the
@@ -652,6 +721,13 @@ export interface ConversationEventRepository {
 	): Promise<ConversationEventRecord[]>;
 	/** Count error-type events in the tenant (dashboard). */
 	countErrors(scope: TenantScope): Promise<number>;
+	/**
+	 * WB-006: tenant-scoped admin listing (cross-owner). The query joins
+	 * `conversations` to enforce `(tenant, app, conversation)` scope and
+	 * uses opaque `(conversation_id, sequence)` pagination just like the
+	 * embed-side path.
+	 */
+	listByConversation(params: AdminConversationEventListParams): Promise<ConversationEventRecord[]>;
 }
 
 /** WB-008: frozen summary record persisted at complete-Turn boundaries. */

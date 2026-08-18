@@ -99,7 +99,7 @@ export function buildSummary(
 	const sourceBytes = events.reduce((sum, event) => sum + event.payloadBytes, 0);
 
 	const lastAssistant = windowed[windowed.length - 1];
-	const throughSequence = lastAssistant === undefined ? 0 : sequenceFor(events, lastAssistant.turnId, "assistant");
+	const throughSequence = lastAssistant === undefined ? 0 : sequenceFor(events, lastAssistant.turnId);
 
 	return {
 		throughSequence,
@@ -145,11 +145,7 @@ function renderText(
 	return lines.join("\n").trim();
 }
 
-function sequenceFor(
-	events: readonly ConversationEventRecord[],
-	turnId: string | null,
-	eventType: "assistant",
-): number {
+function sequenceFor(events: readonly ConversationEventRecord[], turnId: string | null): number {
 	for (let i = events.length - 1; i >= 0; i -= 1) {
 		const event = events[i];
 		if (event === undefined) continue;
