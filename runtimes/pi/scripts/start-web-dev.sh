@@ -42,4 +42,8 @@ server_pid=$!
 npm run dev --workspace=@earendil-works/pi-web -- --host 127.0.0.1 --port "$web_ui_port" --strictPort &
 web_pid=$!
 
-wait -n "$server_pid" "$web_pid"
+# POSIX-portable wait: blocks until $server_pid exits, then returns. $web_pid
+# becomes a zombie but is reaped by the EXIT trap. Equivalent to `wait -n` on
+# GNU bash 4.3+, but works on macOS bash 3.2 (Apple's default) and the BSD
+# variants that don't support the -n extension.
+wait "$server_pid" "$web_pid"
