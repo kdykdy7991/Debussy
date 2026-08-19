@@ -39,9 +39,17 @@ export function Button({
 		.join(" ");
 	return (
 		<button {...rest} type={type} className={className}>
-			{icon ? <span className={styles.iconLeft} aria-hidden="true">{icon}</span> : null}
+			{icon ? (
+				<span className={styles.iconLeft} aria-hidden="true">
+					{icon}
+				</span>
+			) : null}
 			{children}
-			{iconRight ? <span className={styles.iconRight} aria-hidden="true">{iconRight}</span> : null}
+			{iconRight ? (
+				<span className={styles.iconRight} aria-hidden="true">
+					{iconRight}
+				</span>
+			) : null}
 		</button>
 	);
 }

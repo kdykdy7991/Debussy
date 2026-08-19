@@ -1,0 +1,115 @@
+.shell {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-6);
+	min-width: 0;
+}
+
+.code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink);
+	background: var(--aurora-surface-soft);
+	padding: 4px 10px;
+	border-radius: var(--aurora-radius-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.muted {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+}
+
+.tenantInfo {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--aurora-space-2);
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.input {
+	width: 100%;
+	max-width: 360px;
+	padding: 9px 14px;
+	background: var(--aurora-surface-soft);
+	border: 1.5px solid transparent;
+	border-radius: var(--aurora-radius-pill);
+	font: inherit;
+	font-size: var(--aurora-text-base);
+	color: var(--aurora-ink);
+	outline: none;
+	transition:
+		background var(--aurora-motion-fast) var(--aurora-ease-standard),
+		border-color var(--aurora-motion-fast) var(--aurora-ease-standard);
+}
+
+.input:focus {
+	background: var(--aurora-surface);
+	border-color: var(--aurora-accent);
+}
+
+.groupFooter {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--aurora-space-3);
+	flex-wrap: wrap;
+}
+
+.error {
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+	padding: 8px 12px;
+	border-radius: var(--aurora-radius-sm);
+	font-size: var(--aurora-text-sm);
+	margin-right: auto;
+}
+
+/* Modal */
+.modalBackdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(31, 27, 46, 0.45);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 50;
+	backdrop-filter: blur(2px);
+}
+
+.modal {
+	background: var(--aurora-surface);
+	border-radius: var(--aurora-radius-lg);
+	padding: var(--aurora-space-7);
+	width: 480px;
+	max-width: 90vw;
+	box-shadow: var(--aurora-shadow-lg);
+}
+
+.modalHead {
+	margin-bottom: var(--aurora-space-5);
+}
+
+.modalTitle {
+	margin: 0 0 10px;
+	font-family: var(--aurora-font-display);
+	font-size: var(--aurora-text-2xl);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+	letter-spacing: -0.01em;
+}
+
+.modalDesc {
+	margin: 0;
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+	line-height: 1.6;
+}
+
+.modalActions {
+	display: flex;
+	gap: var(--aurora-space-2);
+	justify-content: flex-end;
+}

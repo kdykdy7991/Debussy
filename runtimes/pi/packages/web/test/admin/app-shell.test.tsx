@@ -3,11 +3,11 @@
  *
  * 覆盖任务单验收项：
  *
- * 1. 五个一级标签术语来自 `ADMIN_WORKBENCH_TERMS`，aria-current 标识当前态
+ * 1. 模块导航（v4 起为左侧竖排 AppSidebar，4 个模块）渲染与当前态标识
  * 2. 路由刷新与浏览器前进/后退正确（hash 路由 + parseRoute 覆盖）
  * 3. 401 自动锁定（auth controller 层）
  * 4. 窄屏无横向溢出（CSS 规则断言）
- * 5. 解锁对话框在 locked / error 状态出现，connected 时不出现
+ * 5. v3 起不再渲染解锁对话框（鉴权由 dev proxy / 网关注入）
  * 6. 旧 /publishing/* 重定向走 `legacyPublishingRedirect`
  *
  * 使用 `renderToStaticMarkup` 避免引入额外 React 测试依赖。
@@ -36,18 +36,36 @@ describe("AdminAppShell (WB-002)", () => {
 		resetHash();
 	});
 
-	it("renders five primary nav items with correct terms", () => {
+	it("renders the sidebar module nav with correct terms", () => {
 		const html = renderToStaticMarkup(<AdminAppShell />);
 		for (const term of [
-			ADMIN_WORKBENCH_TERMS.conversation,
 			ADMIN_WORKBENCH_TERMS.agent,
 			ADMIN_WORKBENCH_TERMS.app,
-			ADMIN_WORKBENCH_TERMS.userConversations,
+			"会话",
 			ADMIN_WORKBENCH_TERMS.settings,
 		]) {
+			// v4：模块导航为左侧竖排 AppSidebar，label 渲染为独立 span。
 			expect(html).toContain(`>${term}</span>`);
 		}
-		expect(html.match(/admin-shell__icon-button/g)?.length ?? 0).toBeGreaterThanOrEqual(5);
+		// 顶部 AuroraTopNav 不再渲染模块 tabs；左侧 AppSidebar 持有 4 项。
+		expect(html.match(/aria-label="模块导航"/g)?.length ?? 0).toBe(1);
+	});
+
+	it("marks the active sidebar item with aria-current", async () => {
+		// 测试环境无 window（Node SSR），AppShell 默认落在 chat 路由、无 active；
+		// 因此在隔离环境下直接渲染 AppSidebar 并指定 currentItemId 验证 active 态。
+		const { AuroraAppSidebar } = await import("../../src/admin/aurora/AppSidebar.tsx");
+		const html = renderToStaticMarkup(
+			<AuroraAppSidebar
+				items={[
+					{ id: "agents", label: "Agent", path: "/agents", icon: "◇" },
+					{ id: "apps", label: "应用", path: "/apps", icon: "▤" },
+				]}
+				currentItemId="apps"
+			/>,
+		);
+		expect(html.match(/aria-current="page"/g)?.length ?? 0).toBe(1);
+		expect(html).toContain(">应用</span>");
 	});
 
 	it("marks the current route with aria-current based on parseRoute", () => {
@@ -92,10 +110,11 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(legacyPublishingRedirect("/publishing/unknown/deep")).toBeNull();
 	});
 
-	it("shows the unlock dialog when locked", () => {
+	it("renders the shell without the legacy unlock dialog", () => {
+		// v3：鉴权由 vite dev proxy / 生产网关注入，不再渲染解锁对话框。
 		const html = renderToStaticMarkup(<AdminAppShell />);
-		expect(html).toContain("admin-unlock-backdrop");
-		expect(html).toContain("Admin Token");
+		expect(html).not.toContain("admin-unlock-backdrop");
+		expect(html).not.toContain("Admin Token");
 	});
 
 	it("AdminAuthController locks the session on 401 and clears tenant data", async () => {
@@ -133,14 +152,15 @@ describe("Admin shell CSS layout (WB-002)", () => {
 		expect(css).toMatch(/html,\s*body,\s*#root\s*{[^}]*overflow-x:\s*hidden/);
 	});
 
-	it("uses a grid layout with icon rail, secondary panel, main, and right drawer", () => {
-		expect(css).toMatch(/\.admin-shell\s*{[^}]*grid-template-columns:\s*64px\s+280px\s+1fr\s+360px/);
+	it("uses a row shell with a left sidebar plus a scrollable main area", () => {
+		// v5：admin-shell 直接两栏水平 flex（sidebar + main），不再有顶部独立行。
+		expect(css).toMatch(/\.admin-shell\s*{[^}]*flex-direction:\s*row/);
+		expect(css).toMatch(/\.admin-shell__body\s*{[^}]*display:\s*flex/);
+		expect(css).toMatch(/\.admin-shell__main\s*{[^}]*overflow-y:\s*auto/);
 	});
 
-	it("hides the secondary panel under 720px and the right drawer under 960px", () => {
-		expect(css).toMatch(/@media\s*\(max-width:\s*960px\)[\s\S]*?\.admin-shell__right-drawer\s*{\s*display:\s*none/);
-		expect(css).toMatch(
-			/@media\s*\(max-width:\s*720px\)[\s\S]*?\.admin-shell__secondary-panel\s*{\s*display:\s*none/,
-		);
+	it("keeps the chat route full-bleed next to the sidebar", () => {
+		// v5：无 topbar 后 chat 路由的 main 直接 100vh，不再减去 topbar 高度。
+		expect(css).toMatch(/\.admin-shell\[data-route="chat"\]\s*\.admin-shell__main\s*{[^}]*overflow:\s*hidden/);
 	});
 });

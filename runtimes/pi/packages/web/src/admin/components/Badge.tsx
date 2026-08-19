@@ -40,12 +40,7 @@ export function Badge({
 	dot = false,
 	className,
 }: BadgeProps): React.ReactElement {
-	const classes = [
-		styles.badge,
-		styles[`v_${variant}`],
-		styles[`tone_${tone}`],
-		className ?? "",
-	]
+	const classes = [styles.badge, styles[`v_${variant}`], styles[`tone_${tone}`], className ?? ""]
 		.filter(Boolean)
 		.join(" ");
 	return (

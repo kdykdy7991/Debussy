@@ -1,0 +1,65 @@
+.avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--aurora-inverse);
+	font-family: var(--aurora-font-serif);
+	font-style: italic;
+	font-weight: var(--aurora-weight-regular);
+	flex-shrink: 0;
+	box-shadow: 0 4px 12px rgba(17, 19, 24, 0.16);
+}
+
+/* 尺寸 */
+.size_s {
+	width: 32px;
+	height: 32px;
+	border-radius: 12px;
+	font-size: 16px;
+}
+.size_m {
+	width: 40px;
+	height: 40px;
+	border-radius: 14px;
+	font-size: 18px;
+}
+.size_lg {
+	width: 56px;
+	height: 56px;
+	border-radius: 18px;
+	font-size: 28px;
+}
+.size_xl {
+	width: 80px;
+	height: 80px;
+	border-radius: 24px;
+	font-size: 36px;
+}
+
+/* tone */
+.tone_purple {
+	background: var(--aurora-av-purple);
+}
+.tone_pink {
+	background: var(--aurora-av-pink);
+}
+.tone_emerald {
+	background: var(--aurora-av-emerald);
+}
+.tone_amber {
+	background: var(--aurora-av-amber);
+}
+.tone_sky {
+	background: var(--aurora-av-sky);
+}
+.tone_rose {
+	background: var(--aurora-av-rose);
+}
+.tone_gradient {
+	background: var(--aurora-gradient);
+}
+
+.glyph {
+	display: block;
+	line-height: 1;
+}

@@ -28,10 +28,7 @@ export interface MetricsRowProps {
 
 export function MetricsRow({ items, columns = 6 }: MetricsRowProps): React.ReactElement {
 	return (
-		<section
-			className={`${styles.row} ${columns === 4 ? styles.cols4 : styles.cols6}`}
-			aria-label="会话总览指标"
-		>
+		<section className={`${styles.row} ${columns === 4 ? styles.cols4 : styles.cols6}`} aria-label="会话总览指标">
 			{items.map((item) => (
 				<article key={item.id} className={styles.metric}>
 					<header className={styles.metricLabel}>{item.label}</header>

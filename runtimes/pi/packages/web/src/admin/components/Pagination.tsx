@@ -63,6 +63,8 @@ export function Pagination({
 				</button>
 				{range.map((item, idx) =>
 					item === "ellipsis" ? (
+						// The range contains at most two positional ellipses and no persistent child state.
+						// biome-ignore lint/suspicious/noArrayIndexKey: position distinguishes the two ellipses
 						<span key={`e-${idx}`} className={styles.ellipsis} aria-hidden="true">
 							…
 						</span>

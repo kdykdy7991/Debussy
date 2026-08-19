@@ -337,11 +337,7 @@ export function AppListView(): React.ReactElement {
 			<FilterBar
 				left={
 					<>
-						<FilterSearch
-							placeholder="按名称 / 绑定 Agent / Public ID 搜索"
-							value={query}
-							onChange={setQuery}
-						/>
+						<FilterSearch placeholder="按名称 / 绑定 Agent / Public ID 搜索" value={query} onChange={setQuery} />
 						<FilterSelect
 							ariaLabel="状态筛选"
 							value={statusFilter}
@@ -352,7 +348,14 @@ export function AppListView(): React.ReactElement {
 				}
 				right={
 					<>
-						<Button variant="ghost" size="sm" onClick={() => { setQuery(""); setStatusFilter("all"); }}>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => {
+								setQuery("");
+								setStatusFilter("all");
+							}}
+						>
 							重置
 						</Button>
 						<Button variant="secondary" size="sm">

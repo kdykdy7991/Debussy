@@ -1,7 +1,7 @@
 /**
- * App 列表与详情入口（WB-004 / SPEC §5.3；MVP-15 设计收口）。
+ * App 列表与详情入口（WB-004 / SPEC §5.3；MVP-15 设计收口；v2 = Aurora）。
  *
- * - 列表：`AppListView` 提供 mock-data 预览（设计稿收口用）
+ * - 列表：Aurora 视觉版，与 Agent List 共用同一 Design System
  * - 详情：`/apps/app_<uuid>` 由 `AdminAppDetail` 接管
  *
  * 说明：本轮先把 List 页面的信息架构与样式确定下来，「创建应用」「发布
@@ -11,7 +11,7 @@
  */
 
 import { AdminAppDetail } from "../apps/app-detail.tsx";
-import { AppListView } from "../apps/app-list.tsx";
+import { AppsListView } from "../aurora/apps-list-view.tsx";
 import type { AdminRoute } from "../router.ts";
 
 export function AdminAppsPage({ route }: { route: AdminRoute }): React.ReactElement {
@@ -20,5 +20,5 @@ export function AdminAppsPage({ route }: { route: AdminRoute }): React.ReactElem
 		if (appId === undefined) return <p role="alert">缺少 appId</p>;
 		return <AdminAppDetail appId={appId} />;
 	}
-	return <AppListView />;
+	return <AppsListView />;
 }

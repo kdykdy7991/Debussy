@@ -1,0 +1,97 @@
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	border-radius: var(--aurora-radius-pill);
+	font-family: var(--aurora-font-sans);
+	font-weight: var(--aurora-weight-medium);
+	font-size: var(--aurora-text-md);
+	border: 1.5px solid transparent;
+	cursor: pointer;
+	transition:
+		background var(--aurora-motion-fast) var(--aurora-ease-standard),
+		border-color var(--aurora-motion-fast) var(--aurora-ease-standard),
+		color var(--aurora-motion-fast) var(--aurora-ease-standard),
+		box-shadow var(--aurora-motion-fast) var(--aurora-ease-standard),
+		transform var(--aurora-motion-fast) var(--aurora-ease-standard);
+	white-space: nowrap;
+	text-decoration: none;
+	line-height: 1;
+}
+
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.btn:focus-visible {
+	outline: 2px solid var(--aurora-accent);
+	outline-offset: 2px;
+}
+
+/* sizes */
+.s_sm {
+	height: 28px;
+	padding: 0 12px;
+	font-size: var(--aurora-text-sm);
+}
+.s_md {
+	height: 36px;
+	padding: 0 16px;
+}
+.s_lg {
+	height: 44px;
+	padding: 0 20px;
+	font-size: var(--aurora-text-base);
+}
+
+/* variants */
+.v_default {
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	border-color: var(--aurora-line);
+}
+.v_default:hover:not(:disabled) {
+	border-color: var(--aurora-ink);
+}
+
+.v_primary {
+	background: var(--aurora-ink);
+	color: var(--aurora-inverse);
+	border-color: var(--aurora-ink);
+}
+.v_primary:hover:not(:disabled) {
+	background: #000;
+	border-color: #000;
+}
+
+.v_accent {
+	background: var(--aurora-gradient);
+	color: var(--aurora-inverse);
+	border: none;
+	box-shadow: 0 4px 12px rgba(0, 87, 255, 0.2);
+}
+.v_accent:hover:not(:disabled) {
+	transform: translateY(-1px);
+	box-shadow: 0 6px 16px rgba(0, 87, 255, 0.28);
+}
+
+.v_ghost {
+	background: transparent;
+	color: var(--aurora-ink-2);
+	border-color: transparent;
+}
+.v_ghost:hover:not(:disabled) {
+	color: var(--aurora-ink);
+	background: var(--aurora-surface-soft);
+}
+
+.iconL,
+.iconR {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 14px;
+	line-height: 1;
+}

@@ -1,16 +1,33 @@
 /**
- * Admin Workbench 主 Shell（设计收口 / MVP-15）。
+ * Admin Workbench 主 Shell（v5 = 去掉顶栏，brand 移入左 sidebar）。
  *
- * 视觉：左侧 240px 单一 Sidebar（构建 / 运营 / 平台三段）+ 主工作区。
- * 不再保留 64px icon-rail 与 secondary-panel 双列。
- * Chat 调试页保留路由（`/`），但当前阶段不进 Sidebar 一级菜单。
+ * 视觉对齐 direction-b-aurora：
  *
- * 锁屏时只显示解锁对话框，背景仍渲染 Shell 框架以便视觉衔接。
+ *   ┌─ 页面背景（aurora-bg #eef0f2，冷雾灰） ────────────────────────────────┐
+ *   │  ┌─ AppSidebar（含 brand） ──┬─ admin-shell__main ──────────────┐  │
+ *   │  │  ◇ Acme                   │                                 │  │
+ *   │  │  ADMIN WORKBENCH          │   各业务页面                     │  │
+ *   │  │  ─────────────            │   （agents / apps / conversations │  │
+ *   │  │  Agent                    │    / settings）                  │  │
+ *   │  │  应用                      │                                 │  │
+ *   │  │  会话                      │                                 │  │
+ *   │  │  设置                      │                                 │  │
+ *   │  └────────────────────────────┴─────────────────────────────────┘  │
+ *   └─────────────────────────────────────────────────────────────────────┘
+ *
+ * v3：AdminAuthProvider 挂载即自动连接，不再显示解锁对话框（鉴权由
+ * vite dev proxy 或生产网关负责注入）。连接失败也只把 controller 推到
+ * `error` 态继续渲染 Shell —— 各页面读 snapshot.state 决定是否提示。
+ *
+ * v4：把 v3 顶栏中心的模块 pill tabs 移到左侧竖排 AppSidebar。
+ *
+ * v5：删除顶栏 AuroraTopNav，brand（Acme / Admin Workbench）随模块
+ * 导航一起沉到左侧 AppSidebar 顶部；整个 shell 现在只有 sidebar +
+ * main 两栏水平并排，再无顶部独立一行。
  */
 
+import { AuroraAppSidebar, type AuroraAppSidebarItem } from "./aurora/AppSidebar.tsx";
 import { AdminAuthProvider } from "./auth/admin-auth-context.tsx";
-import { AdminUnlockDialog } from "./auth/unlock-dialog.tsx";
-import { Sidebar, type SidebarItem, type SidebarSection } from "./components/Sidebar.tsx";
 import { AdminAgentsPage } from "./pages/agents-page.tsx";
 import { AdminAppsPage } from "./pages/apps-page.tsx";
 import { AdminChatPage } from "./pages/chat-page.tsx";
@@ -18,32 +35,17 @@ import { AdminSettingsPage } from "./pages/settings-page.tsx";
 import { AdminUserConversationsPage } from "./pages/user-conversations-page.tsx";
 import { type AdminRoute, type AdminRouteId, useAdminRoute } from "./router.ts";
 
-type CurrentItemId = SidebarItem["id"];
+type NavItemId = AuroraAppSidebarItem["id"];
 
-const SIDEBAR_SECTIONS: readonly SidebarSection[] = [
-	{
-		title: "构建",
-		items: [
-			{ id: "agents", label: "Agent", path: "/agents", icon: "◇" },
-			{ id: "apps", label: "应用", path: "/apps", icon: "▢" },
-		],
-	},
-	{
-		title: "运营",
-		items: [{ id: "user-conversations", label: "会话", path: "/conversations", icon: "☰" }],
-	},
-	{
-		title: "平台",
-		items: [{ id: "settings", label: "设置", path: "/settings", icon: "⚙" }],
-	},
+const SIDEBAR_ITEMS: readonly AuroraAppSidebarItem[] = [
+	{ id: "agents", label: "Agent", path: "/agents", icon: "◇" },
+	{ id: "apps", label: "应用", path: "/apps", icon: "▤" },
+	{ id: "user-conversations", label: "会话", path: "/conversations", icon: "◫" },
+	{ id: "settings", label: "设置", path: "/settings", icon: "⚙" },
 ];
 
-const CURRENT_FOR_CHAT: CurrentItemId | null = null;
-
-function resolveCurrentItemId(route: AdminRoute): CurrentItemId | null {
+function resolveNavItemId(route: AdminRoute): NavItemId | null {
 	switch (route.id) {
-		case "chat":
-			return CURRENT_FOR_CHAT;
 		case "agents":
 		case "agent-detail":
 			return "agents";
@@ -55,6 +57,8 @@ function resolveCurrentItemId(route: AdminRoute): CurrentItemId | null {
 			return "user-conversations";
 		case "settings":
 			return "settings";
+		case "chat":
+			return null;
 		default: {
 			const exhaustive: never = route.id;
 			return exhaustive;
@@ -88,12 +92,11 @@ function Shell(): React.ReactElement {
 	const route = useAdminRoute();
 	return (
 		<div className="admin-shell" data-route={route.id}>
-			<Sidebar
-				sections={SIDEBAR_SECTIONS}
-				currentItemId={resolveCurrentItemId(route)}
-				tenantName="Acme Corp"
-				tenantRole="Admin"
-				tenantInitial="A"
+			<AuroraAppSidebar
+				items={SIDEBAR_ITEMS}
+				currentItemId={resolveNavItemId(route)}
+				brandName="Acme"
+				brandSubtitle="Admin Workbench"
 			/>
 			<main className="admin-shell__main">
 				<MainArea route={route} />
@@ -106,7 +109,6 @@ export function AdminAppShell(): React.ReactElement {
 	return (
 		<AdminAuthProvider>
 			<Shell />
-			<AdminUnlockDialog />
 		</AdminAuthProvider>
 	);
 }

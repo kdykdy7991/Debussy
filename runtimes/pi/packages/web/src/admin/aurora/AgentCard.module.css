@@ -1,0 +1,130 @@
+.card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-4);
+	padding: var(--aurora-space-6);
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-lg);
+	box-shadow: var(--aurora-shadow-sm);
+	overflow: hidden;
+	text-align: left;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	transition:
+		box-shadow var(--aurora-motion-base) var(--aurora-ease-standard),
+		transform var(--aurora-motion-base) var(--aurora-ease-standard),
+		border-color var(--aurora-motion-base) var(--aurora-ease-standard);
+}
+
+button.card {
+	font-family: inherit;
+}
+
+.card:hover {
+	box-shadow: var(--aurora-shadow-md);
+	transform: translateY(-2px);
+	border-color: transparent;
+}
+
+.card:focus-visible {
+	outline: 2px solid var(--aurora-accent);
+	outline-offset: 2px;
+}
+
+.bg {
+	position: absolute;
+	inset: 0;
+	background: var(--aurora-gradient-soft);
+	opacity: 0;
+	transition: opacity var(--aurora-motion-slow) var(--aurora-ease-standard);
+	z-index: 0;
+	pointer-events: none;
+}
+
+.card:hover .bg {
+	opacity: 1;
+}
+
+.card > * {
+	position: relative;
+	z-index: 1;
+}
+
+.top {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--aurora-space-4);
+}
+
+.titleBlock {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	padding-top: 2px;
+}
+
+.name {
+	font-family: var(--aurora-font-sans);
+	font-size: 18px;
+	font-weight: var(--aurora-weight-semibold);
+	letter-spacing: -0.01em;
+	color: var(--aurora-ink);
+	line-height: 1.25;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.role {
+	font-size: var(--aurora-text-md);
+	color: var(--aurora-ink-2);
+	line-height: 1.4;
+}
+
+.quote {
+	margin: 0;
+	padding: var(--aurora-space-4) 0;
+	border-top: 1px dashed var(--aurora-line);
+	border-bottom: 1px dashed var(--aurora-line);
+	font-family: var(--aurora-font-serif);
+	font-style: italic;
+	font-size: var(--aurora-text-lg);
+	color: var(--aurora-ink-2);
+	line-height: 1.5;
+}
+
+.tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.metaRow {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: var(--aurora-space-3);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.metaLeft {
+	min-width: 0;
+}
+
+.metaRight {
+	font-weight: var(--aurora-weight-medium);
+	color: var(--aurora-ink-2);
+	flex-shrink: 0;
+}
+
+.footer {
+	display: flex;
+	gap: var(--aurora-space-2);
+	padding-top: var(--aurora-space-2);
+	border-top: 1.5px solid var(--aurora-line-soft);
+}

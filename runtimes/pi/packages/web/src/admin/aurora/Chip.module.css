@@ -1,0 +1,40 @@
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 14px;
+	background: var(--aurora-surface-soft);
+	border: 1.5px solid transparent;
+	border-radius: var(--aurora-radius-pill);
+	font: inherit;
+	font-size: var(--aurora-text-md);
+	color: var(--aurora-ink-2);
+	cursor: pointer;
+	transition:
+		background var(--aurora-motion-fast) var(--aurora-ease-standard),
+		border-color var(--aurora-motion-fast) var(--aurora-ease-standard),
+		color var(--aurora-motion-fast) var(--aurora-ease-standard);
+	white-space: nowrap;
+}
+
+button.chip {
+	font-family: inherit;
+}
+
+.chip:hover {
+	background: var(--aurora-surface);
+	border-color: var(--aurora-line);
+	color: var(--aurora-ink);
+}
+
+.chipActive {
+	background: var(--aurora-accent-soft);
+	color: var(--aurora-accent);
+	border-color: var(--aurora-accent);
+}
+
+.chipActive:hover {
+	background: var(--aurora-accent-soft);
+	color: var(--aurora-accent);
+	border-color: var(--aurora-accent);
+}

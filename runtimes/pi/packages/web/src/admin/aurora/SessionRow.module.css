@@ -1,0 +1,116 @@
+.row {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-3);
+	width: 100%;
+	padding: var(--aurora-space-5) var(--aurora-space-6);
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md);
+	text-align: left;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	transition:
+		box-shadow var(--aurora-motion-fast) var(--aurora-ease-standard),
+		border-color var(--aurora-motion-fast) var(--aurora-ease-standard);
+}
+
+button.row {
+	font-family: inherit;
+}
+
+.row:hover {
+	box-shadow: var(--aurora-shadow-sm);
+	border-color: transparent;
+}
+
+.row:focus-visible {
+	outline: 2px solid var(--aurora-accent);
+	outline-offset: 2px;
+}
+
+.top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--aurora-space-4);
+	flex-wrap: wrap;
+}
+
+.left {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font-size: var(--aurora-text-md);
+	min-width: 0;
+	flex-wrap: wrap;
+}
+
+.when {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+}
+
+.user {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.arrow {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-md);
+}
+
+.channel {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+}
+
+.preview {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: var(--aurora-text-md);
+	color: var(--aurora-ink-2);
+	line-height: 1.5;
+}
+
+.previewLine {
+	display: flex;
+	gap: 6px;
+	min-width: 0;
+}
+
+.previewLine strong {
+	color: var(--aurora-ink);
+	font-weight: var(--aurora-weight-medium);
+	flex-shrink: 0;
+}
+
+.previewLine .agentName {
+	color: var(--aurora-accent);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.previewLine span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	display: -webkit-box;
+	-webkit-line-clamp: 1;
+	-webkit-box-orient: vertical;
+}
+
+.meta {
+	display: flex;
+	gap: var(--aurora-space-4);
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-xs);
+	color: var(--aurora-ink-3);
+	flex-wrap: wrap;
+	padding-top: var(--aurora-space-3);
+	border-top: 1.5px solid var(--aurora-line-soft);
+}

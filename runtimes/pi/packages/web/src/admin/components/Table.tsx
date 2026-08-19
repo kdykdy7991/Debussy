@@ -64,11 +64,7 @@ export function Table<T>({
 								key={col.key}
 								style={col.width !== undefined ? { width: col.width } : undefined}
 								className={`${col.headerClassName ?? ""} ${
-									col.align === "right"
-										? styles.alignRight
-										: col.align === "center"
-											? styles.alignCenter
-											: ""
+									col.align === "right" ? styles.alignRight : col.align === "center" ? styles.alignCenter : ""
 								}`}
 							>
 								{col.header}

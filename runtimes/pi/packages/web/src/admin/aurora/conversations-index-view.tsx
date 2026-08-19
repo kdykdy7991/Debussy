@@ -1,25 +1,34 @@
 /**
- * WB-006: administrator user-conversation list page (SPEC §5.4) — 设计收口。
+ * 用户会话列表 — Aurora 视觉迁移（与 Agent List / Apps 共用同一 Design System）。
  *
- * 优先从 Control API 拉取真实数据；接口不可用时（dev 本地无后端）回退到
- * 设计稿 mock，让页面视觉与信息架构在 dev 阶段完整可见。
+ * 视觉：PageHeader + 工具行（SearchBox + chip 行） + AuroraMetricGrid（6 指标）
+ * + PillTabs（按状态过滤） + 会话 SessionRow 列表 + Pagination。
  *
- * 视觉：PageHeader + 6 metric 卡 + FilterBar（日期 / App / Agent / 状态 / 搜索）
- * + 表格（11 列）+ Pagination。真实业务字段以服务端为准，mock 仅用于视觉。
+ * 数据：保留原 ConversationsApi 拉取链路 + mock fallback。过滤器（status /
+ * app / agent / channel / date / query）的所有组合语义不变；只是把 11 列
+ * 表格替换为紧凑的 SessionRow 形式（来自 direction-b-aurora 的 .session-row），
+ * 保留用户、agent、对话预览、状态、token、响应时间等关键信息。
  */
 import type { ConversationAdminListResponse } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ConversationListArgs, ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
-import { Badge } from "../components/Badge.tsx";
-import { Button } from "../components/Button.tsx";
-import { DateRange, FilterBar, FilterSearch, FilterSelect } from "../components/FilterBar.tsx";
-import { type MetricItem, MetricsRow } from "../components/MetricsRow.tsx";
-import { PageHeader } from "../components/PageHeader.tsx";
-import { Pagination } from "../components/Pagination.tsx";
-import { Table, type TableColumn } from "../components/Table.tsx";
 import { navigate } from "../router.ts";
-import { readInitialQueryParam } from "./query-params.ts";
+import { readInitialQueryParam } from "../user-conversations/query-params.ts";
+import styles from "./conversations-index-view.module.css";
+import {
+	AuroraButton,
+	AuroraChip,
+	AuroraMetricGrid,
+	type AuroraMetricItem,
+	AuroraPageHeader,
+	AuroraPagination,
+	AuroraPill,
+	type AuroraPillTabItem,
+	AuroraPillTabs,
+	AuroraSearchBox,
+	AuroraSessionRow,
+} from "./index.ts";
 
 type ListState =
 	| { kind: "loading" }
@@ -49,7 +58,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_382",
 		principalType: "external_user",
 		appName: "官网客服",
-		agentName: "客服 Agent v12",
+		agentName: "客服 Agent",
 		status: "active",
 		messageCount: 14,
 		errorCount: 0,
@@ -64,7 +73,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_193",
 		principalType: "external_user",
 		appName: "内部客服工作台",
-		agentName: "客服 Agent v12",
+		agentName: "客服 Agent",
 		status: "archived",
 		messageCount: 22,
 		errorCount: 1,
@@ -79,7 +88,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_492",
 		principalType: "external_user",
 		appName: "产品助手",
-		agentName: "产品助手 Agent v8",
+		agentName: "产品助手 Agent",
 		status: "archived",
 		messageCount: 9,
 		errorCount: 0,
@@ -94,7 +103,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_725",
 		principalType: "external_user",
 		appName: "销售助手",
-		agentName: "销售 Agent v9",
+		agentName: "销售 Agent",
 		status: "active",
 		messageCount: 6,
 		errorCount: 0,
@@ -109,7 +118,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_820",
 		principalType: "platform_user",
 		appName: "官网客服",
-		agentName: "客服 Agent v12",
+		agentName: "客服 Agent",
 		status: "archived",
 		messageCount: 18,
 		errorCount: 0,
@@ -124,7 +133,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_553",
 		principalType: "platform_user",
 		appName: "内部客服工作台",
-		agentName: "客服 Agent v12",
+		agentName: "客服 Agent",
 		status: "archived",
 		messageCount: 11,
 		errorCount: 2,
@@ -139,7 +148,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_301",
 		principalType: "anonymous_visitor",
 		appName: "产品助手",
-		agentName: "产品助手 Agent v8",
+		agentName: "产品助手 Agent",
 		status: "archived",
 		messageCount: 13,
 		errorCount: 0,
@@ -154,7 +163,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_177",
 		principalType: "platform_user",
 		appName: "销售助手",
-		agentName: "销售 Agent v9",
+		agentName: "销售 Agent",
 		status: "archived",
 		messageCount: 7,
 		errorCount: 0,
@@ -169,7 +178,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_662",
 		principalType: "external_user",
 		appName: "官网客服",
-		agentName: "客服 Agent v12",
+		agentName: "客服 Agent",
 		status: "archived",
 		messageCount: 20,
 		errorCount: 1,
@@ -184,7 +193,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "user_909",
 		principalType: "platform_user",
 		appName: "内部客服工作台",
-		agentName: "客服 Agent v12",
+		agentName: "客服 Agent",
 		status: "archived",
 		messageCount: 15,
 		errorCount: 0,
@@ -199,7 +208,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "anon_7421",
 		principalType: "anonymous_visitor",
 		appName: "知识库检索",
-		agentName: "知识问答 Agent v5",
+		agentName: "知识问答 Agent",
 		status: "archived",
 		messageCount: 4,
 		errorCount: 0,
@@ -214,7 +223,7 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		principalDisplayId: "service_pipeline_a",
 		principalType: "service",
 		appName: "数据 API",
-		agentName: "数据分析 Agent v21",
+		agentName: "数据分析 Agent",
 		status: "active",
 		messageCount: 27,
 		errorCount: 3,
@@ -223,6 +232,13 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 		channel: "API",
 		lastActiveAt: "2026-08-19 07:42",
 	},
+];
+
+const CHANNEL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+	{ value: "", label: "全部渠道" },
+	{ value: "Web Embed", label: "Web Embed" },
+	{ value: "API", label: "API" },
+	{ value: "Direct", label: "Direct" },
 ];
 
 const APP_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -243,25 +259,14 @@ const AGENT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 	{ value: "agent_demo_knowledge_qa", label: "知识问答 Agent" },
 ];
 
-const STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-	{ value: "", label: "全部状态" },
-	{ value: "active", label: "进行中" },
-	{ value: "archived", label: "已归档" },
-	{ value: "deleted", label: "已删除" },
-];
+type StatusTab = "all" | "active" | "archived" | "deleted";
 
-function statusLabel(status: string): string {
-	switch (status) {
-		case "active":
-			return "进行中";
-		case "archived":
-			return "已归档";
-		case "deleted":
-			return "已删除";
-		default:
-			return status;
-	}
-}
+const STATUS_LABEL: Record<StatusTab, string> = {
+	all: "全部",
+	active: "进行中",
+	archived: "已归档",
+	deleted: "已删除",
+};
 
 function principalLabel(principalType: string): string {
 	switch (principalType) {
@@ -288,20 +293,24 @@ function formatMs(ms: number): string {
 	return `${(ms / 1000).toFixed(2)}s`;
 }
 
-const monoStyle: React.CSSProperties = {
-	fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-	fontSize: 12,
-	color: "var(--admin-text-secondary)",
-};
-
-const numericStyle: React.CSSProperties = {
-	fontVariantNumeric: "tabular-nums",
-	textAlign: "right",
-};
+function formatRelativeTime(s: string): string {
+	// 极简的"X 分钟前"显示，输入形如 "2026-08-19 16:48"。
+	const date = new Date(s.replace(" ", "T"));
+	if (Number.isNaN(date.getTime())) return s;
+	const diff = Date.now() - date.getTime();
+	const min = Math.round(diff / 60000);
+	if (min < 1) return "刚刚";
+	if (min < 60) return `${min} 分钟前`;
+	const hr = Math.round(min / 60);
+	if (hr < 24) return `${hr} 小时前`;
+	const day = Math.round(hr / 24);
+	return `${day} 天前`;
+}
 
 interface DisplayConversation {
 	readonly id: string;
 	readonly lastActiveAt: string;
+	readonly lastRelative: string;
 	readonly principalDisplayId: string;
 	readonly principalType: string;
 	readonly appName: string;
@@ -316,27 +325,41 @@ interface DisplayConversation {
 }
 
 function mapApiToDisplay(items: ConversationAdminListResponse["items"]): readonly DisplayConversation[] {
-	return items.map((item) => ({
-		id: item.id,
-		lastActiveAt: new Date(item.lastActiveAt).toLocaleString(),
-		principalDisplayId: item.principalDisplayId,
-		principalType: principalLabel(item.principalType),
-		appName: item.appName,
-		agentName: item.title || "—",
-		status: item.status,
-		messageCount: item.messageCount,
-		tokenTotal: 0,
-		avgResponseMs: 0,
-		channel: "Web Embed",
-		errorCount: item.errorCount,
-		title: item.title,
-	}));
+	const now = Date.now();
+	return items.map((item) => {
+		const d = new Date(item.lastActiveAt);
+		const diff = now - d.getTime();
+		const min = Math.round(diff / 60000);
+		const rel =
+			Number.isNaN(d.getTime()) || diff < 0
+				? item.lastActiveAt
+				: min < 60
+					? `${Math.max(0, min)} 分钟前`
+					: `${Math.round(min / 60)} 小时前`;
+		return {
+			id: item.id,
+			lastActiveAt: d.toLocaleString(),
+			lastRelative: rel,
+			principalDisplayId: item.principalDisplayId,
+			principalType: principalLabel(item.principalType),
+			appName: item.appName,
+			agentName: item.title || "—",
+			status: item.status,
+			messageCount: item.messageCount,
+			tokenTotal: 0,
+			avgResponseMs: 0,
+			channel: "Web Embed",
+			errorCount: item.errorCount,
+			title: item.title,
+		};
+	});
 }
 
 function mockToDisplay(items: readonly MockConversation[]): readonly DisplayConversation[] {
 	return items.map((item) => ({
 		id: item.id,
 		lastActiveAt: item.lastActiveAt,
+		lastRelative: formatRelativeTime(item.lastActiveAt),
 		principalDisplayId: item.principalDisplayId,
 		principalType: principalLabel(item.principalType),
 		appName: item.appName,
@@ -351,11 +374,18 @@ function mockToDisplay(items: readonly MockConversation[]): readonly DisplayConv
 	}));
 }
 
-export function AdminConversationsIndex(): React.ReactElement {
+function statusBadge(status: string): React.ReactNode {
+	if (status === "active") return <AuroraPill tone="live">进行中</AuroraPill>;
+	if (status === "archived") return <AuroraPill tone="neutral">已归档</AuroraPill>;
+	return <AuroraPill tone="red">已删除</AuroraPill>;
+}
+
+export function AdminConversationsIndexView(): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
 	const requestSequence = useRef(0);
 	const [state, setState] = useState<ListState>({ kind: "loading" });
+	const [statusTab, setStatusTab] = useState<StatusTab>("all");
 	const [statusFilter, setStatusFilter] = useState("");
 	const [appFilter, setAppFilter] = useState(() => readInitialQueryParam("appId"));
 	const [agentFilter, setAgentFilter] = useState("");
@@ -364,7 +394,7 @@ export function AdminConversationsIndex(): React.ReactElement {
 	const [dateFrom, setDateFrom] = useState("");
 	const [dateTo, setDateTo] = useState("");
 	const [page, setPage] = useState(1);
-	const [pageSize, setPageSize] = useState(10);
+	const [pageSize, setPageSize] = useState(8);
 	const [useMock, setUseMock] = useState(false);
 
 	const load = useCallback(
@@ -407,6 +437,7 @@ export function AdminConversationsIndex(): React.ReactElement {
 		const needle = query.trim().toLowerCase();
 		if (useMock) {
 			const filtered = MOCK_CONVERSATIONS.filter((m) => {
+				if (statusTab !== "all" && m.status !== statusTab) return false;
 				if (statusFilter && m.status !== statusFilter) return false;
 				if (appFilter && !m.appName.toLowerCase().includes(appFilter.toLowerCase())) return false;
 				if (agentFilter && !m.agentName.toLowerCase().includes(agentFilter.toLowerCase())) return false;
@@ -423,7 +454,8 @@ export function AdminConversationsIndex(): React.ReactElement {
 			return mockToDisplay(filtered);
 		}
 		if (state.kind !== "loaded") return [];
-		const api = mapApiToDisplay(state.data.items).filter((item) => {
+		const apiRows = mapApiToDisplay(state.data.items).filter((item) => {
+			if (statusTab !== "all" && item.status !== statusTab) return false;
 			if (needle === "") return true;
 			return (
 				item.title.toLowerCase().includes(needle) ||
@@ -431,18 +463,18 @@ export function AdminConversationsIndex(): React.ReactElement {
 				item.appName.toLowerCase().includes(needle)
 			);
 		});
-		return api;
-	}, [useMock, state, query, statusFilter, appFilter, agentFilter, channelFilter, dateFrom, dateTo]);
+		return apiRows;
+	}, [useMock, state, query, statusTab, statusFilter, appFilter, agentFilter, channelFilter, dateFrom, dateTo]);
 
-	const metrics: readonly MetricItem[] = useMemo(() => {
+	const metrics: readonly AuroraMetricItem[] = useMemo(() => {
 		const messages = rows.reduce((sum, r) => sum + r.messageCount, 0);
 		const tokens = rows.reduce((sum, r) => sum + r.tokenTotal, 0);
 		const avgMs = rows.length > 0 ? rows.reduce((sum, r) => sum + r.avgResponseMs, 0) / rows.length : 0;
 		const errors = rows.reduce((sum, r) => sum + r.errorCount, 0);
 		const errorRate = messages > 0 ? (errors / messages) * 100 : 0;
 		return [
-			{ id: "total", label: "总会话数", value: String(128), delta: "12.5%", trend: "up", comparison: "较上周期" },
-			{ id: "active", label: "活跃会话", value: String(18), delta: "5.6%", trend: "up", comparison: "较上周期" },
+			{ id: "total", label: "总会话数", value: "128", delta: "12.5%", trend: "up", comparison: "较上周期" },
+			{ id: "active", label: "活跃会话", value: "18", delta: "5.6%", trend: "up", comparison: "较上周期" },
 			{
 				id: "messages",
 				label: "总消息数",
@@ -479,189 +511,181 @@ export function AdminConversationsIndex(): React.ReactElement {
 		];
 	}, [rows]);
 
-	const columns: readonly TableColumn<DisplayConversation>[] = [
-		{
-			key: "time",
-			header: "时间",
-			render: (row) => <span style={monoStyle}>{row.lastActiveAt}</span>,
-			width: 160,
-		},
-		{
-			key: "id",
-			header: "会话 ID",
-			render: (row) => (
-				<button
-					type="button"
-					style={{
-						background: "transparent",
-						border: 0,
-						padding: 0,
-						font: "inherit",
-						fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-						fontSize: 12,
-						color: "var(--admin-accent-strong)",
-						cursor: "pointer",
-					}}
-					onClick={() => navigate(`/conversations/${row.id}`)}
-				>
-					{row.id}
-				</button>
-			),
-			width: 220,
-		},
-		{
-			key: "user",
-			header: "用户",
-			render: (row) => (
-				<div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-					<span style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace', fontSize: 12 }}>
-						{row.principalDisplayId}
-					</span>
-					<span style={{ fontSize: 11, color: "var(--admin-text-muted)" }}>{row.principalType}</span>
-				</div>
-			),
-		},
-		{
-			key: "app",
-			header: "应用",
-			render: (row) => row.appName,
-		},
-		{
-			key: "agent",
-			header: "Agent",
-			render: (row) => row.agentName,
-		},
-		{
-			key: "status",
-			header: "状态",
-			render: (row) => (
-				<Badge
-					variant={row.status === "active" ? "active" : row.status === "archived" ? "ended" : "archived"}
-					dot={row.status === "active"}
-				>
-					{statusLabel(row.status)}
-				</Badge>
-			),
-		},
-		{
-			key: "messages",
-			header: "消息数",
-			render: (row) => <span style={numericStyle}>{row.messageCount}</span>,
-			align: "right",
-		},
-		{
-			key: "tokens",
-			header: "Token",
-			render: (row) => (
-				<span style={{ ...numericStyle, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace', fontSize: 12 }}>
-					{row.tokenTotal > 0 ? formatTokens(row.tokenTotal) : "—"}
-				</span>
-			),
-			align: "right",
-		},
-		{
-			key: "latency",
-			header: "响应时间",
-			render: (row) => <span style={numericStyle}>{row.avgResponseMs > 0 ? formatMs(row.avgResponseMs) : "—"}</span>,
-			align: "right",
-		},
-		{
-			key: "channel",
-			header: "渠道",
-			render: (row) => <Badge variant="neutral">{row.channel}</Badge>,
-		},
-		{
-			key: "actions",
-			header: "操作",
-			render: (row) => (
-				<Button
-					size="sm"
-					variant="ghost"
-					onClick={() => navigate(`/conversations/${row.id}`)}
-					aria-label="查看会话详情"
-				>
-					⋮
-				</Button>
-			),
-			align: "right",
-		},
+	// 分页
+	const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+	const safePage = Math.min(page, totalPages);
+	const pagedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+	// PillTabs 按状态过滤
+	const statusTabs: AuroraPillTabItem<StatusTab>[] = [
+		{ value: "all", label: STATUS_LABEL.all },
+		{ value: "active", label: STATUS_LABEL.active },
+		{ value: "archived", label: STATUS_LABEL.archived },
+		{ value: "deleted", label: STATUS_LABEL.deleted },
 	];
 
 	return (
-		<section aria-label="用户会话列表">
-			<PageHeader
-				title="会话"
-				subtitle="查看和管理用户与 Agent 的交互日志"
+		<section className={styles.shell} aria-label="用户会话列表">
+			<AuroraPageHeader
 				actions={
-					<Button variant="secondary" size="sm">
-						导出
-					</Button>
-				}
-			/>
-
-			<FilterBar
-				left={
 					<>
-						<DateRange fromValue={dateFrom} toValue={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
-						<FilterSelect ariaLabel="应用筛选" value={appFilter} onChange={setAppFilter} options={APP_OPTIONS} />
-						<FilterSelect
-							ariaLabel="Agent 筛选"
-							value={agentFilter}
-							onChange={setAgentFilter}
-							options={AGENT_OPTIONS}
-						/>
-						<FilterSelect
-							ariaLabel="状态筛选"
-							value={statusFilter}
-							onChange={setStatusFilter}
-							options={STATUS_OPTIONS}
-						/>
-						<FilterSearch placeholder="搜索用户、会话 ID、关键词…" value={query} onChange={setQuery} />
+						<AuroraButton variant="default" size="md">
+							导出 CSV
+						</AuroraButton>
+						<AuroraButton
+							variant="accent"
+							size="md"
+							onClick={() => {
+								setQuery("");
+								setStatusFilter("");
+								setStatusTab("all");
+								setAppFilter("");
+								setAgentFilter("");
+								setChannelFilter("");
+								setDateFrom("");
+								setDateTo("");
+							}}
+						>
+							重置筛选
+						</AuroraButton>
 					</>
 				}
-				right={
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => {
-							setQuery("");
-							setStatusFilter("");
-							setAppFilter("");
-							setAgentFilter("");
-							setChannelFilter("");
-							setDateFrom("");
-							setDateTo("");
-						}}
+			/>
+
+			<div className={styles.metricWrap}>
+				<AuroraMetricGrid items={metrics} columns={6} ariaLabel="会话总览指标" />
+			</div>
+
+			<div className={styles.toolbar}>
+				<AuroraSearchBox value={query} onChange={setQuery} placeholder="搜索用户、会话 ID、关键词…" />
+				<div className={styles.toolbarRight}>
+					<select
+						className={styles.select}
+						value={appFilter}
+						onChange={(e) => setAppFilter(e.currentTarget.value)}
+						aria-label="应用筛选"
 					>
-						重置
-					</Button>
-				}
-			/>
+						{APP_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
+					<select
+						className={styles.select}
+						value={agentFilter}
+						onChange={(e) => setAgentFilter(e.currentTarget.value)}
+						aria-label="Agent 筛选"
+					>
+						{AGENT_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
+					<select
+						className={styles.select}
+						value={channelFilter}
+						onChange={(e) => setChannelFilter(e.currentTarget.value)}
+						aria-label="渠道筛选"
+					>
+						{CHANNEL_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
+					<input
+						type="date"
+						className={styles.date}
+						value={dateFrom}
+						onChange={(e) => setDateFrom(e.currentTarget.value)}
+						aria-label="起始日期"
+					/>
+					<input
+						type="date"
+						className={styles.date}
+						value={dateTo}
+						onChange={(e) => setDateTo(e.currentTarget.value)}
+						aria-label="结束日期"
+					/>
+				</div>
+			</div>
 
-			<MetricsRow items={metrics} />
+			<div className={styles.tabRow}>
+				<AuroraPillTabs<StatusTab>
+					value={statusTab}
+					onChange={setStatusTab}
+					items={statusTabs}
+					ariaLabel="按状态切换"
+				/>
+				<div className={styles.tabRight}>
+					<AuroraChip active>视图：对话</AuroraChip>
+					<AuroraChip>视图：表格</AuroraChip>
+				</div>
+			</div>
 
-			{state.kind === "loading" ? (
-				<p style={{ padding: "16px 4px", color: "var(--admin-text-muted)" }}>加载中…</p>
-			) : null}
+			{state.kind === "loading" && !useMock ? <p className={styles.loading}>加载中…</p> : null}
 
-			<Table<DisplayConversation>
-				columns={columns}
-				rows={rows}
-				rowKey={(row) => row.id}
-				emptyTitle="没有匹配的会话"
-				emptyDescription="尝试调整搜索关键词或筛选条件。"
-			/>
+			{pagedRows.length === 0 ? (
+				<div className={styles.empty}>
+					<div className={styles.emptyTitle}>没有匹配的会话</div>
+					<div className={styles.emptyDesc}>尝试调整搜索关键词或筛选条件。</div>
+				</div>
+			) : (
+				<div className={styles.list}>
+					{pagedRows.map((row) => (
+						<AuroraSessionRow
+							key={row.id}
+							when={row.lastRelative}
+							user={row.principalDisplayId}
+							agentBadge={<AuroraPill tone="accent">{row.agentName}</AuroraPill>}
+							channel={`via ${row.appName} · ${row.channel}`}
+							statusBadge={statusBadge(row.status)}
+							userPreview={`${row.title}（${row.principalType}）`}
+							agentPreview={summarizeAgentReply(row)}
+							meta={
+								<>
+									<span>{row.messageCount} 轮</span>
+									<span>{row.tokenTotal > 0 ? formatTokens(row.tokenTotal) : "—"} token</span>
+									<span>{row.avgResponseMs > 0 ? formatMs(row.avgResponseMs) : "—"} 响应</span>
+									{row.errorCount > 0 ? (
+										<span style={{ color: "var(--aurora-red)" }}>{row.errorCount} 次错误</span>
+									) : null}
+								</>
+							}
+							onClick={() => navigate(`/conversations/${row.id}`)}
+							ariaLabel={`打开会话 ${row.id}`}
+						/>
+					))}
+				</div>
+			)}
 
-			<Pagination
-				total={rows.length}
-				page={page}
-				pageSize={pageSize}
-				onPageChange={setPage}
-				onPageSizeChange={(s) => {
-					setPageSize(s);
-					setPage(1);
-				}}
-			/>
+			<footer className={styles.footer}>
+				<div className={styles.totalCount}>
+					共 <strong>{rows.length}</strong> 条会话
+				</div>
+				<AuroraPagination
+					page={safePage}
+					totalPages={totalPages}
+					pageSize={pageSize}
+					pageSizeOptions={[8, 12, 24, 48]}
+					onPageChange={setPage}
+					onPageSizeChange={(s) => {
+						setPageSize(s);
+						setPage(1);
+					}}
+				/>
+			</footer>
 		</section>
 	);
+}
+
+function summarizeAgentReply(row: DisplayConversation): string {
+	// 把核心数字拼成一句模拟回复，避免单纯"agent: …"过空。
+	if (row.status === "deleted") return "[会话已删除]";
+	if (row.status === "archived") {
+		return `已结算 · ${row.messageCount} 轮 · ${row.tokenTotal > 0 ? formatTokens(row.tokenTotal) : "—"} token`;
+	}
+	return `响应中 · 当前 ${row.messageCount} 轮 · 平均 ${row.avgResponseMs > 0 ? formatMs(row.avgResponseMs) : "—"}`;
 }

@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { defineConfig, type PluginOption } from "vite";
@@ -20,6 +21,22 @@ const isEmbedOnly = target === "embed";
 const isSingle = isAdminOnly || isEmbedOnly;
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+
+/**
+ * 读取 dev 模式的 admin token。dev:admin 脚本通过 `PI_CONTROL_ADMIN_TOKEN_FILE`
+ * 把生成的 token 路径传给 vite，我们在这里一次性读入并在代理转发时自动写入
+ * `Authorization: Bearer <token>` 头 —— 控制台前端从此不需要也不允许用户输入。
+ *
+ * 只在文件存在且非空时启用；缺失时不报错（与之前"无 token 全部 404"保持一致）。
+ */
+function loadDevAdminToken(): string | null {
+	const file = process.env.PI_CONTROL_ADMIN_TOKEN_FILE;
+	if (file === undefined || file === "") return null;
+	if (!existsSync(file)) return null;
+	const value = readFileSync(file, "utf8").trim();
+	return value === "" ? null : value;
+}
+const devAdminToken = loadDevAdminToken();
 
 function routeRewritePlugin(): PluginOption {
 	return {
@@ -127,11 +144,37 @@ export default defineConfig({
  * `PI_ADMIN_DEV_PROXY_TARGET` (the workbench's normal target). When the
  * expected env var is missing we print a single loud warning instead of
  * silently serving 404s so dev:admin failures are obvious (MVP-01).
+ *
+ * `/api/control` 还会在转发前注入 `Authorization: Bearer <token>`（如果
+ * dev:admin 脚本通过 `PI_CONTROL_ADMIN_TOKEN_FILE` 提供了 token 文件），
+ * 让前端无需也不能让用户输入 token。
+ *
+ * Vite 的 proxy 配置项没有官方强类型（属于 http-proxy 透传），这里用
+ * `as` 窄化到我们实际用到的字段。
  */
+type ProxyEntry = {
+	target: string;
+	changeOrigin: boolean;
+	ws?: boolean;
+	configure?: (proxyServer: unknown) => void;
+};
+
 function buildProxyConfig(
 	embedTarget: string | undefined,
 	adminTarget: string | undefined,
-): Record<string, { target: string; changeOrigin: boolean; ws?: boolean }> | undefined {
+): Record<string, ProxyEntry> | undefined {
+	const adminConfigure: ProxyEntry["configure"] = devAdminToken
+		? (proxyServer) => {
+				const server = proxyServer as {
+					on?(event: string, listener: (...args: unknown[]) => void): void;
+				};
+				server.on?.("proxyReq", (...args: unknown[]) => {
+					const proxyReq = args[0] as { setHeader?: (k: string, v: string) => void };
+					proxyReq.setHeader?.("Authorization", `Bearer ${devAdminToken}`);
+				});
+			}
+		: undefined;
+
 	if (isEmbedOnly) {
 		if (embedTarget === undefined) {
 			console.warn(
@@ -140,7 +183,7 @@ function buildProxyConfig(
 			return undefined;
 		}
 		return {
-			"/api/control": { target: embedTarget, changeOrigin: false },
+			"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 			"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
 		};
 	}
@@ -153,7 +196,7 @@ function buildProxyConfig(
 			return undefined;
 		}
 		return {
-			"/api/control": { target: adminTarget, changeOrigin: false },
+			"/api/control": { target: adminTarget, changeOrigin: false, configure: adminConfigure },
 			"/api/embed": { target: adminTarget, changeOrigin: false, ws: true },
 		};
 	}
@@ -162,11 +205,11 @@ function buildProxyConfig(
 			"[pi-web] PI_EMBED_DEV_PROXY_TARGET is not set; /api/embed requests will 404 in dev.",
 		);
 		return {
-			"/api/control": { target: adminTarget ?? "", changeOrigin: false },
+			"/api/control": { target: adminTarget ?? "", changeOrigin: false, configure: adminConfigure },
 		};
 	}
 	return {
-		"/api/control": { target: embedTarget, changeOrigin: false },
+		"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 		"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
 	};
 }

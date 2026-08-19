@@ -23,7 +23,17 @@ export function FilterSearch({ placeholder, value, onChange, ariaLabel }: Filter
 	return (
 		<div className={styles.search}>
 			<span className={styles.searchIcon} aria-hidden="true">
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+				<svg
+					aria-hidden="true"
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
 					<circle cx="11" cy="11" r="7" />
 					<path d="M21 21l-4.3-4.3" />
 				</svg>
@@ -83,7 +93,6 @@ export interface DateRangeProps {
 	readonly onToChange: (next: string) => void;
 	readonly fromLabel?: string;
 	readonly toLabel?: string;
-	readonly ariaLabel?: string;
 }
 
 export function DateRange({
@@ -93,10 +102,9 @@ export function DateRange({
 	onToChange,
 	fromLabel = "起始",
 	toLabel = "结束",
-	ariaLabel = "时间范围",
 }: DateRangeProps): React.ReactElement {
 	return (
-		<div className={styles.dateRange} aria-label={ariaLabel}>
+		<div className={styles.dateRange}>
 			<input
 				type="date"
 				className={styles.dateInput}

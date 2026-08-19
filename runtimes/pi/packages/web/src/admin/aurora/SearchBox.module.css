@@ -1,0 +1,42 @@
+.box {
+	flex: 1;
+	min-width: 240px;
+	max-width: 520px;
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	padding: 0 16px;
+	height: 40px;
+	background: var(--aurora-surface-soft);
+	border: 1.5px solid transparent;
+	border-radius: var(--aurora-radius-pill);
+	color: var(--aurora-ink-3);
+	transition:
+		background var(--aurora-motion-fast) var(--aurora-ease-standard),
+		border-color var(--aurora-motion-fast) var(--aurora-ease-standard);
+}
+
+.box:focus-within {
+	background: var(--aurora-surface);
+	border-color: var(--aurora-accent);
+}
+
+.icon {
+	flex-shrink: 0;
+	color: var(--aurora-ink-3);
+}
+
+.input {
+	flex: 1;
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	font-size: var(--aurora-text-base);
+	color: var(--aurora-ink);
+	outline: none;
+}
+
+.input::placeholder {
+	color: var(--aurora-ink-3);
+}

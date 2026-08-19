@@ -2,39 +2,39 @@
 
 /* ==========================================================================
    Design Tokens（控制台视觉语言）
-   - 暖白底 + 暖橘点缀
+   - 纯白底 + 墨黑侧栏 + 钴蓝点缀
    - 与 runtimes/pi/design 的 --ai-* tokens 解耦，独立命名空间
    - 公共组件以 var(--admin-*) 引用；业务页面继续使用现有语义类名
    ========================================================================== */
 :root {
 	/* —— 颜色：背景 —— */
-	--admin-bg-page: #f8f5ee; /* 页面暖白底 */
+	--admin-bg-page: #ffffff; /* 页面纯白底 */
 	--admin-bg-surface: #ffffff; /* 卡片/弹层 */
-	--admin-bg-elevated: #fdfbf6; /* 浮起 */
-	--admin-bg-inset: #f1ece0; /* 凹陷 */
-	--admin-bg-hover: #faf6ec; /* 行 hover */
-	--admin-bg-sidebar: #fbf8f0; /* 侧边栏 */
+	--admin-bg-elevated: #ffffff; /* 浮起 */
+	--admin-bg-inset: #eef5ff; /* 凹陷 */
+	--admin-bg-hover: #f5f9ff; /* 行 hover */
+	--admin-bg-sidebar: #101114; /* 侧边栏 */
 
 	/* —— 颜色：文字 —— */
-	--admin-text-primary: #1f1d1a;
-	--admin-text-secondary: #5b574e;
-	--admin-text-muted: #8a857a;
-	--admin-text-faint: #b5afa3;
+	--admin-text-primary: #111318;
+	--admin-text-secondary: #454b57;
+	--admin-text-muted: #6e7685;
+	--admin-text-faint: #9aa2af;
 	--admin-text-inverse: #ffffff;
 
 	/* —— 颜色：边框 —— */
-	--admin-border-soft: #eae3d5; /* 默认细线 */
-	--admin-border-default: #ddd4c2; /* 卡片边 */
-	--admin-border-strong: #c9bfa8; /* 强调边 */
-	--admin-border-focus: #c49a5a;
+	--admin-border-soft: #e6edf7; /* 默认细线 */
+	--admin-border-default: #d5e1f0; /* 卡片边 */
+	--admin-border-strong: #b8cbe2; /* 强调边 */
+	--admin-border-focus: #0057ff;
 
-	/* —— 颜色：暖橘点缀（主色） —— */
-	--admin-accent: #c49a5a;
-	--admin-accent-hover: #b58848;
-	--admin-accent-soft: #f5e9d2; /* chip / hover bg */
-	--admin-accent-softer: #fbf4e5; /* 极浅背景 */
-	--admin-accent-strong: #8c6534;
-	--admin-accent-glow: rgba(196, 154, 90, 0.18);
+	/* —— 颜色：钴蓝点缀（主色） —— */
+	--admin-accent: #0057ff;
+	--admin-accent-hover: #0046cc;
+	--admin-accent-soft: #e8f1ff; /* chip / hover bg */
+	--admin-accent-softer: #f4f8ff; /* 极浅背景 */
+	--admin-accent-strong: #003da6;
+	--admin-accent-glow: rgba(0, 87, 255, 0.16);
 
 	/* —— 颜色：状态语义 —— */
 	--admin-success: #5c8a6b;
@@ -45,8 +45,8 @@
 	--admin-danger-soft: #f2d9d4;
 	--admin-info: #6b7a8f;
 	--admin-info-soft: #dee3eb;
-	--admin-neutral: #8a857a;
-	--admin-neutral-soft: #ebe6d8;
+	--admin-neutral: #6e7685;
+	--admin-neutral-soft: #eef5ff;
 
 	/* —— 颜色：趋势（指标卡上下箭头） —— */
 	--admin-trend-up: #3f8b5a;
@@ -108,6 +108,127 @@
 	--admin-page-pad-x: 32px;
 }
 
+/* ==========================================================================
+   Aurora Design Tokens（控制台视觉语言 v2）
+   - 提取自 design/minimax/exploration/direction-b-aurora.html
+   - 与 --admin-* 共存：Aurora 仅在新页面/新组件中使用，旧页面继续 --admin-*
+   - 后续可逐页迁移；本次只在 Agent List 上落地
+   ========================================================================== */
+:root {
+	/* —— 颜色：背景（纯白主画布；不使用灰或米白基调） —— */
+	--aurora-bg: #ffffff;
+	--aurora-surface: #ffffff; /* 卡片/弹层 */
+	--aurora-surface-soft: #eef5ff; /* 凹陷：tabs / field / insets */
+	--aurora-canvas: #ffffff; /* canvas 主区（纯白） */
+	--aurora-overlay: rgba(255, 255, 255, 0.92); /* 顶部 sticky 玻璃态 */
+
+	/* —— 颜色：文字 —— */
+	--aurora-ink: #111318; /* 主文字 */
+	--aurora-ink-2: #454b57; /* 副文字 */
+	--aurora-ink-3: #747d8c; /* 弱化文字、placeholder */
+	--aurora-inverse: #ffffff;
+
+	/* —— 颜色：边框 —— */
+	--aurora-line: #d5e1f0; /* 默认细线 */
+	--aurora-line-soft: #e9f0f8; /* 极浅分割 */
+
+	/* —— 颜色：主品牌（单一钴蓝，不使用紫色渐变） —— */
+	--aurora-accent: #0057ff;
+	--aurora-accent-2: #0057ff;
+	--aurora-accent-3: #0057ff;
+	--aurora-accent-soft: #e8f1ff; /* chip / hover bg */
+	--aurora-accent-glow: rgba(0, 87, 255, 0.16); /* focus halo */
+
+	/* —— 颜色：渐变 —— */
+	--aurora-gradient: #0057ff;
+	--aurora-gradient-soft: #e8f1ff;
+	--aurora-gradient-glow: #f5f9ff;
+
+	/* —— 颜色：状态语义 —— */
+	--aurora-green: #059669;
+	--aurora-green-soft: rgba(5, 150, 105, 0.08);
+	--aurora-amber: #d97706;
+	--aurora-amber-soft: rgba(217, 119, 6, 0.08);
+	--aurora-red: #e11d48;
+	--aurora-red-soft: rgba(225, 29, 72, 0.08);
+	--aurora-neutral: #747d8c;
+	--aurora-neutral-soft: #eef5ff;
+
+	/* —— 头像色（名称为组件兼容保留，色值不含紫色） —— */
+	--aurora-av-purple: #0057ff;
+	--aurora-av-pink: #007f8b;
+	--aurora-av-emerald: linear-gradient(135deg, #34d399, #059669);
+	--aurora-av-amber: linear-gradient(135deg, #fbbf24, #d97706);
+	--aurora-av-sky: linear-gradient(135deg, #60a5fa, #2563eb);
+	--aurora-av-rose: linear-gradient(135deg, #fb7185, #e11d48);
+
+	/* —— 字体 —— */
+	--aurora-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+		"Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+	--aurora-font-display: "Inter Tight", "Inter", -apple-system, sans-serif;
+	--aurora-font-serif: "Instrument Serif", "Cormorant Garamond", Georgia, serif;
+	--aurora-font-mono: "JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, Consolas,
+		monospace;
+
+	/* —— 间距（4px 基础，但单位更慷慨） —— */
+	--aurora-space-1: 4px;
+	--aurora-space-2: 8px;
+	--aurora-space-3: 12px;
+	--aurora-space-4: 16px;
+	--aurora-space-5: 20px;
+	--aurora-space-6: 24px;
+	--aurora-space-7: 28px;
+	--aurora-space-8: 32px;
+	--aurora-space-10: 40px;
+	--aurora-space-12: 48px;
+
+	/* —— 圆角（比 admin 更大） —— */
+	--aurora-radius-sm: 8px;
+	--aurora-radius-md: 14px;
+	--aurora-radius-lg: 20px;
+	--aurora-radius-pill: 999px;
+
+	/* —— 字号 —— */
+	--aurora-text-xs: 11px;
+	--aurora-text-sm: 12px;
+	--aurora-text-md: 13px;
+	--aurora-text-base: 14px;
+	--aurora-text-lg: 15px;
+	--aurora-text-xl: 17px;
+	--aurora-text-2xl: 20px;
+	--aurora-text-3xl: 24px;
+	--aurora-text-4xl: 28px;
+	--aurora-text-5xl: 40px;
+	--aurora-text-display: 80px; /* 仅 hero / banner 用 */
+
+	/* —— 字重 —— */
+	--aurora-weight-regular: 400;
+	--aurora-weight-medium: 500;
+	--aurora-weight-semibold: 600;
+	--aurora-weight-bold: 700;
+
+	/* —— 阴影（极轻，色调用 ink） —— */
+	--aurora-shadow-sm: 0 1px 2px rgba(17, 19, 24, 0.04);
+	--aurora-shadow-md:
+		0 2px 8px rgba(17, 19, 24, 0.04), 0 8px 24px rgba(17, 19, 24, 0.06);
+	--aurora-shadow-lg:
+		0 4px 16px rgba(17, 19, 24, 0.06), 0 24px 64px rgba(17, 19, 24, 0.08);
+	--aurora-shadow-glow: 0 4px 12px rgba(0, 87, 255, 0.2);
+
+	/* —— 动效 —— */
+	--aurora-motion-fast: 120ms;
+	--aurora-motion-base: 180ms;
+	--aurora-motion-slow: 280ms;
+	--aurora-ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
+	--aurora-ease-emphasis: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+	/* —— 布局 —— */
+	--aurora-side-rail-width: 220px;
+	--aurora-page-max-width: 1280px;
+	--aurora-canvas-pad-x: 48px;
+	--aurora-canvas-pad-y: 40px;
+}
+
 /* 强制不出现横向溢出（任务单验收） */
 html,
 body,
@@ -115,24 +236,49 @@ body,
 	height: 100%;
 	margin: 0;
 	overflow-x: hidden;
-	font-family: system-ui, -apple-system, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB",
-		"Microsoft YaHei", sans-serif;
-	color: var(--admin-text-primary);
-	background: var(--admin-bg-page);
+	font-family: var(--font-sans);
+	color: var(--aurora-ink);
+	background: var(--aurora-bg);
+	-webkit-font-smoothing: antialiased;
 }
 
 button {
 	font-family: inherit;
 }
 
-/* ----- Shell 容器（v2 视觉） ----- */
+/* ----- Aurora Shell 容器（v5 = 去掉顶栏，brand 移入左 sidebar） -----
+ * 对齐 direction-b-aurora 的 .app-shell 视觉语言，但取消 1440px 上限：
+ * shell 撑满视口宽度，左右两侧不留白；窄屏（< 920px）才回到带圆角的
+ * 居中卡片视觉，避免视觉在手机/平板上断裂。
+ * shell 内部两栏水平 flex：AppSidebar（含 brand + 导航）+ admin-shell__main。
+ */
 .admin-shell {
 	display: flex;
 	flex-direction: row;
-	height: 100vh;
-	min-width: 0;
-	background: var(--admin-bg-page);
+	min-height: 100vh;
+	width: 100%;
+	background: var(--aurora-surface);
 	overflow: hidden;
+	min-width: 0;
+}
+
+@media (max-width: 920px) {
+	.admin-shell {
+		max-width: 1440px;
+		margin: 0 auto;
+		border: 1.5px solid var(--aurora-line);
+		border-radius: 0 0 var(--aurora-radius-lg) var(--aurora-radius-lg);
+		box-shadow: var(--aurora-shadow-md);
+	}
+}
+
+/* v5：admin-shell 唯一子元素 = AppSidebar + main 直接并排（无 body 容器）。
+ * 旧 .admin-shell__body 仍保留以兼容可能的旧样式钩子，但其内容现在是主区。 */
+.admin-shell__body {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
 }
 
 .admin-shell__main {
@@ -140,12 +286,11 @@ button {
 	min-width: 0;
 	min-height: 0;
 	overflow-y: auto;
-	padding: var(--admin-space-8) var(--admin-page-pad-x);
+	padding: var(--aurora-canvas-pad-y) var(--aurora-canvas-pad-x);
 	max-width: 100%;
 }
 
 .admin-shell[data-route="chat"] .admin-shell__main {
-	height: 100vh;
 	overflow: hidden;
 	padding: 0;
 }
@@ -178,33 +323,14 @@ button {
 	margin-top: 12px;
 }
 
-/* ----- Unlock dialog（兼容保留） ----- */
-.admin-shell .admin-unlock-backdrop {
-	background: rgba(31, 29, 26, 0.45);
-}
-.admin-shell .admin-unlock-card {
-	background: var(--admin-bg-surface);
-	border-radius: var(--admin-radius-2xl);
-	box-shadow: var(--admin-shadow-xl);
-}
-.admin-shell .admin-unlock-card h2 { color: var(--admin-text-primary); }
-.admin-shell .admin-unlock-card input {
-	background: var(--admin-bg-surface);
-	border-color: var(--admin-border-default);
-	color: var(--admin-text-primary);
-}
-.admin-shell .admin-unlock-card .error {
-	background: var(--admin-danger-soft);
-	color: var(--admin-danger);
-	padding: 8px 12px;
-	border-radius: var(--admin-radius-md);
-}
+/* ----- Unlock dialog 已下线（v3 移除 token 输入） -----
+ * 旧 CSS 保留无意义，统一删除。下游代码再无引用，注释留作历史。 */
 
 /* ----- Card / Panel ----- */
 .admin-shell .card,
 .admin-shell .panel {
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-xl);
 	padding: var(--admin-space-6);
 	color: var(--admin-text-primary);
@@ -219,7 +345,7 @@ button {
 .admin-shell .card table { width: 100%; border-collapse: collapse; }
 .admin-shell .card table td {
 	padding: 8px 12px;
-	border-bottom: 1px solid var(--admin-border-soft);
+	border-bottom: 1.5px solid var(--admin-border-soft);
 	color: var(--admin-text-primary);
 	font-size: 13px;
 }
@@ -243,7 +369,7 @@ button {
 	display: flex;
 	gap: 4px;
 	margin: var(--admin-space-3) 0 var(--admin-space-4);
-	border-bottom: 1px solid var(--admin-border-soft);
+	border-bottom: 1.5px solid var(--admin-border-soft);
 }
 .admin-shell .detail-tabs button {
 	background: none;
@@ -275,12 +401,12 @@ button {
 .admin-shell .banner.error {
 	background: var(--admin-danger-soft);
 	color: var(--admin-danger);
-	border: 1px solid var(--admin-danger);
+	border: 1.5px solid var(--admin-danger);
 }
 .admin-shell .banner.warning {
 	background: var(--admin-warning-soft);
 	color: var(--admin-warning);
-	border: 1px solid var(--admin-warning);
+	border: 1.5px solid var(--admin-warning);
 }
 
 /* ----- Drawer (publish + confirm) ----- */
@@ -378,7 +504,7 @@ button {
 	border-collapse: separate;
 	border-spacing: 0;
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-xl);
 	overflow: hidden;
 }
@@ -390,7 +516,7 @@ button {
 .admin-shell .audit-table td {
 	padding: 10px 14px;
 	text-align: left;
-	border-bottom: 1px solid var(--admin-border-soft);
+	border-bottom: 1.5px solid var(--admin-border-soft);
 	font-size: 13px;
 	color: var(--admin-text-primary);
 }
@@ -429,7 +555,7 @@ button {
 .admin-shell .conversation-filters input[type="text"],
 .admin-shell .conversation-filters input[type="datetime-local"] {
 	padding: 7px 10px;
-	border: 1px solid var(--admin-border-default);
+	border: 1.5px solid var(--admin-border-default);
 	border-radius: var(--admin-radius-md);
 	background: var(--admin-bg-surface);
 	color: var(--admin-text-primary);
@@ -443,7 +569,7 @@ button {
 	border-collapse: separate;
 	border-spacing: 0;
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-xl);
 	overflow: hidden;
 }
@@ -453,7 +579,7 @@ button {
 .admin-shell .evt-table td {
 	padding: 12px 14px;
 	text-align: left;
-	border-bottom: 1px solid var(--admin-border-soft);
+	border-bottom: 1.5px solid var(--admin-border-soft);
 	font-size: 13px;
 	color: var(--admin-text-primary);
 }
@@ -492,7 +618,7 @@ button {
 }
 .admin-shell .conversation-export-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-shell .conversation-export-actions button {
-	border: 1px solid var(--admin-border-default);
+	border: 1.5px solid var(--admin-border-default);
 	background: var(--admin-bg-surface);
 	border-radius: var(--admin-radius-md);
 	padding: 6px 12px;
@@ -509,7 +635,7 @@ button {
 .admin-shell .detail-breadcrumb button,
 .admin-shell .rollover-nav button {
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-default);
+	border: 1.5px solid var(--admin-border-default);
 	border-radius: var(--admin-radius-md);
 	padding: 6px 12px;
 	cursor: pointer;
@@ -536,7 +662,7 @@ button {
 .admin-shell .unknown-event { color: var(--admin-danger); font-size: 12px; }
 
 .admin-shell .summary-card {
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-xl);
 	padding: var(--admin-space-4);
 	margin-bottom: var(--admin-space-3);
@@ -558,7 +684,7 @@ button {
 .admin-shell .app-list-toolbar select,
 .admin-shell .app-list-toolbar input {
 	padding: 7px 10px;
-	border: 1px solid var(--admin-border-default);
+	border: 1.5px solid var(--admin-border-default);
 	border-radius: var(--admin-radius-md);
 	background: var(--admin-bg-surface);
 	color: var(--admin-text-primary);
@@ -593,7 +719,7 @@ button {
 
 /* ----- Danger Panel ----- */
 .admin-shell .panel.danger {
-	border: 1px solid var(--admin-danger);
+	border: 1.5px solid var(--admin-danger);
 	padding: var(--admin-space-4);
 	border-radius: var(--admin-radius-xl);
 	background: var(--admin-danger-soft);
@@ -620,7 +746,7 @@ button {
 	gap: 8px;
 	max-height: 320px;
 	overflow-y: auto;
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-md);
 	padding: 8px;
 	margin: 8px 0;
@@ -651,7 +777,7 @@ button {
 }
 .admin-shell .diff-summary {
 	background: var(--admin-bg-inset);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-md);
 	padding: 12px;
 }
@@ -693,7 +819,7 @@ button {
 	margin: 0 0 12px;
 	padding: 12px;
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-lg);
 }
 .admin-shell .list-toolbar__search {
@@ -704,7 +830,7 @@ button {
 .admin-shell .list-toolbar__search input {
 	width: 100%;
 	padding: 8px 12px 8px 32px;
-	border: 1px solid var(--admin-border-default);
+	border: 1.5px solid var(--admin-border-default);
 	border-radius: var(--admin-radius-md);
 	background: var(--admin-bg-surface);
 	color: var(--admin-text-primary);
@@ -718,7 +844,7 @@ button {
 }
 .admin-shell .list-toolbar select {
 	padding: 7px 10px;
-	border: 1px solid var(--admin-border-default);
+	border: 1.5px solid var(--admin-border-default);
 	border-radius: var(--admin-radius-md);
 	background: var(--admin-bg-surface);
 	color: var(--admin-text-primary);
@@ -758,7 +884,7 @@ button {
 	border-collapse: separate;
 	border-spacing: 0;
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-xl);
 	overflow: hidden;
 }
@@ -766,7 +892,7 @@ button {
 .admin-shell .data-table td {
 	padding: 12px 16px;
 	text-align: left;
-	border-bottom: 1px solid var(--admin-border-soft);
+	border-bottom: 1.5px solid var(--admin-border-soft);
 	font-size: 13px;
 	vertical-align: middle;
 	color: var(--admin-text-primary);
@@ -853,7 +979,7 @@ button {
 	border-radius: var(--admin-radius-pill);
 	background: var(--admin-bg-inset);
 	color: var(--admin-text-secondary);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	max-width: 180px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -914,7 +1040,7 @@ button {
 	top: calc(100% + 4px);
 	min-width: 160px;
 	background: var(--admin-bg-surface);
-	border: 1px solid var(--admin-border-soft);
+	border: 1.5px solid var(--admin-border-soft);
 	border-radius: var(--admin-radius-md);
 	box-shadow: var(--admin-shadow-lg);
 	padding: 4px;
@@ -960,7 +1086,7 @@ button {
 	gap: 8px;
 	padding: 8px 14px;
 	background: var(--admin-warning-soft);
-	border: 1px solid var(--admin-warning);
+	border: 1.5px solid var(--admin-warning);
 	border-radius: var(--admin-radius-md);
 	font-size: 12px;
 	color: var(--admin-warning);
@@ -968,7 +1094,7 @@ button {
 }
 .admin-shell .mock-data-banner code {
 	font-family: ui-monospace, monospace;
-	background: rgba(196, 154, 90, 0.15);
+	background: rgba(17, 19, 24, 0.08);
 	padding: 1px 6px;
 	border-radius: 3px;
 }
@@ -1002,7 +1128,7 @@ button {
 	white-space: nowrap;
 	background: var(--admin-neutral-soft);
 	color: var(--admin-text-secondary);
-	border: 1px solid transparent;
+	border: 1.5px solid transparent;
 }
 .admin-shell .badge.status-active { background: var(--admin-success-soft); color: var(--admin-success); }
 .admin-shell .badge.status-draft { background: var(--admin-accent-soft); color: var(--admin-accent-strong); }
@@ -1017,4 +1143,3 @@ button {
 .admin-shell .badge.status-connected { background: var(--admin-success-soft); color: var(--admin-success); }
 .admin-shell .badge.status-connecting { background: var(--admin-warning-soft); color: var(--admin-warning); }
 .admin-shell .badge.status-locked { background: var(--admin-neutral-soft); color: var(--admin-text-muted); }
-

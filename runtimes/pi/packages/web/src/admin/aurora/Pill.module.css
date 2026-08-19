@@ -1,0 +1,54 @@
+.pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border-radius: var(--aurora-radius-pill);
+	font-size: var(--aurora-text-sm);
+	font-weight: var(--aurora-weight-medium);
+	line-height: 1.4;
+	white-space: nowrap;
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink-2);
+}
+
+.tone_accent {
+	background: var(--aurora-accent-soft);
+	color: var(--aurora-accent);
+}
+
+.tone_green {
+	background: var(--aurora-green-soft);
+	color: var(--aurora-green);
+}
+
+.tone_amber {
+	background: var(--aurora-amber-soft);
+	color: var(--aurora-amber);
+}
+
+.tone_red {
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+}
+
+.tone_neutral {
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink-2);
+}
+
+/* live: 绿点 + halo，对齐 .live::before */
+.tone_live {
+	background: var(--aurora-green-soft);
+	color: var(--aurora-green);
+}
+
+.tone_live::before {
+	content: "";
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	box-shadow: 0 0 0 4px rgba(5, 150, 105, 0.15);
+}

@@ -1,0 +1,35 @@
+.header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: var(--aurora-space-8);
+	gap: var(--aurora-space-6);
+	flex-wrap: wrap;
+}
+
+.title {
+	margin: 0;
+	font-family: var(--aurora-font-display);
+	font-size: var(--aurora-text-4xl);
+	font-weight: var(--aurora-weight-semibold);
+	letter-spacing: -0.02em;
+	line-height: 1.1;
+	color: var(--aurora-ink);
+}
+
+.actions {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--aurora-space-2);
+	flex-shrink: 0;
+}
+
+/* 仅 actions(无 title)的紧凑行:右对齐,沿用同一组间距 token */
+.actionsRow {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	gap: var(--aurora-space-2);
+	margin-bottom: var(--aurora-space-6);
+	flex-wrap: wrap;
+}
