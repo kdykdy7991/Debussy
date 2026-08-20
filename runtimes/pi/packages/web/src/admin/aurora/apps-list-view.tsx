@@ -1,153 +1,18 @@
-/**
- * App List — Aurora 视觉迁移（v2，去套壳 + 表格视图，对齐 Agent List）。
- *
- * 视觉：tableToolbar（右上「新建应用」按钮） + 紧凑表格（名称 / 绑定 Agent /
- * Public ID / 状态 / 访问方式 / 今日会话 / 操作）+ Pagination。
- *
- * 数据沿用既有 MOCK_APPS（name / publicAppId / boundAgent / accessMode /
- * status / updatedAt 字段不变）；后续接 Control API 时只替换数据源。
- */
-import { useMemo, useState } from "react";
+import type { PublishedAppSummary } from "@earendil-works/pi-protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppApi } from "../api/app-api.ts";
+import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { navigate } from "../router.ts";
 import styles from "./apps-list-view.module.css";
-import { AuroraButton, AuroraPagination, AuroraPill } from "./index.ts";
+import { AuroraButton, AuroraPageHeader, AuroraPill } from "./index.ts";
 
-type AppStatus = "active" | "draft" | "suspended" | "archived";
-type AccessMode = "anonymous" | "signed_user" | "mixed";
+type AppStatus = PublishedAppSummary["status"];
+type AccessMode = PublishedAppSummary["accessMode"];
 
-interface AppRow {
-	readonly id: string;
-	readonly name: string;
-	readonly publicAppId: string;
-	readonly boundAgentName: string;
-	readonly boundAgentId: string;
-	readonly boundAgentRevision: number;
-	readonly accessMode: AccessMode;
-	readonly status: AppStatus;
-	readonly sessionsToday: number;
-	readonly updatedAt: string;
-	readonly updatedBy: string;
-}
-
-const MOCK_APPS: readonly AppRow[] = [
-	{
-		id: "app_demo_001",
-		name: "官网客服",
-		publicAppId: "app_pub_8f3c1e2a",
-		boundAgentName: "客服 Agent",
-		boundAgentId: "agent_demo_customer_service",
-		boundAgentRevision: 12,
-		accessMode: "anonymous",
-		status: "active",
-		sessionsToday: 1247,
-		updatedAt: "2026-08-15 10:32",
-		updatedBy: "alice@example.com",
-	},
-	{
-		id: "app_demo_002",
-		name: "内部客服工作台",
-		publicAppId: "app_pub_4a92be71",
-		boundAgentName: "客服 Agent",
-		boundAgentId: "agent_demo_customer_service",
-		boundAgentRevision: 11,
-		accessMode: "signed_user",
-		status: "active",
-		sessionsToday: 412,
-		updatedAt: "2026-08-10 14:48",
-		updatedBy: "bob@example.com",
-	},
-	{
-		id: "app_demo_003",
-		name: "客服测试环境预览",
-		publicAppId: "app_pub_2c7dfa09",
-		boundAgentName: "客服 Agent",
-		boundAgentId: "agent_demo_customer_service",
-		boundAgentRevision: 13,
-		accessMode: "anonymous",
-		status: "draft",
-		sessionsToday: 128,
-		updatedAt: "2026-08-16 18:01",
-		updatedBy: "alice@example.com",
-	},
-	{
-		id: "app_demo_004",
-		name: "合同审查控制台",
-		publicAppId: "app_pub_6e1b09dc",
-		boundAgentName: "合同审查 Agent",
-		boundAgentId: "agent_demo_contract_review",
-		boundAgentRevision: 8,
-		accessMode: "signed_user",
-		status: "active",
-		sessionsToday: 87,
-		updatedAt: "2026-08-12 09:14",
-		updatedBy: "bob@example.com",
-	},
-	{
-		id: "app_demo_005",
-		name: "数据分析控制台",
-		publicAppId: "app_pub_71b2ce40",
-		boundAgentName: "数据分析 Agent",
-		boundAgentId: "agent_demo_data_analyst",
-		boundAgentRevision: 21,
-		accessMode: "signed_user",
-		status: "suspended",
-		sessionsToday: 0,
-		updatedAt: "2026-07-28 11:05",
-		updatedBy: "carol@example.com",
-	},
-	{
-		id: "app_demo_006",
-		name: "知识库检索",
-		publicAppId: "app_pub_09c4f812",
-		boundAgentName: "知识问答 Agent",
-		boundAgentId: "agent_demo_knowledge_qa",
-		boundAgentRevision: 5,
-		accessMode: "anonymous",
-		status: "active",
-		sessionsToday: 341,
-		updatedAt: "2026-08-10 14:48",
-		updatedBy: "alice@example.com",
-	},
-	{
-		id: "app_demo_007",
-		name: "销售助手嵌入",
-		publicAppId: "app_pub_a2b7c4f1",
-		boundAgentName: "销售助手",
-		boundAgentId: "agent_demo_sales",
-		boundAgentRevision: 9,
-		accessMode: "mixed",
-		status: "active",
-		sessionsToday: 256,
-		updatedAt: "2026-08-09 16:22",
-		updatedBy: "dave@example.com",
-	},
-	{
-		id: "app_demo_008",
-		name: "语音客服坐席",
-		publicAppId: "app_pub_b3c8d5e2",
-		boundAgentName: "语音客服",
-		boundAgentId: "agent_demo_voice_concierge",
-		boundAgentRevision: 4,
-		accessMode: "anonymous",
-		status: "draft",
-		sessionsToday: 0,
-		updatedAt: "2026-08-14 11:05",
-		updatedBy: "carol@example.com",
-	},
-	{
-		id: "app_demo_009",
-		name: "内部知识助手（停用）",
-		publicAppId: "app_pub_4d8e2a17",
-		boundAgentName: "内部知识助手",
-		boundAgentId: "agent_demo_internal_assistant",
-		boundAgentRevision: 3,
-		accessMode: "signed_user",
-		status: "archived",
-		sessionsToday: 0,
-		updatedAt: "2026-06-30 11:11",
-		updatedBy: "alice@example.com",
-	},
-];
+type LoadState =
+	| { readonly kind: "loading" }
+	| { readonly kind: "loaded"; readonly items: readonly PublishedAppSummary[]; readonly nextCursor: string | null }
+	| { readonly kind: "error"; readonly message: string };
 
 const ACCESS_LABEL: Record<AccessMode, string> = {
 	anonymous: "匿名访问",
@@ -155,146 +20,163 @@ const ACCESS_LABEL: Record<AccessMode, string> = {
 	mixed: "混合",
 };
 
+const STATUS_LABEL: Record<AppStatus, string> = {
+	active: "已发布",
+	draft: "未发布",
+	suspended: "已暂停",
+	archived: "已归档",
+};
+
 function appStatusBadge(status: AppStatus): React.ReactNode {
-	if (status === "active") {
-		return (
-			<AuroraPill tone="live">
-				<span>Live</span>
-			</AuroraPill>
-		);
-	}
-	if (status === "draft") {
-		return (
-			<AuroraPill tone="amber">
-				<span>草稿</span>
-			</AuroraPill>
-		);
-	}
-	if (status === "suspended") {
-		return (
-			<AuroraPill tone="red">
-				<span>已暂停</span>
-			</AuroraPill>
-		);
-	}
-	return (
-		<AuroraPill tone="neutral">
-			<span>已归档</span>
-		</AuroraPill>
-	);
+	const tone =
+		status === "active" ? "live" : status === "draft" ? "amber" : status === "suspended" ? "red" : "neutral";
+	return <AuroraPill tone={tone}>{STATUS_LABEL[status]}</AuroraPill>;
+}
+
+function formatDate(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return new Intl.DateTimeFormat("zh-CN", {
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	}).format(date);
 }
 
 export function AppsListView(): React.ReactElement {
-	const [page, setPage] = useState(1);
-	const [pageSize, setPageSize] = useState(9);
+	const { controller } = useAdminAuth();
+	const apiRef = useRef<AppApi | null>(null);
+	if (apiRef.current === null) apiRef.current = new AppApi({ auth: controller });
+	const api = apiRef.current;
+	const [status, setStatus] = useState<AppStatus | "">("");
+	const [cursor, setCursor] = useState<string | undefined>(undefined);
+	const [cursorHistory, setCursorHistory] = useState<readonly (string | undefined)[]>([]);
+	const [state, setState] = useState<LoadState>({ kind: "loading" });
 
-	const counts = useMemo(() => {
-		const byStatus = (s: AppStatus) => MOCK_APPS.filter((r) => r.status === s).length;
-		return {
-			total: MOCK_APPS.length,
-			active: byStatus("active"),
-			draft: byStatus("draft"),
-			suspended: byStatus("suspended"),
-			archived: byStatus("archived"),
-		};
-	}, []);
+	const load = useCallback(() => {
+		setState({ kind: "loading" });
+		void api.listPublishedApps({ limit: 25, cursor, status }).then(
+			(result) => setState({ kind: "loaded", items: result.items, nextCursor: result.nextCursor }),
+			(error: Error) => setState({ kind: "error", message: error.message }),
+		);
+	}, [api, cursor, status]);
 
-	const totalPages = Math.max(1, Math.ceil(MOCK_APPS.length / pageSize));
-	const safePage = Math.min(page, totalPages);
-	const pagedRows = MOCK_APPS.slice((safePage - 1) * pageSize, safePage * pageSize);
+	useEffect(() => {
+		load();
+	}, [load]);
+
+	const changeStatus = (nextStatus: AppStatus | "") => {
+		setStatus(nextStatus);
+		setCursor(undefined);
+		setCursorHistory([]);
+	};
 
 	return (
-		<section className={styles.shell} aria-label="应用列表">
-			<div className={styles.tableToolbar}>
-				<AuroraButton
-					variant="accent"
-					size="md"
-					onClick={() => navigate("/apps")}
-					icon={
-						<svg
-							aria-hidden="true"
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2.5"
-						>
-							<path d="M12 5v14M5 12h14" />
-						</svg>
-					}
-				>
-					新建应用
+		<section className={styles.shell} aria-labelledby="apps-title">
+			<AuroraPageHeader
+				title="发布"
+				titleId="apps-title"
+				description="管理面向企业网站的发布应用、线上版本和接入范围。"
+				meta={state.kind === "loaded" ? `本页 ${state.items.length} 个应用` : undefined}
+			/>
+
+			<div className={styles.toolbar}>
+				<label className={styles.filterLabel}>
+					<span>状态</span>
+					<select value={status} onChange={(event) => changeStatus(event.target.value as AppStatus | "")}>
+						<option value="">全部</option>
+						<option value="active">已发布</option>
+						<option value="draft">未发布</option>
+						<option value="suspended">已暂停</option>
+						<option value="archived">已归档</option>
+					</select>
+				</label>
+				<AuroraButton variant="ghost" size="sm" onClick={load}>
+					刷新
 				</AuroraButton>
 			</div>
 
-			<AppsTableFallback rows={pagedRows} onOpen={(id) => navigate(`/apps/${id}`)} />
-
-			<footer className={styles.footer}>
-				<div className={styles.totalCount}>
-					共 <strong>{counts.total}</strong> 个应用
-					<span className={styles.totalSub}>
-						· {counts.active} 已发布 · {counts.draft} 未发布 · {counts.suspended} 暂停 · {counts.archived} 归档
-					</span>
+			{state.kind === "loading" && <div className={styles.stateBox}>正在加载发布应用…</div>}
+			{state.kind === "error" && (
+				<div className={styles.errorBox} role="alert">
+					<div>
+						<strong>无法加载发布应用</strong>
+						<p>请确认管理服务已启动，并检查控制台代理配置。</p>
+						<code className={styles.errorDetail}>{state.message}</code>
+					</div>
+					<AuroraButton variant="default" size="sm" onClick={load}>
+						重试
+					</AuroraButton>
 				</div>
-				<AuroraPagination
-					page={safePage}
-					totalPages={totalPages}
-					pageSize={pageSize}
-					onPageChange={setPage}
-					onPageSizeChange={(s) => {
-						setPageSize(s);
-						setPage(1);
-					}}
-				/>
-			</footer>
+			)}
+			{state.kind === "loaded" && <AppsTable rows={state.items} onOpen={(id) => navigate(`/apps/${id}`)} />}
+
+			{state.kind === "loaded" && (cursorHistory.length > 0 || state.nextCursor !== null) ? (
+				<nav className={styles.footer} aria-label="发布应用分页">
+					<span>第 {cursorHistory.length + 1} 页</span>
+					<div className={styles.pageActions}>
+						<AuroraButton
+							variant="default"
+							size="sm"
+							disabled={cursorHistory.length === 0}
+							onClick={() => {
+								const previous = cursorHistory.at(-1);
+								setCursor(previous);
+								setCursorHistory((history) => history.slice(0, -1));
+							}}
+						>
+							上一页
+						</AuroraButton>
+						<AuroraButton
+							variant="default"
+							size="sm"
+							disabled={state.nextCursor === null}
+							onClick={() => {
+								if (state.nextCursor === null) return;
+								setCursorHistory((history) => [...history, cursor]);
+								setCursor(state.nextCursor);
+							}}
+						>
+							下一页
+						</AuroraButton>
+					</div>
+				</nav>
+			) : null}
 		</section>
 	);
 }
 
-// --------------------------------------------------------------------------
-// 内部组件：AppsTableFallback
-// --------------------------------------------------------------------------
-
-interface AppsTableFallbackProps {
-	readonly rows: readonly AppRow[];
+function AppsTable({
+	rows,
+	onOpen,
+}: {
+	readonly rows: readonly PublishedAppSummary[];
 	readonly onOpen: (id: string) => void;
-}
-
-/**
- * App 表格视图：紧凑行表，与 Agent 表格保持一致的列策略（名称列吃下剩余
- * 空间，操作列固定 120px 右对齐）。
- */
-function AppsTableFallback({ rows, onOpen }: AppsTableFallbackProps): React.ReactElement {
+}): React.ReactElement {
 	if (rows.length === 0) {
 		return (
 			<div className={styles.empty}>
-				<div className={styles.emptyTitle}>没有匹配的应用</div>
-				<div className={styles.emptyDesc}>尝试调整筛选条件。</div>
+				<strong>暂无发布应用</strong>
+				<p>当前筛选条件下没有应用。</p>
 			</div>
 		);
 	}
+
 	return (
 		<div className={styles.tableWrap}>
 			<table className={styles.table}>
-				<colgroup>
-					<col className={styles.colName} />
-					<col className={styles.colPublicId} />
-					<col className={styles.colAgent} />
-					<col className={styles.colStatus} />
-					<col className={styles.colAccess} />
-					<col className={styles.colSessions} />
-					<col className={styles.colActions} />
-				</colgroup>
 				<thead>
 					<tr>
-						<th>名称</th>
-						<th>Public ID</th>
-						<th>绑定 Agent</th>
+						<th>应用</th>
 						<th>状态</th>
+						<th>线上版本</th>
 						<th>访问方式</th>
-						<th>今日会话</th>
-						<th className={styles.colActions} />
+						<th>允许 Origin</th>
+						<th>更新时间</th>
+						<th aria-label="操作" />
 					</tr>
 				</thead>
 				<tbody>
@@ -304,26 +186,18 @@ function AppsTableFallback({ rows, onOpen }: AppsTableFallbackProps): React.Reac
 								<button type="button" className={styles.tableName} onClick={() => onOpen(row.id)}>
 									{row.name}
 								</button>
-								<div className={styles.tableDesc}>
-									绑定 {row.boundAgentName} · v{row.boundAgentRevision}
-								</div>
-							</td>
-							<td>
-								<code className={styles.mono}>{row.publicAppId}</code>
-							</td>
-							<td>
-								<span className={styles.colAgentName}>{row.boundAgentName}</span>
+								<code className={styles.publicId}>{row.publicAppId}</code>
 							</td>
 							<td>{appStatusBadge(row.status)}</td>
-							<td>
-								<span className={styles.colAccessLabel}>{ACCESS_LABEL[row.accessMode]}</span>
+							<td>{row.currentVersionId === null ? "尚未上线" : "已固定线上版本"}</td>
+							<td>{ACCESS_LABEL[row.accessMode]}</td>
+							<td className={styles.origins}>
+								{row.allowedOrigins.length === 0 ? "同源" : row.allowedOrigins.join(", ")}
 							</td>
-							<td className={styles.tabular}>
-								{row.status === "archived" ? "—" : row.sessionsToday.toLocaleString()}
-							</td>
-							<td className={styles.colActions}>
+							<td className={styles.date}>{formatDate(row.updatedAt)}</td>
+							<td className={styles.actions}>
 								<AuroraButton variant="ghost" size="sm" onClick={() => onOpen(row.id)}>
-									打开 →
+									管理
 								</AuroraButton>
 							</td>
 						</tr>

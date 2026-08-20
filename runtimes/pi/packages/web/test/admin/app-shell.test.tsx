@@ -3,7 +3,7 @@
  *
  * 覆盖任务单验收项：
  *
- * 1. 模块导航（v4 起为左侧竖排 AppSidebar，4 个模块）渲染与当前态标识
+ * 1. 模块导航（左侧 AppSidebar，6 个模块）渲染与当前态标识
  * 2. 路由刷新与浏览器前进/后退正确（hash 路由 + parseRoute 覆盖）
  * 3. 401 自动锁定（auth controller 层）
  * 4. 窄屏无横向溢出（CSS 规则断言）
@@ -39,15 +39,17 @@ describe("AdminAppShell (WB-002)", () => {
 	it("renders the sidebar module nav with correct terms", () => {
 		const html = renderToStaticMarkup(<AdminAppShell />);
 		for (const term of [
+			ADMIN_WORKBENCH_TERMS.conversation,
 			ADMIN_WORKBENCH_TERMS.agent,
 			ADMIN_WORKBENCH_TERMS.app,
-			"会话",
+			ADMIN_WORKBENCH_TERMS.usage,
+			ADMIN_WORKBENCH_TERMS.userConversations,
 			ADMIN_WORKBENCH_TERMS.settings,
 		]) {
 			// v4：模块导航为左侧竖排 AppSidebar，label 渲染为独立 span。
 			expect(html).toContain(`>${term}</span>`);
 		}
-		// 顶部 AuroraTopNav 不再渲染模块 tabs；左侧 AppSidebar 持有 4 项。
+		// 顶部 AuroraTopNav 不再渲染模块 tabs；左侧 AppSidebar 持有 6 项。
 		expect(html.match(/aria-label="模块导航"/g)?.length ?? 0).toBe(1);
 	});
 
@@ -58,14 +60,14 @@ describe("AdminAppShell (WB-002)", () => {
 		const html = renderToStaticMarkup(
 			<AuroraAppSidebar
 				items={[
-					{ id: "agents", label: "Agent", path: "/agents", icon: "◇" },
-					{ id: "apps", label: "应用", path: "/apps", icon: "▤" },
+					{ id: "agents", label: "Agent 设计", path: "/agents" },
+					{ id: "apps", label: "发布", path: "/apps" },
 				]}
 				currentItemId="apps"
 			/>,
 		);
 		expect(html.match(/aria-current="page"/g)?.length ?? 0).toBe(1);
-		expect(html).toContain(">应用</span>");
+		expect(html).toContain(">发布</span>");
 	});
 
 	it("marks the current route with aria-current based on parseRoute", () => {
@@ -92,6 +94,7 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(parseRoute("/agents/agent_00000000-0000-0000-0000-000000000000").id).toBe("agent-detail");
 		expect(parseRoute("/apps").id).toBe("apps");
 		expect(parseRoute("/apps/app_00000000-0000-0000-0000-000000000000").id).toBe("app-detail");
+		expect(parseRoute("/usage").id).toBe("usage");
 		expect(parseRoute("/conversations").id).toBe("user-conversations");
 		expect(parseRoute("/conversations/conv_00000000-0000-0000-0000-000000000000").id).toBe(
 			"user-conversation-detail",

@@ -4,10 +4,8 @@
  * - 列表：Aurora 视觉版，与 Agent List 共用同一 Design System
  * - 详情：`/apps/app_<uuid>` 由 `AdminAppDetail` 接管
  *
- * 说明：本轮先把 List 页面的信息架构与样式确定下来，「创建应用」「发布
- * 流程」「Dashboard summary」「Pending 版本」等深度页面留待后续迭代接入
- * Control API 时再补回（先前 `AdminAppsDashboard` 的仪表盘 / 创建弹窗 /
- * cursor 分页等复杂逻辑本轮暂不展示）。
+ * 列表和详情均连接 Control API；详情内按管理员任务收敛为概览、版本与上线、
+ * 接入与安全、运行记录、危险操作五个区域。嵌入式对话仍保持独立构建入口。
  */
 
 import { AdminAppDetail } from "../apps/app-detail.tsx";

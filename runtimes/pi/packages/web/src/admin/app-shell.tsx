@@ -27,21 +27,30 @@
  */
 
 import { AuroraAppSidebar, type AuroraAppSidebarItem } from "./aurora/AppSidebar.tsx";
-import { AdminAuthProvider } from "./auth/admin-auth-context.tsx";
+import { NavIcon } from "./aurora/nav-icons.tsx";
+import { AdminAuthProvider, useAdminAuth } from "./auth/admin-auth-context.tsx";
 import { AdminAgentsPage } from "./pages/agents-page.tsx";
 import { AdminAppsPage } from "./pages/apps-page.tsx";
 import { AdminChatPage } from "./pages/chat-page.tsx";
 import { AdminSettingsPage } from "./pages/settings-page.tsx";
+import { AdminUsagePage } from "./pages/usage-page.tsx";
 import { AdminUserConversationsPage } from "./pages/user-conversations-page.tsx";
 import { type AdminRoute, type AdminRouteId, useAdminRoute } from "./router.ts";
 
 type NavItemId = AuroraAppSidebarItem["id"];
 
 const SIDEBAR_ITEMS: readonly AuroraAppSidebarItem[] = [
-	{ id: "agents", label: "Agent", path: "/agents", icon: "◇" },
-	{ id: "apps", label: "应用", path: "/apps", icon: "▤" },
-	{ id: "user-conversations", label: "会话", path: "/conversations", icon: "◫" },
-	{ id: "settings", label: "设置", path: "/settings", icon: "⚙" },
+	{ id: "chat", label: "Chat", path: "/", icon: <NavIcon name="chat" /> },
+	{ id: "agents", label: "Agent 设计", path: "/agents", icon: <NavIcon name="agent" /> },
+	{ id: "apps", label: "发布", path: "/apps", icon: <NavIcon name="publish" /> },
+	{ id: "usage", label: "Usage", path: "/usage", icon: <NavIcon name="usage" /> },
+	{
+		id: "user-conversations",
+		label: "Session 日志",
+		path: "/conversations",
+		icon: <NavIcon name="sessions" />,
+	},
+	{ id: "settings", label: "设置", path: "/settings", icon: <NavIcon name="settings" /> },
 ];
 
 function resolveNavItemId(route: AdminRoute): NavItemId | null {
@@ -52,13 +61,15 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 		case "apps":
 		case "app-detail":
 			return "apps";
+		case "usage":
+			return "usage";
 		case "user-conversations":
 		case "user-conversation-detail":
 			return "user-conversations";
 		case "settings":
 			return "settings";
 		case "chat":
-			return null;
+			return "chat";
 		default: {
 			const exhaustive: never = route.id;
 			return exhaustive;
@@ -76,6 +87,8 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 		case "apps":
 		case "app-detail":
 			return <AdminAppsPage route={route} />;
+		case "usage":
+			return <AdminUsagePage />;
 		case "user-conversations":
 		case "user-conversation-detail":
 			return <AdminUserConversationsPage route={route} />;
@@ -90,13 +103,24 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 
 function Shell(): React.ReactElement {
 	const route = useAdminRoute();
+	const { snapshot } = useAdminAuth();
+	const connectionLabel =
+		snapshot.state === "connected"
+			? "已连接"
+			: snapshot.state === "connecting"
+				? "连接中"
+				: snapshot.state === "error"
+					? "连接失败"
+					: "未连接";
 	return (
 		<div className="admin-shell" data-route={route.id}>
 			<AuroraAppSidebar
 				items={SIDEBAR_ITEMS}
 				currentItemId={resolveNavItemId(route)}
-				brandName="Acme"
-				brandSubtitle="Admin Workbench"
+				brandName="Debussy"
+				brandSubtitle="Admin Console"
+				tenantName={snapshot.tenant?.name}
+				connectionLabel={connectionLabel}
 			/>
 			<main className="admin-shell__main">
 				<MainArea route={route} />

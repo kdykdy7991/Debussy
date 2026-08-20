@@ -7,6 +7,20 @@
 	flex-wrap: wrap;
 }
 
+.copy {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+	min-width: 0;
+}
+
+.titleRow {
+	display: flex;
+	align-items: center;
+	gap: var(--aurora-space-3);
+	min-width: 0;
+}
+
 .title {
 	margin: 0;
 	font-family: var(--aurora-font-display);
@@ -15,6 +29,21 @@
 	letter-spacing: -0.02em;
 	line-height: 1.1;
 	color: var(--aurora-ink);
+}
+
+.description {
+	margin: 0;
+	max-width: 68ch;
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-base);
+	line-height: 1.5;
+}
+
+.meta {
+	display: inline-flex;
+	align-items: center;
+	font-size: var(--aurora-text-xs);
+	color: var(--aurora-ink-3);
 }
 
 .actions {

@@ -7,11 +7,21 @@
 import type { LaunchKeySummary, PublishedAppDetail, PublishedAppVersionSummary } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppApi, AppApiError } from "../api/app-api.ts";
+import { AuroraButton, AuroraPageHeader, AuroraPill } from "../aurora/index.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { navigate } from "../router.ts";
 import { adminConversationsPath } from "../user-conversations/query-params.ts";
+import styles from "./app-detail.module.css";
 
-type DetailTab = "overview" | "versions" | "config" | "embed" | "keys" | "audit" | "users" | "danger";
+type DetailTab = "overview" | "versions" | "access" | "activity" | "danger";
+
+const DETAIL_TABS: readonly { readonly id: DetailTab; readonly label: string }[] = [
+	{ id: "overview", label: "概览" },
+	{ id: "versions", label: "版本与上线" },
+	{ id: "access", label: "接入与安全" },
+	{ id: "activity", label: "运行记录" },
+	{ id: "danger", label: "危险操作" },
+];
 
 type LoadState =
 	| { kind: "loading" }
@@ -53,7 +63,7 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 	// (previously the eager `.catch(() => ({ items: [] }))` silently turned any
 	// failure into an empty list, hiding outages).
 	useEffect(() => {
-		if (tab !== "keys" || keySection.kind !== "idle") return;
+		if (tab !== "access" || keySection.kind !== "idle") return;
 		let cancelled = false;
 		setKeySection({ kind: "loading" });
 		void api.listLaunchKeys(appId).then(
@@ -70,7 +80,7 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 	}, [tab, keySection.kind, api, appId]);
 
 	useEffect(() => {
-		if (tab !== "audit" || auditSection.kind !== "idle") return;
+		if (tab !== "activity" || auditSection.kind !== "idle") return;
 		let cancelled = false;
 		setAuditSection({ kind: "loading" });
 		void api.listAuditEvents({ appId, limit: 50 }).then(
@@ -86,96 +96,140 @@ export function AdminAppDetail({ appId }: { readonly appId: string }): React.Rea
 		};
 	}, [tab, auditSection.kind, api, appId]);
 
-	if (state.kind === "loading") return <output>加载应用详情…</output>;
+	if (state.kind === "loading") return <output className={styles.loading}>加载应用详情…</output>;
 	if (state.kind === "error")
 		return (
-			<section>
-				<p role="alert">加载失败：{state.message}</p>
-				<button type="button" onClick={load}>
-					重试
-				</button>
+			<section className={styles.loadError} role="alert">
+				<div>
+					<strong>无法加载应用详情</strong>
+					<p>{state.message}</p>
+				</div>
+				<AuroraButton onClick={load}>重试</AuroraButton>
 			</section>
 		);
 
 	const { detail, versions } = state;
-	const tabs: { id: DetailTab; label: string }[] = [
-		{ id: "overview", label: "概览" },
-		{ id: "versions", label: "版本与上线" },
-		{ id: "config", label: "应用配置" },
-		{ id: "embed", label: "接入方式" },
-		{ id: "keys", label: "Launch Keys" },
-		{ id: "audit", label: "审计" },
-		{ id: "users", label: "用户会话" },
-		{ id: "danger", label: "Danger Zone" },
-	];
+	const statusTone =
+		detail.status === "active"
+			? "live"
+			: detail.status === "draft"
+				? "amber"
+				: detail.status === "suspended"
+					? "red"
+					: "neutral";
+	const statusLabel =
+		detail.status === "active"
+			? "已发布"
+			: detail.status === "draft"
+				? "未发布"
+				: detail.status === "suspended"
+					? "已暂停"
+					: "已归档";
 
 	return (
-		<section>
-			<button type="button" onClick={() => navigate("/apps")}>
-				← 返回应用列表
-			</button>
-			<h1>
-				{detail.name} <small>{detail.publicAppId}</small>
-			</h1>
+		<section className={styles.workspace} aria-labelledby="app-detail-title">
+			<AuroraButton variant="ghost" size="sm" onClick={() => navigate("/apps")}>
+				← 返回发布列表
+			</AuroraButton>
+			<AuroraPageHeader
+				title={detail.name}
+				titleId="app-detail-title"
+				description={`Public App ID · ${detail.publicAppId}`}
+				meta={<AuroraPill tone={statusTone}>{statusLabel}</AuroraPill>}
+			/>
 
-			<div className="detail-tabs" role="tablist">
-				{tabs.map((t) => (
-					<button key={t.id} role="tab" aria-selected={tab === t.id} type="button" onClick={() => setTab(t.id)}>
+			<div className={styles.tabs} role="tablist" aria-label="应用管理区域">
+				{DETAIL_TABS.map((t, index) => (
+					<button
+						key={t.id}
+						id={`app-tab-${t.id}`}
+						role="tab"
+						aria-controls={`app-panel-${t.id}`}
+						aria-selected={tab === t.id}
+						tabIndex={tab === t.id ? 0 : -1}
+						type="button"
+						onClick={() => setTab(t.id)}
+						onKeyDown={(event) => {
+							if (
+								event.key !== "ArrowLeft" &&
+								event.key !== "ArrowRight" &&
+								event.key !== "Home" &&
+								event.key !== "End"
+							)
+								return;
+							event.preventDefault();
+							const nextIndex =
+								event.key === "Home"
+									? 0
+									: event.key === "End"
+										? DETAIL_TABS.length - 1
+										: (index + (event.key === "ArrowRight" ? 1 : -1) + DETAIL_TABS.length) %
+											DETAIL_TABS.length;
+							const nextTab = DETAIL_TABS[nextIndex];
+							if (nextTab === undefined) return;
+							setTab(nextTab.id);
+							requestAnimationFrame(() => document.getElementById(`app-tab-${nextTab.id}`)?.focus());
+						}}
+					>
 						{t.label}
 					</button>
 				))}
 			</div>
 
-			{tab === "overview" && <OverviewPanel detail={detail} />}
-			{tab === "versions" && (
-				<VersionsPanel
-					appId={appId}
-					appName={detail.name}
-					publicAppId={detail.publicAppId}
-					allowedOrigins={detail.allowedOrigins}
-					versions={versions}
-					api={api}
-					onChange={load}
-				/>
-			)}
-			{tab === "config" && (
-				<ConfigPanel
-					name={detail.name}
-					accessMode={detail.accessMode}
-					allowedOrigins={detail.allowedOrigins ?? []}
-				/>
-			)}
-			{tab === "embed" && (
-				<EmbedPanel publicAppId={detail.publicAppId} allowedOrigins={detail.allowedOrigins ?? []} />
-			)}
-			{tab === "keys" && (
-				<LaunchKeysPanel
-					appId={appId}
-					section={keySection}
-					api={api}
-					onRefresh={() => {
-						setKeySection({ kind: "idle" });
-						api.listLaunchKeys(appId).then(
-							(res) => setKeySection({ kind: "loaded", items: res.items, nextCursor: null }),
-							(err: Error) => setKeySection({ kind: "error", message: err.message }),
-						);
-					}}
-				/>
-			)}
-			{tab === "audit" && <AuditPanel section={auditSection} />}
-			{tab === "users" && <UsersPanel appId={appId} publicAppId={detail.publicAppId} />}
-			{tab === "danger" && (
-				<DangerZonePanel
-					appId={appId}
-					appName={detail.name}
-					publicAppId={detail.publicAppId}
-					currentVersion={detail.currentVersion?.versionNumber ?? null}
-					allowedOrigins={detail.allowedOrigins}
-					status={detail.status}
-					api={api}
-					onChange={load}
-				/>
-			)}
+			<div className={styles.panelBody} id={`app-panel-${tab}`} role="tabpanel" aria-labelledby={`app-tab-${tab}`}>
+				{tab === "overview" && <OverviewPanel detail={detail} />}
+				{tab === "versions" && (
+					<VersionsPanel
+						appId={appId}
+						appName={detail.name}
+						publicAppId={detail.publicAppId}
+						allowedOrigins={detail.allowedOrigins}
+						versions={versions}
+						api={api}
+						onChange={load}
+					/>
+				)}
+				{tab === "access" && (
+					<div className={styles.panelStack}>
+						<ConfigPanel
+							name={detail.name}
+							accessMode={detail.accessMode}
+							allowedOrigins={detail.allowedOrigins ?? []}
+						/>
+						<EmbedPanel publicAppId={detail.publicAppId} allowedOrigins={detail.allowedOrigins ?? []} />
+						<LaunchKeysPanel
+							appId={appId}
+							section={keySection}
+							api={api}
+							onRefresh={() => {
+								setKeySection({ kind: "idle" });
+								api.listLaunchKeys(appId).then(
+									(res) => setKeySection({ kind: "loaded", items: res.items, nextCursor: null }),
+									(err: Error) => setKeySection({ kind: "error", message: err.message }),
+								);
+							}}
+						/>
+					</div>
+				)}
+				{tab === "activity" && (
+					<div className={styles.panelStack}>
+						<UsersPanel appId={appId} publicAppId={detail.publicAppId} />
+						<AuditPanel section={auditSection} />
+					</div>
+				)}
+				{tab === "danger" && (
+					<DangerZonePanel
+						appId={appId}
+						appName={detail.name}
+						publicAppId={detail.publicAppId}
+						currentVersion={detail.currentVersion?.versionNumber ?? null}
+						allowedOrigins={detail.allowedOrigins}
+						status={detail.status}
+						api={api}
+						onChange={load}
+					/>
+				)}
+			</div>
 		</section>
 	);
 }
@@ -198,7 +252,7 @@ function ConfigPanel({
 	readonly allowedOrigins: readonly string[];
 }): React.ReactElement {
 	return (
-		<div className="panel">
+		<div className={styles.section}>
 			<p>
 				<strong>只读</strong>：应用配置的修改必须通过新建 Version 生效（当前 Control API 不提供原地更新）。
 				请到「版本与上线」页创建并上线新版本。
@@ -229,7 +283,7 @@ function EmbedPanel({
 	const sdkSnippet = buildSdkSnippet(origin, publicAppId);
 
 	return (
-		<div className="panel">
+		<div className={styles.section}>
 			<h3>iframe 接入</h3>
 			<p>
 				Embed URL：<code>{embedUrl}</code>
@@ -283,7 +337,7 @@ function UsersPanel({
 	readonly publicAppId: string;
 }): React.ReactElement {
 	return (
-		<div className="panel">
+		<div className={styles.section}>
 			<p>查看该应用下的真实企业用户会话（脱敏列表，非管理员 DebugSession）。</p>
 			<p>
 				<code>publicAppId</code>：{publicAppId}
@@ -297,7 +351,7 @@ function UsersPanel({
 
 function OverviewPanel({ detail }: { readonly detail: PublishedAppDetail }): React.ReactElement {
 	return (
-		<div className="panel">
+		<div className={styles.overviewGrid}>
 			<div className="card">
 				<h3>概览</h3>
 				<table>
@@ -510,7 +564,7 @@ function VersionsPanel({
 	};
 
 	return (
-		<div className="panel">
+		<div className={styles.section}>
 			{confirmation !== null && (
 				<OperationConfirmation
 					action={confirmation.kind}
@@ -714,7 +768,7 @@ function LaunchKeysPanel({
 	};
 
 	return (
-		<div className="panel">
+		<div className={styles.section}>
 			<h3>登记 Launch Key</h3>
 			<div className="form-row">
 				<input value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="keyId" aria-label="Key ID" />
@@ -803,7 +857,7 @@ interface AuditRow {
 
 function AuditPanel({ section }: { section: SectionState<unknown> }): React.ReactElement {
 	return (
-		<div className="panel">
+		<div className={styles.section}>
 			<h3>审计事件</h3>
 			{section.kind === "loading" && <p>加载中…</p>}
 			{section.kind === "error" && (
@@ -899,7 +953,7 @@ function DangerZonePanel({
 	};
 
 	return (
-		<div className="panel danger">
+		<div className={`${styles.section} danger`}>
 			{confirmSuspend && (
 				<div className="drawer-overlay" role="presentation">
 					<section className="drawer" role="dialog" aria-modal="true" aria-label="停用确认">

@@ -13,17 +13,34 @@ import styles from "./PageHeader.module.css";
 
 export interface AuroraPageHeaderProps {
 	readonly title?: string;
+	readonly titleId?: string;
+	readonly description?: string;
+	readonly meta?: ReactNode;
 	readonly actions?: ReactNode;
 }
 
-export function AuroraPageHeader({ title, actions }: AuroraPageHeaderProps): React.ReactElement | null {
+export function AuroraPageHeader({
+	title,
+	titleId,
+	description,
+	meta,
+	actions,
+}: AuroraPageHeaderProps): React.ReactElement | null {
 	if (!title && !actions) return null;
 	if (!title) {
 		return <div className={styles.actionsRow}>{actions}</div>;
 	}
 	return (
 		<header className={styles.header}>
-			<h1 className={styles.title}>{title}</h1>
+			<div className={styles.copy}>
+				<div className={styles.titleRow}>
+					<h1 id={titleId} className={styles.title}>
+						{title}
+					</h1>
+					{meta ? <div className={styles.meta}>{meta}</div> : null}
+				</div>
+				{description ? <p className={styles.description}>{description}</p> : null}
+			</div>
 			{actions ? <div className={styles.actions}>{actions}</div> : null}
 		</header>
 	);

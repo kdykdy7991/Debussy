@@ -1,0 +1,252 @@
+.workspace {
+	min-width: 0;
+}
+
+.loading,
+.loadError {
+	display: flex;
+	min-height: 180px;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink-2);
+}
+
+.loadError {
+	justify-content: space-between;
+	gap: var(--aurora-space-5);
+	min-height: auto;
+	padding: var(--aurora-space-5);
+	border-color: var(--aurora-red);
+}
+
+.loadError strong {
+	color: var(--aurora-red);
+}
+
+.loadError p {
+	margin: 5px 0 0;
+}
+
+.tabs {
+	display: flex;
+	gap: var(--aurora-space-6);
+	overflow-x: auto;
+	margin: 0 0 var(--aurora-space-6);
+	border-bottom: 1px solid var(--aurora-line);
+	scrollbar-width: thin;
+}
+
+.tabs button {
+	position: relative;
+	flex: none;
+	padding: 10px 0 12px;
+	border: 0;
+	background: transparent;
+	color: var(--aurora-ink-3);
+	font: inherit;
+	font-size: var(--aurora-text-base);
+	font-weight: var(--aurora-weight-medium);
+	cursor: pointer;
+}
+
+.tabs button:hover {
+	color: var(--aurora-ink);
+}
+
+.tabs button[aria-selected="true"] {
+	color: var(--aurora-ink);
+}
+
+.tabs button[aria-selected="true"]::after {
+	position: absolute;
+	right: 0;
+	bottom: -1px;
+	left: 0;
+	height: 2px;
+	background: var(--aurora-accent);
+	content: "";
+}
+
+.tabs button:focus-visible {
+	border-radius: 4px;
+	outline: 2px solid var(--aurora-accent);
+	outline-offset: 3px;
+}
+
+.panelBody {
+	min-width: 0;
+}
+
+.panelStack {
+	display: grid;
+	gap: var(--aurora-space-5);
+}
+
+.overviewGrid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--aurora-space-4);
+}
+
+.section,
+.workspace :global(.card) {
+	padding: var(--aurora-space-5);
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md);
+	background: var(--aurora-surface);
+}
+
+.section h3,
+.workspace :global(.card) h3 {
+	margin: 0 0 var(--aurora-space-3);
+	color: var(--aurora-ink);
+	font-size: var(--aurora-text-lg);
+	font-weight: var(--aurora-weight-semibold);
+}
+
+.section > h3:not(:first-child) {
+	margin-top: var(--aurora-space-8);
+}
+
+.section p {
+	max-width: 72ch;
+	color: var(--aurora-ink-2);
+	line-height: 1.6;
+}
+
+.section table,
+.workspace :global(.card) table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.section th,
+.section td,
+.workspace :global(.card) td {
+	padding: 11px 12px;
+	border-bottom: 1px solid var(--aurora-line-soft);
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+	text-align: left;
+	vertical-align: top;
+}
+
+.section th {
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-xs);
+	font-weight: var(--aurora-weight-medium);
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+}
+
+.section tbody tr:last-child td,
+.workspace :global(.card) tbody tr:last-child td {
+	border-bottom: 0;
+}
+
+.workspace :global(.card) td:first-child {
+	width: 32%;
+	color: var(--aurora-ink-3);
+}
+
+.section code,
+.workspace :global(.card) code {
+	color: var(--aurora-ink-2);
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+}
+
+.workspace :global(.code-block) {
+	max-width: 100%;
+	overflow: auto;
+	padding: var(--aurora-space-4);
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink);
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	line-height: 1.6;
+}
+
+.workspace :global(.embed-copy) {
+	position: relative;
+}
+
+.workspace :global(.embed-copy) > button {
+	float: right;
+	margin: 8px;
+}
+
+.workspace :global(.form-row) {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--aurora-space-2);
+	flex-wrap: wrap;
+}
+
+.workspace :global(input),
+.workspace :global(textarea) {
+	min-height: 38px;
+	padding: 8px 10px;
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	font: inherit;
+}
+
+.workspace :global(textarea) {
+	min-width: min(520px, 100%);
+	resize: vertical;
+}
+
+.workspace :global(input:focus-visible),
+.workspace :global(textarea:focus-visible) {
+	outline: 2px solid var(--aurora-accent);
+	outline-offset: 1px;
+}
+
+.workspace :global(.banner.error) {
+	border-color: var(--aurora-red);
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+}
+
+.workspace :global(.diff-summary) {
+	padding: var(--aurora-space-4);
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface-soft);
+}
+
+@media (max-width: 720px) {
+	.overviewGrid {
+		grid-template-columns: 1fr;
+	}
+
+	.tabs {
+		gap: var(--aurora-space-5);
+	}
+
+	.workspace :global(.version-table),
+	.workspace :global(.key-table) {
+		display: block;
+		overflow-x: auto;
+		white-space: nowrap;
+	}
+
+	.workspace :global(.form-row) {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.workspace :global(textarea) {
+		min-width: 0;
+		width: 100%;
+	}
+}

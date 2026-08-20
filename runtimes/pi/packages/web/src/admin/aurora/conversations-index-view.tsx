@@ -19,8 +19,6 @@ import styles from "./conversations-index-view.module.css";
 import {
 	AuroraButton,
 	AuroraChip,
-	AuroraMetricGrid,
-	type AuroraMetricItem,
 	AuroraPageHeader,
 	AuroraPagination,
 	AuroraPill,
@@ -466,51 +464,6 @@ export function AdminConversationsIndexView(): React.ReactElement {
 		return apiRows;
 	}, [useMock, state, query, statusTab, statusFilter, appFilter, agentFilter, channelFilter, dateFrom, dateTo]);
 
-	const metrics: readonly AuroraMetricItem[] = useMemo(() => {
-		const messages = rows.reduce((sum, r) => sum + r.messageCount, 0);
-		const tokens = rows.reduce((sum, r) => sum + r.tokenTotal, 0);
-		const avgMs = rows.length > 0 ? rows.reduce((sum, r) => sum + r.avgResponseMs, 0) / rows.length : 0;
-		const errors = rows.reduce((sum, r) => sum + r.errorCount, 0);
-		const errorRate = messages > 0 ? (errors / messages) * 100 : 0;
-		return [
-			{ id: "total", label: "总会话数", value: "128", delta: "12.5%", trend: "up", comparison: "较上周期" },
-			{ id: "active", label: "活跃会话", value: "18", delta: "5.6%", trend: "up", comparison: "较上周期" },
-			{
-				id: "messages",
-				label: "总消息数",
-				value: messages > 0 ? String(messages) : "3,245",
-				delta: "18.6%",
-				trend: "up",
-				comparison: "较上周期",
-			},
-			{
-				id: "tokens",
-				label: "总 Token",
-				value: tokens > 0 ? formatTokens(tokens) : "3.24M",
-				delta: "16.8%",
-				trend: "up",
-				comparison: "较上周期",
-			},
-			{
-				id: "latency",
-				label: "平均响应时间",
-				value: avgMs > 0 ? formatMs(avgMs) : "1.42s",
-				delta: "0.21s",
-				trend: "down",
-				comparison: "较上周期",
-			},
-			{
-				id: "errors",
-				label: "错误率",
-				value: messages > 0 ? `${errorRate.toFixed(2)}%` : "0.48%",
-				delta: "0.06%",
-				trend: "up",
-				comparison: "较上周期",
-				emphasis: "danger",
-			},
-		];
-	}, [rows]);
-
 	// 分页
 	const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
 	const safePage = Math.min(page, totalPages);
@@ -527,34 +480,28 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	return (
 		<section className={styles.shell} aria-label="用户会话列表">
 			<AuroraPageHeader
+				title="Session 日志"
+				description="检索发布后企业用户产生的会话，并追溯固定版本、事件与错误。"
+				meta={useMock ? "示例数据" : undefined}
 				actions={
-					<>
-						<AuroraButton variant="default" size="md">
-							导出 CSV
-						</AuroraButton>
-						<AuroraButton
-							variant="accent"
-							size="md"
-							onClick={() => {
-								setQuery("");
-								setStatusFilter("");
-								setStatusTab("all");
-								setAppFilter("");
-								setAgentFilter("");
-								setChannelFilter("");
-								setDateFrom("");
-								setDateTo("");
-							}}
-						>
-							重置筛选
-						</AuroraButton>
-					</>
+					<AuroraButton
+						variant="default"
+						size="md"
+						onClick={() => {
+							setQuery("");
+							setStatusFilter("");
+							setStatusTab("all");
+							setAppFilter("");
+							setAgentFilter("");
+							setChannelFilter("");
+							setDateFrom("");
+							setDateTo("");
+						}}
+					>
+						重置筛选
+					</AuroraButton>
 				}
 			/>
-
-			<div className={styles.metricWrap}>
-				<AuroraMetricGrid items={metrics} columns={6} ariaLabel="会话总览指标" />
-			</div>
 
 			<div className={styles.toolbar}>
 				<AuroraSearchBox value={query} onChange={setQuery} placeholder="搜索用户、会话 ID、关键词…" />

@@ -23,6 +23,8 @@ export interface AuroraAppSidebarProps {
 	/** 可选 brand 区，外部省略时不渲染。 */
 	readonly brandName?: string;
 	readonly brandSubtitle?: string;
+	readonly tenantName?: string;
+	readonly connectionLabel?: string;
 	readonly ariaLabel?: string;
 }
 
@@ -31,11 +33,13 @@ export function AuroraAppSidebar({
 	currentItemId,
 	brandName,
 	brandSubtitle,
+	tenantName,
+	connectionLabel,
 	ariaLabel = "模块导航",
 }: AuroraAppSidebarProps): React.ReactElement {
 	const hasBrand = brandName !== undefined || brandSubtitle !== undefined;
 	return (
-		<aside className={styles.rail} aria-label={ariaLabel}>
+		<aside className={styles.rail} aria-label="管理员控制台">
 			{hasBrand ? (
 				<div className={styles.brand}>
 					<span className={styles.orb} aria-hidden="true" />
@@ -46,25 +50,34 @@ export function AuroraAppSidebar({
 				</div>
 			) : null}
 
-			{items.map((item) => {
-				const active = item.id === currentItemId;
-				return (
-					<button
-						key={item.id}
-						type="button"
-						className={`${styles.item} ${active ? styles.itemActive : ""}`}
-						aria-current={active ? "page" : undefined}
-						onClick={() => navigate(item.path)}
-					>
-						{item.icon ? (
-							<span className={styles.icon} aria-hidden="true">
-								{item.icon}
-							</span>
-						) : null}
-						<span className={styles.label}>{item.label}</span>
-					</button>
-				);
-			})}
+			<nav className={styles.navigation} aria-label={ariaLabel}>
+				{items.map((item) => {
+					const active = item.id === currentItemId;
+					return (
+						<button
+							key={item.id}
+							type="button"
+							className={`${styles.item} ${active ? styles.itemActive : ""}`}
+							aria-current={active ? "page" : undefined}
+							aria-label={item.label}
+							onClick={() => navigate(item.path)}
+						>
+							{item.icon ? (
+								<span className={styles.icon} aria-hidden="true">
+									{item.icon}
+								</span>
+							) : null}
+							<span className={styles.label}>{item.label}</span>
+						</button>
+					);
+				})}
+			</nav>
+
+			<section className={styles.context} aria-label="当前工作区">
+				<span className={styles.contextLabel}>当前租户</span>
+				<strong className={styles.contextName}>{tenantName ?? "尚未连接"}</strong>
+				{connectionLabel ? <span className={styles.connection}>{connectionLabel}</span> : null}
+			</section>
 		</aside>
 	);
 }

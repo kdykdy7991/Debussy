@@ -118,7 +118,7 @@
 	/* —— 颜色：背景（纯白主画布；不使用灰或米白基调） —— */
 	--aurora-bg: #ffffff;
 	--aurora-surface: #ffffff; /* 卡片/弹层 */
-	--aurora-surface-soft: #eef5ff; /* 凹陷：tabs / field / insets */
+	--aurora-surface-soft: #f5f6f8; /* 凹陷：tabs / field / insets */
 	--aurora-canvas: #ffffff; /* canvas 主区（纯白） */
 	--aurora-overlay: rgba(255, 255, 255, 0.92); /* 顶部 sticky 玻璃态 */
 
@@ -129,8 +129,8 @@
 	--aurora-inverse: #ffffff;
 
 	/* —— 颜色：边框 —— */
-	--aurora-line: #d5e1f0; /* 默认细线 */
-	--aurora-line-soft: #e9f0f8; /* 极浅分割 */
+	--aurora-line: #dfe2e7; /* 默认细线 */
+	--aurora-line-soft: #eceef1; /* 极浅分割 */
 
 	/* —— 颜色：主品牌（单一钴蓝，不使用紫色渐变） —— */
 	--aurora-accent: #0057ff;
@@ -152,7 +152,7 @@
 	--aurora-red: #e11d48;
 	--aurora-red-soft: rgba(225, 29, 72, 0.08);
 	--aurora-neutral: #747d8c;
-	--aurora-neutral-soft: #eef5ff;
+	--aurora-neutral-soft: #f5f6f8;
 
 	/* —— 头像色（名称为组件兼容保留，色值不含紫色） —— */
 	--aurora-av-purple: #0057ff;
@@ -1143,3 +1143,408 @@ button {
 .admin-shell .badge.status-connected { background: var(--admin-success-soft); color: var(--admin-success); }
 .admin-shell .badge.status-connecting { background: var(--admin-warning-soft); color: var(--admin-warning); }
 .admin-shell .badge.status-locked { background: var(--admin-neutral-soft); color: var(--admin-text-muted); }
+
+/* ==========================================================================
+   AI UI Kit — chat conversation 适配（design/demo 复刻）
+   让 admin 对话的 message-flow 采用 ai 页面宽度，并把 ai token 的主题色
+   钩子（--app-*）对齐到现有 editorial 温暖色板。
+   ========================================================================== */
+.admin-shell .conversation-workspace .conversation-article,
+.conversation-workspace--admin .conversation-article {
+	width: 100%;
+	max-width: var(--ai-width-page);
+	margin: 0 auto;
+	padding: 0;
+}
+
+.admin-shell .conversation-workspace .message-flow,
+.conversation-workspace--admin .message-flow {
+	max-width: var(--ai-width-page);
+	margin: 0 auto;
+	padding-left: 32px;
+	padding-right: 32px;
+	padding-top: var(--ai-header-gap);
+	padding-bottom: 96px;
+}
+
+.admin-shell .conversation-workspace .conversation-title,
+.admin-shell .conversation-workspace .agent-run-strip {
+	max-width: var(--ai-width-page);
+	margin-right: auto;
+	margin-left: auto;
+	padding-left: 32px;
+	padding-right: 32px;
+}
+
+/* 应用主题色到 --app-*，让 ai 组件与工作台一致；对话主区底色取白 */
+.conversation-workspace--admin {
+	--app-bg-page: #ffffff;
+	--app-bg-surface: #ffffff;
+	--app-bg-elevated: #faf9f7;
+	--app-bg-inset: #f0eee9;
+	--app-border-soft: #e4e1da;
+	--app-border-strong: #cfcbc2;
+	--app-border-focus: #8f8a80;
+	--app-text-primary: #26241f;
+	--app-text-secondary: #4f4c45;
+	--app-text-muted: #837f76;
+	--app-text-faint: #b0aca2;
+	--app-accent: #4a5a8f;
+	--app-accent-strong: #37466f;
+	--app-accent-soft: rgba(74, 90, 143, 0.1);
+	--app-accent-glow: rgba(74, 90, 143, 0.4);
+	--app-accent-contrast: #ffffff;
+	--app-success: #4d7c5c;
+	--app-success-soft: rgba(77, 124, 92, 0.2);
+	--app-danger: #a35248;
+	--app-danger-soft: rgba(163, 82, 72, 0.15);
+	--app-chart-bar: rgba(131, 127, 118, 0.32);
+}
+
+/* --- AI 复刻：composer docked --- */
+/* admin 里对话只是右侧一栏：composer 锚定到 workspace 列，而不是全窗口 fixed */
+.conversation-workspace--admin {
+	position: relative;
+}
+.conversation-workspace--admin .composer-dock {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	padding: var(--ai-space-lg) 24px var(--ai-space-lg);
+	background: linear-gradient(transparent, var(--ai-bg-page) 62%);
+	z-index: 30;
+}
+/* The live Agent belongs to the reading surface, immediately above the dock.
+   Keeping it above the dock's gradient prevents the active state from being
+   present in the DOM but visually hidden behind the composer. */
+.conversation-workspace--admin .active-agent-presence {
+	z-index: 31;
+	bottom: var(--ai-safe-dock);
+}
+.conversation-workspace--admin .editorial-composer {
+	max-width: 100%;
+	margin: 0;
+	background: var(--ai-bg-elevated);
+	border: 1px solid var(--ai-border-strong);
+	border-radius: var(--ai-radius-lg);
+	padding: var(--ai-space-lg) var(--ai-space-lg) var(--ai-space-sm);
+	font-family: var(--ai-font-sans);
+	transition:
+		border-color var(--ai-motion-base) ease,
+		box-shadow var(--ai-motion-base) ease;
+}
+.conversation-workspace--admin .editorial-composer:focus-within {
+	border-color: var(--ai-border-focus);
+	box-shadow:
+		0 8px 40px -12px color-mix(in srgb, var(--ai-text-primary) 25%, transparent),
+		0 0 0 1px var(--ai-accent-soft);
+}
+.conversation-workspace--admin .editorial-composer textarea {
+	background: none;
+	border: none;
+	outline: none;
+	resize: none;
+	color: var(--ai-text-primary);
+	font-family: var(--ai-font-sans);
+	font-size: var(--ai-text-composer);
+	line-height: var(--ai-text-composer-lh);
+	font-weight: var(--ai-weight-light);
+}
+
+/* --- 防溢出兜底（对话页） --- */
+.conversation-workspace--admin .conversation-scroll {
+	overflow-x: hidden;
+	padding-bottom: 168px; /* 给 docked composer 让出底部清除位 */
+}
+.conversation-workspace--admin .ai-reading-content,
+.conversation-workspace--admin .ai-prose-block {
+	min-width: 0;
+	max-width: 100%;
+}
+.conversation-workspace--admin .ai-prose pre,
+.conversation-workspace--admin .ai-prose table,
+.conversation-workspace--admin .ai-prose img,
+.conversation-workspace--admin .ai-prose blockquote,
+.conversation-workspace--admin .ai-prose code {
+	max-width: 100%;
+}
+.conversation-workspace--admin .ai-prose pre {
+	overflow-x: auto;
+}
+.conversation-workspace--admin .ai-prose code {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.conversation-workspace--admin .ai-rail {
+	overflow-x: hidden;
+	overflow-wrap: anywhere;
+}
+
+/* --- 运行轨迹预留：自适应，随 .message-flow 容器宽度分档 ---
+   意图：rail 右对齐用户输入右缘、正文右缘自然留出槽位，避免 tool 出现时
+  "挤占一下"UI。预留宽度不写死：
+   - 容器很宽 → 多预留（接近完整 rail）；中 → 略少；窄 → 不预留，
+     rail 合并到 agent 回复一侧（design 原生能力，栈在正文之后）。 */
+.conversation-workspace--admin .message-flow {
+	container-type: inline-size;
+	container-name: chatflow;
+}
+
+.conversation-workspace--admin .ai-turn {
+	/* 默认最窄：不预留，rail 合并到回复侧。
+	   注意不要加 .no-rail 变体：它优先级更高会把 --rail-reserved 锤成 0，
+	   导致无 tool 时正文一路撑到内容右缘、tool 一出现反而挤占（rail 出现会
+	   让正文回缩、布局跳变）。因此无论有没有 rail，正文右缘都应停到预留槽
+	   左边界（再留 gap 空白），模板保持稳定。 */
+	--rail-reserved: 0px;
+	grid-template-columns: minmax(0, 1fr) var(--rail-reserved);
+	gap: var(--ai-rail-gap);
+}
+
+/* 中档：留出较窄的右侧槽（下放到 760，1280 窗口 message-flow≈796 即命中） */
+@container chatflow (min-width: 760px) {
+	.conversation-workspace--admin .ai-turn { --rail-reserved: 160px; }
+}
+/* 宽档：接近完整 rail */
+@container chatflow (min-width: 1040px) {
+	.conversation-workspace--admin .ai-turn { --rail-reserved: 250px; }
+}
+
+/* 最窄：不预留 —— rail 合并到回复侧，但要按实际时间线排布：
+   思考 → 运行轨迹(rail) → 最终正文，而不是沉到整个 answer 末尾。 */
+@container chatflow (max-width: 759px) {
+	.conversation-workspace--admin .ai-turn,
+	.conversation-workspace--admin .ai-turn.no-rail {
+		display: flex;
+		flex-direction: column;
+		grid-template-columns: unset;
+		gap: var(--ai-space-md);
+	}
+	/* 把 reading / reading-content / rail 摊平成 turn 的直接流项，便于用 order 重排 */
+	.conversation-workspace--admin .ai-reading,
+	.conversation-workspace--admin .ai-reading-content,
+	.conversation-workspace--admin .ai-rail {
+		display: contents;
+	}
+	/* 按时间线 order：signature → thinking → running trace → 正文 → cursor → extras → actions */
+	.conversation-workspace--admin .ai-sig { order: 0; }
+	.conversation-workspace--admin .ai-thinking { order: 1; margin-bottom: 0; }
+	.conversation-workspace--admin .ai-rail .ai-trace { order: 2; margin-bottom: 0; }
+	.conversation-workspace--admin .ai-prose { order: 3; }
+	.conversation-workspace--admin .ai-cursor { order: 4; }
+	.conversation-workspace--admin .ai-turn-extras { order: 5; }
+	.conversation-workspace--admin .ai-actions { order: 6; }
+}
+
+/* --- 会话侧栏可折叠：关闭时让对话列拿到更宽（admin） --- */
+.conversation-workspace--admin.sidebar-collapsed {
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-areas: "center" "composer";
+}
+.conversation-workspace--admin.sidebar-collapsed .chat-sidebar {
+	display: none;
+}
+
+
+/* 对话主页面背景用白色，顶栏为常规 chat 布局（覆盖 styles.css 的暖色底） */
+.conversation-workspace--admin .chat-workspace {
+	background: #ffffff;
+}
+
+.conversation-workspace--admin .chat-workspace {
+	display: flex;
+	flex-direction: column;
+}
+/* 对话内容直接填充工作区，不再预留顶部栏。 */
+.conversation-workspace--admin .conversation-scroll {
+	height: auto;
+	flex: 1;
+	min-height: 0;
+}
+
+/* --- 思考过程：作为正文前的辅助信息，不另起卡片 --- */
+.conversation-workspace--admin .thinking-note {
+	width: 100%;
+	margin: var(--ai-space-md) 0 var(--ai-space-lg);
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--aurora-ink-2);
+	font-family: var(--aurora-font-sans);
+	font-size: var(--aurora-text-sm);
+	line-height: 1.5;
+	letter-spacing: normal;
+}
+.conversation-workspace--admin .thinking-note summary {
+	display: flex;
+	justify-content: flex-start;
+	align-items: center;
+	gap: 6px;
+	min-height: 28px;
+	padding: 0;
+	cursor: pointer;
+	list-style: none;
+	font-weight: var(--aurora-weight-medium);
+	color: var(--aurora-ink-2);
+}
+.conversation-workspace--admin .thinking-note summary:hover {
+	color: var(--aurora-ink);
+}
+.conversation-workspace--admin .thinking-note summary:focus-visible {
+	outline: 2px solid var(--aurora-accent);
+	outline-offset: 3px;
+}
+.conversation-workspace--admin .thinking-note summary::-webkit-details-marker {
+	display: none;
+}
+/* 去掉基础样式的默认前缀，保留 JSX 里的 > chevron */
+.conversation-workspace--admin .thinking-note summary::before,
+.conversation-workspace--admin .thinking-note[open] summary::before {
+	content: none;
+	margin: 0;
+}
+.conversation-workspace--admin .thinking-note .work-chevron {
+	color: var(--aurora-ink-3);
+	font-family: inherit;
+	font-size: 13px;
+	transition: transform 140ms ease;
+}
+.conversation-workspace--admin .thinking-note[open] .work-chevron {
+	transform: rotate(90deg);
+}
+.conversation-workspace--admin .thinking-body {
+	margin: 0;
+	padding: 7px 0 12px;
+	border: 0 !important;
+	border-left: 0 !important;
+	border-bottom: 1px solid var(--aurora-line-soft) !important;
+	border-radius: 0;
+	background: transparent !important;
+	color: var(--aurora-ink-2);
+	font: 13px/1.7 var(--aurora-font-sans);
+	letter-spacing: normal;
+	white-space: pre-wrap;
+}
+
+/* --- 输入框顶部不要横线分隔 --- */
+.conversation-workspace--admin .composer-dock {
+	border-top: 0;
+}
+
+/* --- Chat 会话侧栏：与白色工作台使用同一套中性层级 --- */
+.conversation-workspace--admin .chat-sidebar,
+.conversation-workspace--admin.editorial-shell[data-theme="vision-glass"] .chat-sidebar {
+	padding: var(--aurora-space-4) var(--aurora-space-3);
+	border-color: var(--aurora-line);
+	background: var(--aurora-surface);
+}
+.conversation-workspace--admin .new-chat-button,
+.conversation-workspace--admin.editorial-shell[data-theme="vision-glass"] .new-chat-button {
+	min-height: 38px;
+	margin: 0 0 var(--aurora-space-3);
+	padding: 8px 10px;
+	border: 1px solid var(--aurora-line);
+	border-radius: 6px;
+	background: var(--aurora-surface-soft);
+	box-shadow: none;
+	color: var(--aurora-ink);
+	font-size: var(--aurora-text-base);
+	font-weight: var(--aurora-weight-medium);
+}
+.conversation-workspace--admin .sidebar-actions {
+	display: flex;
+	align-items: stretch;
+	gap: var(--aurora-space-2);
+	margin-bottom: var(--aurora-space-3);
+}
+.conversation-workspace--admin .sidebar-actions .new-chat-button {
+	margin: 0;
+	flex: 1;
+}
+.conversation-workspace--admin .sidebar-collapse-button,
+.conversation-workspace--admin .sidebar-reopen-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 38px;
+	padding: 0;
+	border: 1px solid var(--aurora-line);
+	border-radius: 6px;
+	background: var(--aurora-surface);
+	color: var(--aurora-ink-2);
+	cursor: pointer;
+}
+.conversation-workspace--admin .sidebar-collapse-button:hover,
+.conversation-workspace--admin .sidebar-reopen-button:hover {
+	border-color: var(--aurora-ink-3);
+	color: var(--aurora-ink);
+}
+.conversation-workspace--admin .sidebar-collapse-button svg,
+.conversation-workspace--admin .sidebar-reopen-button svg {
+	width: 16px;
+	height: 16px;
+}
+.conversation-workspace--admin .sidebar-reopen-button {
+	position: absolute;
+	top: 50%;
+	left: 0;
+	z-index: 20;
+	height: 40px;
+	transform: translateY(-50%);
+	border-left: 0;
+	border-radius: 0 6px 6px 0;
+}
+.conversation-workspace--admin .new-chat-button:not(:disabled):hover,
+.conversation-workspace--admin.editorial-shell[data-theme="vision-glass"] .new-chat-button:not(:disabled):hover {
+	transform: none;
+	border-color: var(--aurora-ink-3);
+	background: color-mix(in srgb, var(--aurora-ink) 6%, var(--aurora-surface));
+	box-shadow: none;
+}
+.conversation-workspace--admin .new-chat-plus {
+	display: inline-flex;
+	width: 16px;
+	height: 16px;
+	align-items: center;
+	justify-content: center;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+.conversation-workspace--admin .new-chat-plus svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+.conversation-workspace--admin .conversation-search {
+	margin: 0 0 var(--aurora-space-4);
+	border-color: var(--aurora-line);
+	border-radius: 6px;
+	background: var(--aurora-surface-soft);
+}
+.conversation-workspace--admin .sidebar-section-label {
+	margin: 0 0 var(--aurora-space-2) 6px;
+	color: var(--aurora-ink-3);
+}
+.conversation-workspace--admin .conversation-list button,
+.conversation-workspace--admin.editorial-shell[data-theme="vision-glass"] .conversation-list button {
+	border-radius: 6px;
+	color: var(--aurora-ink-2);
+}
+.conversation-workspace--admin .conversation-list button:hover,
+.conversation-workspace--admin.editorial-shell[data-theme="vision-glass"] .conversation-list button:hover {
+	background: var(--aurora-surface-soft);
+}
+.conversation-workspace--admin .conversation-list button.active,
+.conversation-workspace--admin.editorial-shell[data-theme="vision-glass"] .conversation-list button.active {
+	background: color-mix(in srgb, var(--aurora-ink) 9%, var(--aurora-surface));
+	color: var(--aurora-ink);
+}
+.conversation-workspace--admin .sidebar-footer {
+	border-color: var(--aurora-line);
+	color: var(--aurora-ink-3);
+}
+.conversation-workspace--admin .sidebar-footer strong {
+	color: var(--aurora-ink-2);
+}

@@ -12,7 +12,8 @@
  */
 
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
-import { AuroraPill, AuroraSettingsGroup, type AuroraSettingsRow } from "./index.ts";
+import { CustomLlmSection } from "./custom-llm-section.tsx";
+import { AuroraPageHeader, AuroraPill, AuroraSettingsGroup, type AuroraSettingsRow } from "./index.ts";
 import styles from "./settings-view.module.css";
 
 type SnapshotState = "connected" | "connecting" | "error" | "locked";
@@ -67,6 +68,7 @@ export function AdminSettingsView(): React.ReactElement {
 
 	return (
 		<section className={styles.shell} aria-label="设置">
+			<AuroraPageHeader title="设置" description="查看当前租户与 Control API 的连接状态。" />
 			<AuroraSettingsGroup
 				title="连接"
 				description="与 Control API 的实时通信状态。"
@@ -79,6 +81,7 @@ export function AdminSettingsView(): React.ReactElement {
 					</p>
 				}
 			/>
+			<CustomLlmSection />
 		</section>
 	);
 }

@@ -13,7 +13,7 @@ import type { AgentPublicId } from "@earendil-works/pi-protocol";
 import { useMemo, useState } from "react";
 import { navigate } from "../router.ts";
 import styles from "./agent-list-view.module.css";
-import { AuroraButton, AuroraPill } from "./index.ts";
+import { AuroraButton, AuroraPageHeader, AuroraPill } from "./index.ts";
 
 type AgentStatus = "active" | "draft" | "archived";
 
@@ -162,28 +162,11 @@ export function AgentListView(): React.ReactElement {
 
 	return (
 		<section className={styles.shell} aria-label="Agent 列表">
-			<div className={styles.tableToolbar}>
-				<AuroraButton
-					variant="accent"
-					size="md"
-					onClick={() => navigate("/agents")}
-					icon={
-						<svg
-							aria-hidden="true"
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2.5"
-						>
-							<path d="M12 5v14M5 12h14" />
-						</svg>
-					}
-				>
-					新建 Agent
-				</AuroraButton>
-			</div>
+			<AuroraPageHeader
+				title="Agent 设计"
+				description="配置 Agent 能力、保存 Revision，并查看它被哪些发布应用使用。"
+				meta="示例数据"
+			/>
 
 			<TableFallback rows={pagedRows} onOpen={(id) => navigate(`/agents/${id}`)} />
 

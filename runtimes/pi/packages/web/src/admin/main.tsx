@@ -18,6 +18,7 @@ import { legacyPublishingRedirect } from "@earendil-works/pi-protocol";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles.css";
+import "../ai-kit/styles/index.css";
 import { AdminAppShell } from "./app-shell.tsx";
 import "./styles.css";
 

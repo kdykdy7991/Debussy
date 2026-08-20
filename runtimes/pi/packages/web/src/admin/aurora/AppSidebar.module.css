@@ -4,7 +4,7 @@
  * v5：brand 块在顶部、与下方 nav 用 1px 分隔线隔开；整个 sidebar 在
  * shell 中与主区 flex 并排（左侧固定 220px），不再依赖顶部 TopNav。
  *
- * 视觉：墨黑底、右侧蓝色分隔线；active 项使用半透明钴蓝底；
+ * 视觉：白底、中性分隔线；active 项使用中性灰底，靠层级说明当前位置；
  * 窄屏（< 920px）退化为 64px 极简图标栏。
  */
 .rail {
@@ -14,11 +14,17 @@
 	min-height: 100vh;
 	padding: var(--aurora-space-6) var(--aurora-space-3);
 	gap: var(--aurora-space-1);
-	background: #101114;
-	color: #ffffff;
-	border-right: 1.5px solid rgba(0, 87, 255, 0.38);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	border-right: 1px solid var(--aurora-line);
 	box-sizing: border-box;
 	flex-shrink: 0;
+}
+
+.navigation {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-1);
 }
 
 /* —— 品牌区 —— */
@@ -28,17 +34,25 @@
 	gap: var(--aurora-space-3);
 	padding: 0 var(--aurora-space-2) var(--aurora-space-4);
 	margin-bottom: var(--aurora-space-2);
-	border-bottom: 1.5px solid rgba(255, 255, 255, 0.12);
+	border-bottom: 1px solid var(--aurora-line);
 	min-width: 0;
 }
 
 .orb {
-	width: 32px;
-	height: 32px;
-	border-radius: 50%;
-	background: var(--aurora-gradient);
-	box-shadow: var(--aurora-shadow-glow);
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	background: var(--aurora-ink);
 	flex-shrink: 0;
+}
+
+.orb::after {
+	color: var(--aurora-inverse);
+	content: "D";
+	font-size: 13px;
+	font-weight: var(--aurora-weight-semibold);
 }
 
 .brandText {
@@ -53,7 +67,7 @@
 	font-size: var(--aurora-text-base);
 	font-weight: var(--aurora-weight-semibold);
 	letter-spacing: -0.005em;
-	color: #ffffff;
+	color: var(--aurora-ink);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -62,7 +76,7 @@
 .brandSubtitle {
 	font-family: var(--aurora-font-mono);
 	font-size: var(--aurora-text-xs);
-	color: rgba(255, 255, 255, 0.56);
+	color: var(--aurora-ink-3);
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
 	overflow: hidden;
@@ -82,7 +96,7 @@
 	border-radius: var(--aurora-radius-sm);
 	font: inherit;
 	font-size: var(--aurora-text-base);
-	color: rgba(255, 255, 255, 0.72);
+	color: var(--aurora-ink-2);
 	cursor: pointer;
 	text-align: left;
 	transition:
@@ -91,8 +105,8 @@
 }
 
 .item:hover {
-	background: rgba(0, 87, 255, 0.16);
-	color: #ffffff;
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink);
 }
 
 .item:focus-visible {
@@ -101,11 +115,9 @@
 }
 
 .itemActive {
-	background: rgba(0, 87, 255, 0.24);
-	color: #ffffff;
+	background: color-mix(in srgb, var(--aurora-ink) 9%, var(--aurora-surface));
+	color: var(--aurora-ink);
 	font-weight: var(--aurora-weight-medium);
-	border: 1.5px solid rgba(0, 87, 255, 0.72);
-	box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .icon {
@@ -115,12 +127,12 @@
 	align-items: center;
 	justify-content: center;
 	font-size: 14px;
-	color: rgba(255, 255, 255, 0.48);
+	color: var(--aurora-ink-3);
 	flex-shrink: 0;
 }
 
 .itemActive .icon {
-	color: #69a1ff;
+	color: var(--aurora-ink);
 }
 
 .label {
@@ -129,6 +141,30 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.context {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: auto;
+	padding: var(--aurora-space-4) var(--aurora-space-2) 0;
+	border-top: 1px solid var(--aurora-line);
+	min-width: 0;
+}
+
+.contextLabel,
+.connection {
+	font-size: var(--aurora-text-xs);
+	color: var(--aurora-ink-3);
+}
+
+.contextName {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--aurora-text-sm);
+	font-weight: var(--aurora-weight-medium);
 }
 
 @media (max-width: 920px) {
@@ -146,6 +182,21 @@
 	}
 	.label {
 		display: none;
+	}
+	.context {
+		align-items: center;
+		padding-inline: 0;
+	}
+	.contextLabel,
+	.contextName {
+		display: none;
+	}
+	.connection {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: currentColor;
+		font-size: 0;
 	}
 	.item {
 		justify-content: center;

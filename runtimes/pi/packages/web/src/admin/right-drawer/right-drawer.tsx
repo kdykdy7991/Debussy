@@ -28,7 +28,9 @@ export function AdminRightDrawer({ route, hasContext = false }: RightDrawerProps
 				return `${ADMIN_WORKBENCH_TERMS.agent} · 配置`;
 			case "apps":
 			case "app-detail":
-				return `${ADMIN_WORKBENCH_TERMS.app} · 发布`;
+				return `${ADMIN_WORKBENCH_TERMS.app} · 详情`;
+			case "usage":
+				return `${ADMIN_WORKBENCH_TERMS.usage} · 明细`;
 			case "user-conversations":
 			case "user-conversation-detail":
 				return `${ADMIN_WORKBENCH_TERMS.userConversations} · 详情`;
