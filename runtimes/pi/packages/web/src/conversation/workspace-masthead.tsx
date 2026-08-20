@@ -13,25 +13,46 @@ export interface WorkspaceMastheadProps {
 	readonly theme: VisualTheme;
 	readonly onOpenNavigation: () => void;
 	readonly onThemeChange: (theme: VisualTheme) => void;
+	/** 会话侧栏是否展开；传入时渲染成双向收缩开关（☰ ↔ ‹），未传入保持原样 */
+	readonly open?: boolean;
+	/** 管理员紧凑工作区不展示品牌文案与日期。 */
+	readonly showDecorativeContext?: boolean;
 }
 
 export function WorkspaceMasthead(props: WorkspaceMastheadProps): React.ReactElement {
 	return (
 		<header className="chat-masthead">
 			<div className="masthead-group">
-				<button
-					className="icon-button mobile-nav"
-					type="button"
-					onClick={props.onOpenNavigation}
-					aria-label="打开会话导航"
-				>
-					☰
-				</button>
-				<span className="edition">
-					PI INTELLIGENCE <i>／</i> LOCAL DESK
-				</span>
+				{props.open !== undefined ? (
+					<button
+						type="button"
+						className="sidebar-toggle"
+						aria-label={props.open ? "收起会话导航" : "展开会话导航"}
+						aria-expanded={props.open}
+						title={props.open ? "收起会话导航" : "展开会话导航"}
+						onClick={props.onOpenNavigation}
+					>
+						{props.open ? "‹" : "☰"}
+					</button>
+				) : (
+					<button
+						type="button"
+						className="icon-button mobile-nav"
+						aria-label="打开会话导航"
+						onClick={props.onOpenNavigation}
+					>
+						☰
+					</button>
+				)}
+				{props.showDecorativeContext !== false ? (
+					<span className="edition">
+						PI INTELLIGENCE <i>／</i> LOCAL DESK
+					</span>
+				) : null}
 			</div>
-			<time className="masthead-date">{formatDate(Date.now())}</time>
+			{props.showDecorativeContext !== false ? (
+				<time className="masthead-date">{formatDate(Date.now())}</time>
+			) : null}
 			<div className="masthead-actions">
 				<fieldset className="theme-switcher" aria-label="视觉主题">
 					<legend className="sr-only">视觉主题</legend>

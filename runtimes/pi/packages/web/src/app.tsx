@@ -1,5 +1,5 @@
 import type { LiveSpeechJobHandle } from "@earendil-works/pi-client";
-import type { SessionSnapshot, TranscriptItem } from "@earendil-works/pi-protocol";
+import type { SessionSnapshot } from "@earendil-works/pi-protocol";
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -12,15 +12,12 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ActiveAgentPresence, AiMessageFlow } from "./conversation/ai-message-flow.tsx";
 import { ConversationComposer } from "./conversation/conversation-composer.tsx";
 import { ConversationSidebar } from "./conversation/conversation-sidebar.tsx";
 import { type VisualTheme, WorkspaceMasthead } from "./conversation/workspace-masthead.tsx";
-import { LiveStatusRow } from "./features/voice/live-status-row.tsx";
 import type { LivePlaybackState } from "./features/voice/live-types.ts";
 import { PlaybackArbiter } from "./features/voice/playback-arbiter.ts";
-import { SpeechButton } from "./features/voice/speech-button.tsx";
 import type { SpeechController } from "./features/voice/speech-controller.ts";
 import type { SpeechControllerSource } from "./features/voice/types.ts";
 import { useLiveSpeech } from "./features/voice/use-live-speech.ts";
@@ -103,10 +100,12 @@ export function ConversationWorkspace({
 
 	const [message, setMessage] = useState("");
 	const [sessionQuery, setSessionQuery] = useState("");
-	const [sidebarOpen, setSidebarOpen] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(() => variant === "admin");
 	const composerRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const conversationScrollRef = useRef<HTMLDivElement>(null);
+	const followConversationRef = useRef(true);
+	const pendingConversationScrollFrameRef = useRef<number | undefined>(undefined);
 	const [theme, setTheme] = useState<VisualTheme>(() => {
 		if (typeof window === "undefined") return "editorial";
 		try {
@@ -144,6 +143,9 @@ export function ConversationWorkspace({
 	const submitMessage = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!message.trim() || running) return;
+		// Sending is an explicit request to return to the live edge. Once the
+		// user scrolls up again, the scroll handler below releases this lock.
+		followConversationRef.current = true;
 		const attachmentIds = active?.attachments?.map((attachment) => attachment.id);
 		// Phase 2 live朗读: ask the hook whether to attach `speech` before the
 		// prompt leaves the page. The hook owns the AudioContext unlock and the
@@ -192,23 +194,46 @@ export function ConversationWorkspace({
 		return () => window.cancelAnimationFrame(frame);
 	}, [activeId, connected, hasActive]);
 
-	useEffect(() => {
+	const scheduleConversationScroll = useCallback((force = false) => {
 		const element = conversationScrollRef.current;
-		if (!element || !activeId) return;
-		const frame = window.requestAnimationFrame(() => {
-			element.scrollTop = element.scrollHeight;
+		if (!element || (!force && !followConversationRef.current)) return;
+		// Streaming can update several times within a paint. One direct write per
+		// frame avoids competing `smooth` animations and keeps the transcript still.
+		if (pendingConversationScrollFrameRef.current !== undefined) return;
+		pendingConversationScrollFrameRef.current = window.requestAnimationFrame(() => {
+			pendingConversationScrollFrameRef.current = undefined;
+			const currentElement = conversationScrollRef.current;
+			if (!currentElement || (!force && !followConversationRef.current)) return;
+			currentElement.scrollTop = currentElement.scrollHeight;
 		});
-		return () => window.cancelAnimationFrame(frame);
-	}, [activeId]);
+	}, []);
+
+	const handleConversationScroll = useCallback(() => {
+		const element = conversationScrollRef.current;
+		if (!element) return;
+		const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+		// Do not pull a reader back to the live edge while they inspect history.
+		followConversationRef.current = distanceFromBottom < 96;
+	}, []);
 
 	useEffect(() => {
-		const element = conversationScrollRef.current;
-		if (!element || !active) return;
-		const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-		if (distanceFromBottom < 180) {
-			element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-		}
-	}, [active]);
+		if (!activeId) return;
+		followConversationRef.current = true;
+		scheduleConversationScroll(true);
+	}, [activeId, scheduleConversationScroll]);
+
+	useEffect(() => {
+		if (active) scheduleConversationScroll();
+	}, [active, scheduleConversationScroll]);
+
+	useEffect(
+		() => () => {
+			if (pendingConversationScrollFrameRef.current !== undefined) {
+				window.cancelAnimationFrame(pendingConversationScrollFrameRef.current);
+			}
+		},
+		[],
+	);
 
 	useEffect(() => {
 		document.body.dataset.theme = theme;
@@ -259,7 +284,12 @@ export function ConversationWorkspace({
 	}, [arbiter]);
 
 	return (
-		<div className={`editorial-shell conversation-workspace conversation-workspace--${variant}`} data-theme={theme}>
+		<div
+			className={`editorial-shell conversation-workspace conversation-workspace--${variant} ${
+				sidebarOpen ? "" : "sidebar-collapsed"
+			}`}
+			data-theme={theme}
+		>
 			<ConversationSidebar
 				open={sidebarOpen}
 				connected={connected}
@@ -268,19 +298,42 @@ export function ConversationWorkspace({
 				connection={connectionSnapshot}
 				sessions={sessionSnapshot}
 				visibleSessions={visibleSessions}
-				onClose={() => setSidebarOpen(false)}
+				onToggle={variant === "admin" ? () => setSidebarOpen((open) => !open) : undefined}
 				onCreate={createSession}
 				onQueryChange={setSessionQuery}
 				onSelect={selectSession}
 			/>
 
+			{variant === "admin" && !sidebarOpen ? (
+				<button
+					className="sidebar-reopen-button"
+					type="button"
+					onClick={() => setSidebarOpen(true)}
+					aria-label="展开会话导航"
+				>
+					<svg viewBox="0 0 16 16" fill="none" focusable="false" aria-hidden="true">
+						<title>展开会话导航</title>
+						<path
+							d="m6.25 3.5 4.5 4.5-4.5 4.5"
+							stroke="currentColor"
+							strokeWidth="1.5"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</svg>
+				</button>
+			) : null}
+
 			<main className="chat-workspace">
-				<WorkspaceMasthead
-					connection={connectionSnapshot}
-					theme={theme}
-					onOpenNavigation={() => setSidebarOpen(true)}
-					onThemeChange={setTheme}
-				/>
+				{variant !== "admin" ? (
+					<WorkspaceMasthead
+						connection={connectionSnapshot}
+						theme={theme}
+						open={sidebarOpen}
+						onOpenNavigation={() => setSidebarOpen((open) => !open)}
+						onThemeChange={setTheme}
+					/>
+				) : null}
 
 				{contextHeader ? <div className="workspace-context-header">{contextHeader}</div> : null}
 
@@ -302,7 +355,7 @@ export function ConversationWorkspace({
 					</output>
 				) : null}
 
-				<div className="conversation-scroll" ref={conversationScrollRef}>
+				<div className="conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
 					{active ? (
 						<Conversation
 							active={active}
@@ -311,6 +364,7 @@ export function ConversationWorkspace({
 							arbiter={arbiter}
 							livePlaybackState={live.playbackState}
 							onStopLive={live.stop}
+							showTitle={variant !== "admin"}
 						/>
 					) : bootstrapping ? (
 						<StartupConversation />
@@ -318,6 +372,7 @@ export function ConversationWorkspace({
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
 				</div>
+				{active ? <ActiveAgentPresence active={active} /> : null}
 			</main>
 
 			<ConversationComposer
@@ -365,6 +420,7 @@ function Conversation({
 	arbiter,
 	livePlaybackState,
 	onStopLive,
+	showTitle,
 }: {
 	active: SessionSnapshot;
 	abort: () => void;
@@ -372,49 +428,37 @@ function Conversation({
 	arbiter: PlaybackArbiter | undefined;
 	livePlaybackState: LivePlaybackState;
 	onStopLive: () => void;
+	showTitle: boolean;
 }) {
 	const running = active.phase !== "idle";
-	const liveActive = livePlaybackState !== "idle" && livePlaybackState !== "ended";
-	// Identify the assistant item the live job is bound to: the first streaming
-	// item from the current turn, or the last assistant item while the turn is
-	// still running. The status row is anchored on this item so the user
-	// always sees the live pill next to the message that's being spoken.
-	const liveTargetId = useMemo(() => {
-		if (!liveActive) return undefined;
-		const streaming = active.transcript.find((item) => item.role === "assistant" && item.status === "streaming");
-		if (streaming) return streaming.id;
-		for (let index = active.transcript.length - 1; index >= 0; index -= 1) {
-			const item = active.transcript[index];
-			if (item && item.role === "assistant") return item.id;
-		}
-		return undefined;
-	}, [active.transcript, liveActive]);
 	return (
 		<article className="conversation-article">
-			<header className="conversation-title">
-				<div className="conversation-overline">
-					<span>CONVERSATION</span>
-					<span>#{active.id.slice(0, 8).toUpperCase()}</span>
-				</div>
-				<h1>{active.name || "未命名对话"}</h1>
-				<p>围绕当前工作区持续展开的智能分析与协作记录。</p>
-				<div className="conversation-meta">
-					<span>
-						<strong>PI AGENT</strong>
-						<small>
-							{active.model.provider} / {active.model.id}
-						</small>
-					</span>
-					<span>
-						<strong>THINKING</strong>
-						<small>{active.thinkingLevel}</small>
-					</span>
-					<span>
-						<strong>WORKSPACE</strong>
-						<small title={active.cwd}>{active.cwd.split("/").filter(Boolean).at(-1) || active.cwd}</small>
-					</span>
-				</div>
-			</header>
+			{showTitle ? (
+				<header className="conversation-title">
+					<div className="conversation-overline">
+						<span>CONVERSATION</span>
+						<span>#{active.id.slice(0, 8).toUpperCase()}</span>
+					</div>
+					<h1>{active.name || "未命名对话"}</h1>
+					<p>围绕当前工作区持续展开的智能分析与协作记录。</p>
+					<div className="conversation-meta">
+						<span>
+							<strong>PI AGENT</strong>
+							<small>
+								{active.model.provider} / {active.model.id}
+							</small>
+						</span>
+						<span>
+							<strong>THINKING</strong>
+							<small>{active.thinkingLevel}</small>
+						</span>
+						<span>
+							<strong>WORKSPACE</strong>
+							<small title={active.cwd}>{active.cwd.split("/").filter(Boolean).at(-1) || active.cwd}</small>
+						</span>
+					</div>
+				</header>
+			) : null}
 
 			{running ? (
 				<section className="agent-run-strip proc busy" aria-label="Agent 运行状态">
@@ -437,177 +481,15 @@ function Conversation({
 			) : null}
 
 			<section className="message-flow" aria-live="polite">
-				{active.transcript.length > 0 ? (
-					active.transcript.map((item, index) => (
-						<TranscriptItemView
-							item={item}
-							index={index}
-							key={item.id}
-							speech={speech}
-							arbiter={arbiter}
-							sessionId={active.id}
-							liveState={item.id === liveTargetId ? livePlaybackState : "idle"}
-							onStopLive={onStopLive}
-						/>
-					))
-				) : (
-					<EmptyTranscript />
-				)}
+				<AiMessageFlow
+					active={active}
+					speech={speech}
+					arbiter={arbiter}
+					livePlaybackState={livePlaybackState}
+					onStopLive={onStopLive}
+				/>
 			</section>
 		</article>
-	);
-}
-
-function TranscriptItemView({
-	item,
-	index,
-	speech,
-	arbiter,
-	sessionId,
-	liveState,
-	onStopLive,
-}: {
-	item: TranscriptItem;
-	index: number;
-	speech: SpeechController | undefined;
-	arbiter: PlaybackArbiter | undefined;
-	sessionId: string;
-	liveState: LivePlaybackState;
-	onStopLive: () => void;
-}) {
-	if (item.role === "tool") {
-		const status = item.status === "running" ? "正在执行" : item.status === "error" ? "执行失败" : "执行完成";
-		return (
-			<section className={`tool-event ${item.status}`}>
-				<div className={`proc ${item.status === "running" ? "busy" : ""}`}>
-					<span className="proc-dot" aria-hidden="true" />
-					<span>
-						{status}：<b>{item.toolName}</b>
-					</span>
-					<span className={`proc-status ${item.status === "running" ? "live" : ""}`}>{status}</span>
-				</div>
-				<details className="work tool-report" open={item.status === "error"}>
-					<summary>
-						<span className="work-chevron" aria-hidden="true">
-							▸
-						</span>
-						查看工具输入与结果
-					</summary>
-					<div className="tool-details">
-						<div>
-							<span>工具</span>
-							<code>{item.toolName}</code>
-						</div>
-						<div>
-							<span>输入</span>
-							<pre>{JSON.stringify(item.input, null, 2)}</pre>
-						</div>
-						<div>
-							<span>结果</span>
-							<div>
-								{item.content.length ? (
-									item.content.map((content, contentIndex) => (
-										<p key={`${item.id}-${contentIndex}`}>
-											{content.type === "text" ? content.text : "[图片结果]"}
-										</p>
-									))
-								) : (
-									<p>等待结果…</p>
-								)}
-							</div>
-						</div>
-					</div>
-				</details>
-			</section>
-		);
-	}
-
-	if (item.role === "user") {
-		return (
-			<section className="user-brief">
-				<div>
-					{item.content.map((content, contentIndex) => (
-						<p key={`${item.id}-${contentIndex}`}>{content.type === "text" ? content.text : "[图片附件]"}</p>
-					))}
-				</div>
-				<footer>
-					<time>{formatTime(item.timestamp)}</time>
-					<button
-						type="button"
-						onClick={() =>
-							void navigator.clipboard?.writeText(
-								item.content
-									.filter((content) => content.type === "text")
-									.map((content) => content.text)
-									.join("\n"),
-							)
-						}
-					>
-						复制
-					</button>
-				</footer>
-			</section>
-		);
-	}
-
-	return (
-		<section className={`assistant-analysis ${item.status}`}>
-			<header className="answer-byline">
-				<span className="answer-dot" aria-hidden="true" />
-				<span>Assistant</span>
-				<span className="answer-meta">
-					· {item.model.provider} / {item.model.id} · {formatTime(item.timestamp)}
-				</span>
-			</header>
-			<div className="answer-content prose">
-				{item.content.map((content, contentIndex) => {
-					if (content.type === "text")
-						return (
-							<div className="final-answer" key={`${item.id}-${contentIndex}`}>
-								<MarkdownText text={content.text} />
-							</div>
-						);
-					if (content.type === "thinking")
-						return (
-							<details className="thinking-note work" key={`${item.id}-${contentIndex}`}>
-								<summary>
-									<span className="work-chevron" aria-hidden="true">
-										▸
-									</span>
-									<span>思考过程</span>
-									<span className="thinking-toggle">展开查看</span>
-								</summary>
-								<div className="thinking-body">{content.redacted ? "推理内容已隐藏" : content.thinking}</div>
-							</details>
-						);
-					return (
-						<div className="inline-tool-call proc busy" key={`${item.id}-${contentIndex}`}>
-							<span className="proc-dot" aria-hidden="true" />
-							<span>准备调用工具</span>
-							<strong>{content.toolName}</strong>
-						</div>
-					);
-				})}
-				{item.status === "streaming" ? <output className="streaming-indicator" aria-label="正在生成" /> : null}
-			</div>
-			<footer className="answer-actions">
-				<span>ANSWER {String(index + 1).padStart(2, "0")}</span>
-				<div className="answer-actions-controls">
-					{liveState !== "idle" ? <LiveStatusRow state={liveState} onStop={onStopLive} /> : null}
-					{speech?.voiceAvailable && item.status === "complete" ? (
-						<SpeechButton
-							speech={speech && arbiter ? wrapSpeechButtonApi(speech, arbiter) : speech}
-							sessionId={sessionId}
-							messageId={item.id}
-						/>
-					) : null}
-					<button type="button">复制</button>
-					<button type="button" disabled title="当前协议暂不支持重新生成">
-						重新生成
-					</button>
-				</div>
-			</footer>
-		</section>
 	);
 }
 
@@ -616,18 +498,6 @@ function StartupConversation() {
 		<section className="empty-conversation" aria-live="polite">
 			<p>正在连接并恢复最近对话…</p>
 		</section>
-	);
-}
-
-function MarkdownText({ text }: { text: string }) {
-	const fenceCount = text.match(/^```/gm)?.length ?? 0;
-	const markdown = fenceCount % 2 === 0 ? text : `${text}\n\`\`\``;
-	return (
-		<div className="markdown-body">
-			<ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-				{markdown}
-			</ReactMarkdown>
-		</div>
 	);
 }
 
@@ -657,20 +527,6 @@ function EmptyConversation({
 	);
 }
 
-function EmptyTranscript() {
-	return (
-		<section className="empty-transcript">
-			<span>READY FOR BRIEF</span>
-			<h2>这个会话还没有内容</h2>
-			<p>在下方输入你的问题。回答会以适合长文阅读的分析稿形式呈现。</p>
-		</section>
-	);
-}
-
-function formatTime(timestamp: number): string {
-	return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(timestamp);
-}
-
 function phaseLabel(phase: SessionSnapshot["phase"]): string {
 	if (phase === "compaction") return "正在整理上下文";
 	if (phase === "branch_summary") return "正在生成分支摘要";
@@ -697,22 +553,3 @@ function deriveSpeechWebToken(): string | undefined {
  * playback before the new manual job opens (manual↔live mutex). Stop is a
  * thin pass-through because the controller already routes its own job.
  */
-function wrapSpeechButtonApi(
-	controller: SpeechController,
-	arbiter: PlaybackArbiter,
-): import("./features/voice/speech-button.tsx").SpeechButtonApi {
-	return {
-		get activeMessageId() {
-			return controller.activeMessageId;
-		},
-		subscribe: (listener) => controller.subscribe(listener),
-		getState: () => controller.getState(),
-		speak: (sessionId, messageId, voiceProfileId) =>
-			arbiter.startManual(sessionId, messageId, voiceProfileId).catch((error: unknown) => {
-				const detail = error instanceof Error ? error.message : String(error);
-				console.error("无法开始手动朗读", detail);
-				throw error;
-			}),
-		stop: () => controller.stop(),
-	};
-}

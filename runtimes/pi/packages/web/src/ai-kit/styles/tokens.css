@@ -1,0 +1,170 @@
+/* ==========================================================================
+   AI UI Kit — Design Tokens
+   来源：docs/ui-patterns/LAYOUT.md（结构规范，颜色与主题无关）
+   原则：组件样式只允许引用 --ai-* token；业务/主题层通过覆盖 --app-* 换肤。
+   ========================================================================== */
+
+:root {
+	/* ---------- 布局 ---------- */
+	--ai-width-page: 1240px; /* 页面内容上限 */
+	--ai-width-page-pad: 32px; /* 页面侧 padding */
+	--ai-width-composer: 820px; /* composer 宽 */
+	--ai-rail-width: 250px; /* agent 活动轨 */
+	--ai-rail-gap: 40px; /* 主列与 rail 的 gap */
+	--ai-user-max: 62%; /* 用户 bubble 最大宽度 */
+	--ai-safe-dock: 220px; /* composer 安全区（页面底部 padding） */
+	--ai-topbar-height: 58px;
+	--ai-breakpoint-rail: 1100px; /* rail 退化断点（参考值；@media 内不可用 var()，样式中写 1100px） */
+
+	/* ---------- Spacing scale（4px 基础；2/3px 微偏移允许） ---------- */
+	--ai-space-2xs: 2px;
+	--ai-space-xs: 4px;
+	--ai-space-sm: 8px;
+	--ai-space-md: 12px;
+	--ai-space-lg: 16px;
+	--ai-space-xl: 24px;
+	--ai-space-2xl: 32px;
+	--ai-space-3xl: 40px;
+	--ai-space-4xl: 48px;
+	--ai-space-5xl: 56px;
+	--ai-space-6xl: 64px;
+	--ai-space-safe: 220px;
+
+	/* 结构节奏（px，结构间距） */
+	--ai-header-gap: 64px; /* header → 第一个 turn */
+	--ai-turn-gap-user: 56px; /* 上一 turn → user message */
+	--ai-turn-gap-assistant: 32px; /* user message → assistant */
+	--ai-sig-gap: 24px; /* signature → 内容 */
+	--ai-actions-gap: 24px; /* 内容 → actions */
+
+	/* 正文节奏（em，跟随字号） */
+	--ai-prose-gap: 1.3em;
+	--ai-lede-gap: 0.75em;
+	--ai-section-gap-top: 2em;
+	--ai-section-gap-bottom: 0.7em;
+	--ai-container-gap: 1.6em;
+	--ai-chart-gap: 1.7em;
+	--ai-sources-gap-top: 2em;
+
+	/* ---------- Radius ---------- */
+	--ai-radius-xs: 4px; /* bubble 尾角、code、mode */
+	--ai-radius-chip: 6px; /* attachment chip */
+	--ai-radius-sm: 8px; /* chip / action / plus / segmented */
+	--ai-radius-item: 10px; /* source item */
+	--ai-radius-md: 12px; /* 数据卡：table / chart / menu */
+	--ai-radius-bubble: 14px; /* user bubble */
+	--ai-radius-lg: 16px; /* artifact / composer box */
+	--ai-radius-full: 999px; /* pill badge */
+
+	/* ---------- Typography（字号/行高；字族走 --ai-font-*） ---------- */
+	--ai-font-display: var(--app-font-display, Georgia, "Times New Roman", serif);
+	--ai-font-sans: var(
+		--app-font-sans,
+		system-ui,
+		-apple-system,
+		"Segoe UI",
+		"PingFang SC",
+		"Microsoft YaHei",
+		sans-serif
+	);
+	--ai-font-mono: var(--app-font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+
+	--ai-text-display: 44px;
+	--ai-text-display-lh: 1.15;
+	--ai-text-title: 30px;
+	--ai-text-title-lh: 1.2;
+	--ai-text-lede: 29px;
+	--ai-text-lede-lh: 1.35;
+	--ai-text-heading: 23px;
+	--ai-text-heading-lh: 1.3;
+	--ai-text-body: 16px;
+	--ai-text-body-lh: 1.9;
+	--ai-text-body-plain-lh: 1.8;
+	--ai-text-body-small: 14.5px;
+	--ai-text-body-small-lh: 1.65;
+	--ai-text-body-plain: 14px;
+	--ai-text-table: 13.5px;
+	--ai-text-table-lh: 1.5;
+	--ai-text-source: 13px;
+	--ai-text-section: 14px;
+	--ai-text-trace: 12px;
+	--ai-text-trace-lh: 1.5;
+	--ai-text-numeric: 12px;
+	--ai-text-composer: 15px;
+	--ai-text-composer-lh: 1.6;
+	--ai-text-menu: 11.5px;
+	--ai-text-button: 12px;
+	--ai-text-label: 10.5px;
+	--ai-text-label-lh: 1.2;
+	--ai-text-meta: 11px;
+	--ai-text-meta-lh: 1.5;
+	--ai-text-micro: 10px;
+	--ai-text-micro-lh: 1.3;
+	--ai-text-code: 0.82em;
+
+	--ai-weight-light: 300;
+	--ai-weight-regular: 400;
+	--ai-weight-medium: 500;
+	--ai-weight-semibold: 600;
+
+	/* 字距（label 级宽字距） */
+	--ai-track-eyebrow: 0.32em;
+	--ai-track-eyebrow-artifact: 0.28em;
+	--ai-track-signature: 0.24em;
+	--ai-track-rail-title: 0.26em;
+	--ai-track-label: 0.22em;
+	--ai-track-caption: 0.18em;
+	--ai-track-th: 0.14em;
+	--ai-track-meta: 0.08em;
+
+	/* ---------- 结构几何 ---------- */
+	--ai-dot-sm: 8px; /* signature dot */
+	--ai-dot-md: 9px; /* trace node */
+	--ai-rail-indent: 26px;
+	--ai-rail-line-x: 6px; /* 连线 left（贯穿 node 中心） */
+	--ai-cite-size: 17px;
+	--ai-cursor-w: 9px;
+	--ai-cursor-h: 17px;
+	--ai-source-index-w: 22px;
+	--ai-artifact-sec-w: 180px;
+	--ai-chart-height: 130px;
+	--ai-topbar-pad: 20px;
+	--ai-topbar-gap: 20px;
+
+	/* ---------- Motion ---------- */
+	--ai-motion-fast: 150ms;
+	--ai-motion-base: 200ms;
+	--ai-motion-enter: 500ms;
+	--ai-motion-actions: 600ms;
+	--ai-motion-data: 1000ms;
+	--ai-motion-pulse: 1600ms;
+	--ai-motion-blink: 1100ms;
+	--ai-ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
+	--ai-ease-loop: ease-in-out;
+	--ai-stagger-block: 640ms; /* 块级 stagger 上限（编排层使用） */
+
+	/* ---------- 颜色钩子（主题系统通过 --app-* 覆盖；以下为中性回退） ---------- */
+	--ai-bg-page: var(--app-bg-page, #f7f6f4);
+	--ai-bg-surface: var(--app-bg-surface, #ffffff);
+	--ai-bg-elevated: var(--app-bg-elevated, #fcfbf9);
+	--ai-bg-inset: var(--app-bg-inset, #f1efeb);
+	--ai-border-soft: var(--app-border-soft, #e5e2dc);
+	--ai-border-strong: var(--app-border-strong, #d2cec6);
+	--ai-border-focus: var(--app-border-focus, #9a958b);
+	--ai-text-primary: var(--app-text-primary, #23211e);
+	--ai-text-secondary: var(--app-text-secondary, #514e48);
+	--ai-text-muted: var(--app-text-muted, #87827a);
+	--ai-text-faint: var(--app-text-faint, #aba69c);
+	--ai-accent: var(--app-accent, #46568c);
+	--ai-accent-strong: var(--app-accent-strong, #33427a);
+	--ai-accent-soft: var(--app-accent-soft, color-mix(in srgb, #46568c 10%, transparent));
+	--ai-accent-glow: var(--app-accent-glow, color-mix(in srgb, #46568c 45%, transparent));
+	--ai-accent-contrast: var(--app-accent-contrast, #ffffff);
+	--ai-success: var(--app-success, #4e7d5b);
+	--ai-success-soft: var(--app-success-soft, color-mix(in srgb, #4e7d5b 25%, transparent));
+	--ai-danger: var(--app-danger, #a65246);
+	--ai-danger-soft: var(--app-danger-soft, color-mix(in srgb, #a65246 18%, transparent));
+	--ai-positive: var(--app-positive, var(--ai-success));
+	--ai-negative: var(--app-negative, var(--ai-danger));
+	--ai-chart-bar: var(--app-chart-bar, color-mix(in srgb, #87827a 30%, transparent));
+}

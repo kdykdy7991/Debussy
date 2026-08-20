@@ -46,7 +46,7 @@ describe("App", () => {
 			<App connection={createConnection({ state: "disconnected", error: undefined })} sessions={createSessions()} />,
 		);
 
-		expect(markup).toContain("EDITORIAL INTELLIGENCE");
+		expect(markup).toContain("PI INTELLIGENCE");
 		expect(markup).toContain("尚未连接");
 		expect(markup).toContain("连接后载入会话");
 		expect(markup).toContain("为下一阶段制定实施计划");
@@ -88,7 +88,7 @@ describe("App", () => {
 					content: [
 						{
 							type: "text",
-							text: "## 正在回答\n\n包含 **重点** 和 [链接](https://example.com)。\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 完成 |",
+							text: "## 正在回答\n\n包含 **重点**、[链接](https://example.com) 与行内公式 $E = mc^2$。\n\n```ts\nconst left = 0;\nconst right = height.length - 1;\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 完成 |",
 						},
 					],
 					model: { provider: "oneapi", id: "qwen" },
@@ -116,13 +116,17 @@ describe("App", () => {
 
 		expect(markup).toContain("你好");
 		expect(markup).toContain("正在回答");
-		expect(markup).toContain("streaming-indicator");
-		expect(markup).toContain("user-brief");
-		expect(markup).toContain("PI ANALYSIS");
-		expect(markup).toContain("<h2>正在回答</h2>");
-		expect(markup).toContain("<strong>重点</strong>");
-		expect(markup).toContain('<a href="https://example.com">链接</a>');
-		expect(markup).toContain("<table>");
+		expect(markup).toContain("ai-cursor");
+		expect(markup).toContain("ai-user");
+		expect(markup).toContain("active-agent-presence");
+		expect(markup).toContain("ai-agent-avatar is-writing");
+		expect(markup).toContain('data-streamdown="heading-2"');
+		expect(markup).toContain('data-streamdown="strong"');
+		expect(markup).toContain('href="https://example.com/"');
+		expect(markup).toContain("katex");
+		expect(markup).toContain('data-streamdown="code-block-body"');
+		expect(markup).toContain("const right = height.length - 1;");
+		expect(markup).toContain('data-streamdown="table"');
 	});
 });
 
@@ -255,5 +259,69 @@ describe("App speech read-aloud", () => {
 			/>,
 		);
 		expect(markup).not.toContain("speech-button");
+	});
+});
+
+describe("App AI kit conversation (design 复刻)", () => {
+	it("renders the AgentTrace rail for a tool turn", () => {
+		const activeSession = {
+			id: "session-r",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "idle",
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			revision: 1,
+			lastSequence: 0,
+			transcript: [
+				{ id: "user-1", role: "user", content: [{ type: "text", text: "跑一次检索" }], timestamp: 1 },
+				{
+					id: "tool-1",
+					role: "tool",
+					toolCallId: "call_1",
+					toolName: "web.search",
+					input: { query: "q3" },
+					content: [{ type: "text", text: "ok" }],
+					timestamp: 2,
+					status: "complete",
+					isError: false,
+				},
+				{
+					id: "assistant-1",
+					role: "assistant",
+					content: [{ type: "text", text: "汇总完成。" }],
+					model: { provider: "oneapi", id: "qwen" },
+					timestamp: 3,
+					status: "complete",
+					stopReason: "stop",
+				},
+			],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+		} satisfies SessionSnapshot;
+		const markup = renderToStaticMarkup(
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={createSessions({
+					sessions: [activeSession],
+					activeSessionId: activeSession.id,
+					activeSession,
+					uploads: [],
+					loading: false,
+					submitting: false,
+					error: undefined,
+				})}
+			/>,
+		);
+
+		expect(markup).toContain("ai-rail");
+		expect(markup).toContain("ai-trace");
+		expect(markup).toContain("ai-trace-evt");
+		expect(markup).toContain("web.search");
+		expect(markup).toContain("assistant-output-copy");
+		expect(markup).not.toContain("active-agent-presence");
 	});
 });

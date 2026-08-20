@@ -1,0 +1,4 @@
+/* AI UI Kit — style entry（消费方 import 此文件一次） */
+@import "./tokens.css";
+@import "./motion.css";
+@import "./ai.css";

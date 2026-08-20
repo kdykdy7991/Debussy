@@ -15,7 +15,7 @@ export interface ConversationSidebarProps {
 	readonly connection: PiConnectionSnapshot;
 	readonly sessions: SessionBrowserSnapshot;
 	readonly visibleSessions: SessionBrowserSnapshot["sessions"];
-	readonly onClose: () => void;
+	readonly onToggle?: () => void;
 	readonly onCreate: () => void;
 	readonly onQueryChange: (query: string) => void;
 	readonly onSelect: (sessionId: string) => void;
@@ -24,34 +24,48 @@ export interface ConversationSidebarProps {
 export function ConversationSidebar(props: ConversationSidebarProps): React.ReactElement {
 	return (
 		<aside className={`chat-sidebar ${props.open ? "open" : ""}`} aria-label="会话导航">
-			<header className="brand-lockup">
-				<button
-					className="icon-button sidebar-close"
-					type="button"
-					onClick={props.onClose}
-					aria-label="关闭会话导航"
-				>
-					×
-				</button>
-				<strong>
-					Atelier<span aria-hidden="true">.</span>
-				</strong>
-				<small>Your AI workroom</small>
-			</header>
-
-			{!props.bootstrapping ? (
-				<button
-					className="new-chat-button"
-					type="button"
-					disabled={!props.connected || props.sessions.loading}
-					onClick={props.onCreate}
-				>
-					<span className="new-chat-plus" aria-hidden="true">
-						＋
-					</span>
-					<span>新建对话</span>
-				</button>
-			) : null}
+			<div className="sidebar-actions">
+				{!props.bootstrapping ? (
+					<button
+						className="new-chat-button"
+						type="button"
+						disabled={!props.connected || props.sessions.loading}
+						onClick={props.onCreate}
+					>
+						<span className="new-chat-plus" aria-hidden="true">
+							<svg viewBox="0 0 16 16" fill="none" focusable="false">
+								<title>新建对话</title>
+								<path
+									d="M8 3.25v9.5M3.25 8h9.5"
+									stroke="currentColor"
+									strokeWidth="1.5"
+									strokeLinecap="round"
+								/>
+							</svg>
+						</span>
+						<span>新建对话</span>
+					</button>
+				) : null}
+				{props.onToggle ? (
+					<button
+						className="sidebar-collapse-button"
+						type="button"
+						onClick={props.onToggle}
+						aria-label="收起会话导航"
+					>
+						<svg viewBox="0 0 16 16" fill="none" focusable="false" aria-hidden="true">
+							<title>收起会话导航</title>
+							<path
+								d="m9.75 3.5-4.5 4.5 4.5 4.5"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						</svg>
+					</button>
+				) : null}
+			</div>
 
 			<label className="conversation-search">
 				<span aria-hidden="true">⌕</span>

@@ -1,7 +1,8 @@
-import type { PiSessionHandle } from "@earendil-works/pi-client";
+import type { CreateSessionOptions, PiSessionHandle } from "@earendil-works/pi-client";
 import type {
 	LiveSpeechJob,
 	LiveSpeechRequest,
+	ModelRef,
 	ServerEvent,
 	ServerSnapshot,
 	SessionSnapshot,
@@ -15,7 +16,7 @@ import type { PiUploadClient } from "./uploader.ts";
 export interface PiSessionClient {
 	readonly snapshot: ServerSnapshot | undefined;
 	subscribe(listener: (snapshot: ServerSnapshot) => void): () => void;
-	createSession(): Promise<PiSessionHandle>;
+	createSession(options?: CreateSessionOptions): Promise<PiSessionHandle>;
 	attachSession(sessionId: string): Promise<PiSessionHandle>;
 }
 
@@ -60,7 +61,7 @@ export interface SessionSendResult {
 export interface SessionBrowserStore {
 	getSnapshot(): SessionBrowserSnapshot;
 	subscribe(listener: () => void): () => void;
-	createSession(): Promise<void>;
+	createSession(model?: ModelRef): Promise<void>;
 	openDefaultSession(): Promise<void>;
 	selectSession(sessionId: string): Promise<void>;
 	send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult>;
@@ -117,8 +118,8 @@ export class SessionController implements SessionBrowserStore {
 		await this.#activate(() => (latest ? this.#client.attachSession(latest.id) : this.#client.createSession()));
 	}
 
-	async createSession(): Promise<void> {
-		await this.#activate(() => this.#client.createSession());
+	async createSession(model?: ModelRef): Promise<void> {
+		await this.#activate(() => this.#client.createSession(model === undefined ? undefined : { model }));
 	}
 
 	async selectSession(sessionId: string): Promise<void> {

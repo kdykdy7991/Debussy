@@ -724,6 +724,21 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	padding-bottom: 0;
 	overflow-y: auto;
 }
+.active-agent-presence {
+	position: absolute;
+	z-index: 4;
+	bottom: 18px;
+	left: clamp(16px, calc((100% - 720px) / 2 + 12px), 36px);
+	display: grid;
+	width: 48px;
+	height: 48px;
+	place-items: center;
+	border-radius: 12px;
+	background: var(--ai-bg-surface);
+	box-shadow: 0 8px 20px color-mix(in srgb, var(--ai-text-primary) 12%, transparent);
+	pointer-events: none;
+}
+.active-agent-presence .ai-agent-avatar { width: 40px; height: 40px; }
 .conversation-article,
 .editorial-shell[data-theme="vision-glass"] .conversation-article {
 	width: 100%;
