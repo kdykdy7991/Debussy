@@ -7,6 +7,9 @@
 > 依赖：`MULTI-USER-PUBLISHING-MVP-SPEC.md`、`MULTI-USER-PUBLISHING-HOST-INTEGRATION.md`；旧管理台实现证据已归档到 `archive/publishing-mvp/PUBLISHING-ADMIN-CONSOLE-HANDOFF.md`。
 >
 > 优先级：本文覆盖旧规格中“`/publishing` 是独立管理页面”和“同一 Vite 入口仅做路径分流”的决策。既有 Control API、租户隔离、公开 ID、幂等和密钥安全约束继续有效。
+>
+> UI 重构基线：一级导航、页面内容和视觉验收以
+> [管理员控制台 UI 重构规格](./ADMIN-CONSOLE-UI-REDESIGN-SPEC.md) 为准；本文第 4、5 节中与其冲突的旧 UI 信息架构仅保留为历史实现背景。
 
 ## 1. 目标
 
