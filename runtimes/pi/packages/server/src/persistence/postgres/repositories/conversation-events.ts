@@ -12,6 +12,7 @@
  * impossible.
  */
 import {
+	type AgentDefinitionId,
 	type ConversationEventId,
 	type ConversationId,
 	newConversationEventId,
@@ -177,6 +178,45 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				scope.tenantId,
 			);
 			return Number(rows[0]?.cnt ?? 0);
+		},
+		async summarizeUsage(input) {
+			const rows = await client.run(
+				`select pa.agent_definition_id,
+				        coalesce(ad.name, pa.name) as agent_name,
+				        coalesce(sum((e.payload->'usage'->>'input')::bigint), 0)::bigint as input_tokens,
+				        coalesce(sum((e.payload->'usage'->>'output')::bigint), 0)::bigint as output_tokens,
+				        coalesce(sum((e.payload->'usage'->>'cacheRead')::bigint), 0)::bigint as cache_read_tokens,
+				        coalesce(sum((e.payload->'usage'->>'cacheWrite')::bigint), 0)::bigint as cache_write_tokens,
+				        coalesce(sum((e.payload->'usage'->>'totalTokens')::bigint), 0)::bigint as total_tokens,
+				        count(*)::bigint as request_count
+				 from conversation_events e
+				 join conversations c
+				   on c.id = e.conversation_id and c.published_app_id = e.published_app_id
+				 join published_app_versions pav on pav.id = c.published_app_version_id
+				 join published_apps pa on pa.id = c.published_app_id
+				 left join agent_definitions ad
+				   on ad.id = pa.agent_definition_id and ad.revision = pav.source_agent_revision
+				 where e.tenant_id = $1
+				   and e.event_type = 'turn/end'
+				   and e.created_at >= $2 and e.created_at < $3
+				   and jsonb_typeof(e.payload->'usage') = 'object'
+				 group by pa.agent_definition_id, coalesce(ad.name, pa.name)
+				 order by total_tokens desc, agent_name asc`,
+				input.scope.tenantId,
+				input.from,
+				input.to,
+			);
+			return rows.map((row) => ({
+				agentDefinitionId: row.agent_definition_id as AgentDefinitionId,
+				agentName: String(row.agent_name),
+				source: "embed" as const,
+				inputTokens: Number(row.input_tokens ?? 0),
+				outputTokens: Number(row.output_tokens ?? 0),
+				cacheReadTokens: Number(row.cache_read_tokens ?? 0),
+				cacheWriteTokens: Number(row.cache_write_tokens ?? 0),
+				totalTokens: Number(row.total_tokens ?? 0),
+				requestCount: Number(row.request_count ?? 0),
+			}));
 		},
 	};
 }

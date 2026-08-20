@@ -21,7 +21,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline, Readable } from "node:stream";
 import { createGzip } from "node:zlib";
-import type { ConversationExportMode } from "@earendil-works/pi-protocol";
+import type { ConversationExportMode, CustomLlmApi } from "@earendil-works/pi-protocol";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
@@ -50,6 +50,9 @@ const emptyQuery = new URLSearchParams();
 export const CONTROL_MAX_BODY_BYTES = 1024 * 1024;
 /** Idempotency slot TTL for control writes. */
 export const CONTROL_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+
+/** OpenAI protocols the Custom LLM console can bind a provider to. */
+const KNOWN_LLM_APIS: ReadonlySet<string> = new Set(["openai-completions", "openai-responses"]);
 
 export interface ControlHttpHandlerOptions {
 	readonly service: ControlService;
@@ -333,6 +336,18 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		},
 		// ---- Query routes (ADMIN-002). GETs are authenticated reads; they
 		// never read a request body and never write idempotency records. ----
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/usage$/,
+			operation: "usage.summary",
+			handler: async ({ requestId, query }) => {
+				const range = parseUsageRange(query);
+				if (!range.ok) return badRequest(range.message, requestId);
+				const summary = await service.getUsageSummary({ tenantId, from: range.from, to: range.to });
+				if (!summary.ok) return serviceError(summary.error, requestId);
+				return { status: 200, body: { data: summary.data, requestId } };
+			},
+		},
 		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/agent-definitions$/,
@@ -778,6 +793,84 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return { status: 200, body: { data: listed.data, requestId } };
 			},
 		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/llm-providers$/,
+			operation: "llm-providers.list",
+			handler: async ({ requestId }) => {
+				const listed = await service.listLlmProviders();
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/llm-providers\/models$/,
+			operation: "llm-providers.list-models",
+			handler: async ({ requestId }) => {
+				const listed = await service.listLlmModels();
+				if (!listed.ok) return serviceError(listed.error, requestId);
+				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/llm-providers$/,
+			operation: "llm-providers.upsert",
+			handler: async ({ requestId, body }) => {
+				const parsed = parseBody(body, {
+					id: "string",
+					name: "string",
+					baseUrl: "string",
+					api: "string",
+					models: "array",
+					apiKey: ["string", "undefined"],
+				});
+				if (!KNOWN_LLM_APIS.has(parsed.api as string)) {
+					return badRequest("api must be openai-completions | openai-responses", requestId);
+				}
+				const result = await service.upsertLlmProvider({
+					id: parsed.id as string,
+					name: parsed.name as string,
+					baseUrl: parsed.baseUrl as string,
+					api: parsed.api as CustomLlmApi,
+					models: (parsed.models as unknown[]).map(String),
+					apiKey: parsed.apiKey as string | undefined,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/llm-providers\/([^/]+)\/delete$/,
+			operation: "llm-providers.delete",
+			handler: async ({ requestId, params }) => {
+				const id = params[0] as string;
+				const result = await service.removeLlmProvider({ id });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/llm-providers\/test$/,
+			operation: "llm-providers.test",
+			handler: async ({ requestId, body }) => {
+				const parsed = parseBody(body, {
+					baseUrl: "string",
+					api: "string",
+					apiKey: ["string", "undefined"],
+				});
+				const result = await service.testLlmProvider({
+					baseUrl: parsed.baseUrl as string,
+					api: parsed.api as CustomLlmApi,
+					apiKey: parsed.apiKey as string | undefined,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
 	];
 
 	async function transition(
@@ -1133,6 +1226,22 @@ function parseIsoOrNull(raw: string | null):
 		return { invalid: true, message: "timestamp params must be ISO-8601" };
 	}
 	return { invalid: false, value: new Date(millis) };
+}
+
+function parseUsageRange(
+	query: URLSearchParams,
+): { readonly ok: true; readonly from: Date; readonly to: Date } | { readonly ok: false; readonly message: string } {
+	const from = parseIsoOrNull(query.get("from"));
+	const to = parseIsoOrNull(query.get("to"));
+	if (from.invalid || to.invalid || from.value === undefined || to.value === undefined) {
+		return { ok: false, message: "from and to must be ISO-8601 timestamps" };
+	}
+	if (from.value >= to.value) return { ok: false, message: "from must be earlier than to" };
+	const maxRangeMs = 90 * 24 * 60 * 60 * 1000;
+	if (to.value.getTime() - from.value.getTime() > maxRangeMs) {
+		return { ok: false, message: "usage range must not exceed 90 days" };
+	}
+	return { ok: true, from: from.value, to: to.value };
 }
 
 /** View of a published app for API responses (27.1/27.3). */

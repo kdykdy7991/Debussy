@@ -10,7 +10,7 @@
  * 本路径标记为 internal/dev，不作为最终公开协议（TASK-025 的 Realtime
  * 通道建成后关闭或仅测试可用）。
  */
-import type { SessionSnapshot } from "@earendil-works/pi-protocol";
+import type { SessionSnapshot, Usage } from "@earendil-works/pi-protocol";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { RetrievalInput } from "../types.ts";
 import type { RestoredContext } from "./context-restore.ts";
@@ -29,7 +29,7 @@ export interface TurnExecutionInput {
 }
 
 export type TurnExecutionResult =
-	| { readonly ok: true; readonly outputText: string }
+	| { readonly ok: true; readonly outputText: string; readonly usage?: Usage }
 	| { readonly ok: false; readonly error: string };
 
 export type TurnExecutor = (input: TurnExecutionInput) => Promise<TurnExecutionResult>;
@@ -42,7 +42,8 @@ export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
 		const runtime = opened.runtime;
 		try {
 			await runtime.prompt(text, { history, retrieval });
-			return { ok: true, outputText: lastAssistantText(runtime.snapshot()) };
+			const result = lastAssistantResult(runtime.snapshot());
+			return { ok: true, outputText: result.outputText, ...(result.usage ? { usage: result.usage } : {}) };
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
@@ -63,7 +64,8 @@ export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnEx
 		const runtime = acquired.runtime;
 		try {
 			await runtime.prompt(text, { history, retrieval });
-			return { ok: true, outputText: lastAssistantText(runtime.snapshot()) };
+			const result = lastAssistantResult(runtime.snapshot());
+			return { ok: true, outputText: result.outputText, ...(result.usage ? { usage: result.usage } : {}) };
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
@@ -74,14 +76,23 @@ export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnEx
 
 /** 从会话快照提取最后一条 status=complete 的 assistant 文本（拼接 text content）。 */
 export function lastAssistantText(snapshot: SessionSnapshot): string {
+	return lastAssistantResult(snapshot).outputText;
+}
+
+/** Extract final assistant text and provider-reported usage from one snapshot. */
+export function lastAssistantResult(snapshot: SessionSnapshot): {
+	readonly outputText: string;
+	readonly usage?: Usage;
+} {
 	for (let i = snapshot.transcript.length - 1; i >= 0; i -= 1) {
 		const item = snapshot.transcript[i];
 		if (item === undefined || item.role !== "assistant") continue;
 		if (item.status !== "complete") continue;
-		return item.content
+		const outputText = item.content
 			.filter((content) => content.type === "text")
 			.map((content) => (content as { type: "text"; text: string }).text)
 			.join("\n");
+		return { outputText, ...(item.usage ? { usage: item.usage } : {}) };
 	}
-	return "";
+	return { outputText: "" };
 }

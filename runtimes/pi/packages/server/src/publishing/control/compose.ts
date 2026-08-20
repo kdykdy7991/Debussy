@@ -17,6 +17,7 @@ import { parseIdOrThrow } from "../domain/ids.ts";
 import { PreviewTicketService } from "../preview-ticket.ts";
 import { buildCapabilityCatalog } from "./catalog.ts";
 import { createControlHttpHandler } from "./http.ts";
+import { createLlmConfigStore } from "./llm-config.ts";
 import { ControlService } from "./service.ts";
 import { createServerAgentSource } from "./source.ts";
 import { readTokenFile } from "./token.ts";
@@ -91,6 +92,7 @@ export async function composeControlPlane(options: {
 		catalog,
 		embedBaseUrl: publishing.embedBaseUrl,
 		previewTicketService,
+		llm: createLlmConfigStore(options.services),
 	});
 
 	const bootstrapped = await controlService.bootstrapTenant({

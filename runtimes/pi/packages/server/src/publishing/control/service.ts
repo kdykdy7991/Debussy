@@ -24,6 +24,7 @@
 
 import type {
 	AdminSession,
+	AdminUsageSummary,
 	AgentCapabilities,
 	AgentConfigSnapshot,
 	AgentDefinitionAssociatedApp,
@@ -39,6 +40,7 @@ import type {
 	ConversationAdminSummaryListResponse,
 	ConversationEventPublicId,
 	ConversationPublicId,
+	CustomLlmApi,
 	PreviewTicket,
 	PublishedAppLocator,
 	PublishedAppPublicId,
@@ -88,6 +90,7 @@ import type {
 import { type AgentDraftConfig, type CapabilityCatalog, compileRuntimeSpec } from "../runtime-spec/compiler.ts";
 import { canonicalJson, sha256Hex } from "../runtime-spec/hash.ts";
 import { parseRuntimeSpec, type RuntimeSpec } from "../runtime-spec/schema.ts";
+import type { CustomLlmProviderView, LlmConfigStore } from "./llm-config.ts";
 
 /** Cursor-paginated query result shared by the console query API (ADMIN-002). */
 export interface CursorPage<T> {
@@ -195,6 +198,8 @@ export interface ControlServiceOptions {
 	readonly embedBaseUrl: string;
 	/** Preview ticket issuer (WB-005). Required for `createPreviewTicket`. */
 	readonly previewTicketService?: PreviewTicketService;
+	/** Custom LLM provider store backed by models.json (Custom LLM console). */
+	readonly llm?: LlmConfigStore;
 }
 
 export type ControlErrorCode =
@@ -213,7 +218,9 @@ export type ControlErrorCode =
 	| "KEY_ALREADY_REVOKED" // revoke target is already revoked (409)
 	| "PREVIEW_TICKET_FAILED" // preview ticket creation failed (500)
 	| "CONVERSATION_NOT_FOUND" // WB-006: conversation not visible in tenant scope (404)
-	| "CONFLICT"; // unexpected concurrent conflict (409)
+	| "CONFLICT" // unexpected concurrent conflict (409)
+	| "LLM_CONFIG_UNAVAILABLE" // Custom LLM console disabled (503)
+	| "INVALID_LLM_CONFIG"; // Custom LLM provider failed validation (400)
 
 export interface ControlServiceError {
 	readonly code: ControlErrorCode;
@@ -326,12 +333,14 @@ export class ControlService {
 	private readonly catalog: CapabilityCatalog;
 	private readonly embedBaseUrl: string;
 	private readonly previewTicketService: PreviewTicketService | undefined;
+	private readonly llm: LlmConfigStore | undefined;
 
 	constructor(options: ControlServiceOptions) {
 		this.repos = options.repositories;
 		this.catalog = options.catalog;
 		this.embedBaseUrl = options.embedBaseUrl.replace(/\/+$/, "");
 		this.previewTicketService = options.previewTicketService;
+		this.llm = options.llm;
 	}
 
 	/** Bootstrap the MVP tenant idempotently (spec 33.1). */
@@ -1010,6 +1019,57 @@ export class ControlService {
 		};
 	}
 
+	/** Aggregate provider-reported token usage for a bounded UTC period. */
+	async getUsageSummary(input: {
+		readonly tenantId: TenantId;
+		readonly from: Date;
+		readonly to: Date;
+	}): Promise<ControlResult<AdminUsageSummary>> {
+		const rows = await this.repos.events.summarizeUsage({
+			scope: { tenantId: input.tenantId },
+			from: input.from,
+			to: input.to,
+		});
+		const totals = rows.reduce(
+			(acc, row) => ({
+				inputTokens: acc.inputTokens + row.inputTokens,
+				outputTokens: acc.outputTokens + row.outputTokens,
+				cacheReadTokens: acc.cacheReadTokens + row.cacheReadTokens,
+				cacheWriteTokens: acc.cacheWriteTokens + row.cacheWriteTokens,
+				totalTokens: acc.totalTokens + row.totalTokens,
+				requestCount: acc.requestCount + row.requestCount,
+			}),
+			{
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				totalTokens: 0,
+				requestCount: 0,
+			},
+		);
+		return {
+			ok: true,
+			data: {
+				period: { from: input.from.toISOString(), to: input.to.toISOString(), timezone: "UTC" },
+				totals,
+				byAgent: rows.map((row) => ({
+					agentId: toPublicId("AgentDefinitionId", row.agentDefinitionId),
+					agentName: row.agentName,
+					source: row.source,
+					inputTokens: row.inputTokens,
+					outputTokens: row.outputTokens,
+					cacheReadTokens: row.cacheReadTokens,
+					cacheWriteTokens: row.cacheWriteTokens,
+					totalTokens: row.totalTokens,
+					requestCount: row.requestCount,
+				})),
+				bySource: rows.length === 0 ? [] : [{ source: "embed", ...totals }],
+				generatedAt: new Date().toISOString(),
+			},
+		};
+	}
+
 	/** List published apps of the tenant, newest first, for the console. */
 	async listPublishedApps(input: {
 		readonly tenantId: TenantId;
@@ -1622,6 +1682,77 @@ export class ControlService {
 			createdAt: new Date(),
 		});
 		return auditEventId;
+	}
+
+	/** List custom LLM providers configured in models.json (secret-blind). */
+	async listLlmProviders(): Promise<ControlResult<{ readonly items: readonly CustomLlmProviderView[] }>> {
+		if (this.llm === undefined) {
+			return fail("LLM_CONFIG_UNAVAILABLE", 503, "Custom LLM configuration is not available");
+		}
+		const items = await this.llm.list();
+		return { ok: true, data: { items } };
+	}
+
+	/** Create or update a custom LLM provider and hot-reload the model runtime. */
+	async upsertLlmProvider(input: {
+		readonly id: string;
+		readonly name: string;
+		readonly baseUrl: string;
+		readonly api: CustomLlmApi;
+		readonly models: readonly string[];
+		readonly apiKey?: string;
+	}): Promise<ControlResult<{ readonly provider: CustomLlmProviderView }>> {
+		if (this.llm === undefined) {
+			return fail("LLM_CONFIG_UNAVAILABLE", 503, "Custom LLM configuration is not available");
+		}
+		try {
+			const provider = await this.llm.upsert(input);
+			return { ok: true, data: { provider } };
+		} catch (error) {
+			return fail("INVALID_LLM_CONFIG", 400, error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	/** Remove a custom LLM provider and hot-reload the model runtime. */
+	async removeLlmProvider(input: { readonly id: string }): Promise<ControlResult<{ readonly removed: boolean }>> {
+		if (this.llm === undefined) {
+			return fail("LLM_CONFIG_UNAVAILABLE", 503, "Custom LLM configuration is not available");
+		}
+		const removed = await this.llm.remove(input.id);
+		return { ok: true, data: { removed } };
+	}
+
+	/** Best-effort connectivity/auth probe against a custom LLM endpoint. */
+	async testLlmProvider(input: {
+		readonly baseUrl: string;
+		readonly api: CustomLlmApi;
+		readonly apiKey?: string;
+	}): Promise<
+		ControlResult<{ readonly ok: boolean; readonly advertisedModels?: readonly string[]; readonly error?: string }>
+	> {
+		if (this.llm === undefined) {
+			return fail("LLM_CONFIG_UNAVAILABLE", 503, "Custom LLM configuration is not available");
+		}
+		return { ok: true, data: await this.llm.test(input) };
+	}
+
+	/** List currently available runtime models (built-in + custom), for the Chat model switcher. */
+	async listLlmModels(): Promise<
+		ControlResult<{
+			readonly items: readonly {
+				readonly provider: string;
+				readonly id: string;
+				readonly name: string;
+				readonly api: string;
+				readonly reasoning: boolean;
+			}[];
+		}>
+	> {
+		if (this.llm === undefined) {
+			return fail("LLM_CONFIG_UNAVAILABLE", 503, "Custom LLM configuration is not available");
+		}
+		const items = await this.llm.listAvailableModels();
+		return { ok: true, data: { items } };
 	}
 }
 

@@ -22,10 +22,11 @@ export type RequestPublicId = `req_${string}`;
 
 /** Frozen administrator-facing navigation labels. */
 export const ADMIN_WORKBENCH_TERMS = {
-	conversation: "对话",
-	agent: "Agent",
-	app: "应用",
-	userConversations: "用户会话",
+	conversation: "Chat",
+	agent: "Agent 设计",
+	app: "发布",
+	usage: "Usage",
+	userConversations: "Session 日志",
 	settings: "设置",
 } as const;
 
@@ -36,6 +37,7 @@ export const ADMIN_WORKBENCH_ROUTES = {
 	agent: (agentId: AgentPublicId): string => `/agents/${agentId}`,
 	apps: "/apps",
 	app: (appId: PublishedAppPublicId): string => `/apps/${appId}`,
+	usage: "/usage",
 	userConversations: "/conversations",
 	userConversation: (conversationId: ConversationPublicId): string => `/conversations/${conversationId}`,
 	settings: "/settings",

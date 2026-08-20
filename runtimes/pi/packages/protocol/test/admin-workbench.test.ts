@@ -11,10 +11,11 @@ import {
 describe("administrator workbench contract", () => {
 	test("freezes administrator-facing terminology", () => {
 		expect(ADMIN_WORKBENCH_TERMS).toEqual({
-			conversation: "对话",
-			agent: "Agent",
-			app: "应用",
-			userConversations: "用户会话",
+			conversation: "Chat",
+			agent: "Agent 设计",
+			app: "发布",
+			usage: "Usage",
+			userConversations: "Session 日志",
 			settings: "设置",
 		});
 	});
@@ -23,6 +24,7 @@ describe("administrator workbench contract", () => {
 		expect(ADMIN_WORKBENCH_ROUTES.conversation).toBe("/");
 		expect(ADMIN_WORKBENCH_ROUTES.agent("agent_123")).toBe("/agents/agent_123");
 		expect(ADMIN_WORKBENCH_ROUTES.app("app_123")).toBe("/apps/app_123");
+		expect(ADMIN_WORKBENCH_ROUTES.usage).toBe("/usage");
 		expect(ADMIN_WORKBENCH_ROUTES.userConversation("conv_123")).toBe("/conversations/conv_123");
 	});
 

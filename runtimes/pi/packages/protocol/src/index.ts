@@ -2,6 +2,8 @@ export * from "./admin-workbench.ts";
 export * from "./admin-workbench-agents.ts";
 export * from "./admin-workbench-apps.ts";
 export * from "./admin-workbench-conversations.ts";
+export * from "./admin-workbench-llm.ts";
+export * from "./admin-workbench-usage.ts";
 export * from "./cbor/index.ts";
 export * from "./codec.ts";
 export * from "./embed/common.ts";

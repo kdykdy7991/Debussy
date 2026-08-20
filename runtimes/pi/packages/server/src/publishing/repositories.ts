@@ -704,6 +704,19 @@ export interface AdminConversationEventRecord extends ConversationEventRecord {
 	readonly eventId: ConversationEventId;
 }
 
+/** Tenant-scoped provider usage grouped by the Agent revision that served the turn. */
+export interface UsageAggregateRow {
+	readonly agentDefinitionId: AgentDefinitionId;
+	readonly agentName: string;
+	readonly source: "embed";
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly cacheReadTokens: number;
+	readonly cacheWriteTokens: number;
+	readonly totalTokens: number;
+	readonly requestCount: number;
+}
+
 export interface ConversationEventRepository {
 	/**
 	 * Atomically append one event to the conversation (spec 26.3): the
@@ -721,6 +734,12 @@ export interface ConversationEventRepository {
 	): Promise<ConversationEventRecord[]>;
 	/** Count error-type events in the tenant (dashboard). */
 	countErrors(scope: TenantScope): Promise<number>;
+	/** Aggregate only persisted provider usage; message length is never used as a fallback. */
+	summarizeUsage(input: {
+		readonly scope: TenantScope;
+		readonly from: Date;
+		readonly to: Date;
+	}): Promise<UsageAggregateRow[]>;
 	/**
 	 * WB-006: tenant-scoped admin listing (cross-owner). The query joins
 	 * `conversations` to enforce `(tenant, app, conversation)` scope and

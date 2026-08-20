@@ -496,7 +496,7 @@ export class ConversationService {
 				await this.safeAppend(scope, input.conversationId, {
 					eventType: "turn/end",
 					turnId,
-					payload: { ok: true },
+					payload: { ok: true, ...(result.usage ? { usage: result.usage } : {}) },
 				});
 				// WB-008: post-turn rollover check. Re-read the conversation
 				// row so the freshly-advanced counters reflect the events we
