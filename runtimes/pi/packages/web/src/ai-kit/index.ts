@@ -5,6 +5,11 @@
  * 一次性引入（tokens + motion + ai）。
  */
 
+export {
+	type AgentAvatarState,
+	AgentStatusAvatar,
+	preloadAgentStatusAvatar,
+} from "./components/ai/agent-status-avatar.tsx";
 export { AgentTrace, type AgentTraceProps, type AgentTraceStatus } from "./components/ai/agent-trace.tsx";
 export {
 	AgentTraceEvent,
@@ -20,11 +25,6 @@ export {
 	type AssistantSignatureProps,
 	type SignatureStatus,
 } from "./components/ai/assistant-signature.tsx";
-export {
-	AgentStatusAvatar,
-	type AgentAvatarState,
-	preloadAgentStatusAvatar,
-} from "./components/ai/agent-status-avatar.tsx";
 export { Cite, type CiteProps } from "./components/ai/cite.tsx";
 export { Composer, type ComposerMenuItem, type ComposerMode, type ComposerProps } from "./components/ai/composer.tsx";
 export {

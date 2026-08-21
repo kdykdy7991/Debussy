@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AgentStatusAvatar, type AgentAvatarState } from "./agent-status-avatar";
+import { type AgentAvatarState, AgentStatusAvatar } from "./agent-status-avatar";
 
 export type SignatureStatus = "plain" | "running" | "completed" | "failed";
 

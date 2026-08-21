@@ -1,11 +1,18 @@
 import { PiClient } from "@earendil-works/pi-client";
-import type { AgentDefinitionSummary, AgentPublicId, LlmAvailableModel, ModelRef } from "@earendil-works/pi-protocol";
-import { useEffect, useRef, useState } from "react";
+import type {
+	AgentDefinitionSummary,
+	AgentPublicId,
+	LlmAvailableModel,
+	ModelRef,
+	ThinkingLevel,
+} from "@earendil-works/pi-protocol";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ConversationWorkspace } from "../../app.tsx";
 import { PiConnectionController } from "../../lib/connection-controller.ts";
 import { SessionController } from "../../lib/session-controller.ts";
 import { createUploader } from "../../lib/uploader.ts";
 import { createWebSocketTransportFactory } from "../../lib/websocket-transport.ts";
+import { productReasoningEfforts } from "../agents/reasoning-efforts.ts";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
 import { LlmApi } from "../api/llm-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
@@ -31,6 +38,75 @@ type ModelsState =
 interface ChatRuntime {
 	readonly connection: PiConnectionController<PiClient>;
 	readonly sessions: SessionController;
+}
+
+function ThinkingControl({
+	model,
+	sessions,
+}: {
+	readonly model: LlmAvailableModel;
+	readonly sessions: SessionController;
+}) {
+	const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot);
+	const active = snapshot.activeSession;
+	const efforts = productReasoningEfforts(model.parameterCapabilities.reasoning.efforts);
+	if (efforts.length === 0) return null;
+	const selectedEffort = efforts.some((effort) => effort.value === active?.thinkingLevel)
+		? active?.thinkingLevel
+		: (efforts.find((effort) => effort.label === "中")?.value ?? efforts[0]?.value ?? "");
+	return (
+		<label>
+			<span>思考强度</span>
+			<select
+				aria-label="思考强度"
+				value={selectedEffort}
+				disabled={!active || active.phase !== "idle"}
+				onChange={(event) => void sessions.setThinking(event.currentTarget.value as ThinkingLevel)}
+			>
+				{efforts.map((effort) => (
+					<option key={effort.value} value={effort.value}>
+						{effort.label}
+					</option>
+				))}
+			</select>
+		</label>
+	);
+}
+
+function ChatConnectionState({
+	auth,
+}: {
+	readonly auth: ReturnType<typeof useAdminAuth>["snapshot"];
+}): React.ReactElement {
+	const isError = auth.state === "error";
+	return (
+		<section className="admin-chat-connection" aria-live="polite">
+			<div className={`admin-chat-connection__card${isError ? " is-error" : ""}`}>
+				<span className="admin-chat-connection__signal" aria-hidden="true">
+					<span />
+				</span>
+				<p className="admin-chat-connection__eyebrow">ADMIN DEBUG SESSION</p>
+				<h1>{isError ? "工作台连接失败" : "正在连接工作台"}</h1>
+				<p className="admin-chat-connection__description">
+					{isError
+						? "无法建立管理员会话，请确认本地服务与控制平面正在运行。"
+						: "正在验证管理员会话并准备 Chat 调试环境…"}
+				</p>
+				<div className="admin-chat-connection__status">
+					<span className="admin-chat-connection__dot" aria-hidden="true" />
+					<span>{isError ? "连接失败" : "连接中"}</span>
+				</div>
+				{isError ? (
+					<>
+						{auth.error ? <p className="admin-chat-connection__error">{auth.error}</p> : null}
+						<button type="button" onClick={() => window.location.reload()}>
+							重新连接
+						</button>
+					</>
+				) : null}
+			</div>
+		</section>
+	);
 }
 
 export function AdminChatPage(): React.ReactElement {
@@ -163,7 +239,7 @@ export function AdminChatPage(): React.ReactElement {
 	}, [debugSessionsRef, runtime, selectedAgentId, selectedModel]);
 
 	if (auth.state !== "connected") {
-		return <section className="admin-chat-loading">请先解锁工作台。</section>;
+		return <ChatConnectionState auth={auth} />;
 	}
 	if (runtime === null) {
 		return <output className="admin-chat-loading">正在准备管理员调试工作区…</output>;
@@ -173,6 +249,10 @@ export function AdminChatPage(): React.ReactElement {
 	const selected = hasAgents
 		? (agents.items.find((agent) => agent.id === selectedAgentId) ?? agents.items[0])
 		: undefined;
+	const selectedModelMetadata =
+		models.kind === "loaded"
+			? models.items.find((model) => model.provider === selectedModel?.provider && model.id === selectedModel?.id)
+			: undefined;
 	return (
 		<ConversationWorkspace
 			connection={runtime.connection}
@@ -185,6 +265,10 @@ export function AdminChatPage(): React.ReactElement {
 						<span className="workspace-context-kicker">ADMIN DEBUG SESSION</span>
 						<strong>{auth.tenant?.name ?? "当前租户"}</strong>
 					</div>
+					<output className="workspace-connection-status">
+						<span aria-hidden="true" />
+						已连接
+					</output>
 					{hasAgents ? (
 						<label>
 							<span>调试 Agent</span>
@@ -226,6 +310,9 @@ export function AdminChatPage(): React.ReactElement {
 								: null}
 						</select>
 					</label>
+					{selectedModelMetadata ? (
+						<ThinkingControl model={selectedModelMetadata} sessions={runtime.sessions} />
+					) : null}
 					<span className="workspace-revision">Revision #{selected?.currentRevision ?? "—"}</span>
 				</>
 			}

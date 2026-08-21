@@ -158,10 +158,18 @@
 }
 
 .ai-agent-avatar svg {
+	grid-area: 1 / 1;
 	display: block;
 	width: 100%;
 	height: 100%;
 	overflow: visible;
+}
+
+.ai-agent-avatar-placeholder {
+	grid-area: 1 / 1;
+	display: block;
+	width: 100%;
+	height: 100%;
 }
 
 .ai-agent-avatar-shell {

@@ -35,9 +35,24 @@
 	animation: ai-enter-soft-y var(--ai-motion-enter) var(--ai-ease-standard) both;
 }
 
-/* ---- streaming-reveal：正文语义块逐块出现（块完成即挂载） ---- */
-.ai-prose.is-streaming > * {
-	animation: ai-enter-soft-y var(--ai-motion-enter) var(--ai-ease-standard) both;
+/* ---- streaming-reveal：仅 Streamdown 新插入的 buffered chunk 柔和显影 ---- */
+@keyframes sd-softReveal {
+	from {
+		opacity: 0;
+		filter: blur(1.75px);
+		transform: translateY(1px);
+	}
+	to {
+		opacity: 1;
+		filter: blur(0);
+		transform: translateY(0);
+	}
+}
+
+.ai-markdown [data-sd-animate] {
+	display: inline-block;
+	animation: var(--sd-animation, sd-softReveal) var(--sd-duration, 220ms) var(--sd-easing, ease-out) both;
+	animation-delay: var(--sd-delay, 0ms);
 }
 
 /* ---- status-running：breathing pulse（仅限当前 running 的 node/状态点） ---- */
@@ -86,7 +101,8 @@
 	width: var(--ai-cursor-w);
 	height: var(--ai-cursor-h);
 	border-radius: var(--ai-space-2xs);
-	background: var(--ai-accent);
+	background: #22c55e;
+	box-shadow: 0 0 6px rgb(34 197 94 / 55%);
 	vertical-align: -3px;
 	margin-left: var(--ai-space-xs);
 	animation: ai-blink var(--ai-motion-blink) steps(2) infinite;
@@ -114,7 +130,7 @@
 @media (prefers-reduced-motion: reduce) {
 	.ai-enter-soft-x,
 	.ai-enter-soft-y,
-	.ai-prose.is-streaming > *,
+	.ai-markdown [data-sd-animate],
 	.ai-status-running,
 	.ai-cursor,
 	.ai-chart-fill,

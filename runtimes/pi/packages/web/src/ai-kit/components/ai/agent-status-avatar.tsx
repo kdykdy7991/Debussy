@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import geometryDataUrl from "../../../../../../design/references/grok-icon-study/replica/geometry-data.js?url";
+import idleAvatarUrl from "../../../../../../design/references/grok-icon-study/replica/grok-blob-idle.svg?url";
 import characterUrl from "../../../../../../design/references/grok-icon-study/replica/src/character.js?url";
 import eyesUrl from "../../../../../../design/references/grok-icon-study/replica/src/eyes.js?url";
 import fxUrl from "../../../../../../design/references/grok-icon-study/replica/src/fx.js?url";
-import geometryDataUrl from "../../../../../../design/references/grok-icon-study/replica/geometry-data.js?url";
 import mathUrl from "../../../../../../design/references/grok-icon-study/replica/src/math.js?url";
 import poseUrl from "../../../../../../design/references/grok-icon-study/replica/src/pose.js?url";
 import tablesUrl from "../../../../../../design/references/grok-icon-study/replica/src/tables.js?url";
 import tricksUrl from "../../../../../../design/references/grok-icon-study/replica/src/tricks.js?url";
-import idleAvatarUrl from "../../../../../../design/references/grok-icon-study/replica/grok-blob-idle.svg?url";
 
 export type AgentAvatarState =
+	| "idle"
+	| "waking"
+	| "playful"
 	| "loading"
 	| "thinking"
 	| "searching"
@@ -21,6 +24,9 @@ export type AgentAvatarState =
 	| "failed";
 
 const stateLabels: Record<AgentAvatarState, string> = {
+	idle: "Agent 已就绪",
+	waking: "Agent 正在进入会话",
+	playful: "Agent 收到了积极反馈",
 	loading: "Agent 正在启动",
 	thinking: "Agent 正在思考",
 	searching: "Agent 正在检索",
@@ -35,7 +41,15 @@ const stateLabels: Record<AgentAvatarState, string> = {
 type GrokCharacterInstance = { setState: (state: string) => void; destroy: () => void };
 type GrokCharacterConstructor = new (
 	svg: SVGSVGElement,
-	options: { state: string; sizePx: number; mode: "hold"; loginWrap: boolean; followPointer: boolean },
+	options: {
+		state: string;
+		sizePx: number;
+		mode: "hold";
+		loginWrap: boolean;
+		followPointer: boolean;
+		followPointerBody: boolean;
+		followPointerStrength: number;
+	},
 ) => GrokCharacterInstance;
 
 declare global {
@@ -44,15 +58,38 @@ declare global {
 	}
 }
 
-const sourceState: Record<Exclude<AgentAvatarState, "completed" | "failed">, string> = {
+const sourceState: Record<Exclude<AgentAvatarState, "failed">, string> = {
+	idle: "idle",
+	waking: "waking",
+	playful: "playful",
 	loading: "loading",
-	thinking: "thinking",
-	searching: "searching",
-	working: "working",
-	reading: "receiving",
+	thinking: "notifying",
+	searching: "loading",
+	working: "loading",
+	reading: "loading",
 	writing: "writing",
-	waiting: "listening",
+	waiting: "dragging",
+	completed: "spawning",
 };
+
+const idleSourceStates = [
+	"sleeping",
+	"idle",
+	"suspicious",
+	"drowsy",
+	"curious",
+	"confused",
+	"bored",
+	"shy",
+	"sad",
+	"laughing",
+	"scared",
+] as const;
+
+function pickIdleSourceState(current: string | undefined): string {
+	const candidates = idleSourceStates.filter((candidate) => candidate !== current);
+	return candidates[Math.floor(Math.random() * candidates.length)] ?? "idle";
+}
 
 let studyScripts: Promise<void> | undefined;
 
@@ -82,13 +119,15 @@ function loadScript(source: string): Promise<void> {
 	});
 }
 
-/** 对话流专用的微型 Agent 状态标记；终态退化为安静圆点。 */
-export function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
+/** 对话流专用的微型 Agent 状态标记；失败终态退化为红色圆点。 */
+export const AgentStatusAvatar = memo(function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 	const svgRef = useRef<SVGSVGElement>(null);
 	const characterRef = useRef<GrokCharacterInstance | undefined>(undefined);
+	const appliedStateRef = useRef<string | undefined>(undefined);
 	const lastActiveStateRef = useRef("thinking");
+	const [engineReady, setEngineReady] = useState(false);
 	const [showExitAvatar, setShowExitAvatar] = useState(false);
-	const terminal = state === "completed" || state === "failed";
+	const terminal = state === "failed";
 
 	useEffect(() => {
 		if (terminal) {
@@ -97,6 +136,8 @@ export function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 			const timer = window.setTimeout(() => {
 				characterRef.current?.destroy();
 				characterRef.current = undefined;
+				appliedStateRef.current = undefined;
+				setEngineReady(false);
 				setShowExitAvatar(false);
 			}, 1200);
 			return () => window.clearTimeout(timer);
@@ -104,7 +145,8 @@ export function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 
 		setShowExitAvatar(true);
 		let disposed = false;
-		const stateName = sourceState[state];
+		let idleTimer: number | undefined;
+		const stateName = state === "idle" ? pickIdleSourceState(appliedStateRef.current) : sourceState[state];
 		lastActiveStateRef.current = stateName;
 		void loadStudyScripts()
 			.then(() => {
@@ -112,13 +154,34 @@ export function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 				if (!characterRef.current) {
 					characterRef.current = new window.GrokCharacter(svgRef.current, {
 						state: stateName,
-						sizePx: 40,
+						sizePx: 64,
 						mode: "hold",
 						loginWrap: true,
-						followPointer: false,
+						followPointer: true,
+						followPointerBody: true,
+						followPointerStrength: 2.4,
 					});
-				} else {
+					appliedStateRef.current = stateName;
+					setEngineReady(true);
+				} else if (appliedStateRef.current !== stateName) {
 					characterRef.current.setState(stateName);
+					appliedStateRef.current = stateName;
+				}
+				if (state === "idle") {
+					const scheduleNextIdleState = () => {
+						idleTimer = window.setTimeout(
+							() => {
+								if (disposed || !characterRef.current) return;
+								const nextState = pickIdleSourceState(appliedStateRef.current);
+								characterRef.current.setState(nextState);
+								appliedStateRef.current = nextState;
+								lastActiveStateRef.current = nextState;
+								scheduleNextIdleState();
+							},
+							4000 + Math.random() * 4000,
+						);
+					};
+					scheduleNextIdleState();
 				}
 			})
 			.catch(() => {
@@ -126,12 +189,15 @@ export function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 			});
 		return () => {
 			disposed = true;
+			if (idleTimer !== undefined) window.clearTimeout(idleTimer);
 		};
 	}, [state, terminal]);
 
 	useEffect(
 		() => () => {
 			characterRef.current?.destroy();
+			characterRef.current = undefined;
+			appliedStateRef.current = undefined;
 		},
 		[],
 	);
@@ -146,9 +212,8 @@ export function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 			aria-label={stateLabels[state]}
 			role="img"
 		>
-			<svg ref={svgRef} viewBox="-15 -15 259 259" aria-hidden="true" focusable="false">
-				<image href={idleAvatarUrl} width="259" height="259" x="-15" y="-15" />
-			</svg>
+			{!engineReady ? <img className="ai-agent-avatar-placeholder" src={idleAvatarUrl} alt="" /> : null}
+			<svg ref={svgRef} viewBox="-15 -15 259 259" aria-hidden="true" focusable="false" />
 		</span>
 	);
-}
+});
