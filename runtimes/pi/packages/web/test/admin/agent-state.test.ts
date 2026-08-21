@@ -25,7 +25,7 @@ const detail: AgentDefinitionDetail = {
 	currentRevision: 1,
 	modelId: "pi-chat",
 	systemPrompt: "You are helpful.",
-	parameters: { temperature: 0.7 },
+	parameters: { reasoning: { effort: "medium" } },
 	toolIds: ["web.search"],
 	knowledgeBaseIds: ["kb-legal"],
 	capabilities: {

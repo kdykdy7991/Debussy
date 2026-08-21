@@ -14,6 +14,7 @@ import type {
 	AgentDefinitionDetail,
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
+	AgentModelParameters,
 	AgentPublicId,
 	ImportCurrentAgentResponse,
 	SaveAgentRevisionResponse,
@@ -147,7 +148,7 @@ export class AgentApi {
 		draft: {
 			modelId: string | null;
 			systemPrompt: string;
-			parameters: Readonly<Record<string, unknown>>;
+			parameters: AgentModelParameters;
 			toolIds: readonly string[];
 			knowledgeBaseIds: readonly string[];
 			capabilities: AgentCapabilities;

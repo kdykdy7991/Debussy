@@ -14,9 +14,11 @@ import type {
 	AgentDefinitionDetail,
 	AgentDefinitionRevision,
 	AgentPublicId,
+	LlmAvailableModel,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
+import { LlmApi } from "../api/llm-api.ts";
 import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { createDebugSessionStore } from "../conversation/debug-session-store.ts";
@@ -38,6 +40,7 @@ type Tab = "config" | "revisions" | "apps" | "debug";
 export interface AgentWorkspaceProps {
 	readonly agentId: AgentPublicId;
 	readonly api?: AgentApi;
+	readonly llmApi?: LlmApi;
 }
 
 type LoadState =
@@ -45,9 +48,14 @@ type LoadState =
 	| { readonly kind: "loaded"; readonly detail: AgentDefinitionDetail; readonly state: AgentState }
 	| { readonly kind: "error"; readonly message: string };
 
-export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.ReactElement {
+export function AgentWorkspace({ agentId, api, llmApi }: AgentWorkspaceProps): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const resolvedApi = useMemo(() => api ?? new AgentApi({ auth: controller }), [api, controller]);
+	const resolvedLlmApi = useMemo(
+		() => llmApi ?? (api === undefined ? new LlmApi({ auth: controller }) : null),
+		[api, controller, llmApi],
+	);
+	const [models, setModels] = useState<readonly LlmAvailableModel[]>([]);
 	const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 	const [tab, setTab] = useState<Tab>("config");
 	const [changeSummary, setChangeSummary] = useState("");
@@ -68,6 +76,28 @@ export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.Rea
 	useEffect(() => {
 		void reload();
 	}, [reload]);
+	useEffect(() => {
+		if (resolvedLlmApi === null) return;
+		let cancelled = false;
+		void resolvedLlmApi
+			.listModels()
+			.then((result) => {
+				if (!cancelled) setModels(result.items);
+			})
+			.catch(() => {
+				if (!cancelled) setModels([]);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [resolvedLlmApi]);
+
+	useEffect(() => {
+		if (load.kind !== "loaded" || window.location.hash !== "#model-parameters") return;
+		window.requestAnimationFrame(() =>
+			document.getElementById("model-parameters")?.scrollIntoView({ block: "start" }),
+		);
+	}, [load.kind]);
 
 	const onSave = useCallback(
 		async (state: AgentState) => {
@@ -161,6 +191,7 @@ export function AgentWorkspace({ agentId, api }: AgentWorkspaceProps): React.Rea
 					onEdit={onEdit}
 					onRevert={onRevert}
 					onSave={onStartSave}
+					models={models}
 				/>
 			) : null}
 			{tab === "revisions" ? <RevisionTab agentId={agentId} api={resolvedApi} /> : null}
@@ -188,6 +219,7 @@ function ConfigTab({
 	onEdit,
 	onRevert,
 	onSave,
+	models,
 }: {
 	readonly detail: AgentDefinitionDetail;
 	readonly state: AgentState;
@@ -196,10 +228,11 @@ function ConfigTab({
 	readonly onEdit: (patch: Partial<AgentState["draft"]>) => void;
 	readonly onRevert: () => void;
 	readonly onSave: () => void;
+	readonly models: readonly LlmAvailableModel[];
 }): React.ReactElement {
 	return (
 		<div>
-			<AgentForm draft={state.draft} onEdit={onEdit} />
+			<AgentForm draft={state.draft} onEdit={onEdit} models={models} />
 			<div>
 				<label htmlFor="agent-change-summary">变更摘要</label>
 				<input

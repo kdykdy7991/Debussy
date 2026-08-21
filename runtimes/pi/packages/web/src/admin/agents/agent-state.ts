@@ -11,7 +11,12 @@
  * - `error` 保留草稿内容，可重试 `save`
  * - `saved` 后草稿清空，`currentRevision` 更新
  */
-import type { AgentConfigSnapshot, AgentDefinitionDetail, AgentPublicId } from "@earendil-works/pi-protocol";
+import type {
+	AgentConfigSnapshot,
+	AgentDefinitionDetail,
+	AgentModelParameters,
+	AgentPublicId,
+} from "@earendil-works/pi-protocol";
 
 export type AgentStateStatus = "saved" | "dirty" | "saving" | "error";
 
@@ -119,7 +124,7 @@ export function buildSaveRequest(
 ): {
 	readonly modelId: string | null;
 	readonly systemPrompt: string;
-	readonly parameters: Readonly<Record<string, unknown>>;
+	readonly parameters: AgentModelParameters;
 	readonly toolIds: readonly string[];
 	readonly knowledgeBaseIds: readonly string[];
 	readonly capabilities: AgentConfigSnapshot["capabilities"];

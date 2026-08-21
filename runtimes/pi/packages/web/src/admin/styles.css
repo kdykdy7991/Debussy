@@ -1144,6 +1144,128 @@ button {
 .admin-shell .badge.status-connecting { background: var(--admin-warning-soft); color: var(--admin-warning); }
 .admin-shell .badge.status-locked { background: var(--admin-neutral-soft); color: var(--admin-text-muted); }
 
+/* ----- Chat connection state ----- */
+.admin-chat-connection {
+	min-height: 100%;
+	display: grid;
+	place-items: center;
+	padding: 48px 24px;
+	background:
+		radial-gradient(circle at 50% 38%, rgba(74, 90, 143, 0.08), transparent 34%),
+		var(--admin-bg-page);
+}
+.admin-chat-connection__card {
+	width: min(100%, 460px);
+	padding: 42px;
+	text-align: center;
+	background: var(--admin-bg-surface);
+	border: 1px solid var(--admin-border-soft);
+	border-radius: var(--admin-radius-xl);
+	box-shadow: var(--admin-shadow-lg);
+}
+.admin-chat-connection__signal {
+	width: 58px;
+	height: 58px;
+	margin: 0 auto 24px;
+	display: grid;
+	place-items: center;
+	border-radius: 50%;
+	background: var(--admin-warning-soft);
+}
+.admin-chat-connection__signal > span {
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--admin-warning);
+	box-shadow: 0 0 0 0 color-mix(in srgb, var(--admin-warning) 35%, transparent);
+	animation: admin-chat-connection-pulse 1.8s ease-out infinite;
+}
+.admin-chat-connection__card.is-error .admin-chat-connection__signal { background: var(--admin-danger-soft); }
+.admin-chat-connection__card.is-error .admin-chat-connection__signal > span {
+	background: var(--admin-danger);
+	box-shadow: none;
+	animation: none;
+}
+.admin-chat-connection__eyebrow {
+	margin: 0 0 10px;
+	color: var(--admin-text-muted);
+	font-size: 11px;
+	font-weight: 650;
+	letter-spacing: 0.14em;
+}
+.admin-chat-connection h1 {
+	margin: 0;
+	color: var(--admin-text-primary);
+	font-size: 26px;
+	font-weight: 620;
+	letter-spacing: -0.025em;
+}
+.admin-chat-connection__description {
+	margin: 14px auto 0;
+	max-width: 340px;
+	color: var(--admin-text-secondary);
+	font-size: 14px;
+	line-height: 1.65;
+}
+.admin-chat-connection__status {
+	width: fit-content;
+	margin: 24px auto 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 12px;
+	border-radius: var(--admin-radius-pill);
+	background: var(--admin-warning-soft);
+	color: var(--admin-warning);
+	font-size: 12px;
+	font-weight: 600;
+}
+.is-error .admin-chat-connection__status { background: var(--admin-danger-soft); color: var(--admin-danger); }
+.admin-chat-connection__dot,
+.workspace-connection-status > span {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+}
+.admin-chat-connection__error {
+	margin: 14px 0 0;
+	color: var(--admin-text-muted);
+	font-family: var(--admin-font-mono);
+	font-size: 11px;
+}
+.admin-chat-connection button {
+	margin-top: 22px;
+	padding: 9px 18px;
+	border: 0;
+	border-radius: var(--admin-radius-md);
+	background: var(--admin-text-primary);
+	color: var(--admin-bg-surface);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+}
+.admin-chat-connection button:hover { opacity: 0.84; }
+.workspace-connection-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	padding: 5px 10px;
+	border-radius: var(--admin-radius-pill);
+	background: var(--admin-success-soft);
+	color: var(--admin-success);
+	font-size: 12px;
+	font-weight: 600;
+}
+@keyframes admin-chat-connection-pulse {
+	70% { box-shadow: 0 0 0 10px transparent; }
+	100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.admin-chat-connection__signal > span { animation: none; }
+}
+
 /* ==========================================================================
    AI UI Kit — chat conversation 适配（design/demo 复刻）
    让 admin 对话的 message-flow 采用 ai 页面宽度，并把 ai token 的主题色
@@ -1211,7 +1333,7 @@ button {
 	left: 0;
 	right: 0;
 	bottom: 0;
-	padding: var(--ai-space-lg) 24px var(--ai-space-lg);
+	padding: 12px 24px 14px;
 	background: linear-gradient(transparent, var(--ai-bg-page) 62%);
 	z-index: 30;
 }
@@ -1223,12 +1345,12 @@ button {
 	bottom: var(--ai-safe-dock);
 }
 .conversation-workspace--admin .editorial-composer {
-	max-width: 100%;
-	margin: 0;
-	background: var(--ai-bg-elevated);
-	border: 1px solid var(--ai-border-strong);
-	border-radius: var(--ai-radius-lg);
-	padding: var(--ai-space-lg) var(--ai-space-lg) var(--ai-space-sm);
+	max-width: 720px;
+	margin: 0 auto;
+	background: var(--ai-bg-surface);
+	border: 1px solid var(--ai-border-soft);
+	border-radius: 12px;
+	padding: 10px 13px 9px;
 	font-family: var(--ai-font-sans);
 	transition:
 		border-color var(--ai-motion-base) ease,
@@ -1236,11 +1358,23 @@ button {
 }
 .conversation-workspace--admin .editorial-composer:focus-within {
 	border-color: var(--ai-border-focus);
-	box-shadow:
-		0 8px 40px -12px color-mix(in srgb, var(--ai-text-primary) 25%, transparent),
-		0 0 0 1px var(--ai-accent-soft);
+	box-shadow: 0 0 0 3px var(--ai-accent-soft);
+}
+.conversation-workspace--admin .composer-line {
+	gap: 0;
+	padding: 1px 2px 6px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+.conversation-workspace--admin .composer-line:focus-within {
+	border: 0;
+	box-shadow: none;
 }
 .conversation-workspace--admin .editorial-composer textarea {
+	min-height: 22px;
+	max-height: 112px;
 	background: none;
 	border: none;
 	outline: none;
@@ -1250,6 +1384,52 @@ button {
 	font-size: var(--ai-text-composer);
 	line-height: var(--ai-text-composer-lh);
 	font-weight: var(--ai-weight-light);
+}
+.conversation-workspace--admin .composer-toolbar {
+	margin-top: 4px;
+}
+.conversation-workspace--admin .composer-tool,
+.conversation-workspace--admin .composer-attach {
+	width: 28px;
+	height: 28px;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--ai-text-muted);
+}
+.conversation-workspace--admin .composer-attach svg {
+	width: 17px;
+	height: 17px;
+}
+.conversation-workspace--admin .composer-tool:not(:disabled):hover {
+	border: 0;
+	background: var(--ai-bg-inset);
+}
+.conversation-workspace--admin .composer-attachments {
+	gap: 5px;
+	margin-bottom: 7px;
+}
+.conversation-workspace--admin .attachment-chip {
+	max-width: min(100%, 300px);
+	height: 24px;
+	padding: 0 5px 0 8px;
+	border-color: var(--ai-border-soft);
+	border-radius: 6px;
+	background: var(--ai-bg-inset);
+}
+.conversation-workspace--admin .attachment-chip small {
+	flex: 0 0 auto;
+	max-width: 132px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.conversation-workspace--admin .send-button,
+.conversation-workspace--admin .stop-button {
+	min-height: 30px;
+	padding: 6px 13px;
+	border-radius: 8px;
 }
 
 /* --- 防溢出兜底（对话页） --- */
