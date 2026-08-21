@@ -158,7 +158,12 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			publishing,
 			repositories: controlPlane.repositories,
 			createSession: (options) =>
-				backend.createSession({ id: options.id, model: options.model, thinkingLevel: options.thinkingLevel }),
+				backend.createSession({
+					id: options.id,
+					model: options.model,
+					thinkingLevel: options.thinkingLevel,
+					streamOptions: options.streamOptions,
+				}),
 			citations,
 			previewTickets: controlPlane.previewTicketService,
 			log,

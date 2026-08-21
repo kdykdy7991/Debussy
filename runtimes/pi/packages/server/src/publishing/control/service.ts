@@ -53,6 +53,7 @@ import type {
 import { SESSION_EVENT_TYPES } from "@earendil-works/pi-protocol";
 import { importSPKI } from "jose";
 import { validateOriginList } from "../../embed/auth/origin.ts";
+import { modelParameterCapabilities, validateModelParameters } from "../../model-parameters.ts";
 import type {
 	AgentDefinitionId,
 	AuditEventId,
@@ -220,7 +221,8 @@ export type ControlErrorCode =
 	| "CONVERSATION_NOT_FOUND" // WB-006: conversation not visible in tenant scope (404)
 	| "CONFLICT" // unexpected concurrent conflict (409)
 	| "LLM_CONFIG_UNAVAILABLE" // Custom LLM console disabled (503)
-	| "INVALID_LLM_CONFIG"; // Custom LLM provider failed validation (400)
+	| "INVALID_LLM_CONFIG" // Custom LLM provider failed validation (400)
+	| "INVALID_MODEL_PARAMETERS"; // Agent model parameters failed capability validation (400)
 
 export interface ControlServiceError {
 	readonly code: ControlErrorCode;
@@ -793,6 +795,19 @@ export class ControlService {
 		if (latest === undefined) {
 			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		}
+		const availableModels = this.llm === undefined ? [] : await this.llm.listAvailableModels();
+		const selectedModel = availableModels.find((model) => model.id === input.request.modelId);
+		const parameterCapabilities =
+			selectedModel?.parameterCapabilities ??
+			modelParameterCapabilities({
+				id: input.request.modelId ?? "",
+				api: "openai-completions",
+				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(input.request.modelId ?? ""),
+			});
+		const parameterErrors = validateModelParameters(input.request.parameters, parameterCapabilities);
+		if (parameterErrors.length > 0) {
+			return fail("INVALID_MODEL_PARAMETERS", 400, parameterErrors.join("; "));
+		}
 		const nextRevision = latest.revision + 1;
 		const draft = this.requestToDraft(input.request);
 		const sourceHash = sha256Hex(canonicalJson(draft));
@@ -926,7 +941,7 @@ export class ControlService {
 		return {
 			modelId: d.model?.modelId ?? null,
 			systemPrompt: d.prompt ?? "",
-			parameters: (d.model?.params ?? {}) as Readonly<Record<string, unknown>>,
+			parameters: (d.model?.params ?? {}) as AgentConfigSnapshot["parameters"],
 			toolIds,
 			knowledgeBaseIds,
 			capabilities,
@@ -940,7 +955,7 @@ export class ControlService {
 			model: {
 				provider: "platform",
 				modelId: request.modelId ?? "",
-				params: request.parameters,
+				params: request.parameters as unknown as Readonly<Record<string, unknown>>,
 			},
 			tools: request.toolIds.map((id) => ({ id })),
 			knowledgeBases: request.knowledgeBaseIds.map((id) => ({ id })),
@@ -1745,6 +1760,7 @@ export class ControlService {
 				readonly name: string;
 				readonly api: string;
 				readonly reasoning: boolean;
+				readonly parameterCapabilities: import("@earendil-works/pi-protocol").ModelParameterCapabilities;
 			}[];
 		}>
 	> {

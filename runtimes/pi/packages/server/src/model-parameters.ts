@@ -1,0 +1,105 @@
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type {
+	AgentModelParameters,
+	ModelParameterCapabilities,
+	ReasoningEffort,
+	ThinkingLevel,
+} from "@earendil-works/pi-protocol";
+
+const PRODUCT_EFFORTS: readonly ReasoningEffort[] = ["low", "medium", "high"];
+
+const QWEN38_THINKING_SAMPLING = {
+	temperature: 1,
+	samplingParams: { top_p: 0.95, top_k: 20, min_p: 0, presence_penalty: 0, repetition_penalty: 1 },
+} as const;
+const QWEN38_INSTRUCTION_SAMPLING = {
+	temperature: 0.7,
+	samplingParams: { top_p: 0.8, top_k: 20, min_p: 0, presence_penalty: 1.5, repetition_penalty: 1 },
+} as const;
+
+export function modelParameterCapabilities(input: {
+	readonly id: string;
+	readonly api: string;
+	readonly reasoning: boolean;
+	readonly thinkingLevelMap?: Readonly<Record<string, unknown>>;
+}): ModelParameterCapabilities {
+	const qwen38 = isQwen38(input.id);
+	const efforts = input.reasoning || qwen38 ? PRODUCT_EFFORTS : [];
+	return {
+		reasoning: {
+			supported: input.reasoning || qwen38,
+			toggle: qwen38,
+			efforts,
+			...(qwen38 ? { defaultEffort: "high" as const } : {}),
+		},
+	};
+}
+
+function isQwen38(modelId: string): boolean {
+	return /qwen[\s._-]*3[\s._-]*8/i.test(modelId);
+}
+
+export function validateModelParameters(
+	parameters: AgentModelParameters,
+	capabilities: ModelParameterCapabilities,
+): readonly string[] {
+	const errors: string[] = [];
+	const allowedTop = new Set(["reasoning"]);
+	for (const key of Object.keys(parameters))
+		if (!allowedTop.has(key)) errors.push(`parameters.${key} is not supported`);
+	const reasoning = parameters.reasoning;
+	if (reasoning) {
+		const allowedReasoning = new Set(["enabled", "effort"]);
+		for (const key of Object.keys(reasoning))
+			if (!allowedReasoning.has(key)) errors.push(`parameters.reasoning.${key} is not supported`);
+		if (!capabilities.reasoning.supported) errors.push("parameters.reasoning is not supported by this model");
+		if (reasoning.enabled !== undefined && !capabilities.reasoning.toggle)
+			errors.push("parameters.reasoning.enabled is not supported by this model");
+		if (reasoning.effort !== undefined && !capabilities.reasoning.efforts.includes(reasoning.effort))
+			errors.push(`parameters.reasoning.effort must be one of: ${capabilities.reasoning.efforts.join(", ")}`);
+	}
+	return errors;
+}
+
+export function resolveModelStreamOptions(
+	parameters: AgentModelParameters,
+	modelId = "",
+): {
+	readonly thinkingLevel?: ThinkingLevel;
+	readonly streamOptions: Pick<
+		SimpleStreamOptions,
+		"temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets"
+	>;
+} {
+	const reasoning = parameters.reasoning;
+	const qwen38 = isQwen38(modelId);
+	const fixedStreamOptions = qwen38
+		? reasoning?.enabled === false
+			? QWEN38_INSTRUCTION_SAMPLING
+			: QWEN38_THINKING_SAMPLING
+		: {};
+	const configuredEffort =
+		reasoning?.effort ??
+		(reasoning?.enabled === true || (qwen38 && reasoning?.enabled !== false) ? "high" : undefined);
+	const effectiveEffort =
+		configuredEffort === undefined ? undefined : resolveReasoningEffort(configuredEffort, modelId);
+	return {
+		...(reasoning?.enabled === false
+			? { thinkingLevel: "off" as const }
+			: effectiveEffort !== undefined
+				? { thinkingLevel: effectiveEffort as ThinkingLevel }
+				: {}),
+		streamOptions: fixedStreamOptions,
+	};
+}
+
+/** Converts stable product tiers to the concrete level understood by a model. */
+export function resolveReasoningEffort(effort: ReasoningEffort, modelId: string): ThinkingLevel {
+	if (isQwen38(modelId)) {
+		if (effort === "high") return "xhigh";
+		// Keep old persisted provider values readable during migration.
+		if (effort === "minimal") return "low";
+		if (effort === "max") return "xhigh";
+	}
+	return effort as ThinkingLevel;
+}

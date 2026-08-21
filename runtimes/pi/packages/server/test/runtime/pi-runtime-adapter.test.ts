@@ -133,9 +133,40 @@ describe("pi runtime adapter", () => {
 		expect(calls[0]!.id).toBe("conv-0001");
 		expect(calls[0]!.model).toEqual({ provider: "skdy", id: "pi-chat" });
 		expect(calls[0]!.thinkingLevel).toBe("medium");
+		expect(calls[0]!.streamOptions).toEqual({});
 		expect(result.runtime.scope.conversationId).toBe("conv-0001");
 		expect(result.runtime.spec).toBe(spec);
 		await result.runtime.close();
+	});
+
+	test("passes frozen model parameters to every runtime session", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		const spec = chatOnlySpec({
+			agent: {
+				systemPrompt: "published",
+				model: {
+					provider: "qwen",
+					modelId: "Qwen3.8-Agent",
+					params: {
+						reasoning: { enabled: true, effort: "high" },
+					},
+				},
+			},
+		});
+		const result = await adapter.open(spec, scope("conv-params"));
+		expect(result.ok).toBe(true);
+		expect(calls[0]?.thinkingLevel).toBe("xhigh");
+		expect(calls[0]?.streamOptions?.temperature).toBe(1);
+		expect(calls[0]?.streamOptions?.samplingParams).toMatchObject({
+			top_p: 0.95,
+			top_k: 20,
+		});
 	});
 
 	test("two conversations get independent runtimes with their own models", async () => {

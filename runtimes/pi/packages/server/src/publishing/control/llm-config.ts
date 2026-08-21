@@ -10,7 +10,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
-import type { CustomLlmApi } from "@earendil-works/pi-protocol";
+import type { CustomLlmApi, ModelParameterCapabilities } from "@earendil-works/pi-protocol";
+import { modelParameterCapabilities } from "../../model-parameters.ts";
 
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const KNOWN_APIS: readonly CustomLlmApi[] = ["openai-completions", "openai-responses"];
@@ -54,6 +55,7 @@ export interface LlmConfigStore {
 			readonly name: string;
 			readonly api: string;
 			readonly reasoning: boolean;
+			readonly parameterCapabilities: ModelParameterCapabilities;
 		}[]
 	>;
 	test(input: {
@@ -148,6 +150,7 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 			readonly name: string;
 			readonly api: string;
 			readonly reasoning: boolean;
+			readonly parameterCapabilities: ModelParameterCapabilities;
 		}[]
 	> {
 		try {
@@ -158,6 +161,12 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 				name: typeof model.name === "string" ? model.name : model.id,
 				api: model.api,
 				reasoning: model.reasoning === true,
+				parameterCapabilities: modelParameterCapabilities({
+					id: model.id,
+					api: model.api,
+					reasoning: model.reasoning === true,
+					thinkingLevelMap: model.thinkingLevelMap,
+				}),
 			}));
 		} catch {
 			return [];

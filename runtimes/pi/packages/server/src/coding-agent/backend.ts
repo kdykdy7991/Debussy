@@ -155,6 +155,7 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			sessionManager,
 			model: model as never,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
+			streamOptions: options.streamOptions,
 			sessionStartEvent: {
 				type: "session_start",
 				reason: "new",

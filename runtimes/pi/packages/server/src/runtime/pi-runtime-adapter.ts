@@ -17,6 +17,7 @@
  * 恢复链路时统一注入（记录于交接文档）。
  */
 import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
+import { resolveModelStreamOptions } from "../model-parameters.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { PiSessionRuntime } from "../types.ts";
 import { ConversationRuntime } from "./conversation-runtime.ts";
@@ -30,6 +31,7 @@ export interface RuntimeSessionOptions {
 	readonly id: string;
 	readonly model: ModelRef;
 	readonly thinkingLevel?: ThinkingLevel;
+	readonly streamOptions?: import("@earendil-works/pi-ai").SimpleStreamOptions;
 }
 
 export type RuntimeSessionFactory = (options: RuntimeSessionOptions) => Promise<PiSessionRuntime>;
@@ -48,11 +50,13 @@ export function createPiRuntimeAdapter(deps: { readonly createSession: RuntimeSe
 		async open(spec, scope) {
 			const rejection = chatOnlyRejection(spec);
 			if (rejection !== null) return { ok: false, reason: rejection };
-			const thinkingLevel = thinkingLevelFrom(spec);
+			const resolved = resolveModelStreamOptions(spec.agent.model.params ?? {}, spec.agent.model.modelId);
+			const thinkingLevel = resolved.thinkingLevel ?? thinkingLevelFrom(spec);
 			const session = await deps.createSession({
 				id: scope.conversationId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
 				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+				streamOptions: resolved.streamOptions,
 			});
 			return { ok: true, runtime: new ConversationRuntime({ scope, spec, session }) };
 		},

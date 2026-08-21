@@ -769,7 +769,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 						systemPrompt: typeof draft.systemPrompt === "string" ? draft.systemPrompt : "",
 						parameters:
 							draft.parameters !== null && typeof draft.parameters === "object"
-								? (draft.parameters as Record<string, unknown>)
+								? (draft.parameters as import("@earendil-works/pi-protocol").AgentModelParameters)
 								: {},
 						toolIds: Array.isArray(draft.toolIds) ? (draft.toolIds as string[]) : [],
 						knowledgeBaseIds: Array.isArray(draft.knowledgeBaseIds) ? (draft.knowledgeBaseIds as string[]) : [],

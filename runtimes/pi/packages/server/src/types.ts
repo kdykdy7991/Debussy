@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type {
 	Citation,
 	ModelMetadata,
@@ -81,6 +82,7 @@ export interface CreateSessionOptions {
 	name?: string;
 	model?: ModelRef;
 	thinkingLevel?: ThinkingLevel;
+	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets">;
 }
 
 export type PiSessionRuntimeEvent =
