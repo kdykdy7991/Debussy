@@ -82,6 +82,30 @@ function createDeferred(): {
 }
 
 describe("Agent", () => {
+	it("forwards immutable request-level stream defaults", async () => {
+		let received: Parameters<StreamFn>[2];
+		const agent = new Agent({
+			initialState: { model: getModel("openai", "gpt-4o-mini") },
+			streamOptions: {
+				temperature: 0.7,
+				maxTokens: 2048,
+				samplingParams: { top_p: 0.8 },
+			},
+			streamFn: (_model, _context, options) => {
+				received = options;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = createAssistantMessage("ok");
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+		await agent.prompt("hello");
+		expect(received).toMatchObject({ temperature: 0.7, maxTokens: 2048, samplingParams: { top_p: 0.8 } });
+	});
+
 	it("uses the configured default when a legacy caller omits streamFn", async () => {
 		let calls = 0;
 		setDefaultStreamFn(() => {

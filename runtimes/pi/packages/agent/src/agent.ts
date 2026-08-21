@@ -117,6 +117,8 @@ export interface AgentOptions {
 	followUpMode?: QueueMode;
 	sessionId?: string;
 	thinkingBudgets?: ThinkingBudgets;
+	/** Request-level defaults resolved from an immutable Agent revision. */
+	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens">;
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
@@ -206,6 +208,7 @@ export class Agent {
 	public sessionId?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
 	public thinkingBudgets?: ThinkingBudgets;
+	public streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens">;
 	/** Preferred transport forwarded to the stream function. */
 	public transport: Transport;
 	/** Optional cap for provider-requested retry delays. */
@@ -232,6 +235,7 @@ export class Agent {
 		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
+		this.streamOptions = runtimeOptions.streamOptions;
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
@@ -443,6 +447,7 @@ export class Agent {
 		const shouldStopAfterTurn = this.shouldStopAfterTurn;
 		return {
 			model: this._state.model,
+			...this.streamOptions,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
