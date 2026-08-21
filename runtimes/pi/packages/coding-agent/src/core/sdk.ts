@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import {
+	clampThinkingLevel,
+	type Message,
+	type Model,
+	type SimpleStreamOptions,
+	streamSimple,
+} from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -48,6 +54,8 @@ export interface CreateAgentSessionOptions {
 	model?: Model<any>;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
+	/** Immutable request-level defaults supplied by a published Agent revision. */
+	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets">;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -355,7 +363,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		steeringMode: settingsManager.getSteeringMode(),
 		followUpMode: settingsManager.getFollowUpMode(),
 		transport: settingsManager.getTransport(),
-		thinkingBudgets: settingsManager.getThinkingBudgets(),
+		thinkingBudgets: options.streamOptions?.thinkingBudgets ?? settingsManager.getThinkingBudgets(),
+		streamOptions: options.streamOptions,
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 	});
 
