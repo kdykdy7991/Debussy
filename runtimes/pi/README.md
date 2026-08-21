@@ -50,9 +50,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 
 ## Development
 
-Repository-specific commit, SSH, and push instructions are documented in [docs/Git提交与推送指南.md](docs/Git提交与推送指南.md).
-
-To run and verify the browser chat stack locally, see [docs/Web对话运行与联调指南.md](docs/Web对话运行与联调指南.md).
 
 ```bash
 npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
