@@ -1,5 +1,5 @@
 import type { SessionSnapshot, VoiceCapability } from "@earendil-works/pi-protocol";
-import type { ChangeEventHandler, FormEventHandler, KeyboardEventHandler, RefObject } from "react";
+import type { ChangeEventHandler, FocusEventHandler, FormEventHandler, KeyboardEventHandler, RefObject } from "react";
 import { LiveSpeechToggle } from "../features/voice/live-speech-toggle.tsx";
 import type { SessionBrowserSnapshot } from "../lib/session-controller.ts";
 
@@ -19,10 +19,17 @@ export interface ConversationComposerProps {
 	readonly onSubmit: FormEventHandler<HTMLFormElement>;
 	readonly onMessageChange: ChangeEventHandler<HTMLTextAreaElement>;
 	readonly onMessageKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+	readonly onMessageFocus: FocusEventHandler<HTMLTextAreaElement>;
+	readonly onMessageBlur: FocusEventHandler<HTMLTextAreaElement>;
 	readonly onFilesSelected: ChangeEventHandler<HTMLInputElement>;
 	readonly onDismissUpload: (localId: string) => void;
 	readonly onRemoveAttachment: (attachmentId: string) => void;
 	readonly onAbort: () => void;
+}
+
+function uploadErrorLabel(error: string | undefined): string {
+	if (error?.startsWith("Unknown upload:")) return "上传已失效，请重新上传";
+	return error ?? "上传失败";
 }
 
 export function ConversationComposer(props: ConversationComposerProps): React.ReactElement {
@@ -34,11 +41,13 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 					<div className="composer-attachments">
 						{props.sessions.uploads.map((upload) => (
 							<span className={`attachment-chip ${upload.status}`} key={upload.localId}>
-								{upload.name}
+								<span className="attachment-chip__name" title={upload.name}>
+									{upload.name}
+								</span>
 								{upload.status === "uploading" ? (
 									<small>{upload.progress ?? 0}%</small>
 								) : (
-									<small title={upload.error}>{upload.error ?? "上传失败"}</small>
+									<small title={uploadErrorLabel(upload.error)}>{uploadErrorLabel(upload.error)}</small>
 								)}
 								{upload.status === "failed" ? (
 									<button
@@ -53,7 +62,9 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 						))}
 						{active.attachments?.map((attachment) => (
 							<span className="attachment-chip ready" key={attachment.id}>
-								{attachment.name}
+								<span className="attachment-chip__name" title={attachment.name}>
+									{attachment.name}
+								</span>
 								<button
 									type="button"
 									onClick={() => props.onRemoveAttachment(attachment.id)}
@@ -69,9 +80,6 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 					<label className="sr-only" htmlFor="message">
 						消息
 					</label>
-					<span className="composer-leading" aria-hidden="true">
-						＋
-					</span>
 					<textarea
 						ref={props.composerRef}
 						id="message"
@@ -87,6 +95,8 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 						value={props.message}
 						onChange={props.onMessageChange}
 						onKeyDown={props.onMessageKeyDown}
+						onFocus={props.onMessageFocus}
+						onBlur={props.onMessageBlur}
 					/>
 				</div>
 				<div className="composer-toolbar">
@@ -99,7 +109,9 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 							title="上传文件附件"
 							aria-label="上传文件附件"
 						>
-							<span aria-hidden="true">📎</span> Attach
+							<svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+								<path d="M10 4.5v11M4.5 10h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+							</svg>
 						</button>
 						<input ref={props.fileInputRef} type="file" multiple hidden onChange={props.onFilesSelected} />
 					</div>
@@ -113,11 +125,6 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 						</div>
 					) : null}
 					<div className="composer-submit">
-						{active ? (
-							<span className="composer-model">
-								{active.model.provider} / <b>{active.model.id}</b>
-							</span>
-						) : null}
 						{props.running ? (
 							<button className="stop-button" type="button" onClick={props.onAbort}>
 								Stop

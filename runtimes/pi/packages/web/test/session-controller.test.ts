@@ -198,6 +198,7 @@ describe("SessionController", () => {
 	});
 
 	it("merges assistant progress until an authoritative snapshot arrives", async () => {
+		vi.useFakeTimers();
 		const observed = createObservedHandle(SESSION);
 		const client = createClient();
 		client.attachSession.mockResolvedValue(observed.handle);
@@ -245,6 +246,8 @@ describe("SessionController", () => {
 				delta: "持续追加",
 			},
 		});
+		expect(controller.getSnapshot().activeSession?.transcript[0]?.content).toEqual([]);
+		vi.advanceTimersByTime(SessionController.STREAM_FLUSH_INTERVAL_MS);
 
 		const transient = controller.getSnapshot().activeSession;
 		expect(transient?.phase).toBe("turn");
@@ -259,6 +262,143 @@ describe("SessionController", () => {
 		} satisfies SessionSnapshot;
 		observed.emit(authoritative);
 		expect(controller.getSnapshot().activeSession).toBe(authoritative);
+		vi.useRealTimers();
+	});
+
+	it("flushes a semantic streaming chunk at punctuation", async () => {
+		vi.useFakeTimers();
+		const observed = createObservedHandle(SESSION);
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+		const streamingItem = {
+			id: "assistant-semantic",
+			role: "assistant",
+			content: [],
+			model: SESSION.model,
+			timestamp: 3,
+			status: "streaming",
+		} satisfies AssistantTranscriptItem;
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			turnId: "turn-semantic",
+			sequence: 1,
+			progress: { type: "item_started", item: streamingItem },
+		});
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			turnId: "turn-semantic",
+			sequence: 2,
+			progress: {
+				type: "assistant_delta",
+				messageId: streamingItem.id,
+				contentIndex: 0,
+				kind: "text",
+				delta: "这是一个语义片段。",
+			},
+		});
+		vi.advanceTimersByTime(SessionController.STREAM_FLUSH_INTERVAL_MS);
+		expect(controller.getSnapshot().activeSession?.transcript[0]?.content[0]).toEqual({
+			type: "text",
+			text: "这是一个语义片段。",
+		});
+		await controller.dispose();
+		vi.useRealTimers();
+	});
+
+	it("does not miss a completed sentence when another token follows its punctuation", async () => {
+		vi.useFakeTimers();
+		const observed = createObservedHandle(SESSION);
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+		const streamingItem = {
+			id: "assistant-boundary",
+			role: "assistant",
+			content: [],
+			model: SESSION.model,
+			timestamp: 3,
+			status: "streaming",
+		} satisfies AssistantTranscriptItem;
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			turnId: "turn-boundary",
+			sequence: 1,
+			progress: { type: "item_started", item: streamingItem },
+		});
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			turnId: "turn-boundary",
+			sequence: 2,
+			progress: {
+				type: "assistant_delta",
+				messageId: streamingItem.id,
+				contentIndex: 0,
+				kind: "text",
+				delta: "第一句。下一",
+			},
+		});
+
+		vi.advanceTimersByTime(SessionController.STREAM_FLUSH_INTERVAL_MS);
+
+		expect(controller.getSnapshot().activeSession?.transcript[0]?.content[0]).toEqual({
+			type: "text",
+			text: "第一句。下一",
+		});
+		await controller.dispose();
+		vi.useRealTimers();
+	});
+
+	it("uses an English word boundary without waiting for the latency fallback", async () => {
+		vi.useFakeTimers();
+		const observed = createObservedHandle(SESSION);
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+		const streamingItem = {
+			id: "assistant-word",
+			role: "assistant",
+			content: [],
+			model: SESSION.model,
+			timestamp: 3,
+			status: "streaming",
+		} satisfies AssistantTranscriptItem;
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			turnId: "turn-word",
+			sequence: 1,
+			progress: { type: "item_started", item: streamingItem },
+		});
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: SESSION.id,
+			turnId: "turn-word",
+			sequence: 2,
+			progress: {
+				type: "assistant_delta",
+				messageId: streamingItem.id,
+				contentIndex: 0,
+				kind: "text",
+				delta: "semantic ",
+			},
+		});
+
+		vi.advanceTimersByTime(SessionController.STREAM_FLUSH_INTERVAL_MS);
+
+		expect(controller.getSnapshot().activeSession?.transcript[0]?.content[0]).toEqual({
+			type: "text",
+			text: "semantic ",
+		});
+		await controller.dispose();
+		vi.useRealTimers();
 	});
 
 	it("shows a user message before the server responds", async () => {

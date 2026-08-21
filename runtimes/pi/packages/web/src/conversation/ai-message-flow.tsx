@@ -16,18 +16,27 @@ import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
-import { type ComponentPropsWithoutRef, useEffect, useMemo } from "react";
-import { Streamdown } from "streamdown";
+import {
+	type ComponentPropsWithoutRef,
+	createContext,
+	memo,
+	useContext,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+import { type AnimateOptions, Block, type BlockProps, Streamdown } from "streamdown";
 import "katex/dist/katex.min.css";
 import {
+	type AgentAvatarState,
+	AgentStatusAvatar,
 	AgentTrace,
 	AgentTraceEvent,
-	AgentStatusAvatar,
-	type AgentAvatarState,
-	preloadAgentStatusAvatar,
 	AssistantResponse,
 	Prose,
-	StreamCursor,
+	preloadAgentStatusAvatar,
 	UserMessage,
 } from "../ai-kit/index.ts";
 import { LiveStatusRow } from "../features/voice/live-status-row.tsx";
@@ -35,6 +44,9 @@ import type { LivePlaybackState } from "../features/voice/live-types.ts";
 import type { PlaybackArbiter } from "../features/voice/playback-arbiter.ts";
 import { SpeechButton } from "../features/voice/speech-button.tsx";
 import type { SpeechController } from "../features/voice/speech-controller.ts";
+import type { AgentReaction } from "./agent-reaction.ts";
+import type { RevealClock, RevealTiming, SerialRevealPlan } from "./serial-reveal.ts";
+import { computeSerialRevealPlan } from "./serial-reveal.ts";
 import { wrapSpeechButtonApi } from "./speech-wrap.ts";
 
 const markdownPlugins = {
@@ -61,9 +73,83 @@ const markdownTranslations = {
 	openLink: "打开链接",
 };
 
+const SHOW_AGENT_STATE_DEBUG = false;
+
+/** softReveal 字符级显影参数（Streamdown animated 选项与串行调度共用同一来源）。 */
+export const SOFT_REVEAL = { duration: 240, stagger: 40 } as const;
+
+export const softRevealOptions: AnimateOptions = {
+	animation: "softReveal",
+	easing: "ease-out",
+	sep: "char",
+	...SOFT_REVEAL,
+};
+
+const softRevealTiming: RevealTiming = { ...SOFT_REVEAL };
+
+/** 稳定引用，保证 Streamdown memo 生效（避免每帧重渲染整个 markdown 树）。 */
+const disabledLinkSafety = { enabled: false };
+
+/** 当前 MarkdownText（一个 text part）的串行显影计划，供各 block wrapper 读取。 */
+export const SerialRevealContext = createContext<SerialRevealPlan | null>(null);
+
 function MarkdownLink({ node: _node, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
 	return <a {...props} target="_blank" rel="noreferrer" />;
 }
+
+const markdownComponents = { a: MarkdownLink };
+
+// SSR（renderToStaticMarkup）下不使用 layout effect，避免 server 告警。
+const useRevealLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
+ * Streamdown keeps each parsed Markdown block keyed by index; completed siblings stay mounted.
+ *
+ * 串行显影：
+ * 1. block 内容变化的那次提交里，插件生成的「新 span」（--sd-duration > 0）在 paint
+ *    前被叠加本 block 的串行偏移；已显影的旧 span（duration 0）保持 delay 0，不受
+ *    偏移影响（fill both 下给 duration 0 的 span 加 delay 会闪隐）。
+ * 2. 挂载提交（plan.mount）时包装 animatePlugin，把 take 的 prevContentLength 强制为
+ *    0：插件在 block 间共享计数，标题等与后文之间没有分隔块时，上一块的字符数会漏
+ *    给下一块，导致该块开头若干字符被当作「旧内容」直接弹出而非参与串行淡入。
+ */
+export const StableMarkdownBlock = memo(function StableMarkdownBlock(props: BlockProps): React.ReactElement {
+	const plan = useContext(SerialRevealContext);
+	const hostRef = useRef<HTMLDivElement | null>(null);
+	const content = props.content;
+	useRevealLayoutEffect(() => {
+		const host = hostRef.current;
+		if (host === null) return;
+		const offset = plan?.offsets[props.index] ?? 0;
+		if (offset <= 0) return;
+		const spans = host.querySelectorAll<HTMLElement>("[data-sd-animate]");
+		for (const span of spans) {
+			if (span.dataset.sdSerialBase !== undefined) continue;
+			const style = span.style;
+			const duration = Number.parseFloat(style.getPropertyValue("--sd-duration")) || 0;
+			if (duration <= 0) continue;
+			const base = Number.parseFloat(style.getPropertyValue("--sd-delay")) || 0;
+			span.dataset.sdSerialBase = String(base);
+			style.setProperty("--sd-delay", `${base + offset}ms`);
+		}
+	}, [content, plan, props.index]);
+	const animatePlugin = props.animatePlugin;
+	const mountedAnimatePlugin = useMemo(() => {
+		if (plan?.mount !== true || animatePlugin == null) return animatePlugin;
+		return {
+			...animatePlugin,
+			getLastRenderCharCount: () => {
+				animatePlugin.getLastRenderCharCount();
+				return 0;
+			},
+		};
+	}, [animatePlugin, plan]);
+	return (
+		<div ref={hostRef} className="ai-stream-markdown-block" data-stream-block={props.index}>
+			<Block {...props} animatePlugin={mountedAnimatePlugin} />
+		</div>
+	);
+});
 
 interface TurnUnit {
 	user: UserTranscriptItem | undefined;
@@ -113,26 +199,20 @@ export function AiMessageFlow({
 
 	return (
 		<div className="ai-flow">
-			{units.length === 0 ? (
-				<section className="empty-transcript">
-					<span>READY FOR BRIEF</span>
-					<h2>这个会话还没有内容</h2>
-					<p>在下方输入你的问题。回答会以适合长文阅读的分析稿形式呈现。</p>
-				</section>
-			) : (
-				units.map((unit, index) => (
-					<TurnView
-						key={unit.assistant?.id ?? unit.user?.id ?? `turn-${index}`}
-						unit={unit}
-						sessionId={active.id}
-						liveActive={liveActive}
-						speech={speech}
-						arbiter={arbiter}
-						livePlaybackState={livePlaybackState}
-						onStopLive={onStopLive}
-					/>
-				))
-			)}
+			{units.length > 0
+				? units.map((unit, index) => (
+						<TurnView
+							key={unit.assistant?.id ?? unit.user?.id ?? `turn-${index}`}
+							unit={unit}
+							sessionId={active.id}
+							liveActive={liveActive}
+							speech={speech}
+							arbiter={arbiter}
+							livePlaybackState={livePlaybackState}
+							onStopLive={onStopLive}
+						/>
+					))
+				: null}
 		</div>
 	);
 }
@@ -140,19 +220,64 @@ export function AiMessageFlow({
 /**
  * 当前任务的唯一状态形象。它由工作区固定在左下角，不会随某一条回复向上滚走。
  */
-export function ActiveAgentPresence({ active }: { active: SessionSnapshot }): React.ReactElement | null {
-	if (active.phase === "idle") return null;
-	const currentTurn = [...groupTurns(active.transcript)].reverse().find((unit) => unit.assistant !== undefined);
+export function ActiveAgentPresence({
+	active,
+	composerFocused,
+	reaction,
+}: {
+	active: SessionSnapshot;
+	composerFocused: boolean;
+	reaction: AgentReaction | undefined;
+}): React.ReactElement | null {
+	const [waking, setWaking] = useState(true);
+	const [showCompleted, setShowCompleted] = useState(false);
+	const turns = groupTurns(active.transcript);
+	const currentTurn = turns.at(-1);
 	const assistant = currentTurn?.assistant;
-	const state = resolveAgentState({
-		streaming: assistant?.status === "streaming",
-		textBlocks: assistant?.content.filter((content) => content.type === "text").length ?? 0,
-		thinking: assistant?.content.some((content) => content.type === "thinking") ?? false,
-		tools: currentTurn?.tools ?? [],
-	});
+	const previousAssistantRef = useRef(assistant);
+	useEffect(() => {
+		const timer = window.setTimeout(() => setWaking(false), 800);
+		return () => window.clearTimeout(timer);
+	}, []);
+	const previousAssistant = previousAssistantRef.current;
+	const completedThisRender =
+		previousAssistant !== undefined &&
+		assistant !== undefined &&
+		previousAssistant?.id === assistant?.id &&
+		previousAssistant.status === "streaming" &&
+		assistant.status === "complete";
+	useEffect(() => {
+		previousAssistantRef.current = assistant;
+		if (completedThisRender) setShowCompleted(true);
+	}, [assistant, completedThisRender]);
+	useEffect(() => {
+		if (!showCompleted) return undefined;
+		const timer = window.setTimeout(() => setShowCompleted(false), 1000);
+		return () => window.clearTimeout(timer);
+	}, [showCompleted]);
+	const waitingForAssistant = currentTurn?.user !== undefined && assistant === undefined;
+	const state = waking
+		? "waking"
+		: reaction
+			? reaction
+			: waitingForAssistant
+				? "loading"
+				: showCompleted || completedThisRender
+					? "completed"
+					: active.phase === "idle"
+						? composerFocused
+							? "waiting"
+							: "idle"
+						: resolveAgentState({
+								streaming: assistant?.status === "streaming",
+								textBlocks: assistant?.content.filter((content) => content.type === "text").length ?? 0,
+								thinking: assistant?.content.some((content) => content.type === "thinking") ?? false,
+								tools: currentTurn?.tools ?? [],
+							});
 	return (
 		<div className="active-agent-presence">
 			<AgentStatusAvatar state={state} />
+			{SHOW_AGENT_STATE_DEBUG ? <code className="active-agent-presence-state">UI: {state}</code> : null}
 		</div>
 	);
 }
@@ -200,7 +325,6 @@ function TurnView({
 				<AssistantTurn
 					item={unit.assistant}
 					rail={rail}
-					tools={tools}
 					speech={speech}
 					arbiter={arbiter}
 					sessionId={sessionId}
@@ -229,7 +353,6 @@ function UserBrief({ item }: { item: UserTranscriptItem }): React.ReactElement {
 function AssistantTurn({
 	item,
 	rail,
-	tools,
 	speech,
 	arbiter,
 	sessionId,
@@ -238,7 +361,6 @@ function AssistantTurn({
 }: {
 	item: AssistantTranscriptItem;
 	rail: React.ReactNode;
-	tools: readonly ToolTranscriptItem[];
 	speech: SpeechController | undefined;
 	arbiter: PlaybackArbiter | undefined;
 	sessionId: string;
@@ -249,6 +371,8 @@ function AssistantTurn({
 	const textBlocks = item.content.filter((content) => content.type === "text");
 	const thinkingBlock = item.content.find((content) => content.type === "thinking");
 	const plain = textBlocks.length <= 1 && textBlocks.join("").length <= 120 && thinkingBlock === undefined;
+	// 同一条消息的所有 text part 共享显影时钟：后一段 part 须等前一段全部显影完成。
+	const revealClock = useRef<RevealClock>({ freeAt: 0 });
 	return (
 		<AssistantResponse rail={rail}>
 			<div className="assistant-output-card">
@@ -290,12 +414,15 @@ function AssistantTurn({
 					{textBlocks.length > 0 ? (
 						<Prose plain={plain} streaming={streaming}>
 							{textBlocks.map((block, i) => (
-								<MarkdownText key={`${item.id}-${i}`} text={block.text} streaming={streaming} />
+								<MarkdownText
+									key={`${item.id}-${i}`}
+									text={block.text}
+									streaming={streaming}
+									clock={revealClock.current}
+								/>
 							))}
 						</Prose>
 					) : null}
-
-					{streaming ? <StreamCursor /> : null}
 				</div>
 
 				<div className="ai-turn-extras">
@@ -337,23 +464,43 @@ function isSearchTool(tool: ToolTranscriptItem): boolean {
 	return /search|find|browse|web|检索|搜索/i.test(tool.toolName ?? "");
 }
 
-function MarkdownText({ text, streaming }: { text: string; streaming: boolean }): React.ReactElement {
+function MarkdownText({
+	text,
+	streaming,
+	clock,
+}: {
+	text: string;
+	streaming: boolean;
+	clock: RevealClock;
+}): React.ReactElement {
+	const streamed = useRef(streaming);
+	if (streaming) streamed.current = true;
+	const preserveStreamingDom = streamed.current;
+	// 串行显影计划：仅在参与动画（流式）时计算；按 text 变化守卫，渲染期幂等。
+	const planRef = useRef<SerialRevealPlan | null>(null);
+	if (preserveStreamingDom && planRef.current?.text !== text) {
+		planRef.current = computeSerialRevealPlan(text, planRef.current ?? undefined, clock, softRevealTiming);
+	}
+	const plan = planRef.current;
 	return (
 		<div className="ai-prose-block">
-			<Streamdown
-				className="ai-markdown"
-				mode={streaming ? "streaming" : "static"}
-				isAnimating={streaming}
-				animated
-				skipHtml
-				plugins={markdownPlugins}
-				components={{ a: MarkdownLink }}
-				controls={false}
-				linkSafety={{ enabled: false }}
-				translations={markdownTranslations}
-			>
-				{text}
-			</Streamdown>
+			<SerialRevealContext.Provider value={plan}>
+				<Streamdown
+					className="ai-markdown"
+					mode={preserveStreamingDom ? "streaming" : "static"}
+					isAnimating={preserveStreamingDom}
+					animated={softRevealOptions}
+					BlockComponent={StableMarkdownBlock}
+					skipHtml
+					plugins={markdownPlugins}
+					components={markdownComponents}
+					controls={false}
+					linkSafety={disabledLinkSafety}
+					translations={markdownTranslations}
+				>
+					{text}
+				</Streamdown>
+			</SerialRevealContext.Provider>
 		</div>
 	);
 }

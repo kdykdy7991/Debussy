@@ -355,6 +355,7 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .composer-tool:disabled { opacity: 0.4; }
 .composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .attachment-chip { display: inline-flex; max-width: 220px; height: 26px; align-items: center; gap: 5px; padding: 0 6px 0 9px; border: 1px solid var(--color-border-default); border-radius: 13px; font-size: 10px; white-space: nowrap; }
+.attachment-chip__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .attachment-chip small { color: var(--color-text-tertiary); }
 .attachment-chip button { display: grid; width: 16px; height: 16px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--color-text-tertiary); cursor: pointer; font-size: 12px; line-height: 1; }
 .attachment-chip button:hover { background: rgb(32 27 20 / 8%); color: var(--color-text-primary); }
@@ -730,15 +731,22 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	bottom: 18px;
 	left: clamp(16px, calc((100% - 720px) / 2 + 12px), 36px);
 	display: grid;
-	width: 48px;
-	height: 48px;
+	justify-items: center;
+	gap: 2px;
+	min-width: 72px;
 	place-items: center;
-	border-radius: 12px;
-	background: var(--ai-bg-surface);
-	box-shadow: 0 8px 20px color-mix(in srgb, var(--ai-text-primary) 12%, transparent);
 	pointer-events: none;
 }
-.active-agent-presence .ai-agent-avatar { width: 40px; height: 40px; }
+.active-agent-presence .ai-agent-avatar { width: 64px; height: 64px; }
+.active-agent-presence-state {
+	padding: 2px 5px;
+	border: 1px solid color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--color-bg-content) 88%, transparent);
+	color: var(--color-text-primary);
+	font: 600 10px/1.2 var(--font-mono);
+	white-space: nowrap;
+}
 .conversation-article,
 .editorial-shell[data-theme="vision-glass"] .conversation-article {
 	width: 100%;

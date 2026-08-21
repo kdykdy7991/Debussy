@@ -34,6 +34,7 @@ function createSessions(snapshot: SessionBrowserSnapshot = EMPTY_SESSIONS): Sess
 		selectSession: async () => {},
 		send: async () => ({ session: snapshot.activeSession ?? ({} as never) }),
 		abort: async () => {},
+		setThinking: async () => {},
 		uploadFiles: async () => {},
 		removeAttachment: async () => {},
 		dismissUpload: () => {},
@@ -116,10 +117,10 @@ describe("App", () => {
 
 		expect(markup).toContain("你好");
 		expect(markup).toContain("正在回答");
-		expect(markup).toContain("ai-cursor");
+		expect(markup).not.toContain("ai-cursor");
 		expect(markup).toContain("ai-user");
 		expect(markup).toContain("active-agent-presence");
-		expect(markup).toContain("ai-agent-avatar is-writing");
+		expect(markup).toContain("ai-agent-avatar is-waking");
 		expect(markup).toContain('data-streamdown="heading-2"');
 		expect(markup).toContain('data-streamdown="strong"');
 		expect(markup).toContain('href="https://example.com/"');
@@ -322,6 +323,7 @@ describe("App AI kit conversation (design 复刻)", () => {
 		expect(markup).toContain("ai-trace-evt");
 		expect(markup).toContain("web.search");
 		expect(markup).toContain("assistant-output-copy");
-		expect(markup).not.toContain("active-agent-presence");
+		expect(markup).toContain("active-agent-presence");
+		expect(markup).toContain("ai-agent-avatar is-waking");
 	});
 });

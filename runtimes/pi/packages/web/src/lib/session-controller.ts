@@ -7,6 +7,7 @@ import type {
 	ServerSnapshot,
 	SessionSnapshot,
 	SessionSummary,
+	ThinkingLevel,
 	TranscriptItem,
 	TranscriptProgress,
 	UserTranscriptItem,
@@ -66,12 +67,14 @@ export interface SessionBrowserStore {
 	selectSession(sessionId: string): Promise<void>;
 	send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult>;
 	abort(): Promise<void>;
+	setThinking(thinkingLevel: ThinkingLevel): Promise<void>;
 	uploadFiles(files: File[]): Promise<void>;
 	removeAttachment(attachmentId: string): Promise<void>;
 	dismissUpload(localId: string): void;
 }
 
 export class SessionController implements SessionBrowserStore {
+	static readonly STREAM_FLUSH_INTERVAL_MS = 90;
 	readonly #client: PiSessionClient;
 	readonly #uploads: PiUploadClient;
 	readonly #listeners = new Set<() => void>();
@@ -81,6 +84,8 @@ export class SessionController implements SessionBrowserStore {
 	#unsubscribeActiveEvents: (() => void) | undefined;
 	#operation = 0;
 	#uploadSequence = 0;
+	#pendingProgress: Extract<TranscriptProgress, { type: "assistant_delta" }>[] = [];
+	#progressTimer: ReturnType<typeof setTimeout> | undefined;
 	#snapshot: SessionBrowserSnapshot;
 
 	constructor(client: PiSessionClient, uploads: PiUploadClient) {
@@ -200,6 +205,11 @@ export class SessionController implements SessionBrowserStore {
 		await this.#runSessionAction(handle, async () => ({ session: await handle.abort() }));
 	}
 
+	async setThinking(thinkingLevel: ThinkingLevel): Promise<void> {
+		const handle = this.#requireActiveHandle();
+		await this.#runSessionAction(handle, async () => ({ session: await handle.setThinking(thinkingLevel) }));
+	}
+
 	async uploadFiles(files: File[]): Promise<void> {
 		if (files.length === 0) return;
 		const handle = this.#requireActiveHandle();
@@ -265,6 +275,7 @@ export class SessionController implements SessionBrowserStore {
 
 	async dispose(): Promise<void> {
 		this.#operation += 1;
+		this.#clearPendingProgress();
 		this.#unsubscribeClient();
 		this.#listeners.clear();
 		const handle = this.#activeHandle;
@@ -278,6 +289,7 @@ export class SessionController implements SessionBrowserStore {
 
 	async #activate(acquire: () => Promise<PiSessionHandle>): Promise<void> {
 		const operation = ++this.#operation;
+		this.#clearPendingProgress();
 		this.#setSnapshot({ ...this.#snapshot, loading: true, error: undefined });
 		try {
 			const previous = this.#activeHandle;
@@ -306,6 +318,7 @@ export class SessionController implements SessionBrowserStore {
 			});
 			this.#unsubscribeActive = handle.subscribe((session) => {
 				if (this.#activeHandle !== handle) return;
+				this.#clearPendingProgress();
 				this.#setSnapshot({
 					...this.#snapshot,
 					sessions: upsertSession(this.#snapshot.sessions, session),
@@ -366,13 +379,52 @@ export class SessionController implements SessionBrowserStore {
 	#applyProgress(event: Extract<ServerEvent, { type: "session_progress" }>): void {
 		const activeSession = this.#snapshot.activeSession;
 		if (!activeSession || activeSession.id !== event.sessionId) return;
-		const session = applyTranscriptProgress(activeSession, event.progress);
+		if (event.progress.type === "assistant_delta") {
+			this.#pendingProgress.push(event.progress);
+			this.#scheduleProgressFlush();
+			return;
+		}
+		this.#flushPendingProgress();
+		const flushedSession = this.#snapshot.activeSession;
+		if (!flushedSession || flushedSession.id !== event.sessionId) return;
+		const session = applyTranscriptProgress(flushedSession, event.progress);
+		if (session === flushedSession) return;
+		this.#setSnapshot({
+			...this.#snapshot,
+			sessions: upsertSession(this.#snapshot.sessions, session),
+			activeSession: session,
+		});
+	}
+
+	#flushPendingProgress(): void {
+		if (this.#progressTimer !== undefined) clearTimeout(this.#progressTimer);
+		this.#progressTimer = undefined;
+		if (this.#pendingProgress.length === 0) return;
+		const pending = this.#pendingProgress;
+		this.#pendingProgress = [];
+		const activeSession = this.#snapshot.activeSession;
+		if (!activeSession) return;
+		const session = pending.reduce(applyTranscriptProgress, activeSession);
 		if (session === activeSession) return;
 		this.#setSnapshot({
 			...this.#snapshot,
 			sessions: upsertSession(this.#snapshot.sessions, session),
 			activeSession: session,
 		});
+	}
+
+	#clearPendingProgress(): void {
+		if (this.#progressTimer !== undefined) clearTimeout(this.#progressTimer);
+		this.#progressTimer = undefined;
+		this.#pendingProgress = [];
+	}
+
+	#scheduleProgressFlush(): void {
+		if (this.#progressTimer !== undefined) return;
+		this.#progressTimer = setTimeout(() => {
+			this.#progressTimer = undefined;
+			this.#flushPendingProgress();
+		}, SessionController.STREAM_FLUSH_INTERVAL_MS);
 	}
 
 	#setSnapshot(snapshot: SessionBrowserSnapshot): void {

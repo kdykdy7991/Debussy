@@ -12,6 +12,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
+import { type AgentReaction, detectAgentReaction } from "./conversation/agent-reaction.ts";
 import { ActiveAgentPresence, AiMessageFlow } from "./conversation/ai-message-flow.tsx";
 import { ConversationComposer } from "./conversation/conversation-composer.tsx";
 import { ConversationSidebar } from "./conversation/conversation-sidebar.tsx";
@@ -99,6 +100,9 @@ export function ConversationWorkspace({
 	}, [client, live.bindHandle, sessionSnapshot.activeSessionId]);
 
 	const [message, setMessage] = useState("");
+	const [composerFocused, setComposerFocused] = useState(false);
+	const [agentReaction, setAgentReaction] = useState<AgentReaction | undefined>(undefined);
+	const agentReactionTimerRef = useRef<number | undefined>(undefined);
 	const [sessionQuery, setSessionQuery] = useState("");
 	const [sidebarOpen, setSidebarOpen] = useState(() => variant === "admin");
 	const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -116,7 +120,6 @@ export function ConversationWorkspace({
 	});
 	const active = sessionSnapshot.activeSession;
 	const activeId = active?.id;
-	const hasActive = active !== undefined;
 	const running = active !== undefined && active.phase !== "idle";
 	const canSend = connected && active !== undefined && !sessionSnapshot.loading && !sessionSnapshot.submitting;
 	const bootstrapping = !active && sessionSnapshot.loading && !connectionSnapshot.error;
@@ -135,14 +138,39 @@ export function ConversationWorkspace({
 		}
 		void connection.connect().catch(() => {});
 	};
-	const createSession = () => void sessions.createSession().catch(() => {});
+	const resetComposerPresence = () => {
+		composerRef.current?.blur();
+		setComposerFocused(false);
+		setAgentReaction(undefined);
+		if (agentReactionTimerRef.current !== undefined) {
+			window.clearTimeout(agentReactionTimerRef.current);
+			agentReactionTimerRef.current = undefined;
+		}
+	};
+	const createSession = () => {
+		resetComposerPresence();
+		void sessions.createSession().catch(() => {});
+	};
 	const selectSession = (sessionId: string) => {
+		resetComposerPresence();
 		setSidebarOpen(false);
 		void sessions.selectSession(sessionId).catch(() => {});
 	};
 	const submitMessage = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!message.trim() || running) return;
+		const submittedMessage = message;
+		const reaction = detectAgentReaction(submittedMessage);
+		if (reaction) {
+			setAgentReaction(reaction);
+			if (agentReactionTimerRef.current !== undefined) window.clearTimeout(agentReactionTimerRef.current);
+			agentReactionTimerRef.current = window.setTimeout(() => {
+				agentReactionTimerRef.current = undefined;
+				setAgentReaction(undefined);
+			}, 1600);
+		}
+		setMessage("");
+		if (composerRef.current) composerRef.current.style.height = "auto";
 		// Sending is an explicit request to return to the live edge. Once the
 		// user scrolls up again, the scroll handler below releases this lock.
 		followConversationRef.current = true;
@@ -159,13 +187,16 @@ export function ConversationWorkspace({
 					: prep.attachSpeech
 						? { speech: { mode: "live" as const } }
 						: baseOptions;
-			const result = await sessions.send(message, options);
-			setMessage("");
+			const result = await sessions.send(submittedMessage, options);
 			if (result.liveSpeech && client?.getLiveSpeechHandle) {
 				const handle = client.getLiveSpeechHandle(result.liveSpeech.id);
 				if (handle) live.bindHandle(handle);
 			}
-		})().catch(() => {});
+		})().catch(() => {
+			// Preserve a failed prompt without overwriting anything the user has
+			// already started typing while the request was in flight.
+			setMessage((current) => (current === "" ? submittedMessage : current));
+		});
 	};
 
 	const dismissLiveHint = useCallback(() => setLiveHint(undefined), []);
@@ -188,11 +219,12 @@ export function ConversationWorkspace({
 	};
 	const abort = () => void sessions.abort().catch(() => {});
 
-	useEffect(() => {
-		if (!connected || !hasActive || !activeId) return;
-		const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
-		return () => window.cancelAnimationFrame(frame);
-	}, [activeId, connected, hasActive]);
+	useEffect(
+		() => () => {
+			if (agentReactionTimerRef.current !== undefined) window.clearTimeout(agentReactionTimerRef.current);
+		},
+		[],
+	);
 
 	const scheduleConversationScroll = useCallback((force = false) => {
 		const element = conversationScrollRef.current;
@@ -359,7 +391,6 @@ export function ConversationWorkspace({
 					{active ? (
 						<Conversation
 							active={active}
-							abort={abort}
 							speech={speech}
 							arbiter={arbiter}
 							livePlaybackState={live.playbackState}
@@ -372,7 +403,14 @@ export function ConversationWorkspace({
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
 				</div>
-				{active ? <ActiveAgentPresence active={active} /> : null}
+				{active ? (
+					<ActiveAgentPresence
+						key={active.id}
+						active={active}
+						composerFocused={composerFocused}
+						reaction={agentReaction}
+					/>
+				) : null}
 			</main>
 
 			<ConversationComposer
@@ -391,6 +429,8 @@ export function ConversationWorkspace({
 				onSubmit={submitMessage}
 				onMessageChange={handleMessageChange}
 				onMessageKeyDown={handleMessageKeyDown}
+				onMessageFocus={() => setComposerFocused(true)}
+				onMessageBlur={() => setComposerFocused(false)}
 				onFilesSelected={handleFilesSelected}
 				onDismissUpload={(localId) => sessions.dismissUpload(localId)}
 				onRemoveAttachment={removeAttachment}
@@ -415,7 +455,6 @@ export function App(props: AppProps): React.ReactElement {
 
 function Conversation({
 	active,
-	abort,
 	speech,
 	arbiter,
 	livePlaybackState,
@@ -423,14 +462,12 @@ function Conversation({
 	showTitle,
 }: {
 	active: SessionSnapshot;
-	abort: () => void;
 	speech: SpeechController | undefined;
 	arbiter: PlaybackArbiter | undefined;
 	livePlaybackState: LivePlaybackState;
 	onStopLive: () => void;
 	showTitle: boolean;
 }) {
-	const running = active.phase !== "idle";
 	return (
 		<article className="conversation-article">
 			{showTitle ? (
@@ -458,26 +495,6 @@ function Conversation({
 						</span>
 					</div>
 				</header>
-			) : null}
-
-			{running ? (
-				<section className="agent-run-strip proc busy" aria-label="Agent 运行状态">
-					<span className="run-spinner" aria-hidden="true" />
-					<span>
-						<strong>{phaseLabel(active.phase)}</strong>
-						<small>内容将随服务端事件持续更新</small>
-					</span>
-					<div className="run-track" aria-hidden="true">
-						<i />
-						<i />
-						<i className="active" />
-						<i />
-						<i />
-					</div>
-					<button type="button" onClick={abort}>
-						停止运行
-					</button>
-				</section>
 			) : null}
 
 			<section className="message-flow" aria-live="polite">
@@ -525,14 +542,6 @@ function EmptyConversation({
 			</button>
 		</section>
 	);
-}
-
-function phaseLabel(phase: SessionSnapshot["phase"]): string {
-	if (phase === "compaction") return "正在整理上下文";
-	if (phase === "branch_summary") return "正在生成分支摘要";
-	if (phase === "retry") return "连接恢复后重试中";
-	if (phase === "turn") return "Pi 正在组织回答";
-	return "等待下一项任务";
 }
 
 function deriveSpeechHttpBaseUrl(): string {
