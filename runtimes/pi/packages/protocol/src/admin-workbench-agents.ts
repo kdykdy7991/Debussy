@@ -41,7 +41,7 @@ export interface AgentDefinitionDetail {
 	readonly currentRevision: number;
 	readonly modelId: string | null;
 	readonly systemPrompt: string;
-	readonly parameters: Readonly<Record<string, unknown>>;
+	readonly parameters: AgentModelParameters;
 	readonly toolIds: readonly string[];
 	readonly knowledgeBaseIds: readonly string[];
 	readonly capabilities: AgentCapabilities;
@@ -84,10 +84,19 @@ export interface AgentDefinitionRevision {
 }
 
 /** Snapshot captured into a revision; mirrors the editable form fields. */
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface AgentModelParameters {
+	readonly reasoning?: {
+		readonly enabled?: boolean;
+		readonly effort?: ReasoningEffort;
+	};
+}
+
 export interface AgentConfigSnapshot {
 	readonly modelId: string | null;
 	readonly systemPrompt: string;
-	readonly parameters: Readonly<Record<string, unknown>>;
+	readonly parameters: AgentModelParameters;
 	readonly toolIds: readonly string[];
 	readonly knowledgeBaseIds: readonly string[];
 	readonly capabilities: AgentCapabilities;
@@ -145,7 +154,7 @@ export interface AgentDefinitionAssociatedApp {
 export interface SaveAgentRevisionRequest {
 	readonly modelId: string | null;
 	readonly systemPrompt: string;
-	readonly parameters: Readonly<Record<string, unknown>>;
+	readonly parameters: AgentModelParameters;
 	readonly toolIds: readonly string[];
 	readonly knowledgeBaseIds: readonly string[];
 	readonly capabilities: AgentCapabilities;

@@ -64,6 +64,16 @@ export interface LlmAvailableModel {
 	readonly name: string;
 	readonly api: string;
 	readonly reasoning: boolean;
+	readonly parameterCapabilities: ModelParameterCapabilities;
+}
+
+export interface ModelParameterCapabilities {
+	readonly reasoning: {
+		readonly supported: boolean;
+		readonly toggle: boolean;
+		readonly efforts: readonly import("./admin-workbench-agents.ts").ReasoningEffort[];
+		readonly defaultEffort?: import("./admin-workbench-agents.ts").ReasoningEffort;
+	};
 }
 
 export interface LlmAvailableModelsResponse {
