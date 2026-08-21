@@ -1681,6 +1681,23 @@ describe("openai-completions tool_choice", () => {
 		}
 	});
 
+	it("maps Qwen chat-template reasoning effort independently from the thinking toggle", async () => {
+		const model = {
+			...localOpenAICompletionsModel,
+			id: "Qwen3.8-Agent",
+			name: "Qwen3.8 Agent via vLLM",
+			compat: {
+				thinkingFormat: "qwen-chat-template",
+				supportsReasoningEffort: true,
+			},
+			thinkingLevelMap: { low: "low", medium: "medium", xhigh: "xhigh" },
+		} satisfies Model<"openai-completions">;
+
+		const params = await captureSimpleParams(model, "xhigh");
+		expect(params.chat_template_kwargs).toEqual({ enable_thinking: true, preserve_thinking: true });
+		expect(params.reasoning_effort).toBe("xhigh");
+	});
+
 	it("uses configurable chat template effort kwargs with static kwargs", async () => {
 		const model = {
 			...localOpenAICompletionsModel,
