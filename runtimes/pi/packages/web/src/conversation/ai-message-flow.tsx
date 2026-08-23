@@ -130,7 +130,19 @@ export const StableMarkdownBlock = memo(function StableMarkdownBlock(props: Bloc
 			if (duration <= 0) continue;
 			const base = Number.parseFloat(style.getPropertyValue("--sd-delay")) || 0;
 			span.dataset.sdSerialBase = String(base);
-			style.setProperty("--sd-delay", `${base + offset}ms`);
+			// `streamdown/styles.css` 把 `animation: var(--sd-animation) ...
+			// var(--sd-delay) ...` 写在 stylesheet 里，从 inline style 的 CSS
+			// 变量读值。问题是：CSS animation 一旦启动就不响应 CSS 变量变化
+			//（标准行为），改 --sd-delay 不会重启 animation。必须直接重设
+			// inline style 的 `animation` shorthand，让浏览器重启 animation
+			// 引擎并采用新 delay。layout effect 跑在 paint 前，所以重设不会
+			// 引发视觉闪烁。
+			const animationName = style.getPropertyValue("--sd-animation").trim() || "sd-fadeIn";
+			const easing = style.getPropertyValue("--sd-easing").trim() || "ease";
+			style.setProperty(
+				"animation",
+				`${animationName} ${duration}ms ${easing} ${base + offset}ms both`,
+			);
 		}
 	}, [content, plan, props.index]);
 	const animatePlugin = props.animatePlugin;
