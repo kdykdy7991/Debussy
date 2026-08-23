@@ -369,7 +369,7 @@ function MarkdownText({
 			<AnimatedMarkdown
 				content={text}
 				sep="diff"
-				animation={streaming ? "blurIn" : null}
+				animation={streaming ? "slideUp" : null}
 				animationDuration="0.6s"
 				animationTimingFunction="ease-in-out"
 			/>
