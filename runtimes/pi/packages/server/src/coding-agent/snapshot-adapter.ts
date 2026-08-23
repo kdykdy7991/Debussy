@@ -148,7 +148,13 @@ function assistantItemFromMessage(message: AssistantMessage, timestamp: number):
 function toolItemFromMessage(message: ToolResultMessage, timestamp: number): ToolTranscriptItem {
 	const content = message.content.map(toToolContent);
 	const base = {
-		id: `tool-${message.timestamp}`,
+		// Use toolCallId for the React key (it's guaranteed unique per LLM tool
+		// call across the whole conversation). Previously we keyed on
+		// `message.timestamp`, which collides whenever two tool calls land in
+		// the same wall-clock millisecond — common when the model fires off
+		// multiple tools in one turn. Mirrors the live-streaming path in
+		// `progress-adapter.ts:199,212,224`.
+		id: `tool-${message.toolCallId}`,
 		role: "tool" as const,
 		toolCallId: message.toolCallId,
 		toolName: message.toolName,
