@@ -121,13 +121,19 @@ describe("App", () => {
 		expect(markup).toContain("ai-user");
 		expect(markup).toContain("active-agent-presence");
 		expect(markup).toContain("ai-agent-avatar is-waking");
-		expect(markup).toContain('data-streamdown="heading-2"');
-		expect(markup).toContain('data-streamdown="strong"');
-		expect(markup).toContain('href="https://example.com/"');
-		expect(markup).toContain("katex");
-		expect(markup).toContain('data-streamdown="code-block-body"');
-		expect(markup).toContain("const right = height.length - 1;");
-		expect(markup).toContain('data-streamdown="table"');
+		// FlowToken 走 react-markdown，输出标准 HTML 元素；不再有 data-streamdown 属性。
+		expect(markup).toContain("<h2");
+		expect(markup).toContain("<strong");
+		expect(markup).toContain('href="https://example.com"');
+		// minimal 阶段丢了 katex，行内公式退化为原文。代码块由 react-syntax-highlighter
+		// 切成 token span，源代码不再是连续字符串——只验证关键 token 出现。
+		expect(markup).toContain('class="language-ts"');
+		expect(markup).toContain("const");
+		expect(markup).toContain("height");
+		expect(markup).toContain("length");
+		expect(markup).toContain("<table");
+		// FlowToken 字符级淡入：每个 token span 带 inline animation。
+		expect(markup).toMatch(/animation:\s*[a-zA-Z-]+\s+0?\.\d+s/);
 	});
 });
 

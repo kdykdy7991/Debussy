@@ -17,13 +17,9 @@
 		"@earendil-works/pi-client": "^0.83.0",
 		"@earendil-works/pi-protocol": "^0.83.0",
 		"@skdy/avatar": "file:../../../../packages/avatar",
-		"@streamdown/cjk": "1.0.3",
-		"@streamdown/code": "1.1.1",
-		"@streamdown/math": "1.0.2",
-		"@streamdown/mermaid": "1.0.2",
+		"flowtoken": "1.0.40",
 		"react": "19.2.8",
-		"react-dom": "19.2.8",
-		"streamdown": "2.5.0"
+		"react-dom": "19.2.8"
 	},
 	"devDependencies": {
 		"@types/react": "19.2.18",

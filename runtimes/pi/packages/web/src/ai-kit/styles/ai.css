@@ -417,7 +417,6 @@
 .ai-markdown ol,
 .ai-markdown blockquote,
 .ai-markdown pre,
-.ai-markdown [data-streamdown="table-wrapper"],
 .ai-markdown .katex-display {
 	margin: 0 0 var(--ai-prose-gap);
 }
@@ -487,105 +486,28 @@
 	font-size: inherit;
 }
 
-/* Streamdown 的 Shiki 输出使用独立 body 容器；保留源代码的每一个换行与缩进。 */
-.ai-markdown [data-streamdown="code-block"],
-.ai-markdown [data-streamdown="code-block-body"],
-.ai-markdown [data-streamdown="code-block-body"] pre,
-.ai-markdown [data-streamdown="code-block-body"] code {
-	max-width: 100%;
-	overflow-x: auto;
-	white-space: pre !important;
-	word-break: normal !important;
-	overflow-wrap: normal !important;
-}
-
-/* Shiki 将每一行包进 code 的直接 span；没有 Tailwind 时必须显式逐行块化。 */
-.ai-markdown [data-streamdown="code-block-body"] pre > code > span {
-	display: block;
-}
-
-/* 语言名成为代码块顶栏的一部分，避免在正文里形成孤立标签。 */
-.ai-markdown [data-streamdown="code-block"] {
+/* 代码块：FlowToken 用 react-syntax-highlighter 输出 <pre class="hljs">…</pre>；
+   行内 code 还是普通 <code>。两者分别走 prose 容器和 prose code 样式。 */
+.ai-markdown pre {
 	margin: 0 0 var(--ai-prose-gap);
-	overflow: hidden;
+	padding: var(--ai-space-lg);
 	border: 1px solid var(--ai-border-soft);
 	border-radius: var(--ai-radius-sm);
 	background: var(--ai-bg-inset);
+	color: var(--ai-text-primary);
+	font-family: var(--ai-font-mono);
+	font-size: var(--ai-text-code);
+	line-height: 1.65;
+	overflow-x: auto;
 }
 
-.ai-markdown [data-streamdown="code-block-header"] {
-	display: flex;
-	align-items: center;
-	min-height: 34px;
-	padding: 0 var(--ai-space-lg);
-	border-bottom: 1px solid var(--ai-border-soft);
-	color: var(--ai-text-muted);
-	font-family: var(--ai-font-sans);
-	font-size: var(--ai-text-meta);
-	font-weight: var(--ai-weight-medium);
-	letter-spacing: 0;
-}
-
-.ai-markdown [data-streamdown="code-block-body"] {
-	margin: 0;
-	border: 0;
+.ai-markdown pre code {
+	padding: 0;
 	border-radius: 0;
 	background: transparent;
-}
-
-/* Shiki 输出的 token 色值放在 CSS 变量中；本项目未编译它的 Tailwind 工具类，故在此接管。 */
-.ai-markdown [data-streamdown="code-block-body"] pre {
-	margin: 0;
-	padding: var(--ai-space-lg);
-	border: 0;
-	border-radius: 0;
-	background: var(--sdm-bg, var(--ai-bg-inset));
-	color: var(--sdm-fg, var(--ai-text-primary));
-}
-
-.ai-markdown [data-streamdown="code-block-body"] pre code span[style*="--sdm-c"] {
-	color: var(--sdm-c) !important;
-	background-color: var(--sdm-tbg, transparent);
-}
-
-.ai-markdown [data-streamdown="code-block-actions"] {
-	display: flex;
-	justify-content: flex-end;
-	gap: 4px;
-	margin-bottom: calc(var(--ai-space-lg) * -1);
-	padding: var(--ai-space-xs);
-	position: relative;
-	z-index: 1;
-}
-
-.ai-markdown [data-streamdown="code-block-actions"] button,
-.ai-markdown [data-streamdown="table-wrapper"] button,
-.ai-markdown [data-streamdown="mermaid-block"] button {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	border: 1px solid var(--ai-border-soft);
-	border-radius: var(--ai-radius-xs);
-	background: var(--ai-bg-surface);
-	color: var(--ai-text-secondary);
-	cursor: pointer;
-}
-
-.ai-markdown [data-streamdown="code-block-actions"] button:hover,
-.ai-markdown [data-streamdown="table-wrapper"] button:hover,
-.ai-markdown [data-streamdown="mermaid-block"] button:hover {
-	background: var(--ai-bg-page);
-	color: var(--ai-text-primary);
-}
-
-.ai-markdown [data-streamdown="table-wrapper"] {
-	max-width: 100%;
-	overflow-x: auto;
-	border: 1px solid var(--ai-border-soft);
-	border-radius: var(--ai-radius-sm);
+	color: inherit;
+	font-size: inherit;
+	white-space: pre;
 }
 
 .ai-markdown table {
@@ -621,25 +543,6 @@
 	margin: var(--ai-space-lg) 0;
 	border: 1px solid var(--ai-border-soft);
 	border-radius: var(--ai-radius-sm);
-}
-
-.ai-markdown .katex-display {
-	overflow-x: auto;
-	padding: var(--ai-space-sm) 0;
-}
-
-.ai-markdown [data-streamdown="mermaid-block"] {
-	margin: 0 0 var(--ai-prose-gap);
-	padding: var(--ai-space-sm);
-	border: 1px solid var(--ai-border-soft);
-	border-radius: var(--ai-radius-sm);
-	background: var(--ai-bg-inset);
-}
-
-.ai-markdown [data-streamdown="mermaid"] {
-	overflow: auto;
-	padding: var(--ai-space-lg);
-	background: var(--ai-bg-surface);
 }
 
 .ai-prose code {

@@ -35,26 +35,6 @@
 	animation: ai-enter-soft-y var(--ai-motion-enter) var(--ai-ease-standard) both;
 }
 
-/* ---- streaming-reveal：仅 Streamdown 新插入的 buffered chunk 柔和显影 ---- */
-@keyframes sd-softReveal {
-	from {
-		opacity: 0;
-		filter: blur(1.75px);
-		transform: translateY(1px);
-	}
-	to {
-		opacity: 1;
-		filter: blur(0);
-		transform: translateY(0);
-	}
-}
-
-.ai-markdown [data-sd-animate] {
-	display: inline-block;
-	animation: var(--sd-animation, sd-softReveal) var(--sd-duration, 220ms) var(--sd-easing, ease-out) both;
-	animation-delay: var(--sd-delay, 0ms);
-}
-
 /* ---- status-running：breathing pulse（仅限当前 running 的 node/状态点） ---- */
 @keyframes ai-breathe {
 	0%,
@@ -130,7 +110,6 @@
 @media (prefers-reduced-motion: reduce) {
 	.ai-enter-soft-x,
 	.ai-enter-soft-y,
-	.ai-markdown [data-sd-animate],
 	.ai-status-running,
 	.ai-cursor,
 	.ai-chart-fill,
