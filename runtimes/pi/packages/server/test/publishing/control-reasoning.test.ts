@@ -293,6 +293,39 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 		const meta = (mediums as { metadata: { before: string | null; after: string | null } }).metadata;
 		expect(meta).toMatchObject({ before: null, after: "medium" });
 	});
+
+	test("a new published version does not change an existing conversation's frozen params", async () => {
+		const appScope = { tenantId, publishedAppId: appId };
+		const ownerScope = { ...appScope, principalId };
+		const before = await repos.conversations.get(ownerScope, conversationId);
+		if (before === undefined) throw new Error("conversation missing");
+		const pinnedV1 = before.publishedAppVersionId;
+		const v1 = await repos.publishedAppVersions.get(appScope, pinnedV1);
+		if (v1 === undefined) throw new Error("version 1 missing");
+		// Publish version 2 for the same app with a different model + params.
+		const v2Id = newPublishedAppVersionId();
+		const now = new Date();
+		await repos.publishedAppVersions.insert({
+			publishedAppVersionId: v2Id,
+			tenantId,
+			publishedAppId: appId,
+			versionNumber: 2,
+			sourceAgentRevision: 1,
+			snapshot: { prompt: "hi" },
+			runtimeSpec: buildSpec(v2Id, "generic-reasoner"),
+			runtimeSpecHash: "h".repeat(64),
+			createdAt: now,
+			status: "ready",
+			validationErrors: [],
+		});
+		const after = await repos.conversations.get(ownerScope, conversationId);
+		// 会话仍固定旧版本，绝不因新发布而跟随最新。
+		expect(after?.publishedAppVersionId).toBe(pinnedV1);
+		const v1Again = await repos.publishedAppVersions.get(appScope, pinnedV1);
+		expect(v1Again?.versionNumber).toBe(1);
+		expect(v1Again?.runtimeSpecHash).toBe(v1.runtimeSpecHash);
+		expect(v1Again?.runtimeSpec).toEqual(v1.runtimeSpec);
+	});
 });
 
 function httpCall(
