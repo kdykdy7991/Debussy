@@ -6,7 +6,11 @@
  *
  * `fixtures/index.ts` 是开发期 mock 层，绝不进入生产 bundle（见 fixtures/adapter.ts）。
  */
-import { AGENT_V2_METRICS_ERRORS, type AgentV2MetricsErrorCode } from "@earendil-works/pi-protocol";
+import {
+	AGENT_V2_METRICS_ERROR_CODES,
+	AGENT_V2_METRICS_ERRORS,
+	type AgentV2MetricsErrorCode,
+} from "@earendil-works/pi-protocol";
 
 /**
  * 通用数据状态：与 `conversation-detail.tsx` 里的 `DetailState` 同型，
@@ -45,12 +49,11 @@ export function lookupErrorMetadata(code: string): { retryable: boolean; httpSta
 }
 
 /**
- * 协议错误码类型守卫。未知 code 在调用方应统一映射为 `UNKNOWN_ERROR`。
+ * 协议错误码类型守卫。直接基于协议常量 `AGENT_V2_METRICS_ERROR_CODES` 判定，
+ * 不硬编码字符串。未知 code 在调用方应统一映射为 `UNKNOWN_ERROR`。
  */
 export function isKnownErrorCode(code: string): code is AgentV2MetricsErrorCode {
-	return (
-		code === "METRICS_UNAVAILABLE" || code === "CONTEXT_SNAPSHOT_UNAVAILABLE" || code === "INVALID_METRICS_FILTER"
-	);
+	return (AGENT_V2_METRICS_ERROR_CODES as readonly string[]).includes(code);
 }
 
 /**
@@ -86,11 +89,16 @@ function readCode(err: unknown): KnownErrorCode {
 }
 
 function readRetryable(err: unknown, code: KnownErrorCode): boolean {
+	// 协议已知码 → 以 `AGENT_V2_METRICS_ERRORS` 为权威，**不**允许传入错误的
+	// `retryable` 覆盖（防止任意上游把已知协议码标记为"不重试"导致 UI 行为漂移）。
+	// 未知码才退回到传入值兜底（HTTP 状态推断留给 API 层做）。
+	if (isKnownErrorCode(code)) {
+		return AGENT_V2_METRICS_ERRORS[code].retryable;
+	}
 	if (err && typeof err === "object" && "retryable" in err) {
 		const raw = (err as { retryable?: unknown }).retryable;
 		if (typeof raw === "boolean") return raw;
 	}
-	// 协议权威：直接查表，避免重复硬编码。
 	return lookupErrorMetadata(code).retryable;
 }
 

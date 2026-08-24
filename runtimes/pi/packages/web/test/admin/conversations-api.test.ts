@@ -296,5 +296,82 @@ describe("ConversationsApi", () => {
 			parsed1 = new URL(url1);
 			expect(parsed1.searchParams.get("afterSequence")).toBe("50");
 		});
+
+		/**
+		 * retryable 一致性：handleApiError 与抛出的 ConversationsApiError 必须
+		 * 看到同一个 retryable 值；这是 R3 修订项（之前 handleApiError 固定 false，
+		 * ConversationsApiError 已按协议计算，导致 UI/认证控制器两套语义）。
+		 */
+		it("passes the same retryable to handleApiError and the thrown ConversationsApiError", async () => {
+			const handleApiError = vi.fn();
+			controller.handleApiError = handleApiError;
+
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							error: { code: "METRICS_UNAVAILABLE", message: "offline", requestId: "req_retry" },
+						}),
+						{ status: 503 },
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			let thrown: unknown;
+			try {
+				await api.getMetrics("conv_retry", { conversationId: "conv_retry" });
+			} catch (err) {
+				thrown = err;
+			}
+			expect(thrown).toBeInstanceOf(Error);
+			const thrownErr = thrown as { readonly retryable: boolean };
+			expect(thrownErr.retryable).toBe(true);
+			expect(handleApiError).toHaveBeenCalledTimes(1);
+			const callArg = handleApiError.mock.calls[0]?.[0] as { readonly retryable: boolean };
+			expect(callArg.retryable).toBe(thrownErr.retryable);
+		});
+
+		/**
+		 * AbortSignal 透传：metrics/context 第三个参数 signal 必须真正进入 fetch 的
+		 * RequestInit.signal——这是过期请求保护（StaleResponseGuard）链路上的
+		 * 关键一环。
+		 */
+		it("forwards AbortSignal to fetch RequestInit.signal", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_sig",
+								stats: {
+									available: false,
+									turnCount: 0,
+									sampleCount: 0,
+									ttftMs: { mean: null, count: 0, p50: null, p95: null },
+									generationMs: { mean: null, count: 0, p50: null, p95: null },
+									totalLatencyMs: { mean: null, count: 0, p50: null, p95: null },
+									outputTokensPerSecond: { mean: null, count: 0, p50: null, p95: null },
+								},
+								items: [],
+								nextAfterSequence: null,
+							},
+							requestId: "req_sig",
+						}),
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			const controller2 = new AbortController();
+			await api.getMetrics("conv_sig", { conversationId: "conv_sig" }, controller2.signal);
+
+			const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(init.signal).toBe(controller2.signal);
+		});
 	});
 });

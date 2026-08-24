@@ -119,16 +119,22 @@ export class ConversationsApi {
 		const parsed: unknown = text === "" ? null : safeParse(text);
 		if (!response.ok) {
 			const errInfo = (parsed as ErrorEnvelope | null)?.error ?? null;
+			const code = errInfo?.code ?? "HTTP_ERROR";
 			const message = errInfo?.message ?? `HTTP ${response.status}`;
+			const requestId = errInfo?.requestId ?? null;
+			// 重试性按协议表 + HTTP 状态统一计算一次，handleApiError 和抛出的
+			// ConversationsApiError 必须**拿到同一个值**，否则 UI 与认证控制器会
+			// 出现两套重试语义。
+			const retryable = resolveRetryable(code, response.status);
 			this.auth.handleApiError({
 				name: "ConversationsApiError",
-				code: errInfo?.code ?? "HTTP_ERROR",
+				code,
 				message,
-				requestId: errInfo?.requestId ?? "",
-				retryable: false,
+				requestId: requestId ?? "",
+				retryable,
 				httpStatus: response.status,
 			});
-			throw new ConversationsApiError(message, response.status, errInfo?.requestId ?? null, errInfo?.code ?? null);
+			throw new ConversationsApiError(message, response.status, requestId, code, retryable);
 		}
 		if (parsed === null) {
 			throw new ConversationsApiError("Empty response", response.status, null, "EMPTY_RESPONSE");
@@ -156,7 +162,7 @@ export class ConversationsApi {
 		return this.request<ConversationAdminListResponse>(`/api/control/v1/conversations?${params.toString()}`);
 	}
 
-	async downloadExport(conversationId: string, mode: ConversationExportMode): Promise<Blob> {
+	async downloadExport(conversationId: string, mode: ConversationExportMode, signal?: AbortSignal): Promise<Blob> {
 		const token = this.auth.getToken();
 		if (token === null || token === "") {
 			throw new ConversationsApiError("Admin token is not set", 401, null, "UNAUTHORIZED");
@@ -164,25 +170,29 @@ export class ConversationsApi {
 		const params = new URLSearchParams({ mode });
 		const response = await this.fetchImpl(
 			`${this.baseUrl}/api/control/v1/conversations/${encodeURIComponent(conversationId)}/export?${params.toString()}`,
-			{ headers: { Authorization: `Bearer ${token}`, Accept: "application/jsonl+gzip" } },
+			{
+				headers: { Authorization: `Bearer ${token}`, Accept: "application/jsonl+gzip" },
+				...(signal !== undefined ? { signal } : {}),
+			},
 		);
 		if (!response.ok) {
 			const parsed = safeParse(await response.text()) as ErrorEnvelope | null;
 			const error = parsed?.error;
+			const code = error?.code ?? "HTTP_ERROR";
+			const message = error?.message ?? `HTTP ${response.status}`;
+			const requestId = error?.requestId ?? null;
+			// 与 `request()` 同一规则：retryable 仅计算一次，handleApiError 与
+			// 抛出的 ConversationsApiError 看到同一个值。
+			const retryable = resolveRetryable(code, response.status);
 			this.auth.handleApiError({
 				name: "ConversationsApiError",
-				code: error?.code ?? "HTTP_ERROR",
-				message: error?.message ?? `HTTP ${response.status}`,
-				requestId: error?.requestId ?? "",
-				retryable: false,
+				code,
+				message,
+				requestId: requestId ?? "",
+				retryable,
 				httpStatus: response.status,
 			});
-			throw new ConversationsApiError(
-				error?.message ?? `HTTP ${response.status}`,
-				response.status,
-				error?.requestId ?? null,
-				error?.code ?? null,
-			);
+			throw new ConversationsApiError(message, response.status, requestId, code, retryable);
 		}
 		return response.blob();
 	}
