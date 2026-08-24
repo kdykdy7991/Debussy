@@ -17,6 +17,7 @@ describe("session event envelope (WB-007)", () => {
 		expect(SESSION_EVENT_TYPES).toContain("assistant/message");
 		expect(SESSION_EVENT_TYPES).toContain("tool/call");
 		expect(SESSION_EVENT_TYPES).toContain("tool/error");
+		expect(SESSION_EVENT_TYPES).toContain("turn/failed");
 		expect(SESSION_EVENT_TYPES).toContain("turn/interrupted");
 		expect(SESSION_EVENT_TYPES).toContain("conversation/rollover");
 	});

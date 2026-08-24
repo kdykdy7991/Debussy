@@ -7,6 +7,7 @@ import {
 	deriveTurnMetrics,
 	type TurnMetricsDerivationInput,
 	turnOutcomeFromTerminalEvent,
+	validateTurnMonotonicOrder,
 } from "../src/index.ts";
 
 function baseDerivation(overrides: Partial<TurnMetricsDerivationInput> = {}): TurnMetricsDerivationInput {
@@ -85,12 +86,33 @@ describe("deriveTurnMetrics (V2 §4.1 null semantics, monotonic-based)", () => {
 		expect(m.outputTokensPerSecond).toBeNull();
 	});
 
-	test("first output that predates provider start is ignored", () => {
-		const m = deriveTurnMetrics(
-			baseDerivation({ monotonic: monotonic({ providerStartDelayMs: 600, firstOutputDelayMs: 500 }) }),
-		);
-		expect(m.ttftMs).toBeNull();
-		expect(m.generationMs).toBeNull();
+	test("first output that predates provider start is rejected, not ignored", () => {
+		expect(() =>
+			deriveTurnMetrics(
+				baseDerivation({ monotonic: monotonic({ providerStartDelayMs: 600, firstOutputDelayMs: 500 }) }),
+			),
+		).toThrow(RangeError);
+	});
+
+	test("monotonic out-of-order input throws RangeError (no silent negative values)", () => {
+		expect(() =>
+			deriveTurnMetrics(
+				baseDerivation({ monotonic: monotonic({ firstOutputDelayMs: 4000, totalElapsedMs: 3000 }) }),
+			),
+		).toThrow(RangeError);
+		expect(() =>
+			deriveTurnMetrics(
+				baseDerivation({ monotonic: monotonic({ providerStartDelayMs: 500, totalElapsedMs: 300 }) }),
+			),
+		).toThrow(RangeError);
+	});
+
+	test("validateTurnMonotonicOrder flags each ordering violation", () => {
+		expect(validateTurnMonotonicOrder(monotonic())).toEqual([]);
+		expect(validateTurnMonotonicOrder(monotonic({ firstOutputDelayMs: 4000, totalElapsedMs: 3000 }))).toHaveLength(1);
+		// providerStart > totalElapsed, and firstOutput (650) also exceeds totalElapsed -> 2 errors.
+		expect(validateTurnMonotonicOrder(monotonic({ providerStartDelayMs: 500, totalElapsedMs: 300 }))).toHaveLength(2);
+		expect(validateTurnMonotonicOrder(monotonic({ providerStartDelayMs: -1 }))).not.toEqual([]);
 	});
 
 	test("zero output tokens but present first output -> tokens/s null", () => {
@@ -132,7 +154,10 @@ describe("computeConversationMetricsStats (V2 §4.1 success-valued rows only)", 
 	test("failed/cancelled rows are excluded from every field mean, including totalLatencyMs", () => {
 		const ok = deriveTurnMetrics(baseDerivation({ monotonic: monotonic({ totalElapsedMs: 2000 }) }));
 		const cancelled = deriveTurnMetrics(
-			baseDerivation({ outcome: "cancelled", monotonic: monotonic({ totalElapsedMs: 40 }) }),
+			baseDerivation({
+				outcome: "cancelled",
+				monotonic: monotonic({ providerStartDelayMs: 10, firstOutputDelayMs: null, totalElapsedMs: 40 }),
+			}),
 		);
 		const s = computeConversationMetricsStats([row({ metrics: ok }), row({ metrics: cancelled })]);
 		expect(s.totalLatencyMs.count).toBe(1);
