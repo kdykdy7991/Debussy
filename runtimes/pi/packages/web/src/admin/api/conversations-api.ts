@@ -12,7 +12,9 @@
  */
 import {
 	AGENT_V2_METRICS_ERRORS,
+	AGENT_V2_REASONING_ERRORS,
 	type AgentV2MetricsErrorCode,
+	type AgentV2ReasoningErrorCode,
 	type ConversationAdminEventListResponse,
 	type ConversationAdminListResponse,
 	type ConversationAdminSummaryListResponse,
@@ -33,19 +35,27 @@ export interface ConversationsApiOptions {
 
 /**
  * 服务端 `code` 是已知协议码时返回其协议元数据；否则按 HTTP 状态推断重试性。
- * 已知协议错误码 → `{ retryable: AGENT_V2_METRICS_ERRORS[code].retryable, httpStatus }`。
+ *
+ * 已知协议错误码（metrics + reasoning 联合）：
+ * - `AGENT_V2_METRICS_ERRORS[code].retryable` — metrics 错误码；
+ * - `AGENT_V2_REASONING_ERRORS[code].retryable` — reasoning 错误码。
+ *
  * 未知码：
  * - 401/403 → 不可重试（凭证/权限错误，再试一次也不会变）；
  * - 408/425/429/5xx → 可重试；
  * - 其它 4xx → 不可重试。
  *
- * M1 reasoning 错误码（`REASONING_INVALID_EFFORT` / `REASONING_NOT_CONFIGURABLE`）
- * 同样不可重试；它们各自有 HTTP 状态 422 / 403，但 UI 不应允许用户对验证失败/策略禁止
- * 反复点"重试"。这里不引入额外的表——403/422 在 HTTP 兜底里都是不可重试，与协议语义一致。
+ * 这里**不**只依赖 HTTP 兜底：reasoning 错误码 `REASONING_INVALID_EFFORT`
+ * (422) / `REASONING_NOT_CONFIGURABLE` (403) 当前恰好都不可重试，但**协议表是
+ * 权威**——如果未来某个码被改成可重试，前端会跟随；HTTP 兜底只对真正未知的
+ * 码生效。
  */
 function resolveRetryable(code: string | null, httpStatus: number): boolean {
 	if (code !== null && code in AGENT_V2_METRICS_ERRORS) {
 		return AGENT_V2_METRICS_ERRORS[code as AgentV2MetricsErrorCode].retryable;
+	}
+	if (code !== null && code in AGENT_V2_REASONING_ERRORS) {
+		return AGENT_V2_REASONING_ERRORS[code as AgentV2ReasoningErrorCode].retryable;
 	}
 	if (httpStatus === 408 || httpStatus === 425 || httpStatus === 429) return true;
 	if (httpStatus >= 500 && httpStatus <= 599) return true;
@@ -348,11 +358,18 @@ export class ConversationsApi {
 	 * Revision 默认。422 `REASONING_INVALID_EFFORT` 表示档位不在模型能力目录
 	 * 声明的档位内；403 `REASONING_NOT_CONFIGURABLE` 表示策略禁止调整。
 	 * 两者都不可重试，UI 应展示错误码 + 当前 draft，不进入 loading 态。
+	 *
+	 * 第三个参数 `signal` 用于过期保存保护（tab 切换 / 卸载 / 重新打开表单
+	 * 时取消旧保存，避免旧请求覆盖新会话状态）。
 	 */
-	putReasoning(conversationId: string, body: ReasoningUpdateRequest): Promise<ConversationReasoningState> {
+	putReasoning(
+		conversationId: string,
+		body: ReasoningUpdateRequest,
+		signal?: AbortSignal,
+	): Promise<ConversationReasoningState> {
 		return this.requestWithBody<ConversationReasoningState>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
-			{ method: "PUT", body },
+			{ method: "PUT", body, ...(signal !== undefined ? { signal } : {}) },
 		);
 	}
 }

@@ -19,33 +19,53 @@
  * The module is framework-agnostic and depends only on `DOMWindow`; tests inject
  * a fake `window` so it runs in Node.
  *
- * # SECURITY NOTES — Launch Token boundary (M1 R5)
+ * # SECURITY NOTES — Launch Token boundary (M1 R7)
  *
  * The Launch Token is the **only secret** that crosses the SDK boundary
  * (signed-user mode). The following invariants are non-negotiable:
  *
+ * - **OUTBOUND (SDK's responsibility).** Every `iframe.contentWindow.postMessage`
+ *   call goes through one of `postInit` / `logout` / `requestResize` (and the
+ *   future `focus`). The token only ever appears in `init.payload.launchToken`,
+ *   **once** — `postInit` snapshots it then immediately sets
+ *   `pendingLaunchToken = undefined` before invoking `postMessage`, so even a
+ *   hostile `contentWindow.postMessage` implementation cannot observe the
+ *   variable after this point. The regression test
+ *   `sdk-token-boundary.test.ts: outbound: no postMessage after init carries
+ *   launchToken` asserts this for every outbound message type.
+ *
+ * - **INBOUND (iframe producer's responsibility).** `decodeEmbedIframeMessage`
+ *   validates that `error.payload.message` is a string but does **not** scrub
+ *   it. The SDK forwards iframe errors verbatim. The iframe producer MUST NOT
+ *   embed `launchToken` / `externalUserId` / other secrets in `error.message`
+ *   (spec 7.2). The SDK cannot enforce this — the boundary is the iframe
+ *   producer, not the host SDK. This is asserted by the `passthrough` test
+ *   in `sdk-token-boundary.test.ts`.
+ *
+ * - **Memory release.** `create()` immediately destructures `options` into
+ *   closure-local consts; the **only** variable holding the token is
+ *   `pendingLaunchToken` (a `let`). All release paths zero it out:
+ *   - successful `init` postMessage (snapshot + zero, then call);
+ *   - `mount()` early-return (`disposed` / `iframe !== null`);
+ *   - `mount()` `appendChild` throws → token cleared before rethrow;
+ *   - `logout()` → zeroed after postMessage;
+ *   - `destroy()` → zeroed after listener cleanup.
+ *
  * - **NOT in URL.** `iframe.src` only ever contains `${baseUrl}/embed/${appId}`
- *   — never the token. Constructed by `buildIframe()` (this file).
+ *   — never the token. Constructed by `buildIframe()` (this file) using
+ *   closure-local `baseUrl` / `appId`.
  * - **NOT in storage.** Never written to `localStorage` / `sessionStorage` /
  *   `document.cookie` / IndexedDB. The SDK is framework-agnostic and has no
  *   storage layer.
  * - **NOT in DOM.** Never assigned to any DOM attribute. `setAttribute` only
  *   receives `"title"` for a11y.
- * - **NOT in logs / errors.** `error` event payload is
- *   `{ code: string; message: string }` from the protocol envelope
- *   (`embed/post-message.ts` `error` type) — the protocol explicitly forbids
- *   embedding the token in error events. If a future code path adds payload
- *   fields, audit them against this list before merging.
- * - **Released from memory on every code path**:
- *   - successful `init` postMessage → `pendingLaunchToken = undefined`
- *     (see `postInit()`);
- *   - explicit `logout()` → `pendingLaunchToken = undefined`;
- *   - `destroy()` → `pendingLaunchToken = undefined`.
  *
- * The token is held in a single local variable (`pendingLaunchToken`) until
- * the next `init` round-trip, then dropped. If you add a new code path that
- * reads or copies the token, **first** confirm it terminates in a
- * `pendingLaunchToken = undefined` assignment.
+ * # 代码级回归约束
+ *
+ * `create()` 顶部的 destructure **必须**保持完整——后续闭包不得引用
+ * `options.*`（lint/grep 应能验证）。`pendingLaunchToken` 是**唯一**持有
+ * token 的变量；新增任何读/写 token 的代码路径前，必须确认它以
+ * `pendingLaunchToken = undefined` 收尾。
  */
 import {
 	decodeEmbedIframeMessage,
@@ -131,6 +151,23 @@ export interface EmbedInstance {
 /**
  * Create an embed instance. Throws on duplicate create on the same element or an
  * invalid `appId` / `baseUrl`.
+ *
+ * # 内存释放（launchToken）
+ *
+ * `options.launchToken` 是唯一的 secret。`create()` 入口**立即**把它从
+ * `options` 拷出到 `pendingLaunchToken` 局部变量，并保证后续闭包**只引用
+ * 局部变量**（不再持有 `options`）。
+ *
+ * 所有释放路径：
+ *   - `postInit()` 发送 init postMessage 后 → `pendingLaunchToken = undefined`
+ *     （成功路径）；
+ *   - `postInit()` 提前 return（`iframe === null || disposed`）→ 不读 token；
+ *   - `logout()` → `pendingLaunchToken = undefined`；
+ *   - `destroy()` → `pendingLaunchToken = undefined`；
+ *   - `mount()` 抛错（`appendChild` 失败）→ `pendingLaunchToken = undefined`。
+ *
+ * 代码级回归约束：禁止任何闭包引用 `options.*`；`options` 在函数顶部的校验
+ * 完成后即可视为不可达——grep / lint 应能验证（详见 SECURITY NOTES）。
  */
 export function create(options: CreateEmbedOptions): EmbedInstance {
 	if (!/^pub_[0-9a-fA-F-]{36}$/.test(options.appId)) {
@@ -139,17 +176,42 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 	if (options.baseUrl === "" || !/^https:\/\//.test(options.baseUrl)) {
 		throw new Error("baseUrl must be an https URL");
 	}
-	const env = options.env ?? defaultEnv();
-	const container = options.container ?? null;
-	const width = options.initWidth ?? 400;
-	const height = options.initHeight ?? 600;
-	const baseOrigin = originOf(options.baseUrl);
-	const allowedOrigins = new Set([baseOrigin, ...(options.extraOrigins ?? [])]);
+
+	// === Phase 1: 一次性 destructure，所有非敏感字段立即拷贝进 closure 局部 ===
+	// 后续闭包**只能**引用这里的局部变量；不得再访问 `options.*`。
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	const {
+		// launchToken 是唯一 secret；单独持有。
+		launchToken: optionsLaunchToken,
+		// container 在 mount() 时仍要用；env 同样。
+		container: optionsContainer,
+		env: optionsEnv,
+		// 以下字段在 phase 2 的 buildIframe 中使用，提取到局部闭包避免越界。
+		baseUrl: optionsBaseUrl,
+		appId: optionsAppId,
+		initWidth: optionsInitWidth,
+		initHeight: optionsInitHeight,
+		extraOrigins: optionsExtraOrigins,
+	} = options;
+	// `options` 此后在本函数内**禁止**任何代码路径再读取——通过本注释 +
+	// grep 拦截；闭包只能引用下面的局部 const。
+
+	const env = optionsEnv ?? defaultEnv();
+	const container = optionsContainer ?? null;
+	const width = optionsInitWidth ?? 400;
+	const height = optionsInitHeight ?? 600;
+	const baseUrl = optionsBaseUrl;
+	const appId = optionsAppId;
+	const baseOrigin = originOf(baseUrl);
+	const allowedOrigins = new Set([baseOrigin, ...(optionsExtraOrigins ?? [])]);
 
 	let iframe: EmbedIframe | null = null;
 	let disposed = false;
-	/** Launch Token is folded into a transient init message then dropped. */
-	let pendingLaunchToken: string | undefined = options.launchToken;
+	/**
+	 * Launch Token 单独持有。`let` 而非 `const` 是因为发送后必须把它清空；
+	 * 任何路径都不再保留对原始 `options.launchToken` 的引用。
+	 */
+	let pendingLaunchToken: string | undefined = optionsLaunchToken;
 
 	const handlers: Partial<Record<EmbedHostEventName, Array<(payload: never) => void>>> = {};
 
@@ -185,30 +247,41 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 	};
 
 	const postInit = (): void => {
-		if (iframe === null || disposed) return;
+		if (iframe === null || disposed) {
+			// dispose 或 mount 失败 → token 必须清空，避免泄漏。
+			pendingLaunchToken = undefined;
+			return;
+		}
+		const tokenSnapshot = pendingLaunchToken;
+		// **释放时机**：postMessage 调用之前就把 token 视为已消费，立即清空。
+		// 之后即便有人拦截 iframe.contentWindow.postMessage，也读不到 token。
+		pendingLaunchToken = undefined;
 		const message: EmbedPostMessageEnvelope =
-			pendingLaunchToken !== undefined
+			tokenSnapshot !== undefined
 				? {
 						protocol: POST_MESSAGE_PROTOCOL,
 						version: POST_MESSAGE_VERSION,
 						type: "init",
-						payload: { launchToken: pendingLaunchToken },
+						payload: { launchToken: tokenSnapshot },
 					}
 				: { protocol: POST_MESSAGE_PROTOCOL, version: POST_MESSAGE_VERSION, type: "init" };
-		// Release the token from SDK memory immediately after the exchange.
-		pendingLaunchToken = undefined;
 		iframe.contentWindow.postMessage(message, baseOrigin);
 	};
 
 	const buildIframe = (): EmbedIframe => {
 		const el = env.createInternal(width, height);
-		el.src = `${options.baseUrl.replace(/\/+$/, "")}/embed/${options.appId}`;
+		// src 只含 baseUrl + /embed/<appId>——使用闭包局部 `baseUrl`/`appId`，
+		// 永不拼接 launchToken。
+		el.src = `${baseUrl.replace(/\/+$/, "")}/embed/${appId}`;
 		el.setAttribute("title", "Embedded assistant");
 		return el;
 	};
 
 	const mount = (): void => {
-		if (disposed) return;
+		if (disposed) {
+			pendingLaunchToken = undefined;
+			return;
+		}
 		if (iframe !== null) return; // already mounted
 		const built = buildIframe();
 		// Append FIRST: if `container.appendChild` throws (detached document, CSP,
@@ -216,10 +289,16 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 		// we must not register the message listener — otherwise the SDK would
 		// leak a handler that never fires. This is the canonical
 		// "register-after-commit" lifecycle pattern.
-		if (container !== null) {
-			container.appendChild(built as unknown as Node);
-		} else {
-			document.body.appendChild(built as unknown as Node);
+		try {
+			if (container !== null) {
+				container.appendChild(built as unknown as Node);
+			} else {
+				document.body.appendChild(built as unknown as Node);
+			}
+		} catch (err) {
+			// mount 抛错路径：iframe 没挂上去 → 不持有引用 → token 立即清空。
+			pendingLaunchToken = undefined;
+			throw err;
 		}
 		// Commit iframe reference + listener only after a successful mount.
 		iframe = built;
@@ -269,6 +348,7 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 				{ protocol: POST_MESSAGE_PROTOCOL, version: POST_MESSAGE_VERSION, type: "logout" },
 				baseOrigin,
 			);
+			// logout 后 token 一定释放——后续即便重新挂载也不再使用旧 token。
 			pendingLaunchToken = undefined;
 		},
 		destroy() {

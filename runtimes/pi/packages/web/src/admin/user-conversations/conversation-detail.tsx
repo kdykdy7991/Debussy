@@ -23,8 +23,10 @@ import type {
 	ConversationAdminSummaryListResponse,
 	ConversationExportMode,
 } from "@earendil-works/pi-protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgentApi } from "../api/agent-api.ts";
 import { ConversationsApi } from "../api/conversations-api.ts";
+import { LlmApi } from "../api/llm-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { ConfirmModal } from "../components/confirm-modal.tsx";
 import { navigate } from "../router.ts";
@@ -74,6 +76,10 @@ function statusLabel(status: string): string {
 export function AdminConversationDetail({ conversationId }: { conversationId: string }): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
+	// Reasoning tab 需要能力目录：取 Agent Definition（拿 modelId）+ LLM catalog（拿 parameterCapabilities）。
+	// AgentApi 与 LlmApi 共享 admin token；与 ConversationsApi 同一 `controller` 生命周期。
+	const agentApi = useMemo(() => new AgentApi({ auth: controller }), [controller]);
+	const llmApi = useMemo(() => new LlmApi({ auth: controller }), [controller]);
 	const [tab, setTab] = useState<Tab>("overview");
 	const [detail, setDetail] = useState<DetailState>({ kind: "loading" });
 	const [events, setEvents] = useState<EventState>({ kind: "idle" });
@@ -288,7 +294,15 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						/>
 					)}
 					{tab === "context" && <ContextTab conversationId={conversationId} api={api} />}
-					{tab === "reasoning" && <ReasoningTab conversationId={conversationId} api={api} />}
+					{tab === "reasoning" && (
+						<ReasoningTab
+							conversationId={conversationId}
+							agentId={detail.data.conversation.agentId.length === 0 ? null : detail.data.conversation.agentId}
+							api={api}
+							agentApi={agentApi}
+							llmApi={llmApi}
+						/>
+					)}
 				</>
 			)}
 		</section>

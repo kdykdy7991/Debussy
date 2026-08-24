@@ -63,6 +63,50 @@ function makeEnv(): { env: EmbedWindowEnv; iframe: FakeIframe; win: FakeWindow }
 	return { env, iframe, win };
 }
 
+/**
+ * M1 R7：构造一个**共享** fake window（host document），让多个 create()
+ * 共用同一消息总线。`makeEnv` 会生成独立 win——只用于"单实例"测试。
+ *
+ * 用法：
+ *   const { iframe: iframeA, win, env } = makeSharedEnv();
+ *   const { iframe: iframeB } = makeSharedEnv(win);
+ *   // env.window === win；createInternal 每次返回新 iframe 但都挂同一 win。
+ */
+function makeSharedEnv(sharedWin?: FakeWindow): {
+	env: EmbedWindowEnv;
+	iframe: FakeIframe;
+	win: FakeWindow;
+} {
+	const handlers = sharedWin?.handlers ?? [];
+	const removed = sharedWin?.removed ?? [];
+	const win: FakeWindow = sharedWin ?? {
+		handlers,
+		removed,
+		addEventListener: (_t, h) => void handlers.push(h),
+		removeEventListener: (_t, h) => {
+			const i = handlers.indexOf(h);
+			if (i >= 0) handlers.splice(i, 1);
+		},
+	};
+	const iframeRemoved: boolean[] = [];
+	const iframe: FakeIframe = {
+		src: "",
+		style: { width: "", height: "", border: "" },
+		contentWindow: { postMessage: () => {} },
+		// 推 iframe 自己的 `removed` 数组——多实例测试断言每个 iframe 各自的
+		// 移除历史；`win.removed` 仅做"window 层有没有 remove 调用过"的兜底。
+		remove: () => void iframeRemoved.push(true),
+		setAttribute: () => {},
+		posted: [],
+		removed: iframeRemoved,
+	};
+	const env: EmbedWindowEnv = {
+		window: win,
+		createInternal: () => iframe,
+	};
+	return { env, iframe, win };
+}
+
 function container(): { appendChild: (n: unknown) => void; children: unknown[] } {
 	const children: unknown[] = [];
 	return { appendChild: (n) => void children.push(n), children };
@@ -232,46 +276,51 @@ describe("lifecycle", () => {
 	});
 
 	/**
-	 * M1 R5：两个独立 create() 必须互不影响；destroy(A) 之后 A 不再派发，
-	 * 但 B 仍能正常接收消息。共享同一 `window`（host document）——
-	 * handler 列表里有两条记录，destroy 只移除对应的那条。
+	 * M1 R7：两个独立 create() 必须互不影响；destroy(A) 之后 A 不再派发，
+	 * 但 B 仍能正常接收消息。
+	 *
+	 * 关键修复：两个实例**必须共享同一 fake `window`**——真实宿主页面只有
+	 * 一个 document/window，多实例共用同一 message 事件总线。旧版本各自
+	 * 注入独立 fake win，等于在测两个完全隔离的世界，无法证明真实多实例
+	 * 互不干扰。
+	 *
+	 * 验证点：
+	 *   - 共用 win 上有 **2** 条 handler（不是各 1 条）；
+	 *   - destroy(A) 只移除 A 注册的那条 handler，B 的仍保留；
+	 *   - destroy(A) 后 B 仍能正常接收并派发事件。
 	 */
-	test("multi-instance: destroy(A) does not affect B", () => {
-		const { env: envA, iframe: iframeA, win: winA } = makeEnv();
-		const { env: envB, iframe: iframeB, win: winB } = makeEnv();
-		// 真实场景是同一 window；这里为简化仍各自注入独立 fake win，
-		// 但语义验证点在于：A 的 iframe removed 标志位是 `[true]`，B 是 `[]`。
+	test("multi-instance: destroy(A) does not affect B (shared window)", () => {
+		const { iframe: iframeA, win, env } = makeSharedEnv();
+		const { iframe: iframeB } = makeSharedEnv(win);
 		const readyA: Array<unknown> = [];
 		const readyB: Array<unknown> = [];
 		const instA = create({
 			appId: APP,
 			baseUrl: BASE,
 			container: container() as unknown as HTMLElement,
-			env: envA,
+			env: { ...env, createInternal: () => iframeA },
 		});
 		const instB = create({
 			appId: APP,
 			baseUrl: BASE,
 			container: container() as unknown as HTMLElement,
-			env: envB,
+			env: { ...env, createInternal: () => iframeB },
 		});
 		instA.on("ready", () => void readyA.push(undefined));
 		instB.on("ready", () => void readyB.push(undefined));
 		instA.open();
 		instB.open();
 
-		// Both have their own listener registered on their own window.
-		expect(winA.handlers).toHaveLength(1);
-		expect(winB.handlers).toHaveLength(1);
+		// **关键**：同一 window 上同时挂着 2 条 handler——证明它们真的共享总线。
+		expect(win.handlers).toHaveLength(2);
 
 		instA.destroy();
 		expect(iframeA.removed).toEqual([true]);
 		expect(iframeB.removed).toEqual([]); // B 仍未 destroy
-		expect(winA.handlers).toHaveLength(0);
-		expect(winB.handlers).toHaveLength(1); // B 的 listener 保留
+		expect(win.handlers).toHaveLength(1); // 只移除 A 那条
 
 		// B 仍能接收 ready 事件（payload 必须带 publicAppId + mode，协议强校验）。
-		hostEvent(winB, iframeB, {
+		hostEvent(win, iframeB, {
 			protocol: "skdy-embed",
 			version: EMBED_PROTOCOL_VERSION,
 			type: "ready",

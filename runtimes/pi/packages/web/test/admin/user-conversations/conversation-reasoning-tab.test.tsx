@@ -4,20 +4,21 @@
  * 不复制 DTO：组件 import `ConversationReasoningState` / `ReasoningUpdateRequest`
  * / `ReasoningEffort`；测试只校验 wire 与 UI 状态机，不重新声明档位常量。
  *
- * 测试使用 `renderToStaticMarkup`（与 web 包其它 React 测试一致；无 jsdom），
- * 覆盖组件初始渲染的兜底文案。对于真正驱动 useEffect → setState 的路径，
- * 我们直接对 `ConversationsApi.getReasoning` / `putReasoning` 做 mock 验证
- * 调用形态（URL / method / body / 错误码透传），状态机本身在
- * `test/admin/conversations-api.test.ts` 已覆盖。
- *
  * 覆盖路径：
- * 1. 加载初始渲染（loading 兜底）
- * 2. 非 `conv_` 前缀的 route 参数 → 组件不抛异常（错误态走 describeError）
- * 3. 通过 formatReasoningEffort 验证档位字面量透传（无产品语义翻译）
+ * 1. formatReasoningEffort 6 档字面量透传（不做产品翻译）；
+ * 2. 渲染兜底（loading 兜底）；
+ * 3. 非 `conv_` 前缀的 route 参数 → 组件不抛异常。
+ *
+ * wire / state-driven 测试在 `test/admin/conversations-api.test.ts` 已有（覆盖
+ * `getReasoning` / `putReasoning` 的 method/header/body/错误码透传）。
  */
+
+import type { AgentPublicId } from "@earendil-works/pi-protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import type { AgentApi } from "../../../src/admin/api/agent-api.ts";
 import type { ConversationsApi } from "../../../src/admin/api/conversations-api.ts";
+import type { LlmApi } from "../../../src/admin/api/llm-api.ts";
 import { formatReasoningEffort, ReasoningTab } from "../../../src/admin/user-conversations/reasoning-tab.tsx";
 
 function makeFakeApi(): ConversationsApi {
@@ -27,17 +28,66 @@ function makeFakeApi(): ConversationsApi {
 	} as unknown as ConversationsApi;
 }
 
+function makeFakeAgentApi(): AgentApi {
+	return {
+		getAgentDetail: vi.fn(),
+	} as unknown as AgentApi;
+}
+
+function makeFakeLlmApi(): LlmApi {
+	return {
+		listModels: vi.fn(),
+	} as unknown as LlmApi;
+}
+
+const SAMPLE_AGENT_ID = "agent_11111111-1111-1111-1111-111111111111" as AgentPublicId;
+
 describe("ReasoningTab 渲染兜底", () => {
-	it("初始进入 tab → 显示 loading 兜底文案", () => {
+	it("初始渲染 → capability idle，渲染 loading 兜底（form 不可见）", () => {
 		const api = makeFakeApi();
-		const html = renderToStaticMarkup(<ReasoningTab conversationId="conv_1" api={api} />);
-		// 静态渲染触发不到 useEffect，但首帧仍渲染 loading 兜底分支。
-		expect(html).toContain("加载思考强度覆盖");
+		const agentApi = makeFakeAgentApi();
+		const llmApi = makeFakeLlmApi();
+		const html = renderToStaticMarkup(
+			<ReasoningTab
+				conversationId="conv_1"
+				agentId={SAMPLE_AGENT_ID}
+				api={api}
+				agentApi={agentApi}
+				llmApi={llmApi}
+			/>,
+		);
+		// 静态渲染不触发 useEffect，所以 capability 仍是 idle，
+		// 渲染 loading 兜底。form `<select>` **不应**出现。
+		expect(html).toContain("加载模型能力目录");
+		expect(html).not.toContain("reasoning-effort-draft");
+	});
+
+	it("agentId=null 时仍能渲染（不抛）", () => {
+		const api = makeFakeApi();
+		const agentApi = makeFakeAgentApi();
+		const llmApi = makeFakeLlmApi();
+		expect(() =>
+			renderToStaticMarkup(
+				<ReasoningTab conversationId="conv_1" agentId={null} api={api} agentApi={agentApi} llmApi={llmApi} />,
+			),
+		).not.toThrow();
 	});
 
 	it("非法 conv_ 前缀 → 组件不抛异常", () => {
 		const api = makeFakeApi();
-		expect(() => renderToStaticMarkup(<ReasoningTab conversationId="oops" api={api} />)).not.toThrow();
+		const agentApi = makeFakeAgentApi();
+		const llmApi = makeFakeLlmApi();
+		expect(() =>
+			renderToStaticMarkup(
+				<ReasoningTab
+					conversationId="oops"
+					agentId={SAMPLE_AGENT_ID}
+					api={api}
+					agentApi={agentApi}
+					llmApi={llmApi}
+				/>,
+			),
+		).not.toThrow();
 	});
 });
 
