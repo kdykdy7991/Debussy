@@ -49,6 +49,33 @@ describe("readStoredTurnMetrics (strict persisted-payload validation)", () => {
 		const { stamps: _dropStamps, ...noStamps } = validSuccess();
 		expect(readStoredTurnMetrics({ metrics: noStamps })).toBeUndefined();
 	});
+
+	test("rejects non-integer or negative usage", () => {
+		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), outputTokens: 1.5 } })).toBeUndefined();
+		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), inputTokens: -1 } })).toBeUndefined();
+	});
+
+	test("rejects negative derived latency", () => {
+		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), totalLatencyMs: -3 } })).toBeUndefined();
+		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), ttftMs: -1 } })).toBeUndefined();
+	});
+
+	test("rejects out-of-order or non-ISO stamps", () => {
+		const base = validSuccess();
+		expect(
+			readStoredTurnMetrics({
+				metrics: { ...base, stamps: { ...base.stamps, requestStartedAt: base.stamps.completedAt } },
+			}),
+		).toBeUndefined();
+		expect(
+			readStoredTurnMetrics({ metrics: { ...base, stamps: { ...base.stamps, completedAt: "not-a-date" } } }),
+		).toBeUndefined();
+	});
+
+	test("rejects a first output recorded on a non-success outcome", () => {
+		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), outcome: "failed" } })).toBeUndefined();
+		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), outcome: "cancelled" } })).toBeUndefined();
+	});
 });
 
 describe("readStoredContextSnapshot (strict persisted-snapshot validation)", () => {
@@ -78,5 +105,18 @@ describe("readStoredContextSnapshot (strict persisted-snapshot validation)", () 
 		expect(readStoredContextSnapshot({ snapshot: { ...snapshot, breakdown: undefined } })).toBeUndefined();
 		expect(readStoredContextSnapshot({ snapshot: { ...snapshot, usedTokens: "x" } })).toBeUndefined();
 		expect(readStoredContextSnapshot({ snapshot: { ...snapshot, measurement: "exactish" } })).toBeUndefined();
+	});
+
+	test("rejects derivatively inconsistent snapshots", () => {
+		// remainingTokens 与 contextWindow - used - reserved 不一致。
+		expect(readStoredContextSnapshot({ snapshot: { ...snapshot, remainingTokens: 999 } })).toBeUndefined();
+		// usagePercent 与 used/context 不一致。
+		expect(readStoredContextSnapshot({ snapshot: { ...snapshot, usagePercent: 1 } })).toBeUndefined();
+		// sum(breakdown) 与 usedTokens 不一致。
+		const badBreakdown = { ...snapshot, breakdown: { ...snapshot.breakdown, systemPrompt: 99 } };
+		expect(readStoredContextSnapshot({ snapshot: badBreakdown })).toBeUndefined();
+		// 负值分类。
+		const negative = { ...snapshot, breakdown: { ...snapshot.breakdown, conversationMessages: -1 } };
+		expect(readStoredContextSnapshot({ snapshot: negative })).toBeUndefined();
 	});
 });

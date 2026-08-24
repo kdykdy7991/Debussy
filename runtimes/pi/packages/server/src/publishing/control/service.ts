@@ -58,6 +58,7 @@ import {
 	computeConversationMetricsStats,
 	resolveMetricsPage,
 	SESSION_EVENT_TYPES,
+	turnOutcomeFromTerminalEvent,
 } from "@earendil-works/pi-protocol";
 import { importSPKI } from "jose";
 import {
@@ -1524,6 +1525,9 @@ export class ControlService {
 			if (event.turnId === null || !isTerminalTurnEvent(event.eventType)) continue;
 			const metrics = readStoredTurnMetrics(event.payload);
 			if (metrics === undefined) continue;
+			// 终态事件必须与 metrics.outcome 一致（turn/end→success、turn/failed→failed、
+			// turn/interrupted→cancelled），否则整轮排除。
+			if (metrics.outcome !== turnOutcomeFromTerminalEvent(event.eventType)) continue;
 			rows.push(
 				toConversationTurnMetric({
 					turnId: toPublicId("TurnId", event.turnId) as string,
@@ -1533,7 +1537,12 @@ export class ControlService {
 				}),
 			);
 		}
-		return rows;
+		// 同一 turnId 出现重复/冲突终态 → 整轮排除，避免重复计数。
+		const countByTurn = new Map<string, number>();
+		for (const row of rows) {
+			countByTurn.set(row.turnId, (countByTurn.get(row.turnId) ?? 0) + 1);
+		}
+		return rows.filter((row) => countByTurn.get(row.turnId) === 1);
 	}
 
 	/**

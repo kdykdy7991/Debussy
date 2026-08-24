@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { estimateContextSnapshot } from "../../src/agent-v2/context.ts";
 import { buildTurnMetrics } from "../../src/agent-v2/turn-metrics.ts";
 import { ControlService } from "../../src/publishing/control/service.ts";
 import {
@@ -57,6 +58,11 @@ function makeTurn(
 ): ConversationEventRecord[] {
 	const turnId: TurnId = newTurnId();
 	const base = { tenantId: TENANT, publishedAppId: PUBLISHED_APP as never, conversationId: CONV };
+	// 终态事件类型按 metrics.outcome 选择（turn/end→success、turn/failed→failed、
+	// turn/interrupted→cancelled），以贴合真实事件序列。
+	const outcome = (metrics as { outcome?: unknown }).outcome;
+	const eventType = outcome === "failed" ? "turn/failed" : outcome === "cancelled" ? "turn/interrupted" : "turn/end";
+	const terminalPayload = outcome === "failed" ? { error: "boom", metrics } : { ok: true, metrics };
 	return [
 		{
 			eventId: `evt_${turnNo}` as never,
@@ -73,10 +79,10 @@ function makeTurn(
 			eventId: `evt_${turnNo}e` as never,
 			...base,
 			sequence: endSeq,
-			eventType: "turn/end",
+			eventType,
 			eventSchemaVersion: 1,
 			turnId,
-			payload: { ok: true, metrics },
+			payload: terminalPayload,
 			payloadBytes: 0,
 			createdAt: new Date(),
 		},
@@ -219,6 +225,91 @@ describe("M1 ControlService.getConversationMetrics", () => {
 		}
 	});
 
+	test("outcome mismatch with the terminal event type excludes the turn", async () => {
+		// 人为制造冲突：turn/end 期望 success，但指标 outcome 是 failed → 整轮排除。
+		const turnId: TurnId = newTurnId();
+		const base = { tenantId: TENANT, publishedAppId: PUBLISHED_APP as never, conversationId: CONV };
+		const evts = [
+			{
+				...base,
+				eventId: "s" as never,
+				sequence: 1,
+				eventType: "turn/start",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { model: "gpt-4o" },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+			{
+				...base,
+				eventId: "e" as never,
+				sequence: 2,
+				eventType: "turn/end",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { ok: true, metrics: failedMetrics() },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+		] as unknown as ConversationEventRecord[];
+		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
+		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.data.stats.available).toBe(false);
+			expect(r.data.items).toEqual([]);
+		}
+	});
+
+	test("duplicate/conflicting terminal events for one turn exclude the whole turn", async () => {
+		const turnId = newTurnId();
+		const base = { tenantId: TENANT, publishedAppId: PUBLISHED_APP as never, conversationId: CONV };
+		const evts = [
+			{
+				...base,
+				eventId: "s" as never,
+				sequence: 1,
+				eventType: "turn/start",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { model: "gpt-4o" },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+			{
+				...base,
+				eventId: "a" as never,
+				sequence: 2,
+				eventType: "turn/end",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { ok: true, metrics: successMetrics() },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+			{
+				...base,
+				eventId: "b" as never,
+				sequence: 3,
+				eventType: "turn/end",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { ok: true, metrics: successMetrics() },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+		] as unknown as ConversationEventRecord[];
+		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
+		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			// 同一 turnId 两个终态 → 不重复计数，整轮排除。
+			expect(r.data.stats.available).toBe(false);
+			expect(r.data.items).toEqual([]);
+		}
+	});
+
 	test("invalid afterSequence (0) -> 422 INVALID_METRICS_FILTER", async () => {
 		const service = buildService({ metricsEnabled: true, conversation: presentConversation() });
 		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV, afterSequence: 0 });
@@ -228,61 +319,59 @@ describe("M1 ControlService.getConversationMetrics", () => {
 });
 
 describe("M1 ControlService.getConversationContext", () => {
-	const snapshot = {
-		usedTokens: 1200,
+	// 用估算器构造派生自洽的快照（usedTokens==sum(breakdown)，remaining/percent 一致）。
+	const snapshotV1 = estimateContextSnapshot({
 		contextWindow: 32_000,
-		remainingTokens: 30_800,
-		reservedOutputTokens: 1000,
-		usagePercent: 3.75,
-		measurement: "estimated",
-		breakdown: {
-			systemPrompt: 800,
-			skillInstructions: 0,
-			toolDefinitions: 100,
-			conversationMessages: 200,
-			toolResults: 100,
-			retrievalContext: 0,
-			attachments: 0,
-		},
-	};
+		systemPromptText: "a".repeat(3200), // 800 tokens
+		conversationMessagesText: "b".repeat(800), // 200 tokens
+	});
+	const snapshotV2 = estimateContextSnapshot({
+		contextWindow: 32_000,
+		systemPromptText: "a".repeat(3600), // 900 tokens
+		conversationMessagesText: "b".repeat(800), // 200 tokens
+	});
+
+	function snapshotEvent(sequence: number, snapshot: unknown) {
+		return {
+			eventId: `e${sequence}` as never,
+			tenantId: TENANT,
+			publishedAppId: PUBLISHED_APP as never,
+			conversationId: CONV,
+			sequence,
+			eventType: "context/snapshot",
+			eventSchemaVersion: 1,
+			turnId: null,
+			payload: { snapshot },
+			payloadBytes: 0,
+			createdAt: new Date(),
+		};
+	}
 
 	test("returns the latest context/snapshot frame with its sequence", async () => {
-		const evts = [
-			{
-				eventId: "e1" as never,
-				tenantId: TENANT,
-				publishedAppId: PUBLISHED_APP as never,
-				conversationId: CONV,
-				sequence: 1,
-				eventType: "context/snapshot",
-				eventSchemaVersion: 1,
-				turnId: null,
-				payload: { snapshot },
-				payloadBytes: 0,
-				createdAt: new Date(),
-			},
-			{
-				eventId: "e2" as never,
-				tenantId: TENANT,
-				publishedAppId: PUBLISHED_APP as never,
-				conversationId: CONV,
-				sequence: 5,
-				eventType: "context/snapshot",
-				eventSchemaVersion: 1,
-				turnId: null,
-				payload: { snapshot: { ...snapshot, usedTokens: 99 } },
-				payloadBytes: 0,
-				createdAt: new Date(),
-			},
-		] as unknown as ConversationEventRecord[];
+		const evts = [snapshotEvent(1, snapshotV1), snapshotEvent(5, snapshotV2)] as unknown as ConversationEventRecord[];
 		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
 		const r = await service.getConversationContext({ tenantId: TENANT, conversationId: CONV });
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			expect(r.data.available).toBe(true);
 			expect(r.data.atSequence).toBe(5);
-			expect(r.data.latest?.usedTokens).toBe(99);
-			expect(r.data.latest?.breakdown.systemPrompt).toBe(800);
+			expect(r.data.latest?.usedTokens).toBe(snapshotV2.usedTokens);
+			expect(r.data.latest?.breakdown.systemPrompt).toBe(900);
+		}
+	});
+
+	test("falls back to the previous valid snapshot when the latest is damaged", async () => {
+		// 最新一帧派生不自洽（usedTokens 与 breakdown 之和矛盾）→ 被视为不存在，
+		// 回退到 seq=1 的合法快照。
+		const damaged = { ...snapshotV1, usedTokens: 999_999 };
+		const evts = [snapshotEvent(1, snapshotV1), snapshotEvent(5, damaged)] as unknown as ConversationEventRecord[];
+		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
+		const r = await service.getConversationContext({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.data.available).toBe(true);
+			expect(r.data.atSequence).toBe(1);
+			expect(r.data.latest?.usedTokens).toBe(snapshotV1.usedTokens);
 		}
 	});
 

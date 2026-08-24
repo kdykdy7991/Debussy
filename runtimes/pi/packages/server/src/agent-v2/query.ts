@@ -33,6 +33,21 @@ function isFiniteNumber(v: unknown): v is number {
 	return typeof v === "number" && Number.isFinite(v);
 }
 
+/** 非负有限数。 */
+function isNonNegativeFinite(v: unknown): v is number {
+	return isFiniteNumber(v) && v >= 0;
+}
+
+/** 非负整数。 */
+function isNonNegativeInt(v: unknown): v is number {
+	return Number.isInteger(v) && (v as number) >= 0;
+}
+
+/** 合法 ISO-8601 时间（可被 Date.parse 解析）。 */
+function isValidIso(v: unknown): v is string {
+	return typeof v === "string" && v.length > 0 && Number.isFinite(Date.parse(v));
+}
+
 const METRIC_COUNT_KEYS: readonly (keyof TurnMetrics)[] = [
 	"inputTokens",
 	"outputTokens",
@@ -51,55 +66,90 @@ const BREAKDOWN_KEYS: readonly string[] = [
 	"attachments",
 ];
 
-function isValidStoredStamps(v: unknown): boolean {
-	if (!isObject(v)) return false;
-	for (const key of ["requestStartedAt", "providerStartedAt", "completedAt"]) {
-		if (typeof v[key] !== "string") return false;
-	}
-	return v.firstOutputAt === null || typeof v.firstOutputAt === "string";
-}
-
 /**
  * 严格校验存储的 `TurnMetrics`（`turn/end`/`turn/failed` 的 `payload.metrics`）。
- * 任一必需字段缺失/非有限数、或者非 success 仍带 TTFT 派生值，一律视为不存在
- * （绝不把可能产生 NaN 或缺字段的异常数据当指标）。
+ * 任一违规即视为不存在（绝不把可能产生 NaN 或缺字段的异常数据当指标）：
+ * - outcome 合法；
+ * - usage 各字段为非负整数；
+ * - totalLatencyMs 为非负有限数；
+ * - ttft/generation/TPS 为 null 或非负有限数；
+ * - stamps 为有效 ISO 且顺序合法（request<=provider<=completed；first 存在时
+ *   provider<=first<=completed）；
+ * - `firstOutputAt === null` 时 ttft/generation/TPS 必须全部为 null；
+ * - 有 first output 时 outcome 必须为 success。
  */
 export function readStoredTurnMetrics(payload: unknown): TurnMetrics | undefined {
 	if (!isObject(payload)) return undefined;
-	const metrics = payload.metrics;
-	if (!isObject(metrics)) return undefined;
-	const outcome = metrics.outcome;
+	const m = payload.metrics;
+	if (!isObject(m)) return undefined;
+	const outcome = m.outcome;
 	if (typeof outcome !== "string" || !OUTCOMES.has(outcome as TurnOutcome)) return undefined;
 	for (const key of METRIC_COUNT_KEYS) {
-		if (!isFiniteNumber(metrics[key])) return undefined;
+		if (!isNonNegativeInt(m[key])) return undefined;
 	}
-	if (!isFiniteNumber(metrics.totalLatencyMs)) return undefined;
+	if (!isNonNegativeFinite(m.totalLatencyMs)) return undefined;
 	for (const key of METRIC_OPTIONAL_KEYS) {
-		const value = metrics[key];
-		if (value === null) continue;
-		if (!isFiniteNumber(value)) return undefined;
-		// 只有 success 的 ttft/generation/tps 才可能有值。
-		if (outcome !== "success") return undefined;
+		const value = m[key];
+		if (value !== null && !isNonNegativeFinite(value)) return undefined;
 	}
-	if (!isValidStoredStamps(metrics.stamps)) return undefined;
-	return metrics as unknown as TurnMetrics;
+	const stamps = m.stamps;
+	if (!isObject(stamps)) return undefined;
+	const first = stamps.firstOutputAt;
+	if (first !== null && !isValidIso(first)) return undefined;
+	for (const key of ["requestStartedAt", "providerStartedAt", "completedAt"]) {
+		if (!isValidIso(stamps[key])) return undefined;
+	}
+	const req = Date.parse(stamps.requestStartedAt as string);
+	const prov = Date.parse(stamps.providerStartedAt as string);
+	const comp = Date.parse(stamps.completedAt as string);
+	if (req > prov || prov > comp) return undefined;
+	if (first !== null) {
+		const f = Date.parse(first as string);
+		if (prov > f || f > comp) return undefined;
+	}
+	// 无 first output → 派生时序必须全为 null。
+	if (first === null) {
+		for (const key of METRIC_OPTIONAL_KEYS) {
+			if (m[key] !== null) return undefined;
+		}
+	} else if (outcome !== "success") {
+		// 有 first output 只允许 success。
+		return undefined;
+	}
+	return m as unknown as TurnMetrics;
 }
 
-/** 严格校验存储的 `ContextUsageSnapshot`（`context/snapshot` 的 `payload.snapshot`）。 */
+/**
+ * 严格校验存储的 `ContextUsageSnapshot`（`context/snapshot` 的 `payload.snapshot`）：
+ * 数值全部为非负、`contextWindow > 0`、`sum(breakdown) === usedTokens`，且
+ * `remainingTokens`/`usagePercent` 与派生一致。任一违规视为不存在。
+ */
 export function readStoredContextSnapshot(payload: unknown): ContextUsageSnapshot | undefined {
 	if (!isObject(payload)) return undefined;
-	const snapshot = payload.snapshot;
-	if (!isObject(snapshot)) return undefined;
-	for (const key of ["usedTokens", "contextWindow", "remainingTokens", "reservedOutputTokens", "usagePercent"]) {
-		if (!isFiniteNumber(snapshot[key])) return undefined;
-	}
-	if (snapshot.measurement !== "exact" && snapshot.measurement !== "estimated") return undefined;
-	const breakdown = snapshot.breakdown;
+	const s = payload.snapshot;
+	if (!isObject(s)) return undefined;
+	const used = s.usedTokens;
+	const window = s.contextWindow;
+	const remaining = s.remainingTokens;
+	const reserved = s.reservedOutputTokens;
+	const percent = s.usagePercent;
+	if (!isNonNegativeInt(used) || !isNonNegativeInt(window) || window < 1) return undefined;
+	if (!isNonNegativeInt(remaining) || !isNonNegativeInt(reserved)) return undefined;
+	if (!isNonNegativeFinite(percent)) return undefined;
+	if (s.measurement !== "exact" && s.measurement !== "estimated") return undefined;
+	const breakdown = s.breakdown;
 	if (!isObject(breakdown)) return undefined;
+	let sum = 0;
 	for (const key of BREAKDOWN_KEYS) {
-		if (!isFiniteNumber(breakdown[key])) return undefined;
+		const value = breakdown[key];
+		if (!isNonNegativeInt(value)) return undefined;
+		sum += value;
 	}
-	return snapshot as unknown as ContextUsageSnapshot;
+	if (sum !== used) return undefined;
+	if (remaining !== Math.max(0, window - used - reserved)) return undefined;
+	const expectedPercent = Number(((used / window) * 100).toFixed(2));
+	if (Math.abs(percent - expectedPercent) > 1e-6) return undefined;
+	return s as unknown as ContextUsageSnapshot;
 }
 
 /** 组装单轮明细（`turnId` 为公开 `turn_*` id；`sessionEffort` 恒 null，reasoning 不在本里程碑）。 */
