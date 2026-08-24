@@ -379,6 +379,28 @@ describe("faux provider", () => {
 		expect(JSON.parse(toolCallDeltas.join(""))).toEqual({ text: "hi", count: 12 });
 	});
 
+	it("defers the first output deterministically when firstOutputDelayMs is set", async () => {
+		const delayMs = 120;
+		const registration = registerFauxProvider({ firstOutputDelayMs: delayMs, tokenSize: { min: 1, max: 1 } });
+		registrations.push(registration);
+		registration.setResponses([fauxAssistantMessage(fauxText("hello world"))]);
+
+		const s = stream(registration.getModel(), { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] });
+		const seen: { type: string; at: number }[] = [];
+		for await (const event of s) {
+			if (event.type === "start" || event.type === "text_delta") {
+				seen.push({ type: event.type, at: Date.now() });
+			}
+		}
+
+		const startAt = seen.find((e) => e.type === "start")?.at;
+		const firstDeltaAt = seen.find((e) => e.type === "text_delta")?.at;
+		expect(startAt).toBeDefined();
+		expect(firstDeltaAt).toBeDefined();
+		// 首个内容块至少推迟约 delayMs（留出计时器调度余量）。
+		expect(firstDeltaAt! - startAt!).toBeGreaterThanOrEqual(delayMs - 20);
+	});
+
 	it("streams an exact event order for fixed-size chunks", async () => {
 		const registration = registerFauxProvider({ tokenSize: { min: 1, max: 1 } });
 		registrations.push(registration);

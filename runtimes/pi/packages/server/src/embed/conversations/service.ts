@@ -14,13 +14,16 @@
  * `turn.failed` / `turn.interrupted` 等结构化事件；流式 chunk / 工具调用 /
  * 附件 / 引用 按 RuntimeSpec.contextPolicy.logLevel 决定是否持久化。
  */
-import type { Citation, ConversationRollover, SessionLogLevel } from "@earendil-works/pi-protocol";
+import type { Citation, ConversationRollover, SessionLogLevel, TurnMetrics } from "@earendil-works/pi-protocol";
 import {
 	assertEventPayloadSafe,
 	DEFAULT_CONVERSATION_LIMITS,
 	shouldPersistAssistantChunk,
 	shouldRolloverConversation,
 } from "@earendil-works/pi-protocol";
+import { estimateContextSnapshot } from "../../agent-v2/context.ts";
+import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
+import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
 import {
 	appNotFound,
 	appSuspended,
@@ -401,6 +404,9 @@ export class ConversationService {
 		// 请求只有一个能进入执行段（PD-13）。
 		if (this.runningTurns.has(input.conversationId)) return { ok: false, error: turnAlreadyRunning() };
 		this.runningTurns.add(input.conversationId);
+		// Agent V2 M1：PI_AGENT_V2_METRICS 关闭时不采集。开启时在 turn 开始时取一次
+		// 单调+墙上基准，供 turn/end / turn/failed 写入 TurnMetrics。
+		const metricsTiming = agentV2MetricsEnabled() ? startTurnTiming() : undefined;
 		try {
 			const version = await this.repos.publishedAppVersions.get(scope, record.publishedAppVersionId);
 			if (version === undefined) return { ok: false, error: versionUnavailable() };
@@ -441,6 +447,23 @@ export class ConversationService {
 			});
 			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
 
+			// Agent V2 M1：写上下文快照（turn/start 之后、user/message 之前，符合契约顺序）。
+			// 开关关（默认）不采集；开时用 chars→tokens 估算为 `ContextUsageSnapshot`。
+			if (metricsTiming !== undefined) {
+				const snapshot = estimateContextSnapshot({
+					contextWindow: spec.contextPolicy.maxContextTokens,
+					systemPromptText: spec.agent.systemPrompt,
+					conversationMessagesText: history.messages.map((m) => m.text).join("\n"),
+					toolDefinitionsText: spec.capabilities.tools.map((t) => JSON.stringify(t)).join("\n"),
+				});
+				const snapshotAppended = await this.safeAppend(scope, input.conversationId, {
+					eventType: "context/snapshot",
+					turnId,
+					payload: { snapshot },
+				});
+				if (snapshotAppended === undefined) return { ok: false, error: conversationNotFound() };
+			}
+
 			const userEvent = await this.repos.events.append(scope, {
 				conversationId: input.conversationId,
 				eventType: "user/message",
@@ -465,7 +488,21 @@ export class ConversationService {
 				});
 			}
 
+			// Agent V2 M1：捕获 provider 开始（同步执行器=模型请求开始）与终态时点。
+			// 同步路径无逐块首 Token，firstOutput ≈ terminal（burst），generation=0；
+			// 真实 TTFT 属流式路径（后续 M1 触点，见 agent-v2/turn-metrics.ts 说明）。
+			const providerStartAtMs = metricsTiming === undefined ? undefined : performance.now();
 			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history, retrieval });
+			const completedAtMs = metricsTiming === undefined ? undefined : performance.now();
+			let turnMetrics: TurnMetrics | undefined;
+			if (metricsTiming !== undefined && providerStartAtMs !== undefined && completedAtMs !== undefined) {
+				turnMetrics = buildTurnMetrics({
+					outcome: result.ok ? "success" : "failed",
+					base: metricsTiming,
+					events: { providerStartAtMs, firstOutputAtMs: completedAtMs, completedAtMs },
+					usage: usageCountsFromProtocolUsage(result.ok ? result.usage : undefined),
+				});
+			}
 			if (result.ok) {
 				// WB-007: write the final assistant message at the standard
 				// level regardless of log level; this is the authoritative
@@ -496,7 +533,11 @@ export class ConversationService {
 				await this.safeAppend(scope, input.conversationId, {
 					eventType: "turn/end",
 					turnId,
-					payload: { ok: true, ...(result.usage ? { usage: result.usage } : {}) },
+					payload: {
+						ok: true,
+						...(result.usage ? { usage: result.usage } : {}),
+						...(turnMetrics ? { metrics: turnMetrics } : {}),
+					},
 				});
 				// WB-008: post-turn rollover check. Re-read the conversation
 				// row so the freshly-advanced counters reflect the events we
@@ -534,7 +575,7 @@ export class ConversationService {
 			await this.safeAppend(scope, input.conversationId, {
 				eventType: "turn/failed",
 				turnId,
-				payload: { error: result.error },
+				payload: { error: result.error, ...(turnMetrics ? { metrics: turnMetrics } : {}) },
 			});
 			return { ok: false, error: runtimeUnavailable(`Turn failed: ${result.error}`) };
 		} finally {
