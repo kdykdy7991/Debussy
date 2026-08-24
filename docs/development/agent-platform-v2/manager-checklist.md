@@ -106,7 +106,7 @@
 - [ ] reasoning 进入保存 Revision、diff、发布和会话覆盖流程。
 - [ ] 正式 Embed SDK 支持 mount/destroy、事件、resize 和 origin 校验。
 - [ ] Token 不进入 URL、持久化存储、DOM、前端日志或错误上报。
-- [ ] 对外对话页在电脑 Chrome、Android Chrome 和 iOS Safari 完成移动端核心流程验证。
+- [ ] 发布对话页在电脑 Chrome、Android Chrome 和 iOS Safari 完成移动端核心流程验证。
 - [ ] 本地 fixture 已替换为后端真实 fixture/API，生产代码无占位统计。
 
 ### M1 联调与验收
@@ -210,7 +210,7 @@
 - [ ] 完成创建 Skill/MCP、绑定 Revision、发布、Embed 对话、Tool 调用和指标查看的真实 E2E。
 - [ ] 完成特性开关关闭、应用版本回滚和文本对话降级演练。
 - [ ] 验证 20 个同时进行的文本对话，并通过 30 个同时在途轮次自动化门禁。
-- [ ] 对外对话页在真实 Android Chrome 和 iOS Safari 通过核心流程验收。
+- [ ] 发布对话页在真实 Android Chrome 和 iOS Safari 通过核心流程验收。
 - [ ] 总架构师核对所有一票否决项均不存在。
 - [ ] 总架构师提交 M4 验收记录：通过 / 有条件通过 / 不通过。
 - [ ] 所有“有条件通过”遗留项均有负责人、期限和明确风险接受。
