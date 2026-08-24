@@ -8,6 +8,7 @@
 import { describe, expect, test } from "vitest";
 import {
 	decodeEmbedHostMessage,
+	decodeEmbedIframeMessage,
 	type EmbedHostPostMessage,
 	type EmbedIframePostMessage,
 	encodeEmbedIframeMessage,
@@ -157,5 +158,83 @@ describe("type guards", () => {
 			payload: { launchToken: "t" },
 		});
 		expect(result.ok).toBe(true);
+	});
+});
+
+describe("decodeEmbedIframeMessage resize boundary (A6)", () => {
+	function resizeEnvelope(height: unknown) {
+		return {
+			protocol: POST_MESSAGE_PROTOCOL,
+			version: POST_MESSAGE_VERSION,
+			type: "resize",
+			payload: { height },
+		};
+	}
+
+	test("height == 0 → INVALID_PAYLOAD（合法下界为 1）", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope(0))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+	});
+
+	test("height < 0 → INVALID_PAYLOAD", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope(-1))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+	});
+
+	test("height == 1 → 接受（下界）", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope(1))).toEqual({
+			ok: true,
+			message: { type: "resize", height: 1 },
+		});
+	});
+
+	test("height == POST_MESSAGE_RESIZE_MAX_HEIGHT → 接受（上界）", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope(POST_MESSAGE_RESIZE_MAX_HEIGHT))).toEqual({
+			ok: true,
+			message: { type: "resize", height: POST_MESSAGE_RESIZE_MAX_HEIGHT },
+		});
+	});
+
+	test("height == POST_MESSAGE_RESIZE_MAX_HEIGHT + 1 → INVALID_PAYLOAD", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope(POST_MESSAGE_RESIZE_MAX_HEIGHT + 1))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+	});
+
+	test("height 非整数 → INVALID_PAYLOAD", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope(1.5))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+		expect(decodeEmbedIframeMessage(resizeEnvelope(NaN))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+		expect(decodeEmbedIframeMessage(resizeEnvelope(Number.POSITIVE_INFINITY))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+	});
+
+	test("height 类型错（字符串 / null / 缺失）→ INVALID_PAYLOAD", () => {
+		expect(decodeEmbedIframeMessage(resizeEnvelope("123"))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+		expect(decodeEmbedIframeMessage(resizeEnvelope(null))).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+		expect(
+			decodeEmbedIframeMessage({ protocol: POST_MESSAGE_PROTOCOL, version: POST_MESSAGE_VERSION, type: "resize" }),
+		).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
 	});
 });

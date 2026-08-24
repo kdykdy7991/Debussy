@@ -100,8 +100,6 @@ export interface EmbedInstance {
 	destroy: () => void;
 }
 
-const EMBED_HEIGHT_MAX = 100000;
-
 /**
  * Create an embed instance. Throws on duplicate create on the same element or an
  * invalid `appId` / `baseUrl`.
@@ -149,11 +147,9 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 				emit("conversation-created", { conversationId: decoded.message.conversationId });
 				break;
 			case "resize":
-				// Embed height must be 1..POST_MESSAGE_RESIZE_MAX_HEIGHT; protocol layer
-				// already rejects non-positive integers, this is defense in depth.
-				if (decoded.message.height <= 0 || decoded.message.height > EMBED_HEIGHT_MAX) {
-					return;
-				}
+				// Protocol decode is the single source of truth for resize validity
+				// (range `1..POST_MESSAGE_RESIZE_MAX_HEIGHT`). Any rejection already
+				// short-circuited via `if (!decoded.ok) return;` above.
 				emit("resize", { height: decoded.message.height });
 				syncHeight(decoded.message.height);
 				break;

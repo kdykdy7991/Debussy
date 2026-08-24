@@ -8,11 +8,7 @@
 
 本文回答"现在前端能用什么、缺什么、方案如何选、最小原型验证什么"。配套的契约问题清单见 [contract-questions.md](./contract-questions.md)。所有结论必须在 DTO 冻结后再落地为正式实现；本阶段产出仅为骨架与原型。
 
-> **M0 文档措辞规约（修订二）**
-> - 本文不复述 "已冻结/可开发" 等通过性语言：M0 阶段后端只提交了类型枚举的草稿，DTO 路径、错误码、持久化位置与回退边界**尚未冻结**，任何代码或文档不得宣称 "已冻结"。
-> - "已否决的 reasoning 预留开关"：`SessionController.setThinking(ThinkingLevel)` 是 V1 临时通道（`thinkingLevel` 字符串字段），V2 正式通道为 `reasoningEffort` / `ReasoningEffort`；V2 不再保留 V1 字符串预留开关，`thinkingLevel` 路径在 M1 替换为 `setReasoningEffort(reasoningEffort: ReasoningEffort)`，原方法在 M1 删除。本文件不把 `setThinking` 当成 V2 reasoning 通道。
-> - V2 reasoning cover 称作 `sessionEffort`，区别于 Agent Revision 默认 `reasoningEffort`；二者不能混淆。
-> - V2 用量称 `usage`（与 Provider 返回口径一致），估算仅用于上下文分项，不能覆盖权威 usage。
+> **第三轮范围说明（第二轮回退修订）**：前端不应自行起草 `TurnMetrics` 状态枚举、事件名、分页接口、MCP/Skill DTO，或宣告 `M1` 删除既有代码路径（迁移计划属后端）。本文不出现前端对后端契约的"定义"；仅描述前端观察到的现有代码与可复用面，以及"等 DTO"或"前端独立做"的明确边界。
 
 ## 1. 现有代码可以复用什么
 
@@ -35,7 +31,7 @@
 
 | 模块 | 路径 | V2 复用点 |
 |---|---|---|
-| Embed SDK | [packages/web/src/embed/sdk/skdy-embed.ts](../../../runtimes/pi/packages/web/src/embed/sdk/skdy-embed.ts) | V2 SDK 改造基线：`mount/destroy`、`ready`/`error`/`conversation-created`/`resize` 事件、origin 白名单、`launchToken` 一次性发送；`height == 0` 已在协议 + SDK 双重拒绝（修订二） |
+| Embed SDK | [packages/web/src/embed/sdk/skdy-embed.ts](../../../runtimes/pi/packages/web/src/embed/sdk/skdy-embed.ts) | V2 SDK 改造基线：`mount/destroy`、`ready`/`error`/`conversation-created`/`resize` 事件、origin 白名单、`launchToken` 一次性发送；高度 `1..POST_MESSAGE_RESIZE_MAX_HEIGHT` 由 protocol decoder 单一来源校验，SDK 不复制 magic number（第三轮） |
 | postMessage 通道 | [packages/web/src/embed/post-message.ts](../../../runtimes/pi/packages/web/src/embed/post-message.ts) | iframe 侧协议实现，校验 `event.source === window.parent` + origin allowlist + 信封 decode + 明确 `targetOrigin` |
 | WebSocket 传输抽象 | [packages/web/src/embed/realtime-transport.ts](../../../runtimes/pi/packages/web/src/embed/realtime-transport.ts) | 复用 |
 | Embed 应用根 | [packages/web/src/embed/embed-app.tsx](../../../runtimes/pi/packages/web/src/embed/embed-app.tsx) | bootstrap → 鉴权 → 会话 → chat；resize 上报已就位 |
@@ -46,7 +42,7 @@
 |---|---|---|
 | AI 消息流 | [packages/web/src/conversation/ai-message-flow.tsx](../../../runtimes/pi/packages/web/src/conversation/ai-message-flow.tsx) | turn 聚合（user + assistant + tools）+ FlowToken `<AnimatedMarkdown sep="diff" animation="slideUp" streaming?>` |
 | Composer | [packages/web/src/conversation/conversation-composer.tsx](../../../runtimes/pi/packages/web/src/conversation/conversation-composer.tsx) | 输入/附件/上传失败恢复/Abort |
-| SessionController | [packages/web/src/lib/session-controller.ts](../../../runtimes/pi/packages/web/src/lib/session-controller.ts) | `createSession/send/abort/uploadFiles`；**V2 删除 `setThinking(ThinkingLevel)`**，改为 `setReasoningEffort(reasoningEffort: ReasoningEffort)`；持久化通过 `sessionEffort` 走会话端点，不在本类内发明 |
+| SessionController | [packages/web/src/lib/session-controller.ts](../../../runtimes/pi/packages/web/src/lib/session-controller.ts) | `createSession/send/abort/setThinking/uploadFiles` 等方法；V2 reasoning 覆盖通道由后端给出，前端不预告删除既有 API |
 | ConnectionController | [packages/web/src/lib/connection-controller.ts](../../../runtimes/pi/packages/web/src/lib/connection-controller.ts) | idle / connecting / connected / reconnecting / error |
 | WebSocket Transport | [packages/web/src/lib/websocket-transport.ts](../../../runtimes/pi/packages/web/src/lib/websocket-transport.ts) | 浏览器 WS → pi-client `ByteTransportFactory` |
 | Uploader | [packages/web/src/lib/uploader.ts](../../../runtimes/pi/packages/web/src/lib/uploader.ts) | XMLHttpRequest + 进度 → `Attachment` |
@@ -56,23 +52,12 @@
 | 类型 | 路径 | V2 状态 |
 |---|---|---|
 | `AgentModelParameters` | [protocol/admin-workbench-agents.ts:89](../../../runtimes/pi/packages/protocol/src/admin-workbench-agents.ts#L89) | 枚举存在：`reasoning.{enabled,effort}`；**整体契约（含合法 effort、Provider 映射、默认值语义、互斥与默认优先级）尚未由总架构师冻结** |
-| `ReasoningEffort` | [protocol/admin-workbench-agents.ts:87](../../../runtimes/pi/packages/protocol/src/admin-workbench-agents.ts#L87) | 字面量联合 `"minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| "max"`；M1 起各 Provider 的合法档位与默认档位需后端给出映射 |
-| `LlmAvailableModel.parameterCapabilities.reasoning` | [protocol/admin-workbench-llm.ts:70](../../../runtimes/pi/packages/protocol/src/admin-workbench-llm.ts#L70) | 字段存在；**互斥/步长/默认 effort 字段尚未冻结**（README §4.3 已描述边界，但协议尚未落地） |
+| `ReasoningEffort` | [protocol/admin-workbench-agents.ts:87](../../../runtimes/pi/packages/protocol/src/admin-workbench-agents.ts#L87) | 字面量联合；M1 起各 Provider 的合法档位与默认档位需后端给出映射 |
+| `LlmAvailableModel.parameterCapabilities.reasoning` | [protocol/admin-workbench-llm.ts:70](../../../runtimes/pi/packages/protocol/src/admin-workbench-llm.ts#L70) | 字段存在；互斥/步长/默认 effort 字段尚未冻结 |
 | `PublishedAppDetail` / `VersionCapabilitiesSummary` | [protocol/publishing/control-http.ts](../../../runtimes/pi/packages/protocol/src/publishing/control-http.ts) | V2 替换为 Skill + MCP |
-| `EmbedHostPostMessage` / `EmbedIframePostMessage` | [protocol/embed/post-message.ts](../../../runtimes/pi/packages/protocol/src/embed/post-message.ts) | v1 协议；含 `init`/`logout`/`focus`/`resize-request` 与 `ready`/`error`/`resize`/`conversation-created`；**`height == 0` 已在修订二拒绝（`<= 0`）** |
+| `EmbedHostPostMessage` / `EmbedIframePostMessage` | [protocol/embed/post-message.ts](../../../runtimes/pi/packages/protocol/src/embed/post-message.ts) | v1 协议；含 `init`/`logout`/`focus`/`resize-request` 与 `ready`/`error`/`resize`/`conversation-created`；`height == 0` 已在第三轮由 protocol decoder 单一来源拒绝（`<= 0`） |
 | `POST_MESSAGE_LAUNCH_TOKEN_MAX_CHARS = 16384` | 同上 | SDK 端必须保留 |
-| `POST_MESSAGE_RESIZE_MAX_HEIGHT = 100000` | 同上 | SDK 端必须保留；修订二后 SDK 与协议层均拒绝 `<= 0` |
-
-### 1.5 V2 reasoning 与用量术语（修订二补全）
-
-| 术语 | 含义 | 所在层 | 出处 |
-|---|---|---|---|
-| `ReasoningEffort` | 字面量枚举，前端只消费 | 协议 | `protocol/admin-workbench-agents.ts:87` |
-| `AgentModelParameters.reasoning.{enabled,effort}` | Revision 持久化字段 | 协议 | `protocol/admin-workbench-agents.ts:89` |
-| `sessionEffort` | 会话级 `reasoningEffort` 覆盖，**V2 命名**；写入路径由后端冻结（见 [contract-questions.md §3](./contract-questions.md)） | 协议 + 服务端 | 待冻结 |
-| `usage` | 单轮 Provider 权威 input/output/cacheRead/cacheWrite Token；不允许前端估算覆盖 | 服务端 → 协议 | `TurnMetrics` 待冻结 |
-| `TurnMetrics` | 单轮性能（TTFT/generation/totalLatencyMs/outputTokensPerSecond）；`null` 不等于 0 | 协议 | README §4.1 草案，未冻结 |
-| `ContextUsageSnapshot` | 单会话上下文用量与 breakdown | 协议 | README §4.2 草案，未冻结 |
+| `POST_MESSAGE_RESIZE_MAX_HEIGHT = 100000` | 同上 | SDK 端必须保留；第三轮 SDK 移除本地 `EMBED_HEIGHT_MAX` 副本 |
 
 ## 2. 当前缺少什么
 
@@ -80,20 +65,21 @@
 
 | 缺口 | 等 DTO？ | 备注 |
 |---|---|---|
-| 会话详情"上下文"区块 | 是 | 等 `ContextUsageSnapshot`；前端不写 0，估算与 exact 必须分别渲染 |
-| 会话详情"性能"区块 | 是 | 等 `TurnMetrics`；`null` 必须等于"未采集"，不得写 0；会话均值只统计成功有值样本 |
-| 会话分页契约 | 是 | 后端分页契约不完整、当前实现按当前页错误地计算全会话统计（第二轮回退） |
-| 单调时钟顺序 | 是 | 后端在 Provider 请求开始/首个可展示文本增量/结束/失败/取消处打单调时钟时间点，前端只在快照中按时间戳排序展示，不在前端重算 |
-| `sessionEffort` 持久化端点 | 是 | 端点位置未定；不通过 `Conversation.metadata` 暗藏，必须有独立路径 |
+| 会话详情"上下文"区块 | 是 | 等 `ContextUsageSnapshot` 字段集与口径 |
+| 会话详情"性能"区块 | 是 | 等 `TurnMetrics` 字段集与口径 |
+| 会话分页契约 | 是 | R1（后端独立负责）；前端不写"分页接口" |
+| 单调时钟顺序 | 是 | R3（后端独立负责）；前端只按服务端字段渲染，不自定语义 |
+| `turn/failed` 等事件枚举 | 是 | R2（后端独立负责）；前端不在文档中预言状态枚举 |
+| 会话级 `reasoningEffort` 覆盖的持久化端点 | 是 | 端点位置未定（见 [contract-questions.md §5.2](./contract-questions.md)） |
+| 既有 `setThinking` / `thinkingLevel` 通道迁移计划 | 是 | 是否删除、何时删除由后端给出（[contract-questions.md §5.2 Q11](./contract-questions.md)） |
 | Agent 编辑页 `Skill Revision` 选择器 | 是 | 替换 `knowledgeBaseIds` 文本框；保留旧字段读取迁移 |
 | Agent 编辑页 `MCP Revision` + `Tool allowlist` | 是 | 默认不选新发现 Tool |
 | 发布确认页"固定 Skill/MCP"卡片 | 是 | 含 hash / 校验失败原因 |
 | MCP Secret 替换 UI | 是 | 字段名/序列化未定；不回显已存值 |
 | 测试连接 / 同步 Tools 状态机 | 是 | 等错误码与超时约定 |
 | Skill / MCP 列表/详情/导入/启停 | 是 | 等 DTO |
-| 事件枚举冻结（含 `turn/failed`） | 是 | 修订二：服务端实际写入 `turn/failed`，但不在权威枚举中；前端必须在 enum 冻结后再消费 |
 | 上下文 / 指标 / Skill / MCP 的错误码与文案 | 是 | 等 [README §6](./README.md) 错误码冻结 |
-| Embed SDK 正式 package | 否 | 前端独立做；不修改协议共享上限 |
+| Embed SDK 正式 package | 否 | 前端独立做；高度范围由 protocol 单一来源决定 |
 | 单一 fixture 适配层 | 否 | 前端搭；DTO 字段集合占位枚举/字符串，不写业务数字 |
 | 加载/空/部分/失败/无权限 状态壳 | 否 | 前端搭 |
 | 旧占位/兜底数字清理 | 否 | `tokenTotal` / `avgResponseMs` 等 |
@@ -139,18 +125,18 @@
 | SDK 包名/导出名 | `import { createEmbed } from "@earendil-works/pi-embed-sdk"` 与控制台 `app-detail.tsx` 示例一致 | 构建产物清单 + 最小 HTML 复刻运行 |
 | mount / destroy 幂等 | 多次 destroy 不抛；listener 被移除；iframe 被摘除 | vitest fake window 断言 |
 | 事件名稳定性 | `ready`/`error`/`conversation-created`/`resize` 不漂移；不引入未在协议中枚举的事件 | 单测 + 类型导出与文档示例同源 |
-| resize 上下限 | `<= 0` 与 `> POST_MESSAGE_RESIZE_MAX_HEIGHT` 必须拒绝（修订二：协议层 + SDK 层双重） | 单测覆盖 max+1 / 0 / -1 / NaN / 字符串 |
+| resize 上下限（protocol 唯一来源） | `<= 0` 与 `> POST_MESSAGE_RESIZE_MAX_HEIGHT` 必须由 protocol decoder 拒绝；SDK 不复制第二份判断 | protocol 单测（[packages/protocol/test/embed/post-message.test.ts](../../../runtimes/pi/packages/protocol/test/embed/post-message.test.ts)）+ SDK iframe.style.height 同步断言 |
 | origin 校验 | 不在白名单的 origin 不更新 `targetOrigin`、不分发；错误 source 不分发 | 单测覆盖错误 source / origin / version |
 | 多实例清理 | 共享同一宿主 window 时两个独立实例互不串 listener；A.destroy() 不影响 B；B 仍能收到事件 | 双实例 + sharedWin 计数断言 |
 | launchToken 不落盘 | SDK 不写 sessionStorage/localStorage/cookie；销毁后内存引用清除（最佳努力） | 静态扫描 + localStorage.length 断言 |
-| 单调时间顺序 | 同一会话的 turn 时间戳按 `requestStartedAt ≤ providerStartedAt ≤ firstOutputAt ≤ completedAt` 排序展示；不允许前端重新排序 | 单测：乱序样本仍按时间戳升序渲染 |
 | FlowToken 与新组件共存 | 新会话详情页与 AiMessageFlow 同页渲染时不互相破坏样式/动画 | 浏览器目检 + 可选 DOM 比对 |
 | Idempotency-Key 与 401 | 提交时统一 `newIdempotencyKey({ operation })`；401 触发 `auth.failConnection` | 静态检查 + 单测 |
-| `sessionEffort` 覆盖 | V1 `setThinking` → V2 `setReasoningEffort`，落 `sessionEffort`；刷新/重连从服务端读回 | 单测 + 手动 e2e |
+
+> **第三轮移除**：原本型不再包含"单调事件顺序"SDK 描述块——其与后端单调时钟语义无关，SDK 不应承担该项契约的可证责任。后端单调时钟与"事件顺序"的语义由 R3（[contract-questions.md §5.6](./contract-questions.md)）处理。
 
 ## 5. 工作顺序（与用户确认一致）
 
 1. 本文档 + [contract-questions.md](./contract-questions.md) 提交推送。
 2. 对 §4 中"不需要 DTO"的项做最小原型，单独 commit。
-3. 后端提交修订后的 Metrics/Context 第一批候选（含 `sessionEffort`、`usage`、`turn/failed` 事件枚举、单调时钟采集位置、分页契约）+ 总架构师执行第二轮审查 + 首批 DTO 冻结。
+3. 后端提交修订后的 Metrics/Context 第一批候选（含 R1～R5）+ 总架构师执行第二轮审查 + 首批 DTO 冻结。
 4. DTO 冻结方向明确后，进入页面骨架、状态壳与单一 fixture 适配层。
