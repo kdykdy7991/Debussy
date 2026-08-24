@@ -21,18 +21,15 @@ import type {
 	ConversationAdminSummary,
 	ConversationAdminSummaryEntry,
 	ConversationAdminSummaryListResponse,
-	ConversationContextResponse,
 	ConversationExportMode,
-	ConversationMetricsResponse,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { ConfirmModal } from "../components/confirm-modal.tsx";
-import type { DataState } from "../fixtures/index.ts";
 import { navigate } from "../router.ts";
-import { ContextTab, getContextTabData } from "./context-tab.tsx";
-import { getMetricsTabData, MetricsTab } from "./metrics-tab.tsx";
+import { ContextTab } from "./context-tab.tsx";
+import { MetricsTab } from "./metrics-tab.tsx";
 
 type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context";
 
@@ -86,10 +83,8 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		| { kind: "loaded"; data: ConversationAdminAttachmentListResponse }
 		| { kind: "error"; message: string }
 	>({ kind: "idle" });
-	// M1 脚手架：通过 fixture 适配层取占位数据；真实接口接通后改为
-	// `useEffect` 触发 `api.getMetrics` / `api.getContext` 并填充同一 `DataState`。
-	const [metricsState, setMetricsState] = useState<DataState<ConversationMetricsResponse>>(getMetricsTabData("ok"));
-	const [contextState, setContextState] = useState<DataState<ConversationContextResponse>>(getContextTabData("ok"));
+	// M1: 分页游标；metrics tab 暴露"加载下一页"按此递增触发新一轮请求。
+	const [metricsAfter, setMetricsAfter] = useState<number | null>(null);
 	const [fullExportOpen, setFullExportOpen] = useState(false);
 	const [exporting, setExporting] = useState<ConversationExportMode | null>(null);
 	const [exportError, setExportError] = useState<string | null>(null);
@@ -136,8 +131,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		setEvents({ kind: "idle" });
 		setSummaries({ kind: "idle" });
 		setAttachments({ kind: "idle" });
-		setMetricsState({ kind: "idle" });
-		setContextState({ kind: "idle" });
+		setMetricsAfter(null);
 		setExportError(null);
 		loadDetail();
 	}, [loadDetail]);
@@ -152,26 +146,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 				(err: Error) => setAttachments({ kind: "error", message: err.message }),
 			);
 		}
-		if (tab === "metrics" && metricsState.kind === "idle") {
-			// M1 脚手架：先取 fixture 占位；真实接口接通后改为 `api.getMetrics(...)`。
-			setMetricsState(getMetricsTabData("ok"));
-		}
-		if (tab === "context" && contextState.kind === "idle") {
-			// M1 脚手架：先取 fixture 占位；真实接口接通后改为 `api.getContext(...)`。
-			setContextState(getContextTabData("ok"));
-		}
-	}, [
-		api,
-		attachments.kind,
-		contextState.kind,
-		conversationId,
-		events.kind,
-		loadEvents,
-		loadSummaries,
-		metricsState.kind,
-		summaries.kind,
-		tab,
-	]);
+	}, [api, attachments.kind, conversationId, events.kind, loadEvents, loadSummaries, summaries.kind, tab]);
 
 	const downloadExport = useCallback(
 		async (mode: ConversationExportMode): Promise<void> => {
@@ -296,11 +271,14 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 					{tab === "summary" && <SummaryTab state={summaries} reload={loadSummaries} />}
 					{tab === "attachments" && <AttachmentsTab state={attachments} />}
 					{tab === "metrics" && (
-						<MetricsTab state={metricsState} onRetry={() => undefined} conversationId={conversationId} />
+						<MetricsTab
+							conversationId={conversationId}
+							api={api}
+							afterSequence={metricsAfter}
+							onNextPage={(sequence) => setMetricsAfter(sequence)}
+						/>
 					)}
-					{tab === "context" && (
-						<ContextTab state={contextState} onRetry={() => undefined} conversationId={conversationId} />
-					)}
+					{tab === "context" && <ContextTab conversationId={conversationId} api={api} />}
 				</>
 			)}
 		</section>

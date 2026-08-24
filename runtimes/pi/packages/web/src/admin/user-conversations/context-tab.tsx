@@ -1,8 +1,8 @@
 /**
  * WB-006/M1: 会话详情"上下文"（context）tab。
  *
- * 当前阶段：通过 fixtures 适配层取占位 DTO；真实接口接通后
- * 改为调用 `ConversationsApi.getContext` 并填充同一 `DataState`。
+ * 调用 `ConversationsApi.getContext` 真实接口；切换 tab / 重试都触发新请求。
+ * 错误码直接来自协议 `admin-workbench-metrics.ts` 的错误表，按 HTTP 状态映射。
  *
  * 渲染口径：
  * - `loaded` 且 `available=false` → 200 但空态（合法分支：旧会话/未生成快照）；
@@ -14,16 +14,54 @@ import type {
 	ContextUsageSnapshot,
 	ConversationContextResponse,
 } from "@earendil-works/pi-protocol";
+import { useCallback, useEffect, useState } from "react";
+import { type ConversationsApi, ConversationsApiError } from "../api/conversations-api.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
-import { type DataState, describeError, loadFixture } from "../fixtures/index.ts";
+import { type DataState, describeError } from "../fixtures/index.ts";
 
 interface ContextTabProps {
-	readonly state: DataState<ConversationContextResponse>;
-	readonly onRetry: () => void;
 	readonly conversationId: string;
+	readonly api: ConversationsApi;
 }
 
-export function ContextTab({ state, onRetry, conversationId }: ContextTabProps): React.ReactElement {
+type ErrorDataState = Extract<DataState<ConversationContextResponse>, { kind: "error" }>;
+
+function mapErrorToDataState(err: unknown): ErrorDataState {
+	if (err instanceof ConversationsApiError) {
+		const code = err.code ?? "UNKNOWN_ERROR";
+		return {
+			kind: "error",
+			code,
+			message: err.message,
+			retryable: code === "METRICS_UNAVAILABLE" || code === "CONTEXT_SNAPSHOT_UNAVAILABLE",
+		};
+	}
+	return {
+		kind: "error",
+		code: "UNKNOWN_ERROR",
+		message: err instanceof Error ? err.message : String(err),
+		retryable: false,
+	};
+}
+
+export function ContextTab({ conversationId, api }: ContextTabProps): React.ReactElement {
+	const [state, setState] = useState<DataState<ConversationContextResponse>>({ kind: "idle" });
+
+	const load = useCallback(() => {
+		setState({ kind: "loading" });
+		api.getContext(conversationId)
+			.then((data) => setState({ kind: "loaded", data }))
+			.catch((err: unknown) => {
+				setState(mapErrorToDataState(err));
+			});
+	}, [api, conversationId]);
+
+	useEffect(() => {
+		load();
+	}, [load]);
+
+	const onRetry = () => load();
+
 	switch (state.kind) {
 		case "idle":
 			return (
@@ -97,20 +135,21 @@ function LoadedContext({
 			</p>
 			<ContextSnapshotCard snapshot={data.latest} />
 			<button type="button" onClick={onRetry}>
-				刷新（M1 接线后启用）
+				刷新
 			</button>
 		</div>
 	);
 }
 
 function ContextSnapshotCard({ snapshot }: { readonly snapshot: ContextUsageSnapshot }): React.ReactElement {
-	const usagePercent = `${(snapshot.usagePercent * 100).toFixed(2)}%`;
+	// 协议 `ContextUsageSnapshot.usagePercent` 是已经以百分比表达的标量（如 3.75 表示 3.75%），
+	// 渲染时只 `toFixed(2)` 后加 "%"，**不再乘以 100**——之前 `(v * 100)` 会把 3.75 渲染成 375%。
 	return (
 		<div className="context-snapshot-card">
 			<p>
 				<strong>{snapshot.usedTokens.toLocaleString()}</strong> / {snapshot.contextWindow.toLocaleString()}{" "}
-				tokens（使用率 {usagePercent}，剩余 {snapshot.remainingTokens.toLocaleString()}，预留输出{" "}
-				{snapshot.reservedOutputTokens.toLocaleString()}）
+				tokens（使用率 {snapshot.usagePercent.toFixed(2)}%，剩余 {snapshot.remainingTokens.toLocaleString()}
+				，预留输出 {snapshot.reservedOutputTokens.toLocaleString()}）
 			</p>
 			<BreakdownTable breakdown={snapshot.breakdown} />
 		</div>
@@ -151,7 +190,7 @@ function ErrorShell({
 	state,
 	onRetry,
 }: {
-	readonly state: Extract<DataState<ConversationContextResponse>, { kind: "error" }>;
+	readonly state: ErrorDataState;
 	readonly onRetry: () => void;
 }): React.ReactElement {
 	const { title, description } = describeError(state);
@@ -168,36 +207,4 @@ function ErrorShell({
 			compact
 		/>
 	);
-}
-
-/**
- * 数据入口：组件通过此入口获取 `DataState<ConversationContextResponse>`。
- *
- * 当前阶段按 `scenario` 路由到不同 fixture 或错误状态；真实接口接通后改为
- * `useEffect` + `api.getContext`，按 HTTP 状态码映射到 `DataState`。
- * 该函数签名（`DataState<T>`）保持不变，调用方零迁移。
- *
- * `unavailable` 是错误路径，直接构造 `error` 状态；fixture 表保留该条目供单元测试
- * 使用，不在此函数内重复。
- *
- * 注意：此函数不带 `use*` 前缀——它本身不调用任何 React hooks；按同步函数使用。
- */
-export function getContextTabData(
-	scenario: "ok" | "no-snapshot" | "legacy" | "unavailable",
-): DataState<ConversationContextResponse> {
-	switch (scenario) {
-		case "ok":
-			return loadFixture<ConversationContextResponse>("conversation/context/loaded-with-snapshot");
-		case "no-snapshot":
-			return loadFixture<ConversationContextResponse>("conversation/context/loaded-no-snapshot");
-		case "legacy":
-			return loadFixture<ConversationContextResponse>("conversation/context/legacy-no-snapshot");
-		case "unavailable":
-			return {
-				kind: "error",
-				code: "CONTEXT_SNAPSHOT_UNAVAILABLE",
-				message: "上下文快照暂不可用",
-				retryable: true,
-			};
-	}
 }
