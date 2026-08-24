@@ -230,4 +230,82 @@ describe("lifecycle", () => {
 		});
 		expect(resized).toHaveLength(0);
 	});
+
+	/**
+	 * M1 R5：两个独立 create() 必须互不影响；destroy(A) 之后 A 不再派发，
+	 * 但 B 仍能正常接收消息。共享同一 `window`（host document）——
+	 * handler 列表里有两条记录，destroy 只移除对应的那条。
+	 */
+	test("multi-instance: destroy(A) does not affect B", () => {
+		const { env: envA, iframe: iframeA, win: winA } = makeEnv();
+		const { env: envB, iframe: iframeB, win: winB } = makeEnv();
+		// 真实场景是同一 window；这里为简化仍各自注入独立 fake win，
+		// 但语义验证点在于：A 的 iframe removed 标志位是 `[true]`，B 是 `[]`。
+		const readyA: Array<unknown> = [];
+		const readyB: Array<unknown> = [];
+		const instA = create({
+			appId: APP,
+			baseUrl: BASE,
+			container: container() as unknown as HTMLElement,
+			env: envA,
+		});
+		const instB = create({
+			appId: APP,
+			baseUrl: BASE,
+			container: container() as unknown as HTMLElement,
+			env: envB,
+		});
+		instA.on("ready", () => void readyA.push(undefined));
+		instB.on("ready", () => void readyB.push(undefined));
+		instA.open();
+		instB.open();
+
+		// Both have their own listener registered on their own window.
+		expect(winA.handlers).toHaveLength(1);
+		expect(winB.handlers).toHaveLength(1);
+
+		instA.destroy();
+		expect(iframeA.removed).toEqual([true]);
+		expect(iframeB.removed).toEqual([]); // B 仍未 destroy
+		expect(winA.handlers).toHaveLength(0);
+		expect(winB.handlers).toHaveLength(1); // B 的 listener 保留
+
+		// B 仍能接收 ready 事件（payload 必须带 publicAppId + mode，协议强校验）。
+		hostEvent(winB, iframeB, {
+			protocol: "skdy-embed",
+			version: EMBED_PROTOCOL_VERSION,
+			type: "ready",
+			payload: { publicAppId: APP, mode: "anonymous" },
+		});
+		expect(readyB).toEqual([undefined]);
+		expect(readyA).toEqual([]);
+	});
+
+	/**
+	 * M1 R5：mount 失败（`appendChild` 抛错）→ 不注册 listener、不持 iframe 引用，
+	 * 后续 destroy() 不需要做任何清理（避免泄露 orphan handler）。
+	 */
+	test("mount failure (appendChild throws) does not leak listener", () => {
+		const { env, iframe, win } = makeEnv();
+		const boom = {
+			appendChild: () => {
+				throw new Error("detached parent");
+			},
+			children: [],
+		};
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			container: boom as unknown as HTMLElement,
+			env,
+		});
+		inst.on("ready", () => {});
+		expect(() => inst.open()).toThrow(/detached parent/);
+		// 关键断言 —— appendChild 抛错后，listener 列表保持空。
+		// （R5 修复前 addEventListener 在 appendChild 之前调用，这里会看到 1 条 handler。）
+		expect(win.handlers).toHaveLength(0);
+		// destroy 不需要做额外清理（idempotent + iframe 没挂上去）。
+		expect(() => inst.destroy()).not.toThrow();
+		expect(iframe.removed).toEqual([]); // iframe 从未被挂载，remove 没被调用
+	});
 });

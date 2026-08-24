@@ -18,6 +18,34 @@
  *
  * The module is framework-agnostic and depends only on `DOMWindow`; tests inject
  * a fake `window` so it runs in Node.
+ *
+ * # SECURITY NOTES — Launch Token boundary (M1 R5)
+ *
+ * The Launch Token is the **only secret** that crosses the SDK boundary
+ * (signed-user mode). The following invariants are non-negotiable:
+ *
+ * - **NOT in URL.** `iframe.src` only ever contains `${baseUrl}/embed/${appId}`
+ *   — never the token. Constructed by `buildIframe()` (this file).
+ * - **NOT in storage.** Never written to `localStorage` / `sessionStorage` /
+ *   `document.cookie` / IndexedDB. The SDK is framework-agnostic and has no
+ *   storage layer.
+ * - **NOT in DOM.** Never assigned to any DOM attribute. `setAttribute` only
+ *   receives `"title"` for a11y.
+ * - **NOT in logs / errors.** `error` event payload is
+ *   `{ code: string; message: string }` from the protocol envelope
+ *   (`embed/post-message.ts` `error` type) — the protocol explicitly forbids
+ *   embedding the token in error events. If a future code path adds payload
+ *   fields, audit them against this list before merging.
+ * - **Released from memory on every code path**:
+ *   - successful `init` postMessage → `pendingLaunchToken = undefined`
+ *     (see `postInit()`);
+ *   - explicit `logout()` → `pendingLaunchToken = undefined`;
+ *   - `destroy()` → `pendingLaunchToken = undefined`.
+ *
+ * The token is held in a single local variable (`pendingLaunchToken`) until
+ * the next `init` round-trip, then dropped. If you add a new code path that
+ * reads or copies the token, **first** confirm it terminates in a
+ * `pendingLaunchToken = undefined` assignment.
  */
 import {
 	decodeEmbedIframeMessage,
@@ -182,13 +210,20 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 	const mount = (): void => {
 		if (disposed) return;
 		if (iframe !== null) return; // already mounted
-		iframe = buildIframe();
-		env.window.addEventListener("message", messageHandler);
+		const built = buildIframe();
+		// Append FIRST: if `container.appendChild` throws (detached document, CSP,
+		// detached parent node in JSDOM), the iframe is *not* yet attached and
+		// we must not register the message listener — otherwise the SDK would
+		// leak a handler that never fires. This is the canonical
+		// "register-after-commit" lifecycle pattern.
 		if (container !== null) {
-			container.appendChild(iframe as unknown as Node);
+			container.appendChild(built as unknown as Node);
 		} else {
-			document.body.appendChild(iframe as unknown as Node);
+			document.body.appendChild(built as unknown as Node);
 		}
+		// Commit iframe reference + listener only after a successful mount.
+		iframe = built;
+		env.window.addEventListener("message", messageHandler);
 		postInit();
 	};
 
