@@ -58,7 +58,15 @@ async function probe(): Promise<boolean> {
 const pgUp = await probe();
 
 const CATALOG: CapabilityCatalog = {
-	models: [{ provider: "skdy", modelId: "Qwen3.8-Agent" }],
+	models: [
+		{
+			provider: "skdy",
+			modelId: "Qwen3.8-Agent",
+			parameterCapabilities: {
+				reasoning: { supported: true, toggle: true, efforts: ["low", "medium", "high"], defaultEffort: "high" },
+			},
+		},
+	],
 	tools: [],
 	knowledgeBases: [],
 };
@@ -67,7 +75,21 @@ function buildSpec(versionId: string, modelId: string): unknown {
 	return {
 		schemaVersion: 1,
 		publishedAppVersionId: versionId,
-		agent: { systemPrompt: "You are a helpful assistant.", model: { provider: "skdy", modelId } },
+		agent: {
+			systemPrompt: "You are a helpful assistant.",
+			model: {
+				provider: "skdy",
+				modelId,
+				parameterCapabilities: {
+					reasoning: {
+						supported: modelId === "Qwen3.8-Agent",
+						toggle: modelId === "Qwen3.8-Agent",
+						efforts: modelId === "Qwen3.8-Agent" ? ["low", "medium", "high"] : [],
+						...(modelId === "Qwen3.8-Agent" ? { defaultEffort: "high" } : {}),
+					},
+				},
+			},
+		},
 		capabilities: {
 			tools: [],
 			knowledgeBases: [],
@@ -236,6 +258,11 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 		const read = await service.getConversationReasoning({ tenantId, conversationId });
 		if (!read.ok) throw new Error("re-read failed");
 		expect(read.data.effort).toBeNull();
+		expect(read.data.configurable).toBe(true);
+		expect(read.data.pinnedCapability).toMatchObject({
+			modelId: "Qwen3.8-Agent",
+			reasoning: { supported: true, efforts: ["low", "medium", "high"] },
+		});
 	});
 
 	test("unsupported effort outside the model tiers -> 422 REASONING_INVALID_EFFORT", async () => {
@@ -293,6 +320,8 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 			return m.after === "medium" && m.principal?.type === "admin" && m.principal?.id === "admin-1";
 		});
 		expect(mediums).toBeDefined();
+		expect(mediums?.actorType).toBe("platform_admin");
+		expect(mediums?.actorId).toBe("admin-1");
 		const meta = (mediums as { metadata: { before: string | null; after: string | null } }).metadata;
 		expect(meta).toMatchObject({ before: null, after: "medium" });
 	});
@@ -375,8 +404,8 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 			{ tenantId, publishedAppId: appId },
 			conv!.publishedAppVersionId,
 		);
-		expect(caps.reasoning.supported).toBe(true);
-		expect(caps.reasoning.efforts).toEqual(["low", "medium", "high"]);
+		expect(caps?.reasoning.supported).toBe(true);
+		expect(caps?.reasoning.efforts).toEqual(["low", "medium", "high"]);
 	});
 });
 

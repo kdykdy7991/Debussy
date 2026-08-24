@@ -72,6 +72,19 @@ const modelSpec = z
 		provider: z.string().min(1),
 		modelId: z.string().min(1),
 		params: z.record(z.string(), z.unknown()).optional(),
+		parameterCapabilities: z
+			.object({
+				reasoning: z
+					.object({
+						supported: z.boolean(),
+						toggle: z.boolean(),
+						efforts: z.array(z.enum(["minimal", "low", "medium", "high", "xhigh", "max"])),
+						defaultEffort: z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
+					})
+					.strict(),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
 

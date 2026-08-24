@@ -12,11 +12,11 @@ import {
 	AGENT_V2_REASONING_AUDIT_ACTION,
 	type ConversationPublicId,
 	type ConversationReasoningState,
-	type ModelParameterCapabilities,
+	type PublishedAppVersionPublicId,
 	type ReasoningPrincipal,
 	type ReasoningUpdateRequest,
 } from "@earendil-works/pi-protocol";
-import { modelParameterCapabilities, validateModelParameters } from "../model-parameters.ts";
+import { validateModelParameters } from "../model-parameters.ts";
 import {
 	type ConversationId,
 	newAuditEventId,
@@ -56,8 +56,6 @@ export interface ApplyConversationReasoningInput {
 }
 
 /**
-
-/**
  * Shared effort apply: validates against the pinned version's FROZEN capability
  * and atomically upserts the fact source + appends the reasoning-updated audit
  * row in one transaction.
@@ -73,14 +71,25 @@ export async function applyConversationReasoning(
 			message: "policy forbids adjusting reasoning effort for this conversation",
 		};
 	}
-	const capabilities = await reasoningCapabilitiesForVersion(
+	const pinnedCapability = await reasoningCapabilitiesForVersion(
 		input.repos,
 		{ tenantId: input.tenantId, publishedAppId: input.publishedAppId },
 		input.publishedAppVersionId,
 	);
+	if (pinnedCapability === null) {
+		return {
+			ok: false,
+			code: "REASONING_NOT_CONFIGURABLE",
+			status: 403,
+			message: "the pinned published version has no frozen reasoning capability",
+		};
+	}
 	const after = input.request.effort;
 	if (after !== null) {
-		const errors = validateModelParameters({ reasoning: { enabled: true, effort: after } }, capabilities);
+		const errors = validateModelParameters(
+			{ reasoning: { enabled: true, effort: after } },
+			{ reasoning: pinnedCapability.reasoning },
+		);
 		if (errors.length > 0) {
 			return { ok: false, code: "REASONING_INVALID_EFFORT", status: 422, message: errors.join("; ") };
 		}
@@ -102,8 +111,8 @@ export async function applyConversationReasoning(
 		audit: (before) => ({
 			auditEventId: newAuditEventId(),
 			tenantId: input.tenantId,
-			actorType: "platform_admin",
-			actorId: input.tenantId,
+			actorType: input.principal.type === "admin" ? "platform_admin" : "embed_owner",
+			actorId: input.principal.id,
 			action: AGENT_V2_REASONING_AUDIT_ACTION,
 			resourceType: "conversation",
 			resourceId: input.conversationId,
@@ -120,7 +129,13 @@ export async function applyConversationReasoning(
 	});
 	return {
 		ok: true,
-		data: { conversationId: publicId, effort: after, updatedAt: now.toISOString() },
+		data: {
+			conversationId: publicId,
+			effort: after,
+			updatedAt: now.toISOString(),
+			configurable: true,
+			pinnedCapability,
+		},
 	};
 }
 
@@ -137,19 +152,19 @@ export async function reasoningCapabilitiesForVersion(
 		readonly publishedAppId: PublishedAppId;
 	},
 	versionId: PublishedAppVersionId,
-): Promise<ModelParameterCapabilities> {
+): Promise<ConversationReasoningState["pinnedCapability"]> {
 	const version = await repos.publishedAppVersions.get(
 		{ tenantId: versionScope.tenantId, publishedAppId: versionScope.publishedAppId },
 		versionId,
 	);
-	let modelId = "";
-	if (version !== undefined) {
-		const parsed = parseRuntimeSpec(version.runtimeSpec);
-		if (parsed.ok) modelId = parsed.spec.agent.model.modelId;
-	}
-	return modelParameterCapabilities({
-		id: modelId,
-		api: "openai-completions",
-		reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(modelId),
-	});
+	if (version === undefined) return null;
+	const parsed = parseRuntimeSpec(version.runtimeSpec);
+	if (!parsed.ok) return null;
+	const snapshot = parsed.spec.agent.model.parameterCapabilities;
+	if (snapshot === undefined) return null;
+	return {
+		publishedAppVersionId: toPublicId("PublishedAppVersionId", versionId) as PublishedAppVersionPublicId,
+		modelId: parsed.spec.agent.model.modelId,
+		reasoning: snapshot.reasoning,
+	};
 }

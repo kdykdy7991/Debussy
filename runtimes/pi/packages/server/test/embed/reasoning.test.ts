@@ -50,7 +50,21 @@ function buildSpec(versionId: string, modelId: string): unknown {
 	return {
 		schemaVersion: 1,
 		publishedAppVersionId: versionId,
-		agent: { systemPrompt: "You are a helpful assistant.", model: { provider: "skdy", modelId } },
+		agent: {
+			systemPrompt: "You are a helpful assistant.",
+			model: {
+				provider: "skdy",
+				modelId,
+				parameterCapabilities: {
+					reasoning: {
+						supported: true,
+						toggle: true,
+						efforts: ["low", "medium", "high"],
+						defaultEffort: "high",
+					},
+				},
+			},
+		},
 		capabilities: {
 			tools: [],
 			knowledgeBases: [],
@@ -312,7 +326,8 @@ describe.skipIf(!pgUp)("embed conversation reasoning (owner surface)", () => {
 		const audits = await repos.audit.listByTenant({ tenantId }, 50);
 		const entry = audits.find((a) => a.resourceId === conversationId);
 		expect(entry?.action).toBe("conversation.reasoning-updated");
-		expect(entry?.actorType).toBe("platform_admin");
+		expect(entry?.actorType).toBe("embed_owner");
+		expect(entry?.actorId).toBe(ownerPrincipalId);
 		const metadata = entry?.metadata as {
 			principal?: { type?: string; id?: string };
 			before?: unknown;

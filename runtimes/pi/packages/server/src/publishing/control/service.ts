@@ -71,7 +71,7 @@ import {
 	readStoredTurnMetrics,
 	toConversationTurnMetric,
 } from "../../agent-v2/query.ts";
-import { applyConversationReasoning } from "../../agent-v2/reasoning.ts";
+import { applyConversationReasoning, reasoningCapabilitiesForVersion } from "../../agent-v2/reasoning.ts";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import { modelParameterCapabilities, validateModelParameters } from "../../model-parameters.ts";
 import type {
@@ -1927,12 +1927,19 @@ export class ControlService {
 			},
 			input.conversationId,
 		);
+		const pinnedCapability = await reasoningCapabilitiesForVersion(
+			this.repos,
+			{ tenantId: conversation.tenantId, publishedAppId: conversation.publishedAppId },
+			conversation.publishedAppVersionId,
+		);
 		return {
 			ok: true,
 			data: {
 				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
 				effort: state?.effort ?? null,
 				updatedAt: (state?.updatedAt ?? conversation.lastActiveAt).toISOString(),
+				configurable: pinnedCapability !== null,
+				pinnedCapability,
 			},
 		};
 	}
