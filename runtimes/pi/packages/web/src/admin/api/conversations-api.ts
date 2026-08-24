@@ -14,7 +14,10 @@ import type {
 	ConversationAdminEventListResponse,
 	ConversationAdminListResponse,
 	ConversationAdminSummaryListResponse,
+	ConversationContextResponse,
 	ConversationExportMode,
+	ConversationMetricsQuery,
+	ConversationMetricsResponse,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 
@@ -191,6 +194,29 @@ export class ConversationsApi {
 	): Promise<import("@earendil-works/pi-protocol").ConversationAdminAttachmentListResponse> {
 		return this.request<import("@earendil-works/pi-protocol").ConversationAdminAttachmentListResponse>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/attachments`,
+		);
+	}
+
+	/**
+	 * M1: 单会话指标（分页 + 全会话 stats）。
+	 * 参数顺序：先 `conversationId`，再 `query`，避免可选字段顺序错位。
+	 */
+	getMetrics(conversationId: string, query: ConversationMetricsQuery): Promise<ConversationMetricsResponse> {
+		const params = new URLSearchParams();
+		if (query.afterSequence !== undefined && query.afterSequence > 0) {
+			params.set("afterSequence", String(query.afterSequence));
+		}
+		if (query.limit !== undefined) params.set("limit", String(query.limit));
+		const qs = params.toString();
+		return this.request<ConversationMetricsResponse>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/metrics${qs.length > 0 ? `?${qs}` : ""}`,
+		);
+	}
+
+	/** M1: 单会话最新一帧上下文快照；不存在时返回 `available=false, latest=null`。 */
+	getContext(conversationId: string): Promise<ConversationContextResponse> {
+		return this.request<ConversationContextResponse>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/context`,
 		);
 	}
 }
