@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "RUNTIME_UNAVAILABLE",
+    "message": "Metrics service is temporarily unavailable",
+    "requestId": "req_b10e",
+    "retryable": true
+  }
+}

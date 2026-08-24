@@ -1,0 +1,65 @@
+# Agent 平台 V2：metrics / context API 示例（M0）
+
+接口路径在 M0 可调整；响应语义、租户边界与不可变版本原则不变。控制面需
+`X-Tenant-Name` 与 Admin Token；写操作仍需 Idempotency-Key（均为只读查询，无需）。
+
+## 1. 单会话指标：`GET /api/control/v1/conversations/:id/metrics`
+
+```bash
+curl -sS \
+  -H "X-Tenant-Name: acme" \
+  -H "Authorization: Bearer $CONTROL_ADMIN_TOKEN" \
+  "https://localhost:PORT/api/control/v1/conversations/conv_8f3a2e/metrics"
+```
+
+成功（HTTP 200）：正文见 `../m0-fixtures/metrics-success.json`。
+旧会话/无指标（HTTP 200，`stats.available=false`、`items=[]`）：见 `../m0-fixtures/metrics-empty.json`。
+权限失败（HTTP 404 统一信封）：见 `../m0-fixtures/metrics-forbidden.json`。
+验证失败（HTTP 422 `INVALID_METRICS_FILTER`）：见 `../m0-fixtures/metrics-invalid.json`。
+服务不可用（HTTP 503 `RUNTIME_UNAVAILABLE`）：见 `../m0-fixtures/metrics-unavailable.json`。
+
+## 2. 单会话上下文快照：`GET /api/control/v1/conversations/:id/context`
+
+```bash
+curl -sS \
+  -H "X-Tenant-Name: acme" \
+  -H "Authorization: Bearer $CONTROL_ADMIN_TOKEN" \
+  "https://localhost:PORT/api/control/v1/conversations/conv_8f3a2e/context"
+```
+
+成功（HTTP 200）：
+
+```json
+{
+  "conversationId": "conv_8f3a2e",
+  "available": true,
+  "latest": {
+    "usedTokens": 21430,
+    "contextWindow": 100000,
+    "remainingTokens": 76570,
+    "reservedOutputTokens": 2000,
+    "usagePercent": 21.43,
+    "measurement": "estimated",
+    "breakdown": {
+      "systemPrompt": 3200,
+      "skillInstructions": 0,
+      "toolDefinitions": 0,
+      "conversationMessages": 16980,
+      "toolResults": 0,
+      "retrievalContext": 1250,
+      "attachments": 0
+    }
+  },
+  "atSequence": 42
+}
+```
+
+旧会话/无快照（HTTP 200，`available=false`、`latest=null`、`atSequence=null`）：
+分项之和必须等于 `usedTokens`（21430 = 3200 + 16980 + 1250）。
+
+## 3. 空值语义提示
+
+- `latest.breakdown` 缺省分项为 0，但“无该来源”与“值为 0”在调用端语义一致。
+- `TurnMetrics` 中 `ttftMs/generationMs/outputTokensPerSecond` 无值必须为 `null`
+  而非 0；`totalLatencyMs` 恒有值。
+- 完整错误码表见 `m0-contract-2026-08-24.md` §3。
