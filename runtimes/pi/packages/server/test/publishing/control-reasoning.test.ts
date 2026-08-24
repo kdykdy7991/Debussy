@@ -13,10 +13,13 @@
  * - clearing (effort null) reverts to the Revision default.
  * Requires the local test database.
  */
+
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { PostgresClient } from "../../src/persistence/postgres/client.ts";
 import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../src/persistence/postgres/repositories/index.ts";
+import { createControlHttpHandler } from "../../src/publishing/control/http.ts";
 import { ControlService } from "../../src/publishing/control/service.ts";
 import type {
 	AgentDefinitionId,
@@ -81,16 +84,16 @@ function buildSpec(versionId: string, modelId: string): unknown {
 	};
 }
 
-describe.skipIf(!pgUp)("control conversation reasoning service", () => {
-	let client: PostgresClient;
-	let repos: PublishingRepositories;
-	let service: ControlService;
-	let tenantId: TenantId;
-	let otherTenantId: TenantId;
-	let appId: PublishedAppId;
-	let principalId: PrincipalId;
-	let conversationId: ConversationId;
+let client: PostgresClient;
+let repos: PublishingRepositories;
+let service: ControlService;
+let tenantId: TenantId;
+let otherTenantId: TenantId;
+let appId: PublishedAppId;
+let principalId: PrincipalId;
+let conversationId: ConversationId;
 
+describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 	beforeAll(async () => {
 		client = new PostgresClient({ url: PG_URL, searchPath: SCHEMA });
 		await client.run(`drop schema if exists ${SCHEMA} cascade`);
@@ -289,5 +292,99 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 		expect(mediums).toBeDefined();
 		const meta = (mediums as { metadata: { before: string | null; after: string | null } }).metadata;
 		expect(meta).toMatchObject({ before: null, after: "medium" });
+	});
+});
+
+function httpCall(
+	base: string,
+	method: string,
+	path: string,
+	body?: unknown,
+	headers: Record<string, string> = {},
+): Promise<{ status: number; data: unknown; code?: string }> {
+	return new Promise((resolve, reject) => {
+		const payload = body === undefined ? undefined : JSON.stringify(body);
+		const req = httpRequest(
+			new URL(path, base),
+			{
+				method,
+				headers: {
+					host: new URL(base).host,
+					...headers,
+					...(payload !== undefined
+						? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }
+						: {}),
+				},
+			},
+			(res: IncomingMessage) => {
+				const chunks: Buffer[] = [];
+				res.on("data", (c: Buffer) => chunks.push(c));
+				res.on("end", () => {
+					const raw = Buffer.concat(chunks).toString("utf-8");
+					const json = raw ? (JSON.parse(raw) as { data?: unknown; error?: { code: string } }) : undefined;
+					resolve({ status: res.statusCode ?? 0, data: json?.data, code: json?.error?.code });
+				});
+			},
+		);
+		req.on("error", reject);
+		if (payload !== undefined) req.write(payload);
+		req.end();
+	});
+}
+
+describe.skipIf(!pgUp)("control reasoning HTTP routes", () => {
+	let server: Server;
+	let base: string;
+
+	beforeAll(async () => {
+		const handler = createControlHttpHandler({
+			service,
+			repositories: repos,
+			adminToken: "admintoken",
+			tenantId,
+			source: {
+				async collect() {
+					return { name: "x", config: { prompt: "hi" } as AgentDraftConfig, warnings: [] };
+				},
+			},
+		});
+		server = createServer((req, res) => {
+			Promise.resolve(handler(req, res)).catch(() => {
+				res.statusCode = 500;
+				res.end();
+			});
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (address === null || typeof address === "string") throw new Error("no port");
+		base = `http://127.0.0.1:${address.port}`;
+	});
+
+	afterAll(async () => {
+		await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+	});
+
+	test("reasoning endpoints require the admin token", async () => {
+		expect((await httpCall(base, "GET", `/api/control/v1/conversations/${conversationId}/reasoning`)).status).toBe(
+			401,
+		);
+		expect(
+			(await httpCall(base, "PUT", `/api/control/v1/conversations/${conversationId}/reasoning`, { effort: "high" }))
+				.status,
+		).toBe(401);
+	});
+
+	test("malformed reasoning update body is rejected with 400 by the HTTP validator", async () => {
+		const res = await httpCall(
+			base,
+			"PUT",
+			`/api/control/v1/conversations/${conversationId}/reasoning`,
+			{ effort: "ultra" },
+			{ authorization: `Bearer ${"admintoken"}` },
+		);
+		// "ultra" is not a legal ReasoningEffort literal, so it is rejected at the
+		// HTTP boundary (400) before the service capability check.
+		expect(res.status).toBe(400);
+		expect(res.code).toBe("INVALID_REQUEST");
 	});
 });
