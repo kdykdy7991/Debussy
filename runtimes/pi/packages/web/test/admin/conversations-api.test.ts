@@ -374,4 +374,157 @@ describe("ConversationsApi", () => {
 			expect(init.signal).toBe(controller2.signal);
 		});
 	});
+
+	/**
+	 * M1 reasoning：会话级覆盖 tab 的两个 HTTP 入口（V2-README §4.3）。
+	 * 不复制 DTO：测试只断言 URL/method/body/headers + 错误码透传，
+	 * 字段含义（`effort`、`updatedAt`）由协议 frozen 类型保证。
+	 */
+	describe("getReasoning / putReasoning", () => {
+		it("getReasoning sends GET /api/control/v1/conversations/:id/reasoning with bearer token", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_r1",
+								effort: "high",
+								updatedAt: "2026-08-24T10:00:00.000Z",
+							},
+							requestId: "req_get_reasoning",
+						}),
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			const state = await api.getReasoning("conv_r1");
+
+			expect(state.effort).toBe("high");
+			const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(url).toBe("http://localhost/api/control/v1/conversations/conv_r1/reasoning");
+			expect(init.method).toBe("GET");
+			expect(init.headers).toMatchObject({ Authorization: "Bearer admin-token" });
+		});
+
+		it("getReasoning surfaces 404 CONVERSATION_NOT_FOUND with retryable=false", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							error: { code: "CONVERSATION_NOT_FOUND", message: "not in tenant", requestId: "req_404" },
+						}),
+						{ status: 404 },
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			const thrown = await api.getReasoning("conv_x").then(
+				() => null,
+				(err: unknown) => err,
+			);
+			expect(thrown).not.toBeNull();
+			expect((thrown as { code: string }).code).toBe("CONVERSATION_NOT_FOUND");
+			expect((thrown as { retryable: boolean }).retryable).toBe(false);
+		});
+
+		it("putReasoning sends PUT with JSON body and bearer token", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_r2",
+								effort: "xhigh",
+								updatedAt: "2026-08-24T10:01:00.000Z",
+							},
+							requestId: "req_put_reasoning",
+						}),
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			const state = await api.putReasoning("conv_r2", { effort: "xhigh" });
+
+			expect(state.effort).toBe("xhigh");
+			const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(url).toBe("http://localhost/api/control/v1/conversations/conv_r2/reasoning");
+			expect(init.method).toBe("PUT");
+			expect(init.headers).toMatchObject({
+				Authorization: "Bearer admin-token",
+				"Content-Type": "application/json",
+			});
+			expect(JSON.parse(init.body as string)).toEqual({ effort: "xhigh" });
+		});
+
+		it("putReasoning surfaces 422 REASONING_INVALID_EFFORT with retryable=false", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							error: {
+								code: "REASONING_INVALID_EFFORT",
+								message: "effort must be one of: high, low, medium",
+								requestId: "req_422",
+							},
+						}),
+						{ status: 422 },
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			// 服务端会拒绝（422 REASONING_INVALID_EFFORT）——故意用一个不在
+			// 协议 `ReasoningEffort` union 内的字符串，模拟 wire 上的非法档位。
+			// `as never` 让前端类型系统放行（协议不允许构造非法值，但服务端是
+			// 终极权威，所以测试断言服务端能正确拒绝并把错误码透传）。
+			const thrown = await api
+				.putReasoning("conv_r3", { effort: "wrong" as never })
+				.then(
+					() => null,
+					(err: unknown) => err,
+				);
+			expect(thrown).not.toBeNull();
+			expect((thrown as { code: string }).code).toBe("REASONING_INVALID_EFFORT");
+			// 422 在 HTTP 兜底里是不可重试的，与协议表一致；
+			// 关键断言是 UI 拿到 retryable=false，避免无限重试一个验证错误。
+			expect((thrown as { retryable: boolean }).retryable).toBe(false);
+		});
+
+		it("putReasoning accepts null effort (clear override)", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_r4",
+								effort: null,
+								updatedAt: "2026-08-24T10:02:00.000Z",
+							},
+							requestId: "req_clear",
+						}),
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			const state = await api.putReasoning("conv_r4", { effort: null });
+
+			expect(state.effort).toBeNull();
+			const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(JSON.parse(init.body as string)).toEqual({ effort: null });
+		});
+	});
 });

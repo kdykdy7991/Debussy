@@ -30,8 +30,9 @@ import { ConfirmModal } from "../components/confirm-modal.tsx";
 import { navigate } from "../router.ts";
 import { ContextTab } from "./context-tab.tsx";
 import { MetricsTab } from "./metrics-tab.tsx";
+import { ReasoningTab } from "./reasoning-tab.tsx";
 
-type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context";
+type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context" | "reasoning";
 
 interface DetailData {
 	readonly conversation: ConversationAdminSummary;
@@ -73,6 +74,8 @@ function statusLabel(status: string): string {
 export function AdminConversationDetail({ conversationId }: { conversationId: string }): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
+	// R8 修订：ReasoningTab 不再需要 AgentApi / LlmApi——capability 数据
+	// 源待 BE 契约冻结（详见 reasoning-tab.tsx 顶部 TODO + m1-r8-blocker2.md）。
 	const [tab, setTab] = useState<Tab>("overview");
 	const [detail, setDetail] = useState<DetailState>({ kind: "loading" });
 	const [events, setEvents] = useState<EventState>({ kind: "idle" });
@@ -262,6 +265,14 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						<button type="button" role="tab" aria-selected={tab === "context"} onClick={() => setTab("context")}>
 							上下文
 						</button>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={tab === "reasoning"}
+							onClick={() => setTab("reasoning")}
+						>
+							思考强度
+						</button>
 					</div>
 
 					{tab === "overview" && <Overview conversation={detail.data.conversation} />}
@@ -279,6 +290,9 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						/>
 					)}
 					{tab === "context" && <ContextTab conversationId={conversationId} api={api} />}
+					{tab === "reasoning" && (
+						<ReasoningTab conversationId={conversationId} api={api} />
+					)}
 				</>
 			)}
 		</section>

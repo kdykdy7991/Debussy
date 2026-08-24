@@ -10,12 +10,26 @@
  * - `loaded` 且 `stats.available=true` → 渲染 `MetricsRow` + 明细表；
  * - `error` → `EmptyState` 错误壳（title/description 由 `describeError` 给出）。
  */
-import type { ConversationMetricsResponse, ConversationTurnMetric } from "@earendil-works/pi-protocol";
+import type {
+	ConversationMetricsResponse,
+	ConversationPublicId,
+	ConversationTurnMetric,
+} from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConversationsApi } from "../api/conversations-api.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
 import { type MetricItem, MetricsRow } from "../components/MetricsRow.tsx";
 import { createStaleResponseGuard, type DataState, describeError, toDataStateError } from "../data-state.ts";
+
+/**
+  协议 `ConversationPublicId` 是模板字面量 `conv_${string}`，路由参数或上层传入
+  的 raw string 必须先窄化。本 helper 在不变更外部 prop 形态的前提下，
+  让 `ConversationMetricsQuery.conversationId` 在传参前满足协议类型。
+  非 conv_ 前缀：上层路由错配，MetricsTab 渲染错误态，不发请求。
+ */
+function asConversationPublicId(raw: string): ConversationPublicId | null {
+	return raw.startsWith("conv_") ? (raw as ConversationPublicId) : null;
+}
 
 interface MetricsTabProps {
 	readonly conversationId: string;
@@ -91,14 +105,26 @@ export function MetricsTab({ conversationId, api, afterSequence, onNextPage }: M
 
 	const load = useCallback(
 		(after: number | null) => {
+			// 协议 `ConversationMetricsQuery.conversationId` 是 `conv_${string}` 模板字面量；
+			// 上层 raw string 必须先窄化，未通过则不进网络（错误态直接渲染）。
+			const cid = asConversationPublicId(conversationId);
+			if (cid === null) {
+				setState({
+					kind: "error",
+					code: "INVALID_METRICS_FILTER",
+					message: `conversationId must start with "conv_", got ${JSON.stringify(conversationId)}`,
+					retryable: false,
+				});
+				return;
+			}
 			const ticket = guard.begin();
 
 			setState({ kind: "loading" });
 			const arg =
 				after !== null && after > 0
-					? { conversationId, afterSequence: after, limit: 50 }
-					: { conversationId, limit: 50 };
-			api.getMetrics(conversationId, arg, ticket.signal)
+					? { conversationId: cid, afterSequence: after, limit: 50 }
+					: { conversationId: cid, limit: 50 };
+			api.getMetrics(cid, arg, ticket.signal)
 				.then((data) => {
 					ticket.commit(() => setState({ kind: "loaded", data }));
 				})

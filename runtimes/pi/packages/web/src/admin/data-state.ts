@@ -9,7 +9,10 @@
 import {
 	AGENT_V2_METRICS_ERROR_CODES,
 	AGENT_V2_METRICS_ERRORS,
+	AGENT_V2_REASONING_ERROR_CODES,
+	AGENT_V2_REASONING_ERRORS,
 	type AgentV2MetricsErrorCode,
+	type AgentV2ReasoningErrorCode,
 } from "@earendil-works/pi-protocol";
 
 /**
@@ -33,27 +36,64 @@ export type DataState<T> =
 	  };
 
 /**
- * 已知错误码（协议冻结）。`UNKNOWN_ERROR` 是前端兜底，非协议码。
+ * 已知错误码（协议冻结，metrics + reasoning 联合集合）。
+ *
+ * `UNKNOWN_ERROR` 是前端兜底，**非**协议码——`isKnownErrorCode` 返回 false
+ * 时调用方应把错误码字符串收敛到该字面量，避免把任意上游字符串当成"已知"。
+ *
+ * 为什么不合并成单表：协议层 metrics 与 reasoning 是**两条独立 endpoint
+ * 家族**（`/conversations/:id/metrics` vs `/conversations/:id/reasoning`），
+ * 各自有 `AGENT_V2_*_ERRORS` 表。前端用 union 类型 + `isKnownErrorCode` /
+ * `isKnownMetricsErrorCode` / `isKnownReasoningErrorCode` 三个守卫，
+ * 把两个集合视为"生产模块已识别的协议码全集"，不允许把"未知码"放进任一表。
  */
-export type KnownErrorCode = AgentV2MetricsErrorCode | "UNKNOWN_ERROR";
+export type KnownErrorCode = AgentV2MetricsErrorCode | AgentV2ReasoningErrorCode | "UNKNOWN_ERROR";
 
 /**
- * 已知错误码 → HTTP/retryable 映射（直接来自协议）。
- * 未知 code 一律映射为 `UNKNOWN_ERROR`。
+ * 已知错误码 → HTTP/retryable 映射（metrics + reasoning 联合）。
+ *
+ * 解析顺序：
+ * 1. metrics 表 → `AGENT_V2_METRICS_ERRORS[code]`；
+ * 2. reasoning 表 → `AGENT_V2_REASONING_ERRORS[code]`；
+ * 3. 都未命中 → 兜底 `{ retryable: false, httpStatus: null }`。
+ *
+ * 未知 code 一律映射为 `UNKNOWN_ERROR`（由调用方在 `toDataStateError` 内收敛）。
  */
 export function lookupErrorMetadata(code: string): { retryable: boolean; httpStatus: number | null } {
-	if (isKnownErrorCode(code)) {
+	if (isKnownMetricsErrorCode(code)) {
 		return AGENT_V2_METRICS_ERRORS[code];
+	}
+	if (isKnownReasoningErrorCode(code)) {
+		return AGENT_V2_REASONING_ERRORS[code];
 	}
 	return { retryable: false, httpStatus: null };
 }
 
 /**
- * 协议错误码类型守卫。直接基于协议常量 `AGENT_V2_METRICS_ERROR_CODES` 判定，
- * 不硬编码字符串。未知 code 在调用方应统一映射为 `UNKNOWN_ERROR`。
+ * 协议错误码类型守卫（metrics 子集）。直接基于协议常量
+ * `AGENT_V2_METRICS_ERROR_CODES` 判定，不硬编码字符串。
  */
-export function isKnownErrorCode(code: string): code is AgentV2MetricsErrorCode {
+export function isKnownMetricsErrorCode(code: string): code is AgentV2MetricsErrorCode {
 	return (AGENT_V2_METRICS_ERROR_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * 协议错误码类型守卫（reasoning 子集）。直接基于协议常量
+ * `AGENT_V2_REASONING_ERROR_CODES` 判定，不硬编码字符串。
+ */
+export function isKnownReasoningErrorCode(code: string): code is AgentV2ReasoningErrorCode {
+	return (AGENT_V2_REASONING_ERROR_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * 协议错误码联合守卫（metrics + reasoning）。生产模块的"已知码全集"，
+ * **不**允许把上游任意字符串（路径错误、HTTP 兜底消息）当成"已知"。
+ *
+ * 注意：返回类型是 `KnownErrorCode`（含 `"UNKNOWN_ERROR"` 兜底），
+ * 调用方需要进一步 narrow 才能拿到具体协议错误码类型。
+ */
+export function isKnownErrorCode(code: string): code is Exclude<KnownErrorCode, "UNKNOWN_ERROR"> {
+	return isKnownMetricsErrorCode(code) || isKnownReasoningErrorCode(code);
 }
 
 /**
@@ -82,6 +122,8 @@ function readCode(err: unknown): KnownErrorCode {
 	if (err && typeof err === "object" && "code" in err) {
 		const raw = (err as { code?: unknown }).code;
 		if (typeof raw === "string" && raw.length > 0) {
+			// 把"已知协议码"（metrics 或 reasoning 子集）保留为字面量；
+			// 其它字符串（HTTP 兜底消息、未知上游代码）一律收敛为 `UNKNOWN_ERROR`。
 			return isKnownErrorCode(raw) ? raw : "UNKNOWN_ERROR";
 		}
 	}
@@ -89,11 +131,15 @@ function readCode(err: unknown): KnownErrorCode {
 }
 
 function readRetryable(err: unknown, code: KnownErrorCode): boolean {
-	// 协议已知码 → 以 `AGENT_V2_METRICS_ERRORS` 为权威，**不**允许传入错误的
-	// `retryable` 覆盖（防止任意上游把已知协议码标记为"不重试"导致 UI 行为漂移）。
-	// 未知码才退回到传入值兜底（HTTP 状态推断留给 API 层做）。
-	if (isKnownErrorCode(code)) {
+	// 协议已知码（metrics 或 reasoning 子集）→ 以各自的协议表为权威，
+	// **不**允许传入错误的 `retryable` 覆盖（防止任意上游把已知协议码标记为
+	// "不重试"导致 UI 行为漂移）。未知码才退回到传入值兜底
+	// （HTTP 状态推断留给 API 层做）。
+	if (isKnownMetricsErrorCode(code)) {
 		return AGENT_V2_METRICS_ERRORS[code].retryable;
+	}
+	if (isKnownReasoningErrorCode(code)) {
+		return AGENT_V2_REASONING_ERRORS[code].retryable;
 	}
 	if (err && typeof err === "object" && "retryable" in err) {
 		const raw = (err as { retryable?: unknown }).retryable;
@@ -132,6 +178,20 @@ export function describeError(state: Extract<DataState<unknown>, { kind: "error"
 			return {
 				title: "查询参数无效",
 				description: "分页参数 `afterSequence` / `limit` 必须为正整数；请调整后重试。",
+			};
+		case "REASONING_INVALID_EFFORT":
+			// 422：档位不在当前模型能力目录声明档位内；前端不做翻译，把档位
+			// 字面量留给调用方（reasoning tab 的 `formatReasoningEffort`）。
+			return {
+				title: "thinking effort 档位被拒绝",
+				description:
+					"当前模型能力目录不接受该档位；UI 仅展示模型声明的档位，出现此错误通常是会话被切换到另一个 Agent。",
+			};
+		case "REASONING_NOT_CONFIGURABLE":
+			// 403：会话属主合法，但策略禁止调整该会话思考强度。
+			return {
+				title: "策略禁止调整 thinking effort",
+				description: "该会话受租户/企业策略限制，不可调整；请联系策略管理员。",
 			};
 		case "UNKNOWN_ERROR":
 			return {

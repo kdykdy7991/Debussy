@@ -32,13 +32,31 @@ const APP = "pub_11111111-1111-1111-1111-111111111111";
 
 interface FakeIframe extends EmbedIframe {
 	readonly posted: EmbedPostMessageEnvelope[];
-	readonly removed: boolean[];
+	/**
+	 * 调用 `iframe.remove()` 的次数（每次 push `true`）。fake 测试用——实际
+	 * 生产 `EmbedIframe` 只暴露 `remove()` 不暴露此计数器。去掉 `readonly` 让
+	 * `removed.push(true)` 在闭包里正常赋值（之前 readonly 与 push 冲突会
+	 * 让 typecheck 拒绝，挂在 TS2540）。
+	 */
+	removed: boolean[];
 }
 
 interface FakeWindow extends EmbedDomWindow {
+	/**
+	 * 注册到 fake window 的 message handler 列表。`readonly` 与
+	 * `handlers.push(h)` 并不冲突（push 不重新赋值），保留语义。
+	 */
 	readonly handlers: Array<(event: MessageEventLike) => void>;
-	readonly removed: boolean[];
-	readonly added: number;
+	/**
+	 * 调用 `removeEventListener` 的次数（每次 push `true`）。fake 测试用，
+	 * 非 readonly 以允许闭包内 push。
+	 */
+	removed: boolean[];
+	/**
+	 * 调用 `addEventListener` 的次数（`+= 1` 累加）。fake 测试用，非 readonly
+	 * 以允许 `win.added += 1`。
+	 */
+	added: number;
 }
 
 interface FakeEnv extends EmbedWindowEnv {
