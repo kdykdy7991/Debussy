@@ -8,6 +8,13 @@
  */
 import type { AgentPublicId } from "./admin-workbench.ts";
 
+/** 一个 Agent 的具体不可变 Revision（`agentId + agentRevision` 唯一）。 */
+export interface AgentBindingRef {
+	readonly agentId: AgentPublicId;
+	/** 不可变 Agent revision 号；发布后绑定不可漂移。 */
+	readonly agentRevision: number;
+}
+
 /** Skill 的持久来源。`file` = 已导入的文件型 Skill；`builtin` = 平台内置。 */
 export type SkillKind = "file" | "builtin";
 
@@ -43,10 +50,11 @@ export interface SkillRevisionSummary {
 	readonly createdAt: string;
 }
 
-/** Skill 详情：元数据 + 全部 revision + 引用它的 Agent。 */
+/** Skill 详情：元数据 + 全部 revision + 引用它的 Agent Revision 列表。 */
 export interface SkillDetail extends SkillSummary {
 	readonly revisions: readonly SkillRevisionSummary[];
-	readonly boundAgentIds: readonly AgentPublicId[];
+	/** 绑定了本 Skill 的 Agent Revision（不可漂移）。 */
+	readonly boundAgents: readonly AgentBindingRef[];
 }
 
 /** `GET /api/control/v1/skills` 列表响应（cursor 分页）。 */
@@ -78,23 +86,30 @@ export interface SkillValidateResponse {
 	readonly diagnostics: readonly SkillValidationDiagnostic[];
 }
 
-/** 把 Skill 绑定到 Agent Revision（发布后不可漂移）。 */
+/**
+ * 把 Skill 绑定到**不可变 Agent Revision**（`POST /api/control/v1/agents/:id/
+ * revisions/:revision/skills`）。绑定只允许到已保存的不可变 revision，不能绑定
+ * 草稿；发布后绑定不可漂移。
+ */
 export interface SkillBindingRequest {
+	readonly agentRevision: number;
 	readonly skillId: string;
-	/** 缺省 = 绑定当前最新 revision。 */
+	/** 缺省 = 绑定 Skill 当前最新 revision。 */
 	readonly skillRevision?: number;
 }
 
-/** Agent Revision → Skill 绑定条目（每个 Agent 一个固定 Skill Revision）。 */
+/** Agent Revision → Skill 绑定条目（一个 Agent Revision 固定一个 Skill Revision）。 */
 export interface AgentSkillBinding {
 	readonly agentId: AgentPublicId;
+	readonly agentRevision: number;
 	readonly skillId: string;
 	readonly skillRevision: number;
 }
 
-/** `POST /api/control/v1/agents/:id/skills` 装配结果。 */
+/** `POST .../agents/:id/revisions/:revision/skills` 装配结果（按 Agent Revision 返回）。 */
 export interface AgentSkillBindResponse {
 	readonly agentId: AgentPublicId;
+	readonly agentRevision: number;
 	readonly bindings: readonly AgentSkillBinding[];
 }
 

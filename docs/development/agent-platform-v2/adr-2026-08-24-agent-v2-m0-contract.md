@@ -19,9 +19,10 @@ metrics 采集留到 M1，避免契约未完全冻结前触碰运行时。
 
 ### D2　Turn metrics 落库：扩 `turn/end` payload
 
-不新增独立 `turn_metrics` 表（避免第二事实源），不新增事件类型（M0 内仍不扩
-`SESSION_EVENT_TYPES`）。在 `conversation_events` 的 `turn/end` 事件 payload 中写入
-`TurnMetrics`（jsonb，无需 DDL），保持事件日志为唯一真源。
+不新增独立 `turn_metrics` 表（避免第二事实源），不**发明**新事件类型。在
+`conversation_events` 的 `turn/end` 事件 payload 中写入 `TurnMetrics`（jsonb，无需
+DDL），保持事件日志为唯一真源。例外：把**已实际发射**的 `turn/failed` 对齐进权威
+`SESSION_EVENT_TYPES`（见 D7；text 列，无 DDL）。
 
 影响：向后兼容；M1 只需在 `turn/end` 写 payload 与加可选索引，无需破坏性迁移。
 
@@ -31,7 +32,7 @@ metrics 采集留到 M1，避免契约未完全冻结前触碰运行时。
 `context-restore.ts` 恢复路径继续兼容 legacy 命名（`turn.start`、`assistant.message`）
 以读取存量会话，不破坏既有数据。
 
-影响：新事件采用括号式；存量恢复不受影响。
+影响：新事件采用斜杠式；存量恢复不受影响。
 
 ### D4　特性开关 `PI_*` 前缀，默认关闭
 
@@ -69,16 +70,31 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
 - 新增 Skill / MCP 管理契约候选（`admin-workbench-skills.ts`、`admin-workbench-mcp.ts`）；
   MCP transport 集合仍待 BE-3 ADR 冻结，管理形状已含在契约。
 
-## 待办（第 8 项阻断的收口）
+### D8　第三轮结构性修订
 
-- Skill / MCP 管理契约与 reasoning 持久化状态已作为候选提交；**MCP transport 集合**
-  与连接生命周期仍待 BE-3 ADR 明确后才能视为完整冻结，不在本 ADR 拍板。
+- 分页边界冻结：默认 `limit=50`、上限 `limit=200`（钳制）、`afterSequence` 必须正整数；
+  非法分页参数 → 422 `INVALID_METRICS_FILTER`（`resolveMetricsPage`）；补两页 fixture
+  （`metrics-page-1.json`/`metrics-page-2.json`，两页 stats 均为全会话）。
+- Skill / MCP 绑定**固定到不可变 Agent Revision**（`AgentBindingRef.agentRevision` /
+  `AgentMcpBinding.agentRevision`），不随后续 revision 漂移。
+- MCP 配置结构化（`McpServerConfig`/`McpHttpTarget`），**Secret 只以 `*Ref` 引用保存**，
+  读取仅回 `secretConfigured`；新增 `MCP_SECRET_NOT_CONFIGURED`（409）。
+- **MCP transport 未评审**：不以公共类型导出 stdio；当前仅 `streamable-http` 候选描述，
+  其它 transport 待 BE-3 ADR。
+- reasoning 补齐会话更新端点（`PUT .../reasoning`）、权限边界、
+  `REASONING_INVALID_EFFORT`/`REASONING_NOT_CONFIGURABLE` 错误码与
+  `conversation.reasoning-updated` 审计动作。
+
+## 待办（MCP transport 收口）
+
+- MCP **transport 集合**（当前仅 `streamable-http` 候选）与连接生命周期仍待 BE-3 ADR
+  明确后才能视为完整冻结，不在本 ADR 拍板。
 - reasoning 会话 thinking-level 的运行时持久化接线属 M1。
 
 ## 批准状态
 
-- [ ] 后端自检
-- [ ] 总架构师审查 D1–D7
+- [x] 后端自检（protocol tsgo、vitest 352 项、biome 零告警、git diff --check）
+- [ ] 总架构师审查 D1–D8
 - [ ] 前端基于本契约建 mock
 
 ## 变更历史
@@ -86,3 +102,5 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
 - 2026-08-24　建立草案（D1–D5）。
 - 2026-08-24　第一轮审查修订（D6）。
 - 2026-08-24　第二轮修订（D7，turn/failed 枚举、类型收紧、单调校验、Skill/MCP 契约）。
+- 2026-08-24　第三轮修订（D8，分页边界、Agent Revision 绑定、MCP Secret 引用、
+  transport 不导出 stdio、reasoning 更新/权限/错误码/审计）。

@@ -24,9 +24,11 @@ describe("Agent V2 Skill + MCP management contract (M0 candidate)", () => {
 			"MCP_TEST_FAILED",
 			"MCP_SYNC_FAILED",
 			"MCP_BINDING_VIOLATION",
+			"MCP_SECRET_NOT_CONFIGURED",
 		]);
 		expect(AGENT_V2_MCP_ERRORS.MCP_SERVER_NOT_FOUND).toEqual({ httpStatus: 404, retryable: false });
 		expect(AGENT_V2_MCP_ERRORS.MCP_TEST_FAILED).toEqual({ httpStatus: 422, retryable: true });
 		expect(AGENT_V2_MCP_ERRORS.MCP_BINDING_VIOLATION).toEqual({ httpStatus: 409, retryable: false });
+		expect(AGENT_V2_MCP_ERRORS.MCP_SECRET_NOT_CONFIGURED).toEqual({ httpStatus: 409, retryable: false });
 	});
 });

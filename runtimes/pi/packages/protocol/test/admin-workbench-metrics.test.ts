@@ -2,9 +2,15 @@ import { describe, expect, test } from "vitest";
 import {
 	AGENT_V2_METRICS_ERROR_CODES,
 	AGENT_V2_METRICS_ERRORS,
+	AGENT_V2_REASONING_AUDIT_ACTION,
+	AGENT_V2_REASONING_ERROR_CODES,
+	AGENT_V2_REASONING_ERRORS,
+	CONVERSATION_METRICS_DEFAULT_LIMIT,
+	CONVERSATION_METRICS_MAX_LIMIT,
 	type ConversationTurnMetric,
 	computeConversationMetricsStats,
 	deriveTurnMetrics,
+	resolveMetricsPage,
 	type TurnMetricsDerivationInput,
 	turnOutcomeFromTerminalEvent,
 	validateTurnMonotonicOrder,
@@ -222,5 +228,52 @@ describe("AGENT_V2_METRICS_ERROR_CODES and mapping", () => {
 		expect(AGENT_V2_METRICS_ERRORS.METRICS_UNAVAILABLE).toEqual({ httpStatus: 503, retryable: true });
 		expect(AGENT_V2_METRICS_ERRORS.CONTEXT_SNAPSHOT_UNAVAILABLE).toEqual({ httpStatus: 503, retryable: true });
 		expect(AGENT_V2_METRICS_ERRORS.INVALID_METRICS_FILTER).toEqual({ httpStatus: 422, retryable: false });
+	});
+});
+
+describe("resolveMetricsPage (frozen pagination boundary)", () => {
+	test("defaults: no args -> DEFAULT_LIMIT, afterSequential 0", () => {
+		expect(CONVERSATION_METRICS_DEFAULT_LIMIT).toBe(50);
+		expect(CONVERSATION_METRICS_MAX_LIMIT).toBe(200);
+		const r = resolveMetricsPage({});
+		expect(r).toEqual({ ok: true, afterSequence: 0, limit: 50 });
+	});
+
+	test("applies afterSequence and preserves in-bound limit", () => {
+		expect(resolveMetricsPage({ afterSequence: 35, limit: 20 })).toEqual({
+			ok: true,
+			afterSequence: 35,
+			limit: 20,
+		});
+	});
+
+	test("clamps limit above MAX_LIMIT, never above 200", () => {
+		expect(resolveMetricsPage({ limit: 500 })).toEqual({ ok: true, afterSequence: 0, limit: 200 });
+	});
+
+	test("rejects non-positive afterSequence and non-positive/non-integer limit", () => {
+		expect(resolveMetricsPage({ afterSequence: 0 }).ok).toBe(false);
+		expect(resolveMetricsPage({ afterSequence: -3 }).ok).toBe(false);
+		expect(resolveMetricsPage({ afterSequence: 2.5 }).ok).toBe(false);
+		expect(resolveMetricsPage({ limit: 0 }).ok).toBe(false);
+		expect(resolveMetricsPage({ limit: -1 }).ok).toBe(false);
+		expect(resolveMetricsPage({ limit: 10.5 }).ok).toBe(false);
+	});
+
+	test("returns the frozen INVALID_METRICS_FILTER code on violation", () => {
+		const r = resolveMetricsPage({ afterSequence: 0 });
+		expect(r).toEqual({ ok: false, error: "INVALID_METRICS_FILTER", message: expect.any(String) });
+	});
+});
+
+describe("Agent V2 reasoning update contract", () => {
+	test("freezes reasoning error catalogue and HTTP mapping", () => {
+		expect(AGENT_V2_REASONING_ERROR_CODES).toEqual(["REASONING_INVALID_EFFORT", "REASONING_NOT_CONFIGURABLE"]);
+		expect(AGENT_V2_REASONING_ERRORS.REASONING_INVALID_EFFORT).toEqual({ httpStatus: 422, retryable: false });
+		expect(AGENT_V2_REASONING_ERRORS.REASONING_NOT_CONFIGURABLE).toEqual({ httpStatus: 403, retryable: false });
+	});
+
+	test("freezes the update audit action id", () => {
+		expect(AGENT_V2_REASONING_AUDIT_ACTION).toBe("conversation.reasoning-updated");
 	});
 });
