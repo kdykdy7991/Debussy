@@ -11,13 +11,18 @@ import type {
 } from "../../src/publishing/domain/ids.ts";
 import {
 	newAgentDefinitionId,
+	newAuditEventId,
 	newConversationId,
 	newPrincipalId,
 	newPublishedAppId,
 	newPublishedAppVersionId,
 	newTenantId,
 } from "../../src/publishing/domain/ids.ts";
-import type { ConversationRecord, PublishingRepositories } from "../../src/publishing/repositories.ts";
+import type {
+	AuditEventRecord,
+	ConversationRecord,
+	PublishingRepositories,
+} from "../../src/publishing/repositories.ts";
 
 const SCHEMA = `reasoning_verify_${process.pid}_${Date.now().toString(36)}`;
 const PG_URL = process.env.PI_TEST_DATABASE_URL ?? "postgresql://skdy:skdy123@127.0.0.1:5433/skdy_agent_test";
@@ -175,5 +180,57 @@ describe.skipIf(!pgUp)("conversation reasoning fact-store repository", () => {
 		const got = await get();
 		expect(got?.effort).toBeNull();
 		expect(got?.updatedBy).toBe("admin-2");
+	});
+
+	test("setEffortWithAudit is atomic: a failing audit write leaves the fact source unchanged", async () => {
+		const stateFor = (effort: "high" | "medium", updatedBy: string) => ({
+			conversationId,
+			tenantId,
+			publishedAppId: appId,
+			ownerPrincipalId: principalId,
+			effort,
+			updatedBy,
+			requestId: "00000000-0000-0000-7000-0000000000aa" as never,
+			updatedAt: new Date(),
+		});
+		const auditFor = (after: "high" | "medium", requestId: string): AuditEventRecord => ({
+			auditEventId: newAuditEventId(),
+			tenantId,
+			actorType: "platform_admin",
+			actorId: tenantId,
+			action: "conversation.reasoning-updated",
+			resourceType: "conversation",
+			resourceId: conversationId,
+			requestId: requestId as never,
+			metadata: { conversationId, after },
+			createdAt: new Date(),
+		});
+		// seed "high" atomically (state + audit committed together).
+		await repos.conversationReasoning.setEffortWithAudit({
+			state: stateFor("high", "admin-ok"),
+			audit: () => auditFor("high", "00000000-0000-0000-7000-0000000000aa"),
+		});
+		expect((await get())?.effort).toBe("high");
+		// Forcibly make the reasoning audit insert fail: a temporary CHECK
+		// forbids the reasoning-updated action (NOT VALID keeps existing rows).
+		await client.run(
+			`alter table audit_events add constraint audit_fail_reasoning
+			 check (action <> 'conversation.reasoning-updated') not valid`,
+		);
+		try {
+			// the state upsert succeeds but the audit insert violates the CHECK,
+			// so the WHOLE transaction must roll back.
+			await expect(
+				repos.conversationReasoning.setEffortWithAudit({
+					state: stateFor("medium", "admin-bad"),
+					audit: () => auditFor("medium", "00000000-0000-0000-7000-0000000000aa"),
+				}),
+			).rejects.toThrow();
+		} finally {
+			await client.run("alter table audit_events drop constraint audit_fail_reasoning");
+		}
+		// fact source keeps the pre-failure value (audit failure is not partial).
+		expect((await get())?.effort).toBe("high");
+		expect((await get())?.updatedBy).toBe("admin-ok");
 	});
 });

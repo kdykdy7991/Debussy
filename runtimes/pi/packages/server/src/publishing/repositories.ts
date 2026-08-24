@@ -650,6 +650,17 @@ export interface ConversationReasoningRepository {
 	get(scope: OwnerScope, conversationId: ConversationId): Promise<ConversationReasoningStateRecord | undefined>;
 	/** Upsert the fact source for a conversation. */
 	upsert(record: ConversationReasoningStateRecord): Promise<void>;
+	/**
+	 * Atomically read the prior fact source, upsert the new reasoning state and
+	 * append the reasoning-updated audit row in ONE PostgreSQL transaction. On
+	 * any failure (e.g. audit write error) the whole set — including the state
+	 * upsert — rolls back. Resolves the prior state (or undefined when none).
+	 */
+	setEffortWithAudit(input: {
+		readonly state: ConversationReasoningStateRecord;
+		/** Build the audit row from the prior fact source read inside the transaction. */
+		readonly audit: (before: ConversationReasoningStateRecord | undefined) => AuditEventRecord;
+	}): Promise<ConversationReasoningStateRecord | undefined>;
 }
 
 /** Combined repository set wired to a single Postgres client. */

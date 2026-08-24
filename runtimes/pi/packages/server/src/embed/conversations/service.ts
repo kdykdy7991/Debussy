@@ -14,7 +14,14 @@
  * `turn.failed` / `turn.interrupted` 等结构化事件；流式 chunk / 工具调用 /
  * 附件 / 引用 按 RuntimeSpec.contextPolicy.logLevel 决定是否持久化。
  */
-import type { Citation, ConversationRollover, SessionLogLevel, TurnMetrics } from "@earendil-works/pi-protocol";
+import type {
+	Citation,
+	ConversationReasoningState,
+	ConversationRollover,
+	ReasoningUpdateRequest,
+	SessionLogLevel,
+	TurnMetrics,
+} from "@earendil-works/pi-protocol";
 import {
 	assertEventPayloadSafe,
 	DEFAULT_CONVERSATION_LIMITS,
@@ -23,12 +30,13 @@ import {
 } from "@earendil-works/pi-protocol";
 import { estimateContextSnapshot } from "../../agent-v2/context.ts";
 import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
+import { applyConversationReasoning } from "../../agent-v2/reasoning.ts";
 import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
 import {
 	appNotFound,
 	appSuspended,
 	conversationNotFound,
-	type EmbedError,
+	EmbedError,
 	runtimeUnavailable,
 	turnAlreadyRunning,
 	versionUnavailable,
@@ -38,6 +46,7 @@ import {
 	newConversationId,
 	newConversationSummaryId,
 	newTurnId,
+	type RequestId,
 	type TurnId,
 } from "../../publishing/domain/ids.ts";
 import type {
@@ -273,6 +282,38 @@ export class ConversationService {
 		}
 		const updated = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
 		return { ok: true, data: updated ?? record };
+	}
+
+	/**
+	 * PUT conversation reasoning effort (Agent V2 §4.3, embed owner surface).
+	 * Reuses the shared reasoning apply (frozen capability + transactional
+	 * fact-source + audit). The conversation is resolved via the embed
+	 * principal's owner scope: a non-owner or cross-app reference yields a
+	 * uniform CONVERSATION_NOT_FOUND (404).
+	 */
+	async setConversationReasoning(input: {
+		readonly principal: EmbedAuthContext;
+		readonly conversationId: ConversationId;
+		readonly request: ReasoningUpdateRequest;
+		readonly configurable?: boolean;
+		readonly requestId?: RequestId;
+	}): Promise<ConversationResult<ConversationReasoningState>> {
+		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
+		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		const result = await applyConversationReasoning({
+			repos: this.repos,
+			tenantId: input.principal.tenantId,
+			publishedAppId: input.principal.publishedAppId,
+			publishedAppVersionId: record.publishedAppVersionId,
+			ownerPrincipalId: record.ownerPrincipalId,
+			conversationId: input.conversationId,
+			request: input.request,
+			principal: { type: "embed-owner", id: input.principal.principalId },
+			configurable: input.configurable !== false,
+			requestId: input.requestId,
+		});
+		if (!result.ok) return { ok: false, error: new EmbedError(result.code, result.message) };
+		return { ok: true, data: result.data };
 	}
 
 	/**

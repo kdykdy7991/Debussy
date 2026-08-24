@@ -1345,7 +1345,10 @@ function badRequest(message: string, requestId: string): Envelope {
 /** Stable Agent V2 reasoning tiers accepted at the HTTP boundary. */
 const REASONING_EFFORTS = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
-/** Parse and validate the shared `ReasoningUpdateRequest` body. */
+/** Parse and validate the shared `ReasoningUpdateRequest` body. Shape errors
+ * (non-object, missing/extra fields, wrong field type) map to 400; an effort
+ * that is a string but not a protocol tier maps to 422 REASONING_INVALID_EFFORT
+ * (model-capability mismatches are validated by the service with the same code). */
 function parseReasoningUpdate(
 	value: unknown,
 	requestId: string,
@@ -1357,11 +1360,30 @@ function parseReasoningUpdate(
 	if (!Object.hasOwn(record, "effort")) {
 		return { ok: false, failure: badRequest("reasoning body must contain an effort field", requestId) };
 	}
-	const effort = record.effort;
-	if (effort !== null && (typeof effort !== "string" || !REASONING_EFFORTS.has(effort as ReasoningEffort))) {
-		return { ok: false, failure: badRequest("effort must be null or a valid reasoning effort", requestId) };
+	const extra = Object.keys(record).filter((key) => key !== "effort");
+	if (extra.length > 0) {
+		return { ok: false, failure: badRequest("reasoning body must not contain additional fields", requestId) };
 	}
-	return { ok: true, body: { effort: effort as ReasoningEffort | null } };
+	const effort = record.effort;
+	if (effort === null) return { ok: true, body: { effort: null } };
+	if (typeof effort !== "string") {
+		return { ok: false, failure: badRequest("effort must be null or a string", requestId) };
+	}
+	if (!REASONING_EFFORTS.has(effort as ReasoningEffort)) {
+		return {
+			ok: false,
+			failure: {
+				status: 422,
+				body: errorEnvelope(
+					"REASONING_INVALID_EFFORT",
+					"effort is not one of the supported reasoning tiers",
+					requestId,
+					false,
+				),
+			},
+		};
+	}
+	return { ok: true, body: { effort: effort as ReasoningEffort } };
 }
 
 function errorEnvelope(

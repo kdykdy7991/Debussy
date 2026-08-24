@@ -16,10 +16,12 @@
 
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { reasoningCapabilitiesForVersion } from "../../src/agent-v2/reasoning.ts";
 import { PostgresClient } from "../../src/persistence/postgres/client.ts";
 import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../src/persistence/postgres/repositories/index.ts";
 import { createControlHttpHandler } from "../../src/publishing/control/http.ts";
+import type { LlmConfigStore } from "../../src/publishing/control/llm-config.ts";
 import { ControlService } from "../../src/publishing/control/service.ts";
 import type {
 	AgentDefinitionId,
@@ -35,6 +37,7 @@ import {
 	newPublishedAppId,
 	newPublishedAppVersionId,
 	newTenantId,
+	toPublicId,
 } from "../../src/publishing/domain/ids.ts";
 import type { ConversationRecord, PublishingRepositories } from "../../src/publishing/repositories.ts";
 import type { AgentDraftConfig, CapabilityCatalog } from "../../src/publishing/runtime-spec/compiler.ts";
@@ -326,6 +329,55 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 		expect(v1Again?.runtimeSpecHash).toBe(v1.runtimeSpecHash);
 		expect(v1Again?.runtimeSpec).toEqual(v1.runtimeSpec);
 	});
+
+	test("R4: an old conversation's allowed efforts do not drift with a changed live catalogue", async () => {
+		// A hostile live catalogue that no longer reports reasoning support for
+		// Qwen3.8-Agent. Capability must come from the FROZEN pinned version, so
+		// this catalog change cannot alter an existing conversation.
+		const hostileLlm = {
+			listAvailableModels: async () => [
+				{
+					provider: "skdy",
+					id: "Qwen3.8-Agent",
+					name: "qwen",
+					api: "openai-completions",
+					reasoning: false,
+					parameterCapabilities: { reasoning: { supported: false, toggle: false, efforts: [] } },
+				},
+			],
+			list: async () => [],
+			upsert: async () => ({}) as never,
+			remove: async () => false,
+			reload: async () => {},
+			test: async () => ({ ok: true }),
+		} as unknown as LlmConfigStore;
+		const frozenService = new ControlService({
+			repositories: repos,
+			catalog: CATALOG,
+			embedBaseUrl: "https://embed.test",
+			llm: hostileLlm,
+		});
+		// "high" is a legal tier of the frozen Qwen version; the hostile live
+		// catalog (reasoning unsupported) must NOT change acceptance or wire.
+		const ok = await frozenService.setConversationSessionEffort({
+			tenantId,
+			conversationId,
+			request: { effort: "high" },
+			principal: { type: "admin", id: "admin-drift" },
+		});
+		expect(ok.ok).toBe(true);
+		if (ok.ok) expect(ok.data.effort).toBe("high");
+		// And the FACTORY capability resolver still reports the frozen tiers.
+		const conv = await repos.conversations.get({ tenantId, publishedAppId: appId, principalId }, conversationId);
+		expect(conv).toBeDefined();
+		const caps = await reasoningCapabilitiesForVersion(
+			repos,
+			{ tenantId, publishedAppId: appId },
+			conv!.publishedAppVersionId,
+		);
+		expect(caps.reasoning.supported).toBe(true);
+		expect(caps.reasoning.efforts).toEqual(["low", "medium", "high"]);
+	});
 });
 
 function httpCall(
@@ -407,28 +459,58 @@ describe.skipIf(!pgUp)("control reasoning HTTP routes", () => {
 	});
 
 	test("reasoning endpoints require the admin token", async () => {
-		expect((await httpCall(base, "GET", `/api/control/v1/conversations/${conversationId}/reasoning`)).status).toBe(
-			401,
-		);
 		expect(
-			(await httpCall(base, "PUT", `/api/control/v1/conversations/${conversationId}/reasoning`, { effort: "high" }))
-				.status,
+			(
+				await httpCall(
+					base,
+					"GET",
+					`/api/control/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
+				)
+			).status,
+		).toBe(401);
+		expect(
+			(
+				await httpCall(
+					base,
+					"PUT",
+					`/api/control/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
+					{ effort: "high" },
+				)
+			).status,
 		).toBe(401);
 	});
 
-	test("malformed reasoning update body is rejected with 400 by the HTTP validator", async () => {
+	test("non-protocol effort string is rejected with 422 REASONING_INVALID_EFFORT", async () => {
 		const res = await httpCall(
 			base,
 			"PUT",
-			`/api/control/v1/conversations/${conversationId}/reasoning`,
+			`/api/control/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
 			{ effort: "ultra" },
 			{ authorization: `Bearer ${"admintoken"}` },
 		);
-		// "ultra" is not a legal ReasoningEffort literal, so it is rejected at the
-		// HTTP boundary (400) before the service capability check.
-		expect(res.status).toBe(400);
-		expect(res.code).toBe("INVALID_REQUEST");
+		// "ultra" is a string but not a protocol tier → 422 (frozen contract),
+		// not a shape 400.
+		expect(res.status).toBe(422);
+		expect(res.code).toBe("REASONING_INVALID_EFFORT");
 		expect(res.requestId).toBeTruthy();
 		expect(res.requestId).toMatch(/^[0-9a-f-]+$/);
+	});
+
+	test("reasoning update shape errors are rejected with 400 INVALID_REQUEST", async () => {
+		const baseUrl = `/api/control/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`;
+		const headers = { authorization: `Bearer ${"admintoken"}` };
+		const cases: unknown[] = [
+			"not an object",
+			42,
+			[],
+			{}, // missing effort
+			{ effort: 123 }, // wrong field type
+			{ effort: null, unexpected: "x" }, // extra field
+		];
+		for (const body of cases) {
+			const res = await httpCall(base, "PUT", baseUrl, body, headers);
+			expect(res.status).toBe(400);
+			expect(res.code).toBe("INVALID_REQUEST");
+		}
 	});
 });

@@ -23,7 +23,9 @@ export type EmbedErrorCode =
 	| "RATE_LIMITED"
 	| "QUOTA_EXCEEDED"
 	| "UPLOAD_REJECTED"
-	| "RUNTIME_UNAVAILABLE";
+	| "RUNTIME_UNAVAILABLE"
+	| "REASONING_INVALID_EFFORT"
+	| "REASONING_NOT_CONFIGURABLE";
 
 export interface EmbedErrorInfo {
 	readonly code: EmbedErrorCode;
@@ -46,6 +48,8 @@ const ERROR_TABLE: Readonly<Record<EmbedErrorCode, EmbedErrorInfo>> = {
 	QUOTA_EXCEEDED: { code: "QUOTA_EXCEEDED", httpStatus: 429, retryable: true },
 	UPLOAD_REJECTED: { code: "UPLOAD_REJECTED", httpStatus: 422, retryable: false },
 	RUNTIME_UNAVAILABLE: { code: "RUNTIME_UNAVAILABLE", httpStatus: 503, retryable: true },
+	REASONING_INVALID_EFFORT: { code: "REASONING_INVALID_EFFORT", httpStatus: 422, retryable: false },
+	REASONING_NOT_CONFIGURABLE: { code: "REASONING_NOT_CONFIGURABLE", httpStatus: 403, retryable: false },
 };
 
 export function errorInfo(code: EmbedErrorCode): EmbedErrorInfo {

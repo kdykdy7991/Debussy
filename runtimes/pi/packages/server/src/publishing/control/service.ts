@@ -42,7 +42,6 @@ import type {
 	ConversationPublicId,
 	ConversationReasoningState,
 	CustomLlmApi,
-	ModelParameterCapabilities,
 	PreviewTicket,
 	PublishedAppLocator,
 	PublishedAppPublicId,
@@ -55,7 +54,6 @@ import type {
 	TurnPublicId,
 } from "@earendil-works/pi-protocol";
 import {
-	AGENT_V2_REASONING_AUDIT_ACTION,
 	type ContextUsageSnapshot,
 	type ConversationContextResponse,
 	type ConversationMetricsResponse,
@@ -73,6 +71,7 @@ import {
 	readStoredTurnMetrics,
 	toConversationTurnMetric,
 } from "../../agent-v2/query.ts";
+import { applyConversationReasoning } from "../../agent-v2/reasoning.ts";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import { modelParameterCapabilities, validateModelParameters } from "../../model-parameters.ts";
 import type {
@@ -1906,35 +1905,6 @@ export class ControlService {
 	}
 
 	/**
-	 * Resolve the Agent V2 reasoning capability set for a conversation from its
-	 * pinned Published App Version's model.
-	 */
-	private async reasoningCapabilitiesFor(conversation: {
-		readonly tenantId: TenantId;
-		readonly publishedAppId: PublishedAppId;
-		readonly publishedAppVersionId: PublishedAppVersionId;
-	}): Promise<ModelParameterCapabilities> {
-		const version = await this.repos.publishedAppVersions.get(
-			{ tenantId: conversation.tenantId, publishedAppId: conversation.publishedAppId },
-			conversation.publishedAppVersionId,
-		);
-		let modelId = "";
-		if (version !== undefined) {
-			const parsed = parseRuntimeSpec(version.runtimeSpec);
-			if (parsed.ok) modelId = parsed.spec.agent.model.modelId;
-		}
-		if (this.llm !== undefined) {
-			const selected = (await this.llm.listAvailableModels()).find((model) => model.id === modelId);
-			if (selected?.parameterCapabilities !== undefined) return selected.parameterCapabilities;
-		}
-		return modelParameterCapabilities({
-			id: modelId,
-			api: "openai-completions",
-			reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(modelId),
-		});
-	}
-
-	/**
 	 * GET conversation reasoning effort (Agent V2 §4.3). Reads the dedicated
 	 * fact source `conversation_reasoning_state`; never the event journal, and
 	 * it does not advance the conversation event sequence.
@@ -1991,60 +1961,20 @@ export class ControlService {
 		);
 		if (conversation === undefined)
 			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
-		if (input.configurable === false)
-			return fail(
-				"REASONING_NOT_CONFIGURABLE",
-				403,
-				"policy forbids adjusting reasoning effort for this conversation",
-			);
-		const capabilities = await this.reasoningCapabilitiesFor(conversation);
-		if (input.request.effort !== null) {
-			const errors = validateModelParameters(
-				{ reasoning: { enabled: true, effort: input.request.effort } },
-				capabilities,
-			);
-			if (errors.length > 0) return fail("REASONING_INVALID_EFFORT", 422, errors.join("; "));
-		}
-		const ownerScope = {
+		const result = await applyConversationReasoning({
+			repos: this.repos,
 			tenantId: conversation.tenantId,
 			publishedAppId: conversation.publishedAppId,
-			principalId: conversation.ownerPrincipalId,
-		};
-		const before = (await this.repos.conversationReasoning.get(ownerScope, input.conversationId))?.effort ?? null;
-		const after = input.request.effort;
-		const now = new Date();
-		await this.repos.conversationReasoning.upsert({
-			conversationId: input.conversationId,
-			tenantId: conversation.tenantId,
-			publishedAppId: conversation.publishedAppId,
+			publishedAppVersionId: conversation.publishedAppVersionId,
 			ownerPrincipalId: conversation.ownerPrincipalId,
-			effort: after,
-			updatedBy: `${input.principal.type}:${input.principal.id}`,
-			requestId: input.requestId ?? newRequestId(),
-			updatedAt: now,
-		});
-		await this.writeAudit({
-			tenantId: conversation.tenantId,
-			action: AGENT_V2_REASONING_AUDIT_ACTION,
-			resourceType: "conversation",
-			resourceId: input.conversationId,
+			conversationId: input.conversationId,
+			request: input.request,
+			principal: input.principal,
+			configurable: input.configurable !== false,
 			requestId: input.requestId,
-			metadata: {
-				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
-				principal: input.principal,
-				before,
-				after,
-				requestedAt: now.toISOString(),
-			},
 		});
-		return {
-			ok: true,
-			data: {
-				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
-				effort: after,
-				updatedAt: now.toISOString(),
-			},
-		};
+		if (!result.ok) return fail(result.code as never, result.status, result.message);
+		return { ok: true, data: result.data };
 	}
 
 	/** List custom LLM providers configured in models.json (secret-blind). */
