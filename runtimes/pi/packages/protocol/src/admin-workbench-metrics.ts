@@ -71,6 +71,54 @@ export interface ConversationReasoningState {
 	readonly updatedAt: string;
 }
 
+/**
+ * `PUT /api/control/v1/conversations/:id/reasoning`（写权限边界见 doc 注释与 §5）。
+ * `PATCH` 语义：设置单个 `effort`；请求体即本对象。
+ */
+export interface ReasoningUpdateRequest {
+	/**
+	 * 会话思考强度覆盖，取值须为当前模型能力目录声明的档位之一；
+	 * `null` = 清除会话覆盖，回到 Agent Revision 默认值。
+	 */
+	readonly effort: ReasoningEffort | null;
+}
+
+/**
+ * reasoning 更新端点稳定错误码（控制面 `ControlErrorEnvelope`）。
+ */
+export const AGENT_V2_REASONING_ERROR_CODES = [
+	// 档位非法（不在模型能力目录声明档位内）。
+	"REASONING_INVALID_EFFORT",
+	// 调用方无权调整该会话的思考强度（权限边界见 §5）。
+	"REASONING_NOT_CONFIGURABLE",
+] as const;
+export type AgentV2ReasoningErrorCode = (typeof AGENT_V2_REASONING_ERROR_CODES)[number];
+
+/** reasoning 错误码到 HTTP 状态与重试性的稳定映射。 */
+export const AGENT_V2_REASONING_ERRORS: Readonly<
+	Record<AgentV2ReasoningErrorCode, { readonly httpStatus: number; readonly retryable: boolean }>
+> = {
+	REASONING_INVALID_EFFORT: { httpStatus: 422, retryable: false },
+	REASONING_NOT_CONFIGURABLE: { httpStatus: 403, retryable: false },
+} as const;
+
+/**
+ * 每次 reasoning 会话覆盖写入的审计动作。审计需记录 `before`/`after` 与最终生效
+ * 快照（V2-README §4.3 审计要求），但不重复记录每个 Token 事件。
+ */
+export const AGENT_V2_REASONING_AUDIT_ACTION = "conversation.reasoning-updated" as const;
+export type AgentV2ReasoningAuditAction = typeof AGENT_V2_REASONING_AUDIT_ACTION;
+
+/**
+ * reasoning 更新权限与审计边界（候选）：
+ * - 管理员调试会话（admin-debug）：由控制面 Admin Token 授权更新；
+ * - 已发布应用的企业会话：由会话属主（终端用户/Embed 会话）调整自己的会话；
+ *   跨属主/无权限 → 403 `REASONING_NOT_CONFIGURABLE`；
+ * - 每次更新写 `conversation.reasoning-updated` 审计事件（before/after + 生效快照）；
+ * - 档位须在模型能力目录声明的支持档位内（`REASONING_INVALID_EFFORT` 422）；
+ * - 会话 effort 可恢复、可审计，但不得改写 Agent Revision 或其它采样参数。
+ */
+
 /** 回合终局结果。只有 `success` 的派生时序字段才可能有值。 */
 export type TurnOutcome = "success" | "failed" | "cancelled";
 
@@ -235,10 +283,48 @@ export interface TurnEndPayload {
 /** `GET /api/control/v1/conversations/:id/metrics` 查询参数（分页）。 */
 export interface ConversationMetricsQuery {
 	readonly conversationId: ConversationPublicId;
-	/** 分页游标：返回 `sequence > afterSequence` 的轮；首页省略或为 0。 */
+	/**
+	 * 分页游标：返回 `sequence > afterSequence` 的轮；首页省略。
+	 * 必须为不小于 1 的整数；非法值 → 422 `INVALID_METRICS_FILTER`。
+	 */
 	readonly afterSequence?: number;
-	/** 每页上限（服务端钳制）；缺省由实现定义，首版建议 50。 */
+	/**
+	 * 每页上限：整数 `1..CONVERSATION_METRICS_MAX_LIMIT`，超上限钳制到 MAX；
+	 * 缺省为 `CONVERSATION_METRICS_DEFAULT_LIMIT`。非正整数 → 422 `INVALID_METRICS_FILTER`。
+	 */
 	readonly limit?: number;
+}
+
+/** metrics 分页默认与上限（冻结；非法参数规则见 {@link resolveMetricsPage}）。 */
+export const CONVERSATION_METRICS_DEFAULT_LIMIT = 50 as const;
+export const CONVERSATION_METRICS_MAX_LIMIT = 200 as const;
+
+/** `resolveMetricsPage` 结果：`error` 为冻结错误码（`INVALID_METRICS_FILTER`）。 */
+export type MetricsPageResolve =
+	| { readonly ok: true; readonly afterSequence: number; readonly limit: number }
+	| { readonly ok: false; readonly error: "INVALID_METRICS_FILTER"; readonly message: string };
+
+/**
+ * 解析 metrics 分页参数并施以冻结规则（纯函数）：
+ * - `afterSequence` 缺省为 0；提供时必须是正整数；
+ * - `limit` 缺省为 `DEFAULT_LIMIT(50)`，提供时必须是正整数并钳制到 `MAX_LIMIT(200)`；
+ * - 违反任一规则返回 `INVALID_METRICS_FILTER`。
+ */
+export function resolveMetricsPage(input: {
+	readonly afterSequence?: number | undefined;
+	readonly limit?: number | undefined;
+}): MetricsPageResolve {
+	if (input.afterSequence !== undefined && (!Number.isInteger(input.afterSequence) || input.afterSequence < 1)) {
+		return { ok: false, error: "INVALID_METRICS_FILTER", message: "afterSequence must be a positive integer" };
+	}
+	if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1)) {
+		return { ok: false, error: "INVALID_METRICS_FILTER", message: "limit must be a positive integer" };
+	}
+	const limit =
+		input.limit === undefined
+			? CONVERSATION_METRICS_DEFAULT_LIMIT
+			: Math.min(input.limit, CONVERSATION_METRICS_MAX_LIMIT);
+	return { ok: true, afterSequence: input.afterSequence ?? 0, limit };
 }
 
 /** `GET /api/control/v1/conversations/:id/metrics` 单轮明细行。 */

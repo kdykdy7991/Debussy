@@ -2,20 +2,46 @@
  * Agent 平台 V2：MCP Server 管理契约（候选，待总架构师冻结）。
  *
  * 对应总计划 §6 共享接口中的 MCP 能力：列表、详情、创建、更新、测试、同步
- * Tool、启停、Agent Revision 绑定与 Tool 白名单。本模块只冻结管理/控制面 DTO
- * 形状；**transport 集合与连接生命周期由 backend.md BE-3 的 ADR 再定**，本文件
- * 仅以 `McpTransport` 类型标注候选集合，不承诺最终支持范围与 wire 细节。
+ * Tool、启停、Agent Revision 绑定与 Tool 白名单。本模块只冻结管理/控制面 DTO 形状。
  *
- * Secret 只以引用形式存在（`config` 中不得含明文密钥），不进入 RuntimeSpec、
- * 日志、事件 payload 或导出文件。
+ * **transport 未评审**：BE-3 ADR 尚未定案前，本文件**不**把 transport 集合当公共契约
+ * 导出。当前仅给出管理形状与候选的 `streamable-http` 目标描述（`McpHttpTarget`）；
+ * 任何新增 transport（如 stdio）必须经 BE-3 ADR 批准后再扩展。接线 (M1) 在 transport
+ * 定案后再实现。
+ *
+ * **Secret 只以引用保存**：请求/详情中没有接受或回传明文密钥的字段。凭据以
+ * `bearerTokenRef` 等 `*Ref` 引用存储（服务端 Secret 库）；所有读取只回 `secretConfigured`
+ * 布尔，绝不含秘密值。Secret 不进入 RuntimeSpec、日志、事件 payload 或导出文件。
  */
 import type { AgentPublicId } from "./admin-workbench.ts";
+import type { AgentBindingRef } from "./admin-workbench-skills.ts";
 
 /**
- * 候选 transport 集合。首期支持范围以 BE-3 ADR 为准（建议先 `streamable-http`；
- * `stdio` 仅在生产部署模型与进程隔离获批后启用）。
+ * 候选 transport 描述（**未冻结**）。只有当前建议首推的 `streamable-http`；
+ * 其它 transport 待 BE-3 ADR 批准后以扩展 union 加入，不得先写死。
  */
-export type McpTransport = "streamable-http" | "stdio";
+export type McpTransportKind = "streamable-http";
+
+/**
+ * HTTP (streamable) 目标配置。可保存 URL 与静态非密钥请求头；任何凭据必须以
+ * `bearerTokenRef` 引用服务端已存秘密，**请求体不得含明文密钥**。
+ */
+export interface McpHttpTarget {
+	readonly transport: McpTransportKind;
+	readonly url: string;
+	/** 静态且非密钥的头（如 Content-Type）；不得放凭据。 */
+	readonly headers?: Readonly<Record<string, string>>;
+	/**
+	 * 服务端 Secret 库中已存秘密的引用名。线上请求只带引用名；读取仅回
+	 * `secretConfigured: boolean`，绝不回传值。
+	 */
+	readonly bearerTokenRef?: string;
+}
+
+/** MCP Server 创建/更新时的配置载体（单一候选 transport）。 */
+export interface McpServerConfig {
+	readonly target: McpHttpTarget;
+}
 
 /** MCP Tool 引用（发现/同步后由服务端持有 schema 快照）。 */
 export interface McpToolRef {
@@ -23,21 +49,24 @@ export interface McpToolRef {
 	readonly name: string;
 }
 
-/** 列表行（不含 tools/secret 引用）。 */
+/** 列表行（不含 tools/secret 状态）。 */
 export interface McpServerSummary {
 	/** `mcp_<uuid>`，传输层禁止裸 UUID。 */
 	readonly id: string;
 	readonly name: string;
-	readonly transport: McpTransport;
+	readonly transport: McpTransportKind;
 	readonly status: "disabled" | "connecting" | "connected" | "error";
 	readonly toolCount: number;
+	/** 引用凭据是否需要补配（`true` = 已配置，密钥值永不下行）。 */
+	readonly secretConfigured: boolean;
 	readonly updatedAt: string;
 }
 
-/** MCP Server 详情：元数据 + tools + 引用它的 Agent + 最近测试结果。 */
+/** MCP Server 详情：元数据 + tools + 引用它的 Agent Revision + 最近测试结果。 */
 export interface McpServerDetail extends McpServerSummary {
 	readonly tools: readonly McpToolRef[];
-	readonly boundAgentIds: readonly AgentPublicId[];
+	/** 绑定了本 Server 的 Agent Revision（不可漂移）。 */
+	readonly boundAgents: readonly AgentBindingRef[];
 	readonly lastTest: {
 		readonly ok: boolean;
 		readonly latencyMs: number | null;
@@ -48,12 +77,7 @@ export interface McpServerDetail extends McpServerSummary {
 /** `POST /api/control/v1/mcp-servers`（创建/更新）。 */
 export interface McpServerUpsertRequest {
 	readonly name: string;
-	readonly transport: McpTransport;
-	/**
-	 * transport 配置。仅允许保存引用/端点描述，**不得**含明文 Secret；
-	 * Secret 以引用（读取后仅返回 `secretConfigured: boolean`）形式保存。
-	 */
-	readonly config: Readonly<Record<string, unknown>>;
+	readonly config: McpServerConfig;
 }
 
 /** `POST /api/control/v1/mcp-servers/:id/test` 连接测试。 */
@@ -78,9 +102,13 @@ export interface McpToolAllowlist {
 	readonly toolIds: readonly string[];
 }
 
-/** Agent Revision → MCP 绑定（固定 MCP Server + Tool 白名单）。 */
+/**
+ * Agent Revision → MCP 绑定（固定 MCP Server + Tool 白名单）。绑定到不可变
+ * Agent Revision，不随 Agent 后续 revision 漂移。
+ */
 export interface AgentMcpBinding {
 	readonly agentId: AgentPublicId;
+	readonly agentRevision: number;
 	readonly mcpServerId: string;
 	readonly allowlist: McpToolAllowlist;
 }
@@ -101,6 +129,8 @@ export const AGENT_V2_MCP_ERROR_CODES = [
 	"MCP_SYNC_FAILED",
 	// 目标已被禁用，或绑定引用了未允许的 Tool。
 	"MCP_BINDING_VIOLATION",
+	// 配置载入引用了未配置的凭据（需先补配置 `secretConfigured=false`）。
+	"MCP_SECRET_NOT_CONFIGURED",
 ] as const;
 export type AgentV2McpErrorCode = (typeof AGENT_V2_MCP_ERROR_CODES)[number];
 
@@ -112,4 +142,5 @@ export const AGENT_V2_MCP_ERRORS: Readonly<
 	MCP_TEST_FAILED: { httpStatus: 422, retryable: true },
 	MCP_SYNC_FAILED: { httpStatus: 422, retryable: true },
 	MCP_BINDING_VIOLATION: { httpStatus: 409, retryable: false },
+	MCP_SECRET_NOT_CONFIGURED: { httpStatus: 409, retryable: false },
 } as const;
