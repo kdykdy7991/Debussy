@@ -2,9 +2,6 @@ import { describe, expect, test } from "vitest";
 import {
 	AGENT_V2_METRICS_ERROR_CODES,
 	AGENT_V2_METRICS_ERRORS,
-	AGENT_V2_REASONING_AUDIT_ACTION,
-	AGENT_V2_REASONING_ERROR_CODES,
-	AGENT_V2_REASONING_ERRORS,
 	CONVERSATION_METRICS_DEFAULT_LIMIT,
 	CONVERSATION_METRICS_MAX_LIMIT,
 	type ConversationTurnMetric,
@@ -266,14 +263,7 @@ describe("resolveMetricsPage (frozen pagination boundary)", () => {
 	});
 });
 
-describe("Agent V2 reasoning update contract", () => {
-	test("freezes reasoning error catalogue and HTTP mapping", () => {
-		expect(AGENT_V2_REASONING_ERROR_CODES).toEqual(["REASONING_INVALID_EFFORT", "REASONING_NOT_CONFIGURABLE"]);
-		expect(AGENT_V2_REASONING_ERRORS.REASONING_INVALID_EFFORT).toEqual({ httpStatus: 422, retryable: false });
-		expect(AGENT_V2_REASONING_ERRORS.REASONING_NOT_CONFIGURABLE).toEqual({ httpStatus: 403, retryable: false });
-	});
-
-	test("freezes the update audit action id", () => {
-		expect(AGENT_V2_REASONING_AUDIT_ACTION).toBe("conversation.reasoning-updated");
-	});
-});
+/*
+ * reasoning（会话 effort 覆盖）契约已移至 `admin-workbench-reasoning.ts`，
+ * 测试见 `admin-workbench-reasoning.test.ts`。
+ */

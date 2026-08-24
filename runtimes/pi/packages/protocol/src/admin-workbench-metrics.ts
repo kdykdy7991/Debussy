@@ -1,9 +1,9 @@
 /**
- * Agent 平台 V2：单会话统计、上下文快照与 reasoning 会话状态契约（V2-README §4）。
+ * Agent 平台 V2：单会话统计与上下文快照契约（M0-A 已冻结，V2-README §4.1/§4.2）。
  *
- * 本模块是 M0 契约候选（待总架构师冻结），只定义共享 DTO、事件顺序/空值语义、
- * 错误码与纯函数推导规则；不包含采集或查询实现（M1）。冻结后前端可基于本模块
- * 建立 mock 并行开发。
+ * 本模块为已冻结契约，只定义共享 DTO、事件顺序/空值语义、错误码与纯函数推导规则；
+ * 不再承接采集/查询实现（M1）。会话 reasoning 状态/更新/审计契约见
+ * `admin-workbench-reasoning.ts`（独立模块，非本模块）。
  *
  * 契约口径（候选，不可在实现中静默漂移）：
  *
@@ -61,63 +61,6 @@ export interface ContextUsageSnapshot {
 	readonly measurement: ContextUsageMeasurement;
 	readonly breakdown: ContextUsageBreakdown;
 }
-
-/** 单会话生效的 reasoning 会话状态（V2-README §4.3：会话 effort 持久化可恢复）。 */
-export interface ConversationReasoningState {
-	readonly conversationId: ConversationPublicId;
-	/** 会话级思考强度覆盖；`null` = 使用 Agent Revision 默认值。 */
-	readonly effort: ReasoningEffort | null;
-	/** 最近一次覆盖的时间（ISO 8601 / UTC）。 */
-	readonly updatedAt: string;
-}
-
-/**
- * `PUT /api/control/v1/conversations/:id/reasoning`（写权限边界见 doc 注释与 §5）。
- * `PATCH` 语义：设置单个 `effort`；请求体即本对象。
- */
-export interface ReasoningUpdateRequest {
-	/**
-	 * 会话思考强度覆盖，取值须为当前模型能力目录声明的档位之一；
-	 * `null` = 清除会话覆盖，回到 Agent Revision 默认值。
-	 */
-	readonly effort: ReasoningEffort | null;
-}
-
-/**
- * reasoning 更新端点稳定错误码（控制面 `ControlErrorEnvelope`）。
- */
-export const AGENT_V2_REASONING_ERROR_CODES = [
-	// 档位非法（不在模型能力目录声明档位内）。
-	"REASONING_INVALID_EFFORT",
-	// 调用方无权调整该会话的思考强度（权限边界见 §5）。
-	"REASONING_NOT_CONFIGURABLE",
-] as const;
-export type AgentV2ReasoningErrorCode = (typeof AGENT_V2_REASONING_ERROR_CODES)[number];
-
-/** reasoning 错误码到 HTTP 状态与重试性的稳定映射。 */
-export const AGENT_V2_REASONING_ERRORS: Readonly<
-	Record<AgentV2ReasoningErrorCode, { readonly httpStatus: number; readonly retryable: boolean }>
-> = {
-	REASONING_INVALID_EFFORT: { httpStatus: 422, retryable: false },
-	REASONING_NOT_CONFIGURABLE: { httpStatus: 403, retryable: false },
-} as const;
-
-/**
- * 每次 reasoning 会话覆盖写入的审计动作。审计需记录 `before`/`after` 与最终生效
- * 快照（V2-README §4.3 审计要求），但不重复记录每个 Token 事件。
- */
-export const AGENT_V2_REASONING_AUDIT_ACTION = "conversation.reasoning-updated" as const;
-export type AgentV2ReasoningAuditAction = typeof AGENT_V2_REASONING_AUDIT_ACTION;
-
-/**
- * reasoning 更新权限与审计边界（候选）：
- * - 管理员调试会话（admin-debug）：由控制面 Admin Token 授权更新；
- * - 已发布应用的企业会话：由会话属主（终端用户/Embed 会话）调整自己的会话；
- *   跨属主/无权限 → 403 `REASONING_NOT_CONFIGURABLE`；
- * - 每次更新写 `conversation.reasoning-updated` 审计事件（before/after + 生效快照）；
- * - 档位须在模型能力目录声明的支持档位内（`REASONING_INVALID_EFFORT` 422）；
- * - 会话 effort 可恢复、可审计，但不得改写 Agent Revision 或其它采样参数。
- */
 
 /** 回合终局结果。只有 `success` 的派生时序字段才可能有值。 */
 export type TurnOutcome = "success" | "failed" | "cancelled";
