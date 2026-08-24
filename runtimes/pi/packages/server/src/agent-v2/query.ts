@@ -43,9 +43,11 @@ function isNonNegativeInt(v: unknown): v is number {
 	return Number.isInteger(v) && (v as number) >= 0;
 }
 
-/** 合法 ISO-8601 时间（可被 Date.parse 解析）。 */
+/** 严格 ISO-8601 UTC 判定：写端统一用 `toISOString()`，故经 `Date` 往返必须逐字一致。 */
 function isValidIso(v: unknown): v is string {
-	return typeof v === "string" && v.length > 0 && Number.isFinite(Date.parse(v));
+	if (typeof v !== "string" || v.length === 0) return false;
+	const parsed = Date.parse(v);
+	return Number.isFinite(parsed) && new Date(parsed).toISOString() === v;
 }
 
 const METRIC_COUNT_KEYS: readonly (keyof TurnMetrics)[] = [

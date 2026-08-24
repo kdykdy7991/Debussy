@@ -89,6 +89,38 @@ function makeTurn(
 	];
 }
 
+function makeTerminal(sequence: number, eventType: string, turnId: TurnId, payload: unknown): ConversationEventRecord {
+	return {
+		eventId: `t${sequence}` as never,
+		tenantId: TENANT,
+		publishedAppId: PUBLISHED_APP as never,
+		conversationId: CONV,
+		sequence,
+		eventType,
+		eventSchemaVersion: 1,
+		turnId,
+		payload,
+		payloadBytes: 0,
+		createdAt: new Date(),
+	};
+}
+
+function makeTurnStart(sequence: number, turnId: TurnId): ConversationEventRecord {
+	return {
+		eventId: `s${sequence}` as never,
+		tenantId: TENANT,
+		publishedAppId: PUBLISHED_APP as never,
+		conversationId: CONV,
+		sequence,
+		eventType: "turn/start",
+		eventSchemaVersion: 1,
+		turnId,
+		payload: { model: "gpt-4o" },
+		payloadBytes: 0,
+		createdAt: new Date(),
+	};
+}
+
 function buildService(opts: {
 	metricsEnabled?: boolean;
 	rows?: ConversationEventRecord[];
@@ -305,6 +337,57 @@ describe("M1 ControlService.getConversationMetrics", () => {
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			// 同一 turnId 两个终态 → 不重复计数，整轮排除。
+			expect(r.data.stats.available).toBe(false);
+			expect(r.data.items).toEqual([]);
+		}
+	});
+
+	test("a valid terminal plus an outcome-mismatch terminal excludes the whole turn", async () => {
+		const turnId = newTurnId();
+		const evts = [
+			makeTurnStart(1, turnId),
+			makeTerminal(2, "turn/end", turnId, { ok: true, metrics: successMetrics() }),
+			// turn/failed 期望 failed，但指标是 success → 冲突终态。
+			makeTerminal(3, "turn/failed", turnId, { error: "x", metrics: successMetrics() }),
+		];
+		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
+		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.data.stats.available).toBe(false);
+			expect(r.data.items).toEqual([]);
+		}
+	});
+
+	test("a valid terminal plus a malformed terminal excludes the whole turn", async () => {
+		const turnId = newTurnId();
+		const malformed = { ...successMetrics(), totalLatencyMs: "bad" };
+		const evts = [
+			makeTurnStart(1, turnId),
+			makeTerminal(2, "turn/end", turnId, { ok: true, metrics: successMetrics() }),
+			// malformed 指标不能因被过滤而隐藏其作为“第二个终态”的事实。
+			makeTerminal(3, "turn/end", turnId, { ok: true, metrics: malformed }),
+		];
+		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
+		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.data.stats.available).toBe(false);
+			expect(r.data.items).toEqual([]);
+		}
+	});
+
+	test("two distinct legitimate terminal events exclude the whole turn", async () => {
+		const turnId = newTurnId();
+		const evts = [
+			makeTurnStart(1, turnId),
+			makeTerminal(2, "turn/end", turnId, { ok: true, metrics: successMetrics() }),
+			makeTerminal(3, "turn/failed", turnId, { error: "boom", metrics: failedMetrics() }),
+		];
+		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
+		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
 			expect(r.data.stats.available).toBe(false);
 			expect(r.data.items).toEqual([]);
 		}

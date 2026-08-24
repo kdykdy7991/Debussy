@@ -72,6 +72,20 @@ describe("readStoredTurnMetrics (strict persisted-payload validation)", () => {
 		).toBeUndefined();
 	});
 
+	test("rejects non-strict ISO stamps (Date.parse alone is not sufficient)", () => {
+		const base = validSuccess();
+		for (const value of [
+			"August 24, 2026", // 自然语言日期
+			"2026-08-24", // 仅日期
+			"2026-08-24T10:00:00", // 缺时区
+			"2026-13-99T00:00:00Z", // 非法日期
+			"not-a-date",
+		]) {
+			const m = { ...base, stamps: { ...base.stamps, completedAt: value } };
+			expect(readStoredTurnMetrics({ metrics: m }), `completedAt=${value}`).toBeUndefined();
+		}
+	});
+
 	test("rejects a first output recorded on a non-success outcome", () => {
 		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), outcome: "failed" } })).toBeUndefined();
 		expect(readStoredTurnMetrics({ metrics: { ...validSuccess(), outcome: "cancelled" } })).toBeUndefined();
