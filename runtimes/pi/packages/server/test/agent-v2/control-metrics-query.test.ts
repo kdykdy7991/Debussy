@@ -192,14 +192,30 @@ describe("M1 ControlService.getConversationMetrics", () => {
 		expect(r.data.stats.ttftMs.mean).toBe(450);
 	});
 
-	test("afterSequence filters the returned page (cursor = last sequence)", async () => {
+	test("afterSequence on the final page returns a null cursor", async () => {
 		const evts = [...makeTurn(1, 2, 1, "gpt-4o", successMetrics()), ...makeTurn(3, 4, 2, "gpt-4o", successMetrics())];
 		const service = buildService({ metricsEnabled: true, conversation: presentConversation(), rows: evts });
 		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV, afterSequence: 2 });
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			expect(r.data.items.map((i) => i.sequence)).toEqual([4]);
-			expect(r.data.nextAfterSequence).toBe(4);
+			// 本页即最后一页 → nextAfterSequence 为 null。
+			expect(r.data.nextAfterSequence).toBeNull();
+		}
+	});
+
+	test("malformed stored metrics payload is treated as absent, not NaN", async () => {
+		const bad = { ...successMetrics(), totalLatencyMs: "bad" } as unknown as ReturnType<typeof successMetrics>;
+		const service = buildService({
+			metricsEnabled: true,
+			conversation: presentConversation(),
+			rows: makeTurn(1, 2, 1, "gpt-4o", bad),
+		});
+		const r = await service.getConversationMetrics({ tenantId: TENANT, conversationId: CONV });
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.data.stats.available).toBe(false);
+			expect(r.data.items).toEqual([]);
 		}
 	});
 

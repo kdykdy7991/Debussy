@@ -1424,7 +1424,13 @@ export class ControlService {
 		const rows = await this.collectTurnMetrics(input.tenantId, input.conversationId);
 		const stats = computeConversationMetricsStats(rows);
 		const page = rows.filter((r) => r.sequence > resolved.afterSequence).slice(0, resolved.limit);
-		const nextAfterSequence = page.length === 0 ? null : page[page.length - 1]!.sequence;
+		// 契约：只有本页之后仍有轮才返回游标；本页即是最后一页（或空页）时为 null。
+		const lastGlobal = rows[rows.length - 1];
+		const pageLast = page.length === 0 ? undefined : page[page.length - 1];
+		const nextAfterSequence =
+			pageLast === undefined || (lastGlobal !== undefined && pageLast.sequence >= lastGlobal.sequence)
+				? null
+				: pageLast.sequence;
 		return {
 			ok: true,
 			data: {

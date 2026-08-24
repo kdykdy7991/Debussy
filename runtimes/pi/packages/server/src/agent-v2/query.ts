@@ -29,9 +29,40 @@ function isObject(v: unknown): v is Record<string, unknown> {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function isFiniteNumber(v: unknown): v is number {
+	return typeof v === "number" && Number.isFinite(v);
+}
+
+const METRIC_COUNT_KEYS: readonly (keyof TurnMetrics)[] = [
+	"inputTokens",
+	"outputTokens",
+	"cacheReadTokens",
+	"cacheWriteTokens",
+];
+const METRIC_OPTIONAL_KEYS: readonly (keyof TurnMetrics)[] = ["ttftMs", "generationMs", "outputTokensPerSecond"];
+
+const BREAKDOWN_KEYS: readonly string[] = [
+	"systemPrompt",
+	"skillInstructions",
+	"toolDefinitions",
+	"conversationMessages",
+	"toolResults",
+	"retrievalContext",
+	"attachments",
+];
+
+function isValidStoredStamps(v: unknown): boolean {
+	if (!isObject(v)) return false;
+	for (const key of ["requestStartedAt", "providerStartedAt", "completedAt"]) {
+		if (typeof v[key] !== "string") return false;
+	}
+	return v.firstOutputAt === null || typeof v.firstOutputAt === "string";
+}
+
 /**
- * 校验并取出存储的 `TurnMetrics`（`turn/end`/`turn/failed` 的 `payload.metrics`）。
- * 非对象 / 缺 outcome / outcome 非法一律视为不存在。
+ * 严格校验存储的 `TurnMetrics`（`turn/end`/`turn/failed` 的 `payload.metrics`）。
+ * 任一必需字段缺失/非有限数、或者非 success 仍带 TTFT 派生值，一律视为不存在
+ * （绝不把可能产生 NaN 或缺字段的异常数据当指标）。
  */
 export function readStoredTurnMetrics(payload: unknown): TurnMetrics | undefined {
 	if (!isObject(payload)) return undefined;
@@ -39,14 +70,35 @@ export function readStoredTurnMetrics(payload: unknown): TurnMetrics | undefined
 	if (!isObject(metrics)) return undefined;
 	const outcome = metrics.outcome;
 	if (typeof outcome !== "string" || !OUTCOMES.has(outcome as TurnOutcome)) return undefined;
+	for (const key of METRIC_COUNT_KEYS) {
+		if (!isFiniteNumber(metrics[key])) return undefined;
+	}
+	if (!isFiniteNumber(metrics.totalLatencyMs)) return undefined;
+	for (const key of METRIC_OPTIONAL_KEYS) {
+		const value = metrics[key];
+		if (value === null) continue;
+		if (!isFiniteNumber(value)) return undefined;
+		// 只有 success 的 ttft/generation/tps 才可能有值。
+		if (outcome !== "success") return undefined;
+	}
+	if (!isValidStoredStamps(metrics.stamps)) return undefined;
 	return metrics as unknown as TurnMetrics;
 }
 
-/** 校验并取出存储的 `ContextUsageSnapshot`（`context/snapshot` 的 `payload.snapshot`）。 */
+/** 严格校验存储的 `ContextUsageSnapshot`（`context/snapshot` 的 `payload.snapshot`）。 */
 export function readStoredContextSnapshot(payload: unknown): ContextUsageSnapshot | undefined {
 	if (!isObject(payload)) return undefined;
 	const snapshot = payload.snapshot;
-	if (!isObject(snapshot) || typeof snapshot.usedTokens !== "number") return undefined;
+	if (!isObject(snapshot)) return undefined;
+	for (const key of ["usedTokens", "contextWindow", "remainingTokens", "reservedOutputTokens", "usagePercent"]) {
+		if (!isFiniteNumber(snapshot[key])) return undefined;
+	}
+	if (snapshot.measurement !== "exact" && snapshot.measurement !== "estimated") return undefined;
+	const breakdown = snapshot.breakdown;
+	if (!isObject(breakdown)) return undefined;
+	for (const key of BREAKDOWN_KEYS) {
+		if (!isFiniteNumber(breakdown[key])) return undefined;
+	}
 	return snapshot as unknown as ContextUsageSnapshot;
 }
 

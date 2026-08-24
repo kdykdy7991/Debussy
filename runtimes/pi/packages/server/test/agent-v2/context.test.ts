@@ -51,4 +51,21 @@ describe("estimateContextSnapshot (M1 ContextUsageSnapshot estimator)", () => {
 				.remainingTokens,
 		).toBe(0);
 	});
+
+	test("retrieval context counts into its own category and the sum", () => {
+		const s = estimateContextSnapshot({
+			contextWindow: 1000,
+			systemPromptText: "a".repeat(40), // 10
+			conversationMessagesText: "u".repeat(80), // 20 (history + current user message)
+			retrievalContextText: "r".repeat(40), // 10
+			toolDefinitionsText: "t".repeat(8), // 2
+		});
+		expect(s.breakdown.systemPrompt).toBe(10);
+		expect(s.breakdown.conversationMessages).toBe(20);
+		expect(s.breakdown.retrievalContext).toBe(10);
+		expect(s.breakdown.toolDefinitions).toBe(2);
+		const sum = Object.values(s.breakdown).reduce((a, b) => a + b, 0);
+		expect(s.usedTokens).toBe(sum);
+		expect(s.usedTokens).toBe(42);
+	});
 });
