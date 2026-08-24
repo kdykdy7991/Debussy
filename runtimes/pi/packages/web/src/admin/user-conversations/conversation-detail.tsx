@@ -21,15 +21,20 @@ import type {
 	ConversationAdminSummary,
 	ConversationAdminSummaryEntry,
 	ConversationAdminSummaryListResponse,
+	ConversationContextResponse,
 	ConversationExportMode,
+	ConversationMetricsResponse,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { ConfirmModal } from "../components/confirm-modal.tsx";
+import type { DataState } from "../fixtures/index.ts";
 import { navigate } from "../router.ts";
+import { ContextTab, getContextTabData } from "./context-tab.tsx";
+import { getMetricsTabData, MetricsTab } from "./metrics-tab.tsx";
 
-type Tab = "overview" | "events" | "summary" | "attachments";
+type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context";
 
 interface DetailData {
 	readonly conversation: ConversationAdminSummary;
@@ -81,6 +86,10 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		| { kind: "loaded"; data: ConversationAdminAttachmentListResponse }
 		| { kind: "error"; message: string }
 	>({ kind: "idle" });
+	// M1 脚手架：通过 fixture 适配层取占位数据；真实接口接通后改为
+	// `useEffect` 触发 `api.getMetrics` / `api.getContext` 并填充同一 `DataState`。
+	const [metricsState, setMetricsState] = useState<DataState<ConversationMetricsResponse>>(getMetricsTabData("ok"));
+	const [contextState, setContextState] = useState<DataState<ConversationContextResponse>>(getContextTabData("ok"));
 	const [fullExportOpen, setFullExportOpen] = useState(false);
 	const [exporting, setExporting] = useState<ConversationExportMode | null>(null);
 	const [exportError, setExportError] = useState<string | null>(null);
@@ -127,6 +136,8 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		setEvents({ kind: "idle" });
 		setSummaries({ kind: "idle" });
 		setAttachments({ kind: "idle" });
+		setMetricsState({ kind: "idle" });
+		setContextState({ kind: "idle" });
 		setExportError(null);
 		loadDetail();
 	}, [loadDetail]);
@@ -141,7 +152,26 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 				(err: Error) => setAttachments({ kind: "error", message: err.message }),
 			);
 		}
-	}, [api, attachments.kind, conversationId, events.kind, loadEvents, loadSummaries, summaries.kind, tab]);
+		if (tab === "metrics" && metricsState.kind === "idle") {
+			// M1 脚手架：先取 fixture 占位；真实接口接通后改为 `api.getMetrics(...)`。
+			setMetricsState(getMetricsTabData("ok"));
+		}
+		if (tab === "context" && contextState.kind === "idle") {
+			// M1 脚手架：先取 fixture 占位；真实接口接通后改为 `api.getContext(...)`。
+			setContextState(getContextTabData("ok"));
+		}
+	}, [
+		api,
+		attachments.kind,
+		contextState.kind,
+		conversationId,
+		events.kind,
+		loadEvents,
+		loadSummaries,
+		metricsState.kind,
+		summaries.kind,
+		tab,
+	]);
 
 	const downloadExport = useCallback(
 		async (mode: ConversationExportMode): Promise<void> => {
@@ -251,6 +281,12 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						>
 							附件
 						</button>
+						<button type="button" role="tab" aria-selected={tab === "metrics"} onClick={() => setTab("metrics")}>
+							性能
+						</button>
+						<button type="button" role="tab" aria-selected={tab === "context"} onClick={() => setTab("context")}>
+							上下文
+						</button>
 					</div>
 
 					{tab === "overview" && <Overview conversation={detail.data.conversation} />}
@@ -259,6 +295,12 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 					)}
 					{tab === "summary" && <SummaryTab state={summaries} reload={loadSummaries} />}
 					{tab === "attachments" && <AttachmentsTab state={attachments} />}
+					{tab === "metrics" && (
+						<MetricsTab state={metricsState} onRetry={() => undefined} conversationId={conversationId} />
+					)}
+					{tab === "context" && (
+						<ContextTab state={contextState} onRetry={() => undefined} conversationId={conversationId} />
+					)}
 				</>
 			)}
 		</section>
