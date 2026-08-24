@@ -212,6 +212,74 @@ describe("pi runtime adapter", () => {
 		await b.runtime.close();
 	});
 
+	test("session effort override beats Revision config at the session seam", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		// ① conversationEffort null → 无覆盖，Revision 配置 high 原样生效。
+		const noOverride = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "revision high",
+					model: {
+						provider: "generic",
+						modelId: "generic-reasoner",
+						params: { reasoning: { effort: "high" } },
+					},
+				},
+			}),
+			{ ...scope("conv-no-override"), conversationEffort: null },
+		);
+		// ② conversationEffort low → 压过 Revision 的 high。会话覆盖 > Revision 配置。
+		const withOverride = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "revision high",
+					model: {
+						provider: "generic",
+						modelId: "generic-reasoner",
+						params: { reasoning: { effort: "high" } },
+					},
+				},
+			}),
+			{ ...scope("conv-override"), conversationEffort: "low" },
+		);
+		expect(noOverride.ok).toBe(true);
+		expect(withOverride.ok).toBe(true);
+		if (!noOverride.ok || !withOverride.ok) return;
+		expect(calls[0]!.thinkingLevel).toBe("high");
+		expect(calls[1]!.thinkingLevel).toBe("low");
+		await noOverride.runtime.close();
+		await withOverride.runtime.close();
+	});
+
+	test("session effort applies over the default when Revision carries no effort", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		const a = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "default",
+					model: { provider: "generic", modelId: "generic-reasoner", params: {} },
+				},
+			}),
+			{ ...scope("conv-session-default"), conversationEffort: "medium" },
+		);
+		expect(a.ok).toBe(true);
+		if (!a.ok) return;
+		expect(calls[0]!.thinkingLevel).toBe("medium");
+		await a.runtime.close();
+	});
+
 	test("two conversations get independent runtimes with their own models", async () => {
 		const calls: RuntimeSessionOptions[] = [];
 		const adapter = createPiRuntimeAdapter({
