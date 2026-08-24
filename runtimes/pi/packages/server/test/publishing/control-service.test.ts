@@ -145,6 +145,44 @@ describe.skipIf(!pgUp)("control service", () => {
 		expect(result.error.httpStatus).toBe(409);
 	});
 
+	test("importAgent rejects model-unsupported reasoning parameters (INVALID_MODEL_PARAMETERS)", async () => {
+		const bad = baseConfig({
+			model: { provider: "skdy", modelId: "pi-chat", params: { reasoning: { effort: "high" } } },
+		});
+		const result = await service.importAgent({ tenantId: tenantA }, source(bad));
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.code).toBe("INVALID_MODEL_PARAMETERS");
+		expect(result.error.httpStatus).toBe(400);
+	});
+
+	test("importAgent rejects unknown parameter fields and sampling overrides", async () => {
+		const bad = baseConfig({
+			model: {
+				provider: "skdy",
+				modelId: "pi-chat",
+				params: { reasoning: { effort: "high" }, sampling: { topP: 0.9 } },
+			},
+		});
+		const result = await service.importAgent({ tenantId: tenantA }, source(bad));
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.code).toBe("INVALID_MODEL_PARAMETERS");
+		expect(result.error.httpStatus).toBe(400);
+	});
+
+	test("importAgent accepts a valid reasoning configuration for a reasoning model", async () => {
+		const good = baseConfig({
+			model: {
+				provider: "skdy",
+				modelId: "Qwen3.8-Agent",
+				params: { reasoning: { enabled: true, effort: "high" } },
+			},
+		});
+		const result = await service.importAgent({ tenantId: tenantA }, source(good));
+		expect(result.ok).toBe(true);
+	});
+
 	test("createPublishedApp pins a same-tenant agent and stores theme in mutablePolicy", async () => {
 		const imported = await service.importAgent({ tenantId: tenantA }, source(baseConfig({ prompt: "app pin" })));
 		expect(imported.ok).toBe(true);

@@ -453,6 +453,22 @@ export class ControlService {
 	): Promise<ControlResult<ImportAgentResult>> {
 		const collected = await source.collect();
 		const sourceHash = sha256Hex(canonicalJson(collected.config));
+		// import 路径与 saveAgentRevision 同口径：模型参数只接受已声明 reasoning 字段，
+		// 非法 effort / 未知字段 / sampling-gen 覆盖一律拒绝（避免未加验证的草稿进入仓库）。
+		if (collected.config.model.params !== undefined) {
+			const parameterCapabilities = modelParameterCapabilities({
+				id: collected.config.model.modelId,
+				api: "openai-completions",
+				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(collected.config.model.modelId),
+			});
+			const parameterErrors = validateModelParameters(
+				collected.config.model.params as import("@earendil-works/pi-protocol").AgentModelParameters,
+				parameterCapabilities,
+			);
+			if (parameterErrors.length > 0) {
+				return fail("INVALID_MODEL_PARAMETERS", 400, parameterErrors.join("; "));
+			}
+		}
 		if (
 			input.expectedSourceHash !== undefined &&
 			input.expectedSourceHash !== null &&
