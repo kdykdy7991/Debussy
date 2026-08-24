@@ -532,6 +532,40 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		},
 		{
 			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/metrics$/,
+			operation: "conversations.metrics",
+			handler: async ({ requestId, query, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const afterRaw = query.get("afterSequence");
+				const afterSequence = afterRaw === null || afterRaw.trim() === "" ? undefined : Number(afterRaw);
+				const limitRaw = query.get("limit");
+				const limit = limitRaw === null || limitRaw.trim() === "" ? undefined : Number(limitRaw);
+				const result = await service.getConversationMetrics({
+					tenantId,
+					conversationId,
+					afterSequence,
+					limit,
+					requestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/context$/,
+			operation: "conversations.context",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const result = await service.getConversationContext({ tenantId, conversationId, requestId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
 			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/attachments$/,
 			operation: "conversations.list-attachments",
 			handler: async ({ requestId, params }) => {

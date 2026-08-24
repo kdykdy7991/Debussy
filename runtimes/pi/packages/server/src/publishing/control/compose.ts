@@ -7,6 +7,7 @@
  * any required piece of the 24.2 configuration is missing.
  */
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
+import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
 import { PostgresClient } from "../../persistence/postgres/client.ts";
 import { runMigrations } from "../../persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../persistence/postgres/repositories/index.ts";
@@ -93,6 +94,7 @@ export async function composeControlPlane(options: {
 		embedBaseUrl: publishing.embedBaseUrl,
 		previewTicketService,
 		llm: createLlmConfigStore(options.services),
+		metricsEnabled: agentV2MetricsEnabled(),
 	});
 
 	const bootstrapped = await controlService.bootstrapTenant({

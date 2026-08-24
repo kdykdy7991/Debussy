@@ -50,8 +50,23 @@ import type {
 	SessionEventType,
 	TurnPublicId,
 } from "@earendil-works/pi-protocol";
-import { SESSION_EVENT_TYPES } from "@earendil-works/pi-protocol";
+import {
+	type ContextUsageSnapshot,
+	type ConversationContextResponse,
+	type ConversationMetricsResponse,
+	type ConversationTurnMetric,
+	computeConversationMetricsStats,
+	resolveMetricsPage,
+	SESSION_EVENT_TYPES,
+} from "@earendil-works/pi-protocol";
 import { importSPKI } from "jose";
+import {
+	isTerminalTurnEvent,
+	isTurnStartEvent,
+	readStoredContextSnapshot,
+	readStoredTurnMetrics,
+	toConversationTurnMetric,
+} from "../../agent-v2/query.ts";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import { modelParameterCapabilities, validateModelParameters } from "../../model-parameters.ts";
 import type {
@@ -81,6 +96,7 @@ import type { PreviewTicketService } from "../preview-ticket.ts";
 import type {
 	AdminConversationListRow,
 	AgentDefinitionRecord,
+	ConversationEventRecord,
 	ConversationSummaryRecord,
 	LaunchKeyRecord,
 	PublishedAppRecord,
@@ -201,6 +217,12 @@ export interface ControlServiceOptions {
 	readonly previewTicketService?: PreviewTicketService;
 	/** Custom LLM provider store backed by models.json (Custom LLM console). */
 	readonly llm?: LlmConfigStore;
+	/**
+	 * Agent V2 metrics/context 开关（M1）。缺省 false：metrics/context 查询返回
+	 * `METRICS_UNAVAILABLE`/`CONTEXT_SNAPSHOT_UNAVAILABLE`(503)。组合时由
+	 * `agentV2MetricsEnabled()` 读取 `PI_AGENT_V2_METRICS`。
+	 */
+	readonly metricsEnabled?: boolean;
 }
 
 export type ControlErrorCode =
@@ -222,7 +244,10 @@ export type ControlErrorCode =
 	| "CONFLICT" // unexpected concurrent conflict (409)
 	| "LLM_CONFIG_UNAVAILABLE" // Custom LLM console disabled (503)
 	| "INVALID_LLM_CONFIG" // Custom LLM provider failed validation (400)
-	| "INVALID_MODEL_PARAMETERS"; // Agent model parameters failed capability validation (400)
+	| "INVALID_MODEL_PARAMETERS" // Agent model parameters failed capability validation (400)
+	| "METRICS_UNAVAILABLE" // Agent V2 metrics subsystem disabled/unavailable (503)
+	| "CONTEXT_SNAPSHOT_UNAVAILABLE" // Agent V2 context snapshot subsystem unavailable (503)
+	| "INVALID_METRICS_FILTER"; // metrics/context query params invalid (422)
 
 export interface ControlServiceError {
 	readonly code: ControlErrorCode;
@@ -236,6 +261,10 @@ export type ControlResult<T> =
 
 function fail<T>(code: ControlErrorCode, httpStatus: number, message: string): ControlResult<T> {
 	return { ok: false, error: { code, httpStatus, message } };
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Result of importing the current agent configuration (spec 33.3). */
@@ -336,6 +365,7 @@ export class ControlService {
 	private readonly embedBaseUrl: string;
 	private readonly previewTicketService: PreviewTicketService | undefined;
 	private readonly llm: LlmConfigStore | undefined;
+	private readonly metricsEnabled: boolean;
 
 	constructor(options: ControlServiceOptions) {
 		this.repos = options.repositories;
@@ -343,6 +373,7 @@ export class ControlService {
 		this.embedBaseUrl = options.embedBaseUrl.replace(/\/+$/, "");
 		this.previewTicketService = options.previewTicketService;
 		this.llm = options.llm;
+		this.metricsEnabled = options.metricsEnabled ?? false;
 	}
 
 	/** Bootstrap the MVP tenant idempotently (spec 33.1). */
@@ -1367,6 +1398,136 @@ export class ControlService {
 				nextAfterSequence: items.length === input.limit && throughSequence < lastSequence ? throughSequence : null,
 			},
 		};
+	}
+
+	/**
+	 * GET /metrics（M1）——只读聚合持久化轮指标。`stats` 在整个会话轮记录上计算，
+	 * 分页仅作用于返回页。开关关 → `METRICS_UNAVAILABLE`(503)。
+	 */
+	async getConversationMetrics(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly afterSequence?: number;
+		readonly limit?: number;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationMetricsResponse>> {
+		if (!this.metricsEnabled)
+			return fail("METRICS_UNAVAILABLE", 503, "Agent V2 metrics disabled (PI_AGENT_V2_METRICS)");
+		const resolved = resolveMetricsPage({ afterSequence: input.afterSequence, limit: input.limit });
+		if (!resolved.ok) return fail("INVALID_METRICS_FILTER", 422, resolved.message);
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const rows = await this.collectTurnMetrics(input.tenantId, input.conversationId);
+		const stats = computeConversationMetricsStats(rows);
+		const page = rows.filter((r) => r.sequence > resolved.afterSequence).slice(0, resolved.limit);
+		const nextAfterSequence = page.length === 0 ? null : page[page.length - 1]!.sequence;
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				stats,
+				items: page,
+				nextAfterSequence,
+			},
+		};
+	}
+
+	/** GET /context（M1）——返回最新 `context/snapshot` 帧。关 → `CONTEXT_SNAPSHOT_UNAVAILABLE`(503)。 */
+	async getConversationContext(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationContextResponse>> {
+		if (!this.metricsEnabled)
+			return fail("CONTEXT_SNAPSHOT_UNAVAILABLE", 503, "Agent V2 context snapshot disabled (PI_AGENT_V2_METRICS)");
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		let latest: ContextUsageSnapshot | undefined;
+		let atSequence: number | null = null;
+		let after = 0;
+		for (;;) {
+			const batch = await this.repos.events.listByConversation({
+				scope: { tenantId: input.tenantId },
+				conversationId: input.conversationId,
+				limit: 500,
+				afterSequence: after,
+			});
+			if (batch.length === 0) break;
+			for (const event of batch) {
+				if (event.eventType === "context/snapshot") {
+					const snapshot = readStoredContextSnapshot(event.payload);
+					if (snapshot !== undefined) {
+						latest = snapshot;
+						atSequence = event.sequence;
+					}
+				}
+			}
+			after = batch[batch.length - 1]!.sequence;
+			if (batch.length < 500) break;
+		}
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				available: latest !== undefined,
+				latest: latest ?? null,
+				atSequence,
+			},
+		};
+	}
+
+	/**
+	 * 汇总全会话轮指标：扫描事件，关联 turn/start→model，收集持有合法 `metrics`
+	 * 的终态轮记录（升序）。
+	 */
+	private async collectTurnMetrics(
+		tenantId: TenantId,
+		conversationId: ConversationId,
+	): Promise<readonly ConversationTurnMetric[]> {
+		let after = 0;
+		const allEvents: ConversationEventRecord[] = [];
+		for (;;) {
+			const batch = await this.repos.events.listByConversation({
+				scope: { tenantId },
+				conversationId,
+				limit: 500,
+				afterSequence: after,
+			});
+			allEvents.push(...batch);
+			if (batch.length === 0) break;
+			after = batch[batch.length - 1]!.sequence;
+			if (batch.length < 500) break;
+		}
+		const modelByTurn = new Map<string, string>();
+		for (const event of allEvents) {
+			if (event.turnId === null || !isTurnStartEvent(event.eventType)) continue;
+			const payload = isObject(event.payload) ? event.payload : undefined;
+			const model = payload === undefined ? undefined : payload.model;
+			if (typeof model === "string" && model.length > 0) modelByTurn.set(event.turnId, model);
+		}
+		const rows: ConversationTurnMetric[] = [];
+		for (const event of allEvents) {
+			if (event.turnId === null || !isTerminalTurnEvent(event.eventType)) continue;
+			const metrics = readStoredTurnMetrics(event.payload);
+			if (metrics === undefined) continue;
+			rows.push(
+				toConversationTurnMetric({
+					turnId: toPublicId("TurnId", event.turnId) as string,
+					sequence: event.sequence,
+					modelId: modelByTurn.get(event.turnId) ?? "",
+					metrics,
+				}),
+			);
+		}
+		return rows;
 	}
 
 	/**
