@@ -83,6 +83,52 @@ function makeEnv(): { env: EmbedWindowEnv; iframe: FakeIframe; win: FakeWindow }
 	return { env, iframe, win };
 }
 
+/**
+ * R8 阻断项 #3: 构造一个在 `contentWindow.postMessage` 第 N 次调用时抛错的
+ * fake iframe，验证 `logout()` 在 postMessage 异常下仍完成 token 释放。
+ *
+ * `throwOn` 指定从第几次调用开始抛错（1-indexed）：
+ *   - `throwOn: 1` → 第一次 postMessage（init）就抛，验证即便 init 都失败，
+ *     token 释放路径仍走完（postInit 先 snapshot 再清 pendingLaunchToken）。
+ *   - `throwOn: 2` → init 已成功，logout 的 postMessage 抛错——验证
+ *     `try/finally` 包裹 logout 时 token 必清。
+ */
+function makeEnvWithPostMessageError(throwOn: number): { env: EmbedWindowEnv; iframe: FakeIframe; win: FakeWindow } {
+	const posted: EmbedPostMessageEnvelope[] = [];
+	const handlers: Array<(event: MessageEventLike) => void> = [];
+	const attributeWrites: Array<{ name: string; value: string }> = [];
+	const iframe: FakeIframe = {
+		src: "",
+		style: { width: "", height: "", border: "" },
+		contentWindow: {
+			postMessage: (m) => {
+				posted.push(m);
+				if (posted.length === throwOn) {
+					throw new Error("postMessage boom (simulated hostile iframe)");
+				}
+			},
+		},
+		remove: () => {},
+		setAttribute: (name, value) => void attributeWrites.push({ name, value }),
+		posted,
+		removed: [],
+		attributeWrites,
+	};
+	const win: FakeWindow = {
+		handlers,
+		addEventListener: (_t, h) => void handlers.push(h),
+		removeEventListener: (_t, h) => {
+			const i = handlers.indexOf(h);
+			if (i >= 0) handlers.splice(i, 1);
+		},
+	};
+	const env: EmbedWindowEnv = {
+		window: win,
+		createInternal: () => iframe,
+	};
+	return { env, iframe, win };
+}
+
 function container(): { appendChild: (n: unknown) => void; children: unknown[] } {
 	const children: unknown[] = [];
 	return { appendChild: (n) => void children.push(n), children };
@@ -246,5 +292,92 @@ describe("Launch Token boundary (M1 R7)", () => {
 			});
 		}
 		expect(ready).toEqual([]);
+	});
+
+	/**
+	 * R8 阻断项 #3：logout 的 `contentWindow.postMessage` 抛错时（cross-origin /
+	 * closed window / hostile iframe），token 释放仍完成。R7 之前的实现是
+	 * "postMessage → pendingLaunchToken = undefined"——postMessage 抛错则
+	 * 清理不执行，token 残留到 destroy()。R8 改为 `try/finally`。
+	 *
+	 * 间接验证：再 `inst.open()` 不能从 init payload 里看到 SENTINEL。
+	 */
+	test("R8: logout postMessage throws -> token release still completes", () => {
+		// throwOn: 2 → init(1) 成功，logout(2) 的 postMessage 抛错。
+		const { env, iframe } = makeEnvWithPostMessageError(2);
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			launchToken: SENTINEL,
+			container: container() as unknown as HTMLElement,
+			env,
+		});
+		inst.open();
+		// init(1) 已成功发出（payload.launchToken === SENTINEL 是预期入口）。
+		expect(iframe.posted).toHaveLength(1);
+		expect(iframe.posted[0]?.type).toBe("init");
+		expect((iframe.posted[0]?.payload as Record<string, unknown>).launchToken).toBe(SENTINEL);
+
+		// logout 触发 postMessage(2) 抛错；try/finally 保证 token 释放完成
+		// （错误会**原样上抛**给调用方——try/finally 不吞错，这是 JS 语义；
+		// 关键在于 finally 一定跑了，即 token 一定清空）。
+		expect(() => inst.logout()).toThrow(/postMessage boom/);
+		// 但 iframe 仍记录了 logout 消息（push 发生在 throw 之前）。
+		expect(iframe.posted).toHaveLength(2);
+		expect(iframe.posted[1]?.type).toBe("logout");
+
+		// **关键**：token 释放仍完成。再次 open 走 init 路径：payload 不带 SENTINEL。
+		// close() 让 iframe 重新设为 null，open() 重新挂上；这里直接验证 SENTINEL
+		// 不出现在第二次 init 的 payload 中（这正是 R7 修复点的扩展：R7 验证
+		// "init 后所有出站不带 token"，R8 额外验证 "logout 异常也不带 token"）。
+		inst.close();
+		inst.open();
+		const allNonInit = iframe.posted.filter((m) => m.type !== "init");
+		for (const m of allNonInit) {
+			expect(JSON.stringify(m)).not.toContain(SENTINEL);
+		}
+		const inits = iframe.posted.filter((m) => m.type === "init");
+		expect(inits).toHaveLength(2);
+		// 第二次 init 必为匿名（pendingLaunchToken 已被 finally 清空）：
+		// payload 要么是 undefined（无 launchToken 字段），要么 launchToken 是 undefined。
+		const secondPayload = inits[1]?.payload as Record<string, unknown> | undefined;
+		const secondToken = secondPayload !== undefined ? (secondPayload.launchToken as string | undefined) : undefined;
+		expect(secondToken).toBeUndefined();
+		// 直接断言 SENTINEL 不在第二次 init 的 JSON 里。
+		expect(JSON.stringify(inits[1])).not.toContain(SENTINEL);
+	});
+
+	/**
+	 * R8 阻断项 #3：init 阶段 postMessage 就抛错时（hostile iframe 立刻拒绝
+	 * init 消息），postInit 的 snapshot + 立即清空 `pendingLaunchToken` 仍生效。
+	 * 后续 `logout` / 任何出站消息都不应再出现 SENTINEL。
+	 */
+	test("R8: init postMessage throws -> token still cleared before throw propagates", () => {
+		// throwOn: 1 → init 本身抛错。
+		const { env, iframe } = makeEnvWithPostMessageError(1);
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			launchToken: SENTINEL,
+			container: container() as unknown as HTMLElement,
+			env,
+		});
+		// init 抛错——但 SDK 没有 try/catch 在 postInit 外部（postInit 是同步），
+		// 错误会冒泡到 open() 调用方。**关键**：即便如此，
+		// pendingLaunchToken 已经被 snapshot 后立即清空（postInit 的语义）。
+		expect(() => inst.open()).toThrow(/postMessage boom/);
+		// init 已被 push（push 在 throw 之前），但 payload.launchToken
+		// 不在后续任何出站消息里出现。
+		expect(iframe.posted).toHaveLength(1);
+		expect(iframe.posted[0]?.type).toBe("init");
+		expect((iframe.posted[0]?.payload as Record<string, unknown>).launchToken).toBe(SENTINEL);
+
+		// 后续 logout / requestResize 不应让 SENTINEL 出现。
+		expect(() => inst.logout()).not.toThrow();
+		expect(() => inst.requestResize()).not.toThrow();
+		const allNonInit = iframe.posted.filter((m) => m.type !== "init");
+		for (const m of allNonInit) {
+			expect(JSON.stringify(m)).not.toContain(SENTINEL);
+		}
 	});
 });

@@ -17,6 +17,7 @@ import {
 	create,
 	type EmbedDomWindow,
 	type EmbedIframe,
+	EmbedInstanceBrokenError,
 	type EmbedWindowEnv,
 	type MessageEventLike,
 } from "../../src/embed/sdk/skdy-embed.ts";
@@ -334,11 +335,12 @@ describe("lifecycle", () => {
 	 * M1 R5：mount 失败（`appendChild` 抛错）→ 不注册 listener、不持 iframe 引用，
 	 * 后续 destroy() 不需要做任何清理（避免泄露 orphan handler）。
 	 */
-	test("mount failure (appendChild throws) does not leak listener", () => {
+	test("mount failure (appendChild throws) does not leak listener (R5) + instance is broken (R8)", () => {
 		const { env, iframe, win } = makeEnv();
+		const originalErr = new Error("detached parent");
 		const boom = {
 			appendChild: () => {
-				throw new Error("detached parent");
+				throw originalErr;
 			},
 			children: [],
 		};
@@ -349,12 +351,129 @@ describe("lifecycle", () => {
 			env,
 		});
 		inst.on("ready", () => {});
-		expect(() => inst.open()).toThrow(/detached parent/);
+		// R8: 抛 EmbedInstanceBrokenError（cause 链上挂原 err）。
+		let caught: unknown;
+		try {
+			inst.open();
+		} catch (e) {
+			caught = e;
+		}
+		expect(caught).toBeInstanceOf(EmbedInstanceBrokenError);
+		expect((caught as { cause?: unknown }).cause).toBe(originalErr);
 		// 关键断言 —— appendChild 抛错后，listener 列表保持空。
-		// （R5 修复前 addEventListener 在 appendChild 之前调用，这里会看到 1 条 handler。）
 		expect(win.handlers).toHaveLength(0);
-		// destroy 不需要做额外清理（idempotent + iframe 没挂上去）。
+		// R8: iframe 引用被保留（让 destroy 仍能 remove），未挂上 document。
+		// destroy() 不抛错，且 remove() 仍被调用。
 		expect(() => inst.destroy()).not.toThrow();
-		expect(iframe.removed).toEqual([]); // iframe 从未被挂载，remove 没被调用
+		expect(iframe.removed).toEqual([true]);
+		// iframe.posted 仍为空——没有 init 消息发出（mount 失败前 postInit 未跑）。
+		expect(iframe.posted).toEqual([]);
+	});
+
+	/**
+	 * R8 阻断项 #3：mount 失败后**不可复用**——后续 `open()` 必须抛
+	 * `EmbedInstanceBrokenError`，**禁止**降级为匿名 init（即不能再
+	 * 发出 init postMessage）。这是 signed-user 实例"静默丢失身份"的
+	 * 关键修复路径。
+	 */
+	test("R8: mount failure -> second open throws EmbedInstanceBrokenError (no anonymous fallback)", () => {
+		const { env, iframe } = makeEnv();
+		const boom = {
+			appendChild: () => {
+				throw new Error("detached parent");
+			},
+			children: [],
+		};
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			launchToken: "tok_signed",
+			container: boom as unknown as HTMLElement,
+			env,
+		});
+		// 第一次 open：抛 EmbedInstanceBrokenError。
+		expect(() => inst.open()).toThrow(EmbedInstanceBrokenError);
+		// **关键**：iframe 没发出任何 init 消息（mount 失败前 postInit 未跑）。
+		expect(iframe.posted).toEqual([]);
+		// 第二次 open：必须仍抛 EmbedInstanceBrokenError，**不**降级为匿名。
+		expect(() => inst.open()).toThrow(EmbedInstanceBrokenError);
+		expect(iframe.posted).toEqual([]); // 仍然为空——没有匿名 init
+	});
+
+	/**
+	 * R8 阻断项 #3：mount 失败后 `logout()` 抛 `EmbedInstanceBrokenError`，
+	 * 避免向一个未挂上的 iframe 发 postMessage（更重要的：避免看起来
+	 * 正常的 logout 掩盖 broken 态）。
+	 */
+	test("R8: mount failure -> logout throws EmbedInstanceBrokenError", () => {
+		const { env, iframe } = makeEnv();
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			container: {
+				appendChild: () => {
+					throw new Error("detached parent");
+				},
+				children: [],
+			} as unknown as HTMLElement,
+			env,
+		});
+		expect(() => inst.open()).toThrow(EmbedInstanceBrokenError);
+		expect(() => inst.logout()).toThrow(EmbedInstanceBrokenError);
+		// 关键：没有任何 postMessage 发出。
+		expect(iframe.posted).toEqual([]);
+	});
+
+	/**
+	 * R8 阻断项 #3：mount 失败后 `requestResize()` 抛 `EmbedInstanceBrokenError`，
+	 * 避免在 broken 态下"假装可调整尺寸"掩盖问题。
+	 */
+	test("R8: mount failure -> requestResize throws EmbedInstanceBrokenError", () => {
+		const { env, iframe } = makeEnv();
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			container: {
+				appendChild: () => {
+					throw new Error("detached parent");
+				},
+				children: [],
+			} as unknown as HTMLElement,
+			env,
+		});
+		expect(() => inst.open()).toThrow(EmbedInstanceBrokenError);
+		expect(() => inst.requestResize()).toThrow(EmbedInstanceBrokenError);
+		expect(iframe.posted).toEqual([]);
+	});
+
+	/**
+	 * R8 阻断项 #3：mount 失败后**不再派发事件**——`addEventListener` 之前
+	 * 已确认不会被调用（mount 失败不注册 listener），这里验证 iframe
+	 * 即使在 mount 失败后投递消息，宿主订阅者也收不到。
+	 */
+	test("R8: mount failure -> ready events are not dispatched (no listener registered)", () => {
+		const { env, iframe, win } = makeEnv();
+		const ready: Array<unknown> = [];
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			container: {
+				appendChild: () => {
+					throw new Error("detached parent");
+				},
+				children: [],
+			} as unknown as HTMLElement,
+			env,
+		});
+		inst.on("ready", () => void ready.push(undefined));
+		expect(() => inst.open()).toThrow(EmbedInstanceBrokenError);
+		// iframe 上线后投递 ready：因为 win 上根本没挂 handler，宿主不收。
+		hostEvent(win, iframe, {
+			protocol: "skdy-embed",
+			version: EMBED_PROTOCOL_VERSION,
+			type: "ready",
+			payload: { publicAppId: APP, mode: "anonymous" },
+		});
+		expect(ready).toEqual([]);
 	});
 });

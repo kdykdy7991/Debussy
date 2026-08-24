@@ -81,4 +81,30 @@ describe("stale save: putReasoning + StaleResponseGuard", () => {
 			});
 		expect(setStateForNewConversation).not.toHaveBeenCalled();
 	});
+
+	/**
+	 * R8 阻断项 #1 反向证明：stateGuard 与 saveGuard 严格独立——
+	 * `begin()` 一个不会 abort 另一个的 in-flight ticket。R7 的死锁
+	 * 是因为 `loadCapability` 与 `loadState` 共用 `loadGuard`；R8
+	 * 删除 capability 加载后，`stateGuard` 只守护 `getReasoning`，
+	 * `saveGuard` 只守护 `putReasoning`，互不影响。
+	 */
+	it("stateGuard 与 saveGuard 严格独立：begin() 互不取消", () => {
+		const stateGuard = createStaleResponseGuard();
+		const saveGuard = createStaleResponseGuard();
+		// 并发两个 save 期间发起一个 state load。
+		const saveTicket1 = saveGuard.begin();
+		const saveTicket2 = saveGuard.begin();
+		const stateTicket = stateGuard.begin();
+
+		// 三个 ticket 都未 abort。
+		expect(saveTicket1.signal.aborted).toBe(true); // 第二次 begin abort 第一次（同 guard 内）
+		expect(saveTicket2.signal.aborted).toBe(false);
+		expect(stateTicket.signal.aborted).toBe(false); // 不同 guard，互不影响
+
+		// 反向：cancel stateGuard 不会影响 saveGuard。
+		stateGuard.cancel();
+		expect(stateTicket.signal.aborted).toBe(true);
+		expect(saveTicket2.signal.aborted).toBe(false);
+	});
 });
