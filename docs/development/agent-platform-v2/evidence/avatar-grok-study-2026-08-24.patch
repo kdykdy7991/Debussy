@@ -1,0 +1,55 @@
+diff --git a/replica/src/character.js b/replica/src/character.js
+index ae3b580..c55ebc7 100644
+--- a/replica/src/character.js
++++ b/replica/src/character.js
+@@ -35,6 +35,8 @@
+       this.eyeScaleProp = opts.eyeScale ?? (this.loginWrap ? shapeEyeScale(this.shapeName) : 1);
+       this.emphasis = !!opts.emphasis;
+       this.followPointer = !!opts.followPointer;
++      this.followPointerBody = !!opts.followPointerBody;
++      this.followPointerStrength = Math.max(0, Number(opts.followPointerStrength) || 1);
+       this.gazeTarget = opts.gazeTarget || null;
+       this.paused = !!opts.paused;
+       this.reduceMotion = opts.reduceMotion ?? (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+@@ -492,8 +494,10 @@
+         const rect = this.rectCache;
+         if (rect && rect.width > 0) {
+           const mapped = this.gazeTarget ? src : mapPointer(rect, src);
+-          this.pointer.tx = clamp((mapped.x - (rect.left + rect.width / 2)) / rect.width, -0.6, 0.6) * 22;
+-          this.pointer.ty = clamp((mapped.y - (rect.top + rect.height / 2)) / rect.height, -0.6, 0.6) * 14;
++          const strength = this.gazeTarget ? 1 : this.followPointerStrength;
++          const pointerTx = clamp((mapped.x - (rect.left + rect.width / 2)) / rect.width, -0.6, 0.6) * 22 * strength;
++          this.pointer.tx = this.state === "dragging" ? Math.max(0, pointerTx) : pointerTx;
++          this.pointer.ty = clamp((mapped.y - (rect.top + rect.height / 2)) / rect.height, -0.6, 0.6) * 14 * strength;
+         }
+       } else {
+         this.pointer.tx = 0;
+@@ -723,9 +727,12 @@
+       const ov = this.fx.extras(now, this.stateAt, this.ovKind, this.ovPrev, yl, mix);
+       const bodyW = 1 - yl;
+       const ex = this.extras;
+-      const tx = this.tx.x * bodyW + ex.yi * bodyW + ov.yre * yl;
+-      const ty = (this.ty.x + ex.hop) * bodyW + ex.ki * bodyW - ov.rX.lift * ov.Lee + ov.aX * yl;
+-      const rot = (this.spin.x * bodyW + ex.Kr * bodyW) * tilt + (ex.Yr || 0) * bodyW + ov.wl * yl;
++      const pointerBody = this.followPointerBody && this.followPointer && this.pointerRaw && !this.reduceMotion;
++      const pointerX = pointerBody ? clamp(this.pointer.x / 22, -1, 1) : 0;
++      const pointerY = pointerBody ? clamp(this.pointer.y / 14, -1, 1) : 0;
++      const tx = this.tx.x * bodyW + ex.yi * bodyW + ov.yre * yl + pointerX * 3;
++      const ty = (this.ty.x + ex.hop) * bodyW + ex.ki * bodyW - ov.rX.lift * ov.Lee + ov.aX * yl + pointerY * 2;
++      const rot = (this.spin.x * bodyW + ex.Kr * bodyW) * tilt + (ex.Yr || 0) * bodyW + ov.wl * yl + pointerX * 5;
+       const sx = bodyW + ov.wre * yl;
+       const sy = this.squash.x * bodyW + ov.wre * yl;
+       this.group.setAttribute(
+diff --git a/replica/src/tables.js b/replica/src/tables.js
+index 617b2fd..5b41751 100644
+--- a/replica/src/tables.js
++++ b/replica/src/tables.js
+@@ -19,7 +19,7 @@
+     spawning: [3, 0], humming: [0, 8], loading: [0, 8], dictating: [10, 1, 19],
+     sending: [0, 8], receiving: [19, 0, 8], uploading: [15, 9, 8], writing: [15, 9],
+     notifying: [3, 21, 0], alerting: [3, 21], bouncing: [2, 17],
+-    dragging: [3, 15, 0], "powering-down": [13, 22],
++    dragging: [15, 0], "powering-down": [13, 22],
+   };
+ 
+   const EYE_HOLD_MS = {
