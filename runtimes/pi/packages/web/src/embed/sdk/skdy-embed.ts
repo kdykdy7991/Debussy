@@ -149,7 +149,11 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 				emit("conversation-created", { conversationId: decoded.message.conversationId });
 				break;
 			case "resize":
-				if (decoded.message.height > EMBED_HEIGHT_MAX) return;
+				// Embed height must be 1..POST_MESSAGE_RESIZE_MAX_HEIGHT; protocol layer
+				// already rejects non-positive integers, this is defense in depth.
+				if (decoded.message.height <= 0 || decoded.message.height > EMBED_HEIGHT_MAX) {
+					return;
+				}
 				emit("resize", { height: decoded.message.height });
 				syncHeight(decoded.message.height);
 				break;

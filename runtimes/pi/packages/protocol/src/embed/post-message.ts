@@ -172,7 +172,7 @@ export function decodeEmbedIframeMessage(raw: unknown): EmbedPayloadDecodeResult
 		if (
 			typeof height !== "number" ||
 			!Number.isInteger(height) ||
-			height < 0 ||
+			height <= 0 ||
 			height > POST_MESSAGE_RESIZE_MAX_HEIGHT
 		) {
 			return { ok: false, reason: "INVALID_PAYLOAD" };

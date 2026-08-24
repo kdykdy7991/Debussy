@@ -6,11 +6,11 @@
  *   - 多实例监听器隔离与清理（共享同一个宿主 window）
  *   - source / origin / version / 协议 / 类型校验
  *   - resize 非法值（含 NaN、负数、零、超过上限、上限附近）与最大高度裁剪
+ *   - 单调事件顺序（同一 iframe 连续 dispatch 按到达顺序触发回调）
  *   - launchToken 不进入 localStorage / sessionStorage / cookie
  *
- * **仅为 M0 原型**：在 DTO / 总架构师拍板前不修改 `skdy-embed.ts` 业务实现；
- * resize == 0 的缺口按总架构师"Embed 高度必须是 1～最大值，0 无效"的拍板记为
- * `it.skip`，待 M1 SDK 改造时一并修复。
+ * `height == 0` 在 M0 修订中已由协议层 (`< 0` → `<= 0`) 与 SDK 层
+ * 双重拒绝并落地；用例从 skip 改回 it()，结果必须为通过。
  *
  * 测试基础设施与现有 `sdk.test.ts` 一致：注入 fake `window` / `iframe`，跑在
  * vitest node 环境，不引入新依赖。
@@ -423,10 +423,9 @@ describe("M0 prototype: resize 非法值与上限", () => {
 		expect(resized).toEqual([]);
 	});
 
-	// resize == 0 缺口：总架构师已拍板"Embed 高度必须是 1～最大值，0 无效"，
-	// 但当前 SDK 仍允许 0 通过（协议层只校验 Number.isInteger / >=0 / <=上限），
-	// 修复属 M1 SDK 改造。本测试跳过以保持测试集合绿灯；缺口记录在原型报告 §4.1。
-	it.skip("height == 0 → 应被拒绝（M1 SDK 改造时启用）", () => {
+	// resize == 0 已修复：协议层 `height < 0` → `height <= 0`；
+	// SDK 层 messageHandler 同时增加 `<= 0` 拒绝（纵深防御）。
+	it("height == 0 → 应被拒绝", () => {
 		const env = makeEnv();
 		const resized: number[] = [];
 		const inst = create({ appId: APP, baseUrl: BASE, container: container() as unknown as HTMLElement, env });
@@ -453,6 +452,79 @@ describe("M0 prototype: resize 非法值与上限", () => {
 		inst.open();
 		hostEvent(env.win, env.iframe, resizeMsg(456));
 		expect(env.iframe.style.height).toBe("456px");
+	});
+});
+
+/**
+ * 修订二新增：单调事件顺序契约。
+ *
+ * 前端不重排、不缓冲、不异步批处理 iframe 上报的事件；
+ * 单调契约要求同一 iframe 连续 dispatch 的事件在宿主侧按到达顺序触发回调。
+ * 后端单调时钟语义见 contract-questions.md §1.1 / §2.3，本原型只在 SDK 层固化该契约。
+ */
+describe("M0 prototype: 单调事件顺序（同一 iframe 连续 dispatch 按到达顺序触发回调）", () => {
+	function resizeMsg(height: unknown) {
+		return {
+			protocol: "skdy-embed",
+			version: EMBED_PROTOCOL_VERSION,
+			type: "resize",
+			payload: { height },
+		};
+	}
+
+	it("同一 iframe 连续 5 次 resize → 宿主按到达顺序触发回调", () => {
+		const env = makeEnv();
+		const resized: number[] = [];
+		const inst = create({ appId: APP, baseUrl: BASE, container: container() as unknown as HTMLElement, env });
+		inst.on("resize", (p) => void resized.push(p.height));
+		inst.open();
+
+		// 模拟 iframe 在时间戳 t1 < t2 < t3 < t4 < t5 上报的合法高度
+		const sequence = [320, 380, 410, 520, 600];
+		for (const h of sequence) hostEvent(env.win, env.iframe, resizeMsg(h));
+
+		expect(resized).toEqual(sequence);
+	});
+
+	it("合法事件与非法事件交错时 → 合法按到达顺序触发，非法被丢弃不重排", () => {
+		const env = makeEnv();
+		const resized: number[] = [];
+		const inst = create({ appId: APP, baseUrl: BASE, container: container() as unknown as HTMLElement, env });
+		inst.on("resize", (p) => void resized.push(p.height));
+		inst.open();
+
+		// 合法 / 非法 / 合法 / 合法 / 非法（应被丢弃，不进入回调序列）
+		hostEvent(env.win, env.iframe, resizeMsg(300)); // ✓
+		hostEvent(env.win, env.iframe, resizeMsg(0)); // ✗ (修订二拒绝 <=0)
+		hostEvent(env.win, env.iframe, resizeMsg(350)); // ✓
+		hostEvent(env.win, env.iframe, resizeMsg(400)); // ✓
+		hostEvent(env.win, env.iframe, resizeMsg(100001)); // ✗ (超过上限)
+
+		expect(resized).toEqual([300, 350, 400]);
+	});
+
+	it("共享同一宿主 window 的两个实例各自维持单调顺序", () => {
+		const { envs, sharedWin } = makeSharedEnv(2);
+		const envA = envs[0]!;
+		const envB = envs[1]!;
+		const a = create({ appId: APP, baseUrl: BASE, container: container() as unknown as HTMLElement, env: envA });
+		const b = create({ appId: APP, baseUrl: BASE, container: container() as unknown as HTMLElement, env: envB });
+		const aResize: number[] = [];
+		const bResize: number[] = [];
+		a.on("resize", (p) => void aResize.push(p.height));
+		b.on("resize", (p) => void bResize.push(p.height));
+		a.open();
+		b.open();
+
+		// 交织 dispatch：A 的合法、B 的合法、A 的合法、B 的非法、B 的合法
+		hostEvent(sharedWin, envA.iframe, resizeMsg(100));
+		hostEvent(sharedWin, envB.iframe, resizeMsg(220));
+		hostEvent(sharedWin, envA.iframe, resizeMsg(140));
+		hostEvent(sharedWin, envB.iframe, resizeMsg(0)); // ✗
+		hostEvent(sharedWin, envB.iframe, resizeMsg(260));
+
+		expect(aResize).toEqual([100, 140]);
+		expect(bResize).toEqual([220, 260]);
 	});
 });
 
