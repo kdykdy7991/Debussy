@@ -30,8 +30,9 @@ import { ConfirmModal } from "../components/confirm-modal.tsx";
 import { navigate } from "../router.ts";
 import { ContextTab } from "./context-tab.tsx";
 import { MetricsTab } from "./metrics-tab.tsx";
+import { ReasoningTab } from "./reasoning-tab.tsx";
 
-type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context";
+type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context" | "reasoning";
 
 interface DetailData {
 	readonly conversation: ConversationAdminSummary;
@@ -262,6 +263,14 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						<button type="button" role="tab" aria-selected={tab === "context"} onClick={() => setTab("context")}>
 							上下文
 						</button>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={tab === "reasoning"}
+							onClick={() => setTab("reasoning")}
+						>
+							思考强度
+						</button>
 					</div>
 
 					{tab === "overview" && <Overview conversation={detail.data.conversation} />}
@@ -279,6 +288,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						/>
 					)}
 					{tab === "context" && <ContextTab conversationId={conversationId} api={api} />}
+					{tab === "reasoning" && <ReasoningTab conversationId={conversationId} api={api} />}
 				</>
 			)}
 		</section>

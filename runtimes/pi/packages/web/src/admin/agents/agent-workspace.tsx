@@ -117,8 +117,16 @@ export function AgentWorkspace({ agentId, api, llmApi }: AgentWorkspaceProps): R
 				setChangeSummary("");
 				idempotencyRef.current = "";
 			} catch (err) {
-				const message =
-					err instanceof AgentApiError ? err.message : err instanceof Error ? err.message : String(err);
+				// M1 reasoning：把 `REASONING_INVALID_EFFORT` 错误码单独标在错误信息里，
+				// 让用户在保存草稿时能立刻看到是「档位被服务端拒绝」而非通用网络错误。
+				// 不复制 DTO：错误码来自协议 `admin-workbench-reasoning.ts` 的
+				// `AGENT_V2_REASONING_ERROR_CODES`，此处只是字符串比较。
+				let message: string;
+				if (err instanceof AgentApiError && err.code === "REASONING_INVALID_EFFORT") {
+					message = `reasoning 档位被服务端拒绝（REASONING_INVALID_EFFORT）：${err.message}`;
+				} else {
+					message = err instanceof AgentApiError ? err.message : err instanceof Error ? err.message : String(err);
+				}
 				setLoad((prev) =>
 					prev.kind === "loaded"
 						? { kind: "loaded", detail: prev.detail, state: saveFailed(prev.state, message) }

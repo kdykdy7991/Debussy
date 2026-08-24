@@ -20,6 +20,8 @@ import {
 	type ConversationExportMode,
 	type ConversationMetricsQuery,
 	type ConversationMetricsResponse,
+	type ConversationReasoningState,
+	type ReasoningUpdateRequest,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 
@@ -36,6 +38,10 @@ export interface ConversationsApiOptions {
  * - 401/403 → 不可重试（凭证/权限错误，再试一次也不会变）；
  * - 408/425/429/5xx → 可重试；
  * - 其它 4xx → 不可重试。
+ *
+ * M1 reasoning 错误码（`REASONING_INVALID_EFFORT` / `REASONING_NOT_CONFIGURABLE`）
+ * 同样不可重试；它们各自有 HTTP 状态 422 / 403，但 UI 不应允许用户对验证失败/策略禁止
+ * 反复点"重试"。这里不引入额外的表——403/422 在 HTTP 兜底里都是不可重试，与协议语义一致。
  */
 function resolveRetryable(code: string | null, httpStatus: number): boolean {
 	if (code !== null && code in AGENT_V2_METRICS_ERRORS) {
@@ -125,6 +131,58 @@ export class ConversationsApi {
 			// 重试性按协议表 + HTTP 状态统一计算一次，handleApiError 和抛出的
 			// ConversationsApiError 必须**拿到同一个值**，否则 UI 与认证控制器会
 			// 出现两套重试语义。
+			const retryable = resolveRetryable(code, response.status);
+			this.auth.handleApiError({
+				name: "ConversationsApiError",
+				code,
+				message,
+				requestId: requestId ?? "",
+				retryable,
+				httpStatus: response.status,
+			});
+			throw new ConversationsApiError(message, response.status, requestId, code, retryable);
+		}
+		if (parsed === null) {
+			throw new ConversationsApiError("Empty response", response.status, null, "EMPTY_RESPONSE");
+		}
+		const envelope = parsed as Envelope<T>;
+		return envelope.data;
+	}
+
+	/**
+	 * 写操作（PUT/POST）的统一入口。复用与 GET 相同的：
+	 *   - token 取自 AdminAuthController；
+	 *   - 401 → controller 自动清空 + 锁屏；
+	 *   - 错误 envelope 解析（`{ error: { code, message, requestId } }`）；
+	 *   - `retryable` 由 `resolveRetryable` 单一计算；
+	 *   - 成功 envelope 解析（`{ data: T, requestId }`）。
+	 */
+	private async requestWithBody<T>(
+		path: string,
+		init: { readonly method: "PUT" | "POST"; readonly body: unknown; readonly signal?: AbortSignal },
+	): Promise<T> {
+		const token = this.auth.getToken();
+		if (token === null || token === "") {
+			throw new ConversationsApiError("Admin token is not set", 401, null, "UNAUTHORIZED");
+		}
+		const url = `${this.baseUrl}${path}`;
+		const response = await this.fetchImpl(url, {
+			method: init.method,
+			headers: {
+				Authorization: `Bearer ${token}`,
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(init.body),
+			...(init.signal !== undefined ? { signal: init.signal } : {}),
+		});
+		const text = await response.text();
+		const parsed: unknown = text === "" ? null : safeParse(text);
+		if (!response.ok) {
+			const errInfo = (parsed as ErrorEnvelope | null)?.error ?? null;
+			const code = errInfo?.code ?? "HTTP_ERROR";
+			const message = errInfo?.message ?? `HTTP ${response.status}`;
+			const requestId = errInfo?.requestId ?? null;
 			const retryable = resolveRetryable(code, response.status);
 			this.auth.handleApiError({
 				name: "ConversationsApiError",
@@ -263,6 +321,38 @@ export class ConversationsApi {
 		return this.request<ConversationContextResponse>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/context`,
 			signal !== undefined ? { signal } : {},
+		);
+	}
+
+	/**
+	 * M1 reasoning：读取单会话级 thinking effort 覆盖。
+	 *
+	 * 返回 `ConversationReasoningState`：含 `effort`（`null` = 使用 Agent Revision
+	 * 默认值）与审计 `updatedAt`（ISO）。404 = 跨租户（`CONVERSATION_NOT_FOUND`，
+	 * 不暴露归属）。
+	 *
+	 * 不复制 DTO——直接 import `ConversationReasoningState` / `ReasoningUpdateRequest`
+	 * 给上层组件。
+	 */
+	getReasoning(conversationId: string, signal?: AbortSignal): Promise<ConversationReasoningState> {
+		return this.request<ConversationReasoningState>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
+			signal !== undefined ? { signal } : {},
+		);
+	}
+
+	/**
+	 * M1 reasoning：设置单会话级 thinking effort 覆盖（PUT 幂等）。
+	 *
+	 * 请求体即 `ReasoningUpdateRequest`：传 `null` 清除会话覆盖，回到 Agent
+	 * Revision 默认。422 `REASONING_INVALID_EFFORT` 表示档位不在模型能力目录
+	 * 声明的档位内；403 `REASONING_NOT_CONFIGURABLE` 表示策略禁止调整。
+	 * 两者都不可重试，UI 应展示错误码 + 当前 draft，不进入 loading 态。
+	 */
+	putReasoning(conversationId: string, body: ReasoningUpdateRequest): Promise<ConversationReasoningState> {
+		return this.requestWithBody<ConversationReasoningState>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
+			{ method: "PUT", body },
 		);
 	}
 }
