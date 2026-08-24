@@ -21,6 +21,7 @@ import {
 	shouldPersistAssistantChunk,
 	shouldRolloverConversation,
 } from "@earendil-works/pi-protocol";
+import { estimateContextSnapshot } from "../../agent-v2/context.ts";
 import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
 import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
 import {
@@ -445,6 +446,23 @@ export class ConversationService {
 				payload: { model: spec.agent.model.modelId, logLevel },
 			});
 			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
+
+			// Agent V2 M1：写上下文快照（turn/start 之后、user/message 之前，符合契约顺序）。
+			// 开关关（默认）不采集；开时用 chars→tokens 估算为 `ContextUsageSnapshot`。
+			if (metricsTiming !== undefined) {
+				const snapshot = estimateContextSnapshot({
+					contextWindow: spec.contextPolicy.maxContextTokens,
+					systemPromptText: spec.agent.systemPrompt,
+					conversationMessagesText: history.messages.map((m) => m.text).join("\n"),
+					toolDefinitionsText: spec.capabilities.tools.map((t) => JSON.stringify(t)).join("\n"),
+				});
+				const snapshotAppended = await this.safeAppend(scope, input.conversationId, {
+					eventType: "context/snapshot",
+					turnId,
+					payload: { snapshot },
+				});
+				if (snapshotAppended === undefined) return { ok: false, error: conversationNotFound() };
+			}
 
 			const userEvent = await this.repos.events.append(scope, {
 				conversationId: input.conversationId,
