@@ -169,6 +169,49 @@ describe("pi runtime adapter", () => {
 		});
 	});
 
+	test("wire-intent precedence: default fallback yields no override, revision config forces it", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		// ① 无参数 → 不注入覆盖（thinkingLevel 未定义，交给 provider 默认）。
+		const a = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "default",
+					model: { provider: "generic", modelId: "generic-reasoner", params: {} },
+				},
+			}),
+			scope("conv-default"),
+		);
+		// ② Revision 显式 reasoning.effort:high → 会话 seam 收到 thinkingLevel high。
+		const b = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "revision",
+					model: {
+						provider: "generic",
+						modelId: "generic-reasoner",
+						params: { reasoning: { effort: "high" } },
+					},
+				},
+			}),
+			scope("conv-revision"),
+		);
+		expect(a.ok).toBe(true);
+		expect(b.ok).toBe(true);
+		if (!a.ok || !b.ok) return;
+		expect(calls).toHaveLength(2);
+		expect(calls[0]!.thinkingLevel).toBeUndefined();
+		expect(calls[1]!.thinkingLevel).toBe("high");
+		// 会话语义：模型默认值仅在无 Revision 参数时生效；显式 Revision 覆盖之。
+		await a.runtime.close();
+		await b.runtime.close();
+	});
+
 	test("two conversations get independent runtimes with their own models", async () => {
 		const calls: RuntimeSessionOptions[] = [];
 		const adapter = createPiRuntimeAdapter({
