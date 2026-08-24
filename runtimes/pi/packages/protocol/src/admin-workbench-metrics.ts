@@ -1,35 +1,37 @@
 /**
- * Agent 平台 V2：单会话统计与上下文快照契约（V2-README §4）。
+ * Agent 平台 V2：单会话统计、上下文快照与 reasoning 会话状态契约（V2-README §4）。
  *
- * M0 只冻结共享 DTO、事件顺序/空值语义、错误码与纯函数推导规则；不包含
- * 采集或查询实现（M1）。冻结后前端可基于本模块建立 mock 并行开发。
+ * 本模块是 M0 契约候选（待总架构师冻结），只定义共享 DTO、事件顺序/空值语义、
+ * 错误码与纯函数推导规则；不包含采集或查询实现（M1）。冻结后前端可基于本模块
+ * 建立 mock 并行开发。
  *
- * 冻结口径（不可在实现中静默漂移）：
+ * 契约口径（候选，不可在实现中静默漂移）：
  *
- * - Provider Usage 是 input/output/cache Token 的权威值；估算只用于上下文
- *   分项，不覆盖权威 Usage。
+ * - Provider Usage 是 input/output/cache Token 的权威值；估算只用于上下文分项，
+ *   不覆盖权威 Usage。
  * - 时间测量必须使用单调时钟（monotonic），与墙上时间（wall-clock，仅用于
  *   展示/追溯的 ISO 时间戳）显式分离，避免 NTP 跳变污染延迟推导。见
  *   {@link TurnMonotonicDelays} 与 {@link TurnWallClockStamps}。
+ * - 单调时序必须满足 `providerStartDelayMs <= firstOutputDelayMs <= totalElapsedMs`
+ *   （firstOutput 缺席除外）；乱序输入由 {@link validateTurnMonotonicOrder} 拒绝，
+ *   `deriveTurnMetrics` 会抛错，而非静默忽略。
  * - `ttftMs` 只算首个可展示文本增量（thinking/心跳/Tool 事件不算首 Token）。
  * - 非 success 回合（failed/cancelled）以 `outcome` 标记，其
- *   `ttftMs`/`generationMs`/`outputTokensPerSecond` 为 `null`，不得写成 0 混入
- *   平均值。
+ *   `ttftMs`/`generationMs`/`outputTokensPerSecond` 为 `null`，不得写成 0 混入平均值。
  * - 会话均值只统计 `outcome === "success"` 的有值轮次，同时返回样本数
  *   （`sampleCount`）。failed/cancelled 不参与任何均值，包括 `totalLatencyMs`。
- * - 上下文快照在最终模型请求组装完成、发送之前生成；`breakdown` 分项之和
- *   必须能解释 `usedTokens`；无法使用精确 tokenizer 时标为 `estimated`。
+ * - 上下文快照在最终模型请求组装完成、发送之前生成；`breakdown` 分项之和必须
+ *   能解释 `usedTokens`；无法使用精确 tokenizer 时标为 `estimated`。
  *
- * 事件顺序（M0 冻结）：`turn/start` → `context/snapshot` → `user/message` →
- * `assistant/start` → 首个可展示文本增量 → … → `turn/end`（携带 `TurnMetrics`）。
- * `context/snapshot` 必须在最终请求发送前持久化，查询端不得重新猜测历史值。
- *
- * 终态事件边界（M0 冻结）：`turn/end` → success；`turn/interrupted` →
- * cancelled；legacy 命名（`turn.end`/`turn.interrupted`）仅只读兼容映射。失败
- * 回合当前以 `turn/interrupted` 表达，无副作用终态事件时视为 cancelled。详见
- * {@link turnOutcomeFromTerminalEvent}。
+ * 事件顺序（候选）：`turn/start` → `context/snapshot` → `user/message` →
+ * `assistant/start` → 首个可展示文本增量 → … → 终态事件。终态事件（写权威枚举）：
+ * `turn/end` → success、`turn/failed` → failed、`turn/interrupted` → cancelled；
+ * legacy 命名（`turn.end`/`turn.failed`/`turn.interrupted`）仅只读兼容映射。见
+ * {@link turnOutcomeFromTerminalEvent} 与 `session-events.ts` 的 `SESSION_EVENT_TYPES`。
  */
 import type { ConversationPublicId } from "./admin-workbench.ts";
+import type { ReasoningEffort } from "./admin-workbench-agents.ts";
+import type { Usage } from "./schemas.ts";
 
 /** 上下文快照的计量精度。无法使用模型精确 tokenizer 时必为 `estimated`。 */
 export type ContextUsageMeasurement = "exact" | "estimated";
@@ -60,6 +62,15 @@ export interface ContextUsageSnapshot {
 	readonly breakdown: ContextUsageBreakdown;
 }
 
+/** 单会话生效的 reasoning 会话状态（V2-README §4.3：会话 effort 持久化可恢复）。 */
+export interface ConversationReasoningState {
+	readonly conversationId: ConversationPublicId;
+	/** 会话级思考强度覆盖；`null` = 使用 Agent Revision 默认值。 */
+	readonly effort: ReasoningEffort | null;
+	/** 最近一次覆盖的时间（ISO 8601 / UTC）。 */
+	readonly updatedAt: string;
+}
+
 /** 回合终局结果。只有 `success` 的派生时序字段才可能有值。 */
 export type TurnOutcome = "success" | "failed" | "cancelled";
 
@@ -77,6 +88,10 @@ export interface TurnWallClockStamps {
 /**
  * 单调时钟延迟（毫秒，相对一次请求开始时捕获的单一单调时间基准）。
  * 与墙上时间分离，免疫 NTP 跳变；所有 `*Ms` 派生值仅由这些延迟计算。
+ *
+ * 有序约束：`0 <= providerStartDelayMs <= totalElapsedMs`；
+ * `firstOutputDelayMs` 存在时须满足 `providerStartDelayMs <= firstOutputDelayMs
+ * <= totalElapsedMs`。违反则由 {@link validateTurnMonotonicOrder} 拒绝。
  */
 export interface TurnMonotonicDelays {
 	/** 从请求开始到 Provider 请求开始的单调延迟。 */
@@ -116,32 +131,60 @@ export interface TurnMetricsDerivationInput {
 }
 
 /**
- * 从单调延迟推导 `TurnMetrics`。纯函数、无副作用，供后端测试与前端 mock 共用
- * 同一公式；M1 采集在持久化前调用并以结果写 `turn/end` payload。
+ * 校验单调时序的有序性。返回错误列表；`deriveTurnMetrics` 依赖此函数拒绝乱序输入。
+ * 合法顺序：`0 <= providerStartDelayMs <= totalElapsedMs`，且 `firstOutputDelayMs`
+ * 存在时 `providerStartDelayMs <= firstOutputDelayMs <= totalElapsedMs`。
+ */
+export function validateTurnMonotonicOrder(monotonic: TurnMonotonicDelays): readonly string[] {
+	const errors: string[] = [];
+	if (!Number.isFinite(monotonic.providerStartDelayMs) || monotonic.providerStartDelayMs < 0) {
+		errors.push("providerStartDelayMs must be a non-negative finite number");
+	}
+	if (!Number.isFinite(monotonic.totalElapsedMs) || monotonic.totalElapsedMs < monotonic.providerStartDelayMs) {
+		errors.push("totalElapsedMs must be a finite number >= providerStartDelayMs");
+	}
+	if (monotonic.firstOutputDelayMs !== null) {
+		if (!Number.isFinite(monotonic.firstOutputDelayMs)) {
+			errors.push("firstOutputDelayMs must be null or a finite number");
+		} else {
+			if (monotonic.firstOutputDelayMs < monotonic.providerStartDelayMs) {
+				errors.push("firstOutputDelayMs must be >= providerStartDelayMs");
+			}
+			if (monotonic.firstOutputDelayMs > monotonic.totalElapsedMs) {
+				errors.push("firstOutputDelayMs must be <= totalElapsedMs");
+			}
+		}
+	}
+	return errors;
+}
+
+/**
+ * 从单调延迟推导 `TurnMetrics`。纯函数、无副作用；乱序单调输入抛 `RangeError`，
+ * 不会静默产生负值或 null。M1 采集在持久化前调用并以结果写 `turn/end` payload。
  *
  * 推导规则（与 V2-README §4.1 一致，全部基于单调时钟）：
- * - `ttftMs = firstOutputDelayMs - providerStartDelayMs`（仅 success 且首 Token
- *   存在且不早于 provider 开始）；
+ * - `ttftMs = firstOutputDelayMs - providerStartDelayMs`（仅 success 且首 Token 存在）；
  * - `generationMs = totalElapsedMs - firstOutputDelayMs`（同上，仅 success）；
  * - `totalLatencyMs = totalElapsedMs`（恒有值，但不用于 failed/cancelled 的均值）；
  * - `outputTokensPerSecond = outputTokens / generationMs * 1000`（仅 success 且
  *   generationMs>0 且 outputTokens>0，否则 `null`）。
  */
 export function deriveTurnMetrics(input: TurnMetricsDerivationInput): TurnMetrics {
-	const { outcome, monotonic } = input;
-	const successful = outcome === "success";
-	const hasFirstOutput =
-		successful &&
-		monotonic.firstOutputDelayMs !== null &&
-		monotonic.firstOutputDelayMs >= monotonic.providerStartDelayMs;
-	const ttftMs = hasFirstOutput ? monotonic.firstOutputDelayMs! - monotonic.providerStartDelayMs : null;
-	const generationMs = hasFirstOutput ? monotonic.totalElapsedMs - monotonic.firstOutputDelayMs! : null;
+	const orderingErrors = validateTurnMonotonicOrder(input.monotonic);
+	if (orderingErrors.length > 0) {
+		throw new RangeError(`invalid monotonic turn timing: ${orderingErrors.join("; ")}`);
+	}
+	const successful = input.outcome === "success";
+	const hasFirstOutput = successful && input.monotonic.firstOutputDelayMs !== null;
+	const firstOutput = input.monotonic.firstOutputDelayMs;
+	const ttftMs = hasFirstOutput ? (firstOutput as number) - input.monotonic.providerStartDelayMs : null;
+	const generationMs = hasFirstOutput ? input.monotonic.totalElapsedMs - (firstOutput as number) : null;
 	const outputTokensPerSecond =
-		hasFirstOutput && generationMs! > 0 && input.outputTokens > 0
-			? (input.outputTokens / generationMs!) * 1000
+		hasFirstOutput && generationMs !== null && generationMs > 0 && input.outputTokens > 0
+			? (input.outputTokens / generationMs) * 1000
 			: null;
 	return {
-		outcome,
+		outcome: input.outcome,
 		stamps: input.stamps,
 		inputTokens: input.inputTokens,
 		outputTokens: input.outputTokens,
@@ -149,22 +192,23 @@ export function deriveTurnMetrics(input: TurnMetricsDerivationInput): TurnMetric
 		cacheWriteTokens: input.cacheWriteTokens,
 		ttftMs,
 		generationMs,
-		totalLatencyMs: monotonic.totalElapsedMs,
+		totalLatencyMs: input.monotonic.totalElapsedMs,
 		outputTokensPerSecond,
 	};
 }
 
 /**
  * 终态事件到 `TurnOutcome` 的映射，冻结 legacy 只读兼容边界。
- * 返回 `null` 表示传入的不是终态事件（如 `turn/start`）。
+ * 权威关键为 `turn/end`、`turn/failed`、`turn/interrupted`；`turn.end`/`turn.failed`/
+ * `turn.interrupted` 仅为存量只读别名。非终态事件返回 `null`。
  */
 const TERMINAL_EVENT_TO_OUTCOME: Readonly<Record<string, TurnOutcome>> = {
 	"turn/end": "success",
+	"turn/failed": "failed",
+	"turn/interrupted": "cancelled",
 	"turn.end": "success",
 	"turn.failed": "failed",
-	"turn/failed": "failed",
 	"turn.interrupted": "cancelled",
-	"turn/interrupted": "cancelled",
 } as const;
 
 /** 终态事件到 `TurnOutcome` 的映射（含 legacy 只读别名）；非终态返回 `null`。 */
@@ -182,21 +226,30 @@ export function turnOutcomeFromTerminalEvent(eventType: string): TurnOutcome | n
 export interface TurnEndPayload {
 	/** 既有：本轮是否成功。保留以兼容现有写入方。 */
 	readonly ok?: boolean;
-	/** 既有：Provider 报告的用量对象。保留原有形状与读取路径。 */
-	readonly usage?: Readonly<Record<string, unknown>>;
+	/** 既有：Provider 报告的用量对象（protocol `Usage`）。保留原有形状与读取路径。 */
+	readonly usage?: Usage;
 	/** V2 扩展：本轮性能度量。pre-V2 转向不写；failed/cancelled 亦可写（派生时序为 null）。 */
 	readonly metrics?: TurnMetrics;
+}
+
+/** `GET /api/control/v1/conversations/:id/metrics` 查询参数（分页）。 */
+export interface ConversationMetricsQuery {
+	readonly conversationId: ConversationPublicId;
+	/** 分页游标：返回 `sequence > afterSequence` 的轮；首页省略或为 0。 */
+	readonly afterSequence?: number;
+	/** 每页上限（服务端钳制）；缺省由实现定义，首版建议 50。 */
+	readonly limit?: number;
 }
 
 /** `GET /api/control/v1/conversations/:id/metrics` 单轮明细行。 */
 export interface ConversationTurnMetric {
 	/** 持久事件 turn id（`turn_*`）。 */
 	readonly turnId: string;
-	/** 该轮 `turn/end` 事件的序列号；分页游标按此推进。 */
+	/** 该轮终态事件的序列号；分页游标按此推进。 */
 	readonly sequence: number;
 	readonly modelId: string;
 	/** 该轮生效的会话思考覆盖（仅 reasoning；未覆盖/无则为 `null`）。 */
-	readonly sessionEffort: string | null;
+	readonly sessionEffort: ReasoningEffort | null;
 	readonly metrics: TurnMetrics;
 }
 
@@ -211,13 +264,16 @@ export interface TurnMetricFieldStat {
 	readonly p95: number | null;
 }
 
-/** 单会话指标汇总。均值/分位只统计 `outcome === "success"` 且有值的轮次。 */
+/**
+ * 会话级指标汇总。均值/分位只统计 `outcome === "success"` 且有值的轮次，且必须在
+ * **整个会话**的轮记录上计算，与当前返回页（`items`）无关。
+ */
 export interface ConversationMetricsStats {
-	/** 至少存在一条查询返回的轮记录。 */
+	/** 会话至少存在一条轮记录。 */
 	readonly available: boolean;
-	/** 当前页返回的总轮数（任意 outcome）。 */
+	/** 整个会话的总轮数（任意 outcome）。 */
 	readonly turnCount: number;
-	/** `outcome === "success"` 的轮数；是均值/分位的有效样本上界。 */
+	/** 整个会话 `outcome === "success"` 的轮数；是均值/分位的有效样本上界。 */
 	readonly sampleCount: number;
 	readonly ttftMs: TurnMetricFieldStat;
 	readonly generationMs: TurnMetricFieldStat;
@@ -228,15 +284,23 @@ export interface ConversationMetricsStats {
 /**
  * `GET /api/control/v1/conversations/:id/metrics` 响应。
  *
+ * 分页与统计分离：`items` 仅当前页（升序，`sequence in (afterSequence, nextAfterSequence]`）；
+ * `stats` 是**整个会话**的聚合，服务端在完整轮记录上计算，**不得**从当前页
+ * `items` 推导。
+ *
+ * 风格约定：请求带 `ConversationMetricsQuery`，响应的 `nextAfterSequence` 就是本页
+ * 最后一轮的 `sequence`；请求下一页把 `afterSequence` 设为其值。`nextAfterSequence`
+ * 为 `null` 表示没有更多轮。
+ *
  * 空态：会话存在但无指标数据时返回 HTTP 200 且 `stats.available=false`、`items=[]`
- * （这不是错误）。需要游标翻页时看 `nextAfterSequence`。
+ * （这不是错误）。
  */
 export interface ConversationMetricsResponse {
 	readonly conversationId: ConversationPublicId;
 	readonly stats: ConversationMetricsStats;
-	/** 逐轮明细（按 sequence 升序；返回本页最后一轮 sequence 的游标）。 */
+	/** 当前页逐轮明细（升序）。 */
 	readonly items: readonly ConversationTurnMetric[];
-	/** 下一页起始 sequence 游标；无更多数据时为 `null`。 */
+	/** 下一页游标（本页最后一轮 sequence）；无更多数据时为 `null`。 */
 	readonly nextAfterSequence: number | null;
 }
 
@@ -252,8 +316,9 @@ export interface ConversationContextResponse {
 }
 
 /**
- * 从逐轮明细计算单会话统计。均值与分位只统计 `outcome === "success"` 且有值的
- * 轮次；failed/cancelled 一律不参与（包括 `totalLatencyMs`）。
+ * 从完整轮记录聚合会话统计（服务端在全会话上调用，不依赖分页）。均值与分位只统计
+ * `outcome === "success"` 且有值的轮次；failed/cancelled 一律不参与（包括
+ * `totalLatencyMs`）。
  */
 export function computeConversationMetricsStats(items: readonly ConversationTurnMetric[]): ConversationMetricsStats {
 	const successRows = items.filter((item) => item.metrics.outcome === "success");
@@ -292,13 +357,13 @@ function percentile(sorted: readonly number[], p: number): number {
 	return sorted[Math.max(0, Math.min(sorted.length - 1, rank))] ?? 0;
 }
 
-/** 本里程碑数据集 / 上下文查询的稳定错误码（控制面错误信封 `ControlErrorEnvelope`）。 */
+/** 本里程碑数据集 / 上下文路线的稳定错误码（控制面错误信封 `ControlErrorEnvelope`）。 */
 export const AGENT_V2_METRICS_ERROR_CODES = [
-	// 指标子系统暂不可用（特性关闭/服务不可达）→ 503 可重试；与“空态”区分开。
+	// 指标子系统暂不可用（特性关闭/服务不可达）→ 503 可重试；与“空态”（200 available=false）区分。
 	"METRICS_UNAVAILABLE",
 	// 上下文快照子系统暂不可用 → 503 可重试。
 	"CONTEXT_SNAPSHOT_UNAVAILABLE",
-	// 查询参数非法（非本会话 id、无效 sequence/时间过滤）→ 422。
+	// 查询参数非法（非本会话 id、无效 sequence）→ 422。
 	"INVALID_METRICS_FILTER",
 ] as const;
 export type AgentV2MetricsErrorCode = (typeof AGENT_V2_METRICS_ERROR_CODES)[number];
@@ -311,3 +376,10 @@ export const AGENT_V2_METRICS_ERRORS: Readonly<
 	CONTEXT_SNAPSHOT_UNAVAILABLE: { httpStatus: 503, retryable: true },
 	INVALID_METRICS_FILTER: { httpStatus: 422, retryable: false },
 } as const;
+
+/**
+ * 空态与 unavailable 的分界（候选）：
+ * - 会话存在但无指标/快照数据 → HTTP 200 `available=false`（非错误）；
+ * - 指标/上下文子系统暂不可用 → HTTP 503 `METRICS_UNAVAILABLE`/`CONTEXT_SNAPSHOT_UNAVAILABLE`；
+ * - 会话不存在或跨租户越权 → HTTP 404 `CONVERSATION_NOT_FOUND`（既有语义，不暴露归属）。
+ */
