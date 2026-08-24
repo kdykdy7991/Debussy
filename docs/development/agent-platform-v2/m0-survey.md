@@ -56,8 +56,8 @@
 | `LlmAvailableModel.parameterCapabilities.reasoning` | [protocol/admin-workbench-llm.ts:70](../../../runtimes/pi/packages/protocol/src/admin-workbench-llm.ts#L70) | 字段存在；互斥/步长/默认 effort 字段尚未冻结 |
 | `PublishedAppDetail` / `VersionCapabilitiesSummary` | [protocol/publishing/control-http.ts](../../../runtimes/pi/packages/protocol/src/publishing/control-http.ts) | V2 替换为 Skill + MCP |
 | `EmbedHostPostMessage` / `EmbedIframePostMessage` | [protocol/embed/post-message.ts](../../../runtimes/pi/packages/protocol/src/embed/post-message.ts) | v1 协议；含 `init`/`logout`/`focus`/`resize-request` 与 `ready`/`error`/`resize`/`conversation-created`；`height == 0` 已在第三轮由 protocol decoder 单一来源拒绝（`<= 0`） |
-| `POST_MESSAGE_LAUNCH_TOKEN_MAX_CHARS = 16384` | 同上 | SDK 端必须保留 |
-| `POST_MESSAGE_RESIZE_MAX_HEIGHT = 100000` | 同上 | SDK 端必须保留；第三轮 SDK 移除本地 `EMBED_HEIGHT_MAX` 副本 |
+| `POST_MESSAGE_LAUNCH_TOKEN_MAX_CHARS = 16384` | 同上 | protocol 保留，SDK 通过 decoder 间接消费 |
+| `POST_MESSAGE_RESIZE_MAX_HEIGHT = 100000` | 同上 | protocol 保留，SDK 通过 decoder 间接消费；第三轮 SDK 移除本地 `EMBED_HEIGHT_MAX` 副本 |
 
 ## 2. 当前缺少什么
 
@@ -69,7 +69,7 @@
 | 会话详情"性能"区块 | 是 | 等 `TurnMetrics` 字段集与口径 |
 | 会话分页契约 | 是 | R1（后端独立负责）；前端不写"分页接口" |
 | 单调时钟顺序 | 是 | R3（后端独立负责）；前端只按服务端字段渲染，不自定语义 |
-| `turn/failed` 等事件枚举 | 是 | R2（后端独立负责）；前端不在文档中预言状态枚举 |
+| `turn/failed` 等事件枚举 | 是 | 第三轮反馈已加入权威事件枚举；前端按枚举消费 |
 | 会话级 `reasoningEffort` 覆盖的持久化端点 | 是 | 端点位置未定（见 [contract-questions.md §5.2](./contract-questions.md)） |
 | 既有 `setThinking` / `thinkingLevel` 通道迁移计划 | 是 | 是否删除、何时删除由后端给出（[contract-questions.md §5.2 Q11](./contract-questions.md)） |
 | Agent 编辑页 `Skill Revision` 选择器 | 是 | 替换 `knowledgeBaseIds` 文本框；保留旧字段读取迁移 |

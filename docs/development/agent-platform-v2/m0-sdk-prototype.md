@@ -123,9 +123,9 @@ Tests       328 passed (328)
 
 ## 6. SDK 仍待决项（前端范围内）
 
-1. SDK 包名/导出名是否冻结为 `@earendil-works/embed-sdk` + `createEmbed` / `EmbedInstance`？[contract-questions.md §5.5 Q20](./contract-questions.md)
+1. SDK 包名/导出名是否冻结为 `@earendil-works/pi-embed-sdk` + `createEmbed` / `EmbedInstance`？[contract-questions.md §5.5 Q20](./contract-questions.md)
 2. postMessage 协议是否需要 v2？[contract-questions.md §5.5 Q20](./contract-questions.md)
-3. 多实例 host 约束：建议把"不重写 `window.addEventListener("message", ...)` / 不在 SDK 之外添加同协议监听 / 不主动卸载 SDK 挂载的 iframe"三条 host 约束写入 `@earendil-works/embed-sdk` README。**待定**。
+3. 多实例 host 约束：建议把"不重写 `window.addEventListener("message", ...)` / 不在 SDK 之外添加同协议监听 / 不主动卸载 SDK 挂载的 iframe"三条 host 约束写入 `@earendil-works/pi-embed-sdk` README。**待定**。
 4. Launch Token 内存清理：当前"断开引用"已满足硬性要求；如需更严格策略（GC buffer 清零）需总架构师拍板时机与对调试的影响。
 
 ## 7. 其它观察项
