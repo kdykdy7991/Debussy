@@ -15,14 +15,24 @@
 
 - [x] 产品负责人确认当前目标仍是 10～20 人内部可用的文本 Agent 闭环。备注：语音和数字人不阻断首版。
 - [x] 产品负责人确认本次实际开发范围与 [ROADMAP](../../product/ROADMAP.md) 一致。
-- [ ] 将当前产品、开发、质量和 SOP 文档评审为团队共同基线并提交 Git。备注：三人必须从同一个基线提交开始。
+- [x] 将当前产品、开发、质量和 SOP 文档评审为团队共同基线并提交 Git。备注：共同基线为 `f404570`，三人必须从该提交开始。
 - [ ] 确认三个角色已分别阅读自己的必读文档，并能复述职责边界。
-- [ ] 为前端、后端、验收分别建立独立 Git worktree。备注：不要在同一目录切换三个角色的分支。
-- [ ] 为三个 worktree 配置互不冲突的 Web、Server、PostgreSQL 和 Redis 端口。
-- [ ] 建立 `feature/agent-v2-m0-contract` 短期分支，由后端负责 M0 契约草案。
+- [x] 为前端、后端、验收分别建立独立 Git worktree。备注：不要在同一目录切换三个角色的分支。
+- [x] 为三个 worktree 配置互不冲突的 Web、Server、PostgreSQL 和 Redis 端口。备注：当前 Compose 项目名固定，三套完整基础设施仍须串行启动，见下表。
+- [x] 建立 `feature/agent-v2-m0-contract` 短期分支，由后端负责 M0 契约草案。
 - [x] 约定分支按里程碑创建和合并，不保留长期 `frontend`、`backend` 大分支。
 - [x] 约定统一的证据记录位置。备注：使用 [`evidence/`](./evidence/README.md)，至少记录提交、命令、结果、截图/日志位置和遗留项。
 - [ ] 产品负责人宣布进入 M0；在此之前不开始持久化、Runtime 或正式页面字段实现。
+
+### A 阶段工作区记录
+
+| 角色 | Worktree | M0 分支 | UI / Server | PostgreSQL / Redis |
+| --- | --- | --- | --- | --- |
+| 后端 | `/home/hello/workspace/skdy-agent-backend` | `feature/agent-v2-m0-contract` | `5174` / `8766` | `15433` / `16380` |
+| 前端 | `/home/hello/workspace/skdy-agent-frontend` | `feature/agent-v2-m0-frontend` | `5175` / `8767` | `15434` / `16381` |
+| 验收 | `/home/hello/workspace/skdy-agent-acceptance` | `verify/agent-v2-m0-acceptance` | `5176` / `8768` | `15435` / `16382` |
+
+端口保存在各 worktree 的 `runtimes/pi/.env.web.local`，不提交 Git。当前 `start-admin-dev.sh` 使用固定 Compose 项目名 `pi-admin-dev`；在脚本支持角色级项目名之前，不得同时运行三个 `npm run dev:admin`，否则会操作同一组容器。该限制不影响三人分别编辑、提交和运行不需要完整 Compose 栈的检查。
 
 ## B. M0：契约与版本一致性
 
