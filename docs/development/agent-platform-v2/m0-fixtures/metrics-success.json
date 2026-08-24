@@ -4,10 +4,10 @@
     "available": true,
     "turnCount": 2,
     "sampleCount": 2,
-    "ttftMs": { "mean": 520.5, "count": 2, "p50": 521, "p95": 620 },
-    "generationMs": { "mean": 4210, "count": 2, "p50": 4210, "p95": 6820 },
-    "totalLatencyMs": { "mean": 4730.5, "count": 2, "p50": 4731, "p95": 7440 },
-    "outputTokensPerSecond": { "mean": 42.1, "count": 2, "p50": 42.1, "p95": 49.5 }
+    "ttftMs": { "mean": 1030, "count": 2, "p50": 1030, "p95": 1510 },
+    "generationMs": { "mean": 4500, "count": 2, "p50": 4500, "p95": 7000 },
+    "totalLatencyMs": { "mean": 5530, "count": 2, "p50": 5530, "p95": 8510 },
+    "outputTokensPerSecond": { "mean": 53.5, "count": 2, "p50": 53.5, "p95": 110 }
   },
   "items": [
     {
@@ -16,14 +16,17 @@
       "modelId": "qwen3.8",
       "sessionEffort": "high",
       "metrics": {
+        "outcome": "success",
+        "stamps": {
+          "requestStartedAt": "2026-08-24T09:30:01.000Z",
+          "providerStartedAt": "2026-08-24T09:30:01.500Z",
+          "firstOutputAt": "2026-08-24T09:30:02.000Z",
+          "completedAt": "2026-08-24T09:30:09.000Z"
+        },
         "inputTokens": 1284,
         "outputTokens": 180,
         "cacheReadTokens": 512,
         "cacheWriteTokens": 44,
-        "requestStartedAt": "2026-08-24T09:30:01.000Z",
-        "providerStartedAt": "2026-08-24T09:30:01.500Z",
-        "firstOutputAt": "2026-08-24T09:30:02.000Z",
-        "completedAt": "2026-08-24T09:30:09.000Z",
         "ttftMs": 500,
         "generationMs": 7000,
         "totalLatencyMs": 8000,
@@ -36,19 +39,23 @@
       "modelId": "qwen3.8",
       "sessionEffort": null,
       "metrics": {
+        "outcome": "success",
+        "stamps": {
+          "requestStartedAt": "2026-08-24T09:31:01.000Z",
+          "providerStartedAt": "2026-08-24T09:31:01.040Z",
+          "firstOutputAt": "2026-08-24T09:31:02.600Z",
+          "completedAt": "2026-08-24T09:31:04.600Z"
+        },
         "inputTokens": 960,
         "outputTokens": 220,
         "cacheReadTokens": 640,
         "cacheWriteTokens": 88,
-        "requestStartedAt": "2026-08-24T09:31:01.000Z",
-        "providerStartedAt": "2026-08-24T09:31:01.040Z",
-        "firstOutputAt": "2026-08-24T09:31:02.600Z",
-        "completedAt": "2026-08-24T09:31:04.600Z",
         "ttftMs": 1560,
         "generationMs": 2000,
         "totalLatencyMs": 3600,
         "outputTokensPerSecond": 110
       }
     }
-  ]
+  ],
+  "nextAfterSequence": null
 }
