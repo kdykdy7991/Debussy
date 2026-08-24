@@ -10,8 +10,9 @@
 		"paths": {
 			"@earendil-works/pi-client": ["../client/src/index.ts"],
 			"@earendil-works/pi-protocol": ["../protocol/src/index.ts"],
-			"@skdy/avatar": ["../../../../packages/avatar/src/index.ts"]
+			"@skdy/avatar": ["../../../../packages/avatar/src/index.ts"],
+			"@rive-app/canvas": ["./types/stubs/rive-app-canvas.d.ts"]
 		}
 	},
-	"include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts"]
+	"include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts", "types/**/*.d.ts"]
 }
