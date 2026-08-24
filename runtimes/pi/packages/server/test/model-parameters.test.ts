@@ -5,6 +5,7 @@ import {
 	resolveModelStreamOptions,
 	resolveReasoningEffort,
 	validateModelParameters,
+	withConversationEffort,
 } from "../src/model-parameters.ts";
 
 describe("model parameters", () => {
@@ -115,5 +116,35 @@ describe("model parameters", () => {
 		expect(resolveReasoningEffort("max", "Qwen3.8-Agent")).toBe("xhigh");
 		expect(resolveReasoningEffort("high", "generic-reasoner")).toBe("high");
 		expect(resolveReasoningEffort("medium", "generic-reasoner")).toBe("medium");
+	});
+
+	test("conversation effort override takes precedence over Revision config and default", () => {
+		// 会话覆盖为 null → 回落 Revision 参数（未改动原对象）。
+		expect(withConversationEffort({ reasoning: { effort: "low" } }, null)).toEqual({ reasoning: { effort: "low" } });
+		expect(withConversationEffort({}, null)).toEqual({});
+		// 会话覆盖非 null → 强制 enabled + effort，忽略 Revision 里的档位。
+		expect(withConversationEffort({ reasoning: { enabled: false, effort: "low" } }, "high")).toEqual({
+			reasoning: { enabled: true, effort: "high" },
+		});
+		// 会话覆盖在默认之上的效果：`{}`(默认) + 会话 high → 解析出 thinkingLevel high。
+		expect(resolveModelStreamOptions(withConversationEffort({}, "high"), "generic-reasoner").thinkingLevel).toBe(
+			"high",
+		);
+		// 会话覆盖压过 Revision 配置：Revision low 被会话 high 覆盖。
+		expect(
+			resolveModelStreamOptions(withConversationEffort({ reasoning: { effort: "low" } }, "high"), "generic-reasoner")
+				.thinkingLevel,
+		).toBe("high");
+		// 会话覆盖在 Qwen3.8 上仍走模型映射（high→xhigh）。
+		expect(resolveModelStreamOptions(withConversationEffort({}, "high"), "Qwen3.8-Agent").thinkingLevel).toBe(
+			"xhigh",
+		);
+	});
+
+	test("withConversationEffort refuses nothing and only shapes reasoning fields", () => {
+		// sample/gen 覆盖不可经会话 effort 引入：输出仍只含 reasoning。
+		const effective = withConversationEffort({}, "medium");
+		expect(Object.keys(effective)).toEqual(["reasoning"]);
+		expect(Object.keys(effective.reasoning ?? {})).toEqual(["enabled", "effort"]);
 	});
 });

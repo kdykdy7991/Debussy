@@ -103,3 +103,27 @@ export function resolveReasoningEffort(effort: ReasoningEffort, modelId: string)
 	}
 	return effort as ThinkingLevel;
 }
+
+/**
+ * Overlay a conversation-level effort override onto the Agent Revision's frozen
+ * parameters (V2-README §4.3). Fixed precedence: **会话覆盖 > Revision 配置 > 默认**.
+ *
+ * - `effort === null` → 清除会话覆盖，直接采用 Revision 参数（回落到 Revision 默认）。
+ * - `effort` 为合法档位 → 强制 `reasoning.enabled = true` 并把 `reasoning.effort`
+ *   覆盖为该档位（无论 Revision 里写的是什么）。
+ *
+ * 该函数是纯函数（不触库/不发请求），调用方先取会话固定版本的参数再叠加此覆盖，
+ * 供 `resolveModelStreamOptions` → Provider wire payload 使用。
+ */
+export function withConversationEffort(
+	base: AgentModelParameters,
+	effort: ReasoningEffort | null,
+): AgentModelParameters {
+	if (effort === null) return base;
+	return {
+		reasoning: {
+			enabled: true,
+			effort,
+		},
+	};
+}
