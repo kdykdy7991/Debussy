@@ -2,6 +2,8 @@
 
 本文是 Debussy 日常开发的统一入口。功能需求和产品规则以 [`product/`](./product/README.md) 为准；单项功能的实施方案放在 [`development/`](./development/README.md)。
 
+开始开发前根据 [`product/ROADMAP.md`](./product/ROADMAP.md) 确认范围和优先级；完成与发布分别遵循 [`product/QUALITY.md`](./product/QUALITY.md) 和 [`product/RELEASE-SOP.md`](./product/RELEASE-SOP.md)。线上异常按 [`product/INCIDENT-SOP.md`](./product/INCIDENT-SOP.md) 处理。
+
 ## 工作目录
 
 Pi Runtime 是当前主要开发工作区：
@@ -58,6 +60,18 @@ npm run dev:web
 - 本地补齐或更新依赖：`npm install --ignore-scripts`
 - 只刷新锁文件：`npm install --package-lock-only --ignore-scripts`
 - 依赖与锁文件属于需要审查的代码，不执行未经确认的生命周期脚本。
+
+## 方案选型
+
+正式实现非简单通用能力前，先完成 [`development/TEMPLATE.md`](./development/TEMPLATE.md) 中的“现有方案调研与选型”：
+
+- 先检查仓库现有代码、依赖和上游 runtime 是否已经提供能力。
+- 再调查维护活跃、许可证兼容的成熟外部方案。
+- 对最接近需求的候选做最小原型，以真实核心场景比较效果和接入成本。
+- 只有现有方案存在明确、不可接受的缺口时才完整自研，并记录证据。
+- 选用第三方方案后应通过本地适配层隔离变化，避免业务代码无边界依赖外部 API。
+
+Chat 流式渲染动画曾在未先验证成熟方案的情况下进入自研，投入较多但效果未达目标，最终改用 FlowToken。该案例形成的长期规则是“先调查和验证，再决定复用或自研”，而不是要求所有相似功能固定使用 FlowToken。
 
 ## 检查与测试
 

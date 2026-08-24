@@ -19,6 +19,7 @@
 
 本文负责跨角色边界与顺序。具体执行要求见：
 
+- [产品负责人管理节奏检查清单](./manager-checklist.md)
 - [前端任务单](./frontend.md)
 - [后端任务单](./backend.md)
 - [总架构师验收任务单](./architect-acceptance.md)
