@@ -1,7 +1,7 @@
 # M1 metrics/context 浏览器联调 evidence log（2026-08-24）
 
-> 共同验收基线 `verify/agent-v2-m0-acceptance` @ `6e15804`（含 `a2af75e` R3 follow-up），
-> 在 `feature/agent-v2-m1-frontend` 增量补充 R1（typecheck baseline，`242004c`）后联调。
+> 共同验收基线 `verify/agent-v2-m0-acceptance` @ `269897c`（含 reasoning 后端
+> `dbe175e` 与前端/Embed `0afd8f4`）联调。
 > 目标：把 8 类场景的真实前端表现 + request ID + conversation ID + 异常证据
 > 落盘，让后续 M1 总验收无需再次手动跑。
 
@@ -120,7 +120,7 @@ cd /home/hello/workspace/skdy-agent-frontend/runtimes/pi
 ## 3. 已知限制与人工标注位
 
 - **`start-admin-dev.sh` 起 admin 服务默认绑 http://localhost**——非 127.0.0.1，hosts 文件需保留。
-- **M1 feature flag** 默认关；`packages/server/src/agent-v2/feature-flag.ts` 描述了开启条件；本验收前先 `PI_AGENT_V2_METRICS_CONTEXT=on` 起 server。
+- **M1 feature flag** 默认关；`packages/server/src/agent-v2/feature-flag.ts` 描述了开启条件；本验收前先以 `PI_AGENT_V2_METRICS=true` 起 server。
 - **Avatar @rive-app/canvas** 不影响本场景（avatar 是另一条 build target）。
 
 ## 4. 验收 checklist
@@ -143,3 +143,25 @@ cd /home/hello/workspace/skdy-agent-frontend/runtimes/pi
 - `d8e8351` — M1 R2
 - `3a03540` — M1 R1 骨架
 - `242004c` — M1 typecheck baseline（R1，本文件配套）
+
+## 6. 2026-08-24 部分执行记录（不等同浏览器通过）
+
+共同验收分支启动成功；首次启动缺少被 gitignore 的模型目录，使用主 worktree
+已有生成缓存恢复。随后初始化仓库声明的 `grok-icon-study` submodule（提交
+`647e9bd7c60290c42a738fad586589b3f36a4680`），消除既有 Vite import 缺失。
+
+为避免把接口探测冒充浏览器结果，下列仅记为 API 前置证据，场景 checklist 保持未勾选：
+
+| 前置场景 | Conversation ID | HTTP / 数据 | Request ID |
+| --- | --- | --- | --- |
+| success 首页 | `conv_50000000-0000-7000-8000-000000000001` | 200；`available=true`；50 items；`nextAfterSequence=100` | `01a03326-bbda-7c0a-9c8c-c4dc6d48c367` |
+| empty | `conv_50000000-0000-7000-8000-000000000002` | 200；`available=false`；0 items | `01a03326-bc06-7c58-aa2d-e15b44b27952` |
+| legacy | `conv_50000000-0000-7000-8000-000000000003` | 200；旧终态无 metrics；`available=false`；0 items | `01a03326-bc2c-7103-ba66-90539114f258` |
+| pagination 末页 | success conversation | 200；`afterSequence=100`；5 items；`nextAfterSequence=null` | `01a03336-50b2-7b29-8cbb-c75909ba6c59` |
+| disabled flag | success conversation | 503；`METRICS_UNAVAILABLE`；`retryable=true` | `01a03326-3b76-7c2b-84e9-bfa302a1daff` |
+
+浏览器执行仍未完成：当前自动化 Chrome/CDP 进程在本执行环境中导航后没有稳定返回
+页面执行上下文，无法取得可审计的 UI 状态、cancelled request 或截图。已停止 Chrome、
+Vite、Control，并执行 `npm run dev:admin:down`；Docker volume 保留上述专用测试数据。
+下次应从本机交互式 Chrome 运行本文件 8 场景，或先把浏览器 runner 与 dev server
+收敛到同一稳定进程/网络环境。

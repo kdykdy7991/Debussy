@@ -24,6 +24,10 @@
 - [x] 约定统一的证据记录位置。备注：使用 [`evidence/`](./evidence/README.md)，至少记录提交、命令、结果、截图/日志位置和遗留项。
 - [x] 产品负责人宣布进入 M0；在此之前不开始持久化、Runtime 或正式页面字段实现。
 
+> 当前共同集成基线：`origin/verify/agent-v2-m0-acceptance` @ `269897c`。M1
+> 统计/上下文及 reasoning/Embed 自动化验收候选均已合入；完成 M1 真实浏览器、
+> 移动端与运行场景验收前不直接合入 `origin/main`。
+
 ### A 阶段工作区记录
 
 | 角色 | Worktree | M0 分支 | UI / Server | PostgreSQL / Redis |
@@ -77,52 +81,57 @@
 
 ## C. M1：统计、模型参数与 Embed
 
+> 进度快照（2026-08-24）：统计/上下文后端 `b3d5afb`、前端 `a2af75e`；
+> reasoning 后端 `dbe175e`、前端/Embed `0afd8f4`。后两项合并提交为
+> `04b6e11`、`269897c`。合并后后端定向 4 套件 36 测试、前端定向 6 套件
+> 53 测试通过，Biome clean，原 3 个 capability skip 已改为执行测试。
+>
+> 尚未完成：真实浏览器 8 场景、Android Chrome/iOS Safari、连续 ≥10 轮指标
+> 运行证据及 M1 总体验收。API 前置证据和浏览器 runner 阻断详见
+> [`evidence/m1-browser-acceptance-2026-08-24.md`](./evidence/m1-browser-acceptance-2026-08-24.md)。
+
 ### 里程碑启动
 
-- [ ] 建立 `feature/agent-v2-m1-backend` 分支和后端 worktree 工作区。
-- [ ] 建立 `feature/agent-v2-m1-frontend` 分支和前端 worktree 工作区。
+- [x] 建立 `feature/agent-v2-m1-backend` 分支和后端 worktree 工作区。
+- [x] 建立 `feature/agent-v2-m1-frontend` 分支和前端 worktree 工作区。
 - [ ] 三人确认 M1 只包含统计、reasoning 参数和 Embed SDK，不夹带 Skill/MCP 正式实现。
-- [ ] 前后端确认冻结 DTO、fixture 和错误语义版本一致。
+- [x] 前后端确认冻结 DTO、fixture 和错误语义版本一致。
 
 ### 后端交付
 
-- [ ] 上下文快照在最终模型请求组装完成后、发送前生成。
-- [ ] TTFT、generation、总耗时和 tokens/s 按冻结口径采集。
+- [x] 上下文快照在最终模型请求组装完成后、发送前生成。
+- [x] TTFT、generation、总耗时和 tokens/s 按冻结口径采集。备注：同步执行器没有独立首 Token 时点，相关值为 `null`。
 - [ ] 成功、Tool-only、失败、取消、重试、断流和恢复均有测试。
-- [ ] 旧会话返回不可用/空样本，不伪造为 0。
-- [ ] Revision 和对话请求只接受模型支持的 reasoning 字段。
-- [ ] 非法 effort、未知字段和 sampling/generation 覆盖被服务端明确拒绝。
-- [ ] 实际 Provider wire payload 有捕获测试，能证明参数优先级和固化值。
-- [ ] 发布版本修改后，旧会话仍使用原固定版本。
+- [x] 旧会话返回不可用/空样本，不伪造为 0。
+- [x] Revision 和对话请求只接受模型支持的 reasoning 字段。备注：会话只读取 Published App Version 冻结 capability；旧产物缺快照时只读。
+- [x] 非法 effort、未知字段和 sampling/generation 覆盖被服务端明确拒绝。
+- [x] 实际 Provider wire payload 有捕获测试，能证明参数优先级和固化值。
+- [x] 发布版本修改后，旧会话仍使用原固定版本。
 - [ ] 后端向前端提供真实 API、五组 fixture、请求示例和特性开关。
-
-备注：M1 候选 1 已完成第一轮审查；开关/API 外壳可保留，真实 TTFT、最终请求快照、末页 cursor 与持久 payload 校验待修，见 `evidence/m1.md`。
 
 ### 前端交付
 
-- [ ] 会话上下文展示已用、总量、剩余、分项和 exact/estimated。
-- [ ] 会话性能展示输入/输出 Token、TTFT、tokens/s、完整耗时和样本数。
+- [x] 会话上下文展示已用、总量、剩余、分项和 exact/estimated。
+- [x] 会话性能展示输入/输出 Token、TTFT、tokens/s、完整耗时和样本数。
 - [ ] 成功、空态、旧数据、部分数据、错误和无权限状态均有测试。
-- [ ] reasoning 表单只显示模型支持的思考开关和档位。
-- [ ] 未配置、Provider 默认、不支持和校验失败四种状态不混淆。
-- [ ] reasoning 进入保存 Revision、diff、发布和会话覆盖流程。
-- [ ] 正式 Embed SDK 支持 mount/destroy、事件、resize 和 origin 校验。
-- [ ] Token 不进入 URL、持久化存储、DOM、前端日志或错误上报。
+- [x] reasoning 表单只显示模型支持的思考开关和档位。备注：档位来自会话固定版本随 reasoning DTO 返回的快照。
+- [x] 未配置、Provider 默认、不支持和校验失败四种状态不混淆。
+- [x] reasoning 进入保存 Revision、diff、发布和会话覆盖流程。
+- [x] 正式 Embed SDK 支持 mount/destroy、事件、resize 和 origin 校验。备注：append/listener/init 失败完整回滚并进入 broken 态。
+- [x] Token 不进入 URL、持久化存储、DOM、前端日志或错误上报。备注：SDK 出站路径已覆盖；iframe producer 仍负责入站错误脱敏。
 - [ ] 发布对话页在电脑 Chrome、Android Chrome 和 iOS Safari 完成移动端核心流程验证。
-- [ ] 本地 fixture 已替换为后端真实 fixture/API，生产代码无占位统计。
-
-备注：M1 候选 1 已完成 typed adapter 与六态骨架，但页面仍直接加载 fixture；百分比、假 loaded 快照、真实 API/分页与格式门禁待修，见 `evidence/m1.md`。
+- [x] 本地 fixture 已替换为后端真实 fixture/API，生产代码无占位统计。
 
 ### M1 联调与验收
 
-- [x] 前后端分别提交候选提交号和相关测试结果。备注：后端 4 个提交、前端 `3a03540`；第一轮证据见 `evidence/m1.md`。
+- [x] 前后端分别提交候选提交号和相关测试结果。备注：统计/上下文后端 `b3d5afb`、前端 `a2af75e`；reasoning 后端 `dbe175e`、前端/Embed `0afd8f4`。
 - [ ] 在同一候选版本完成真实浏览器联调，记录请求 ID、会话 ID 和失败证据。
 - [ ] 总架构师用可控 fake provider 验证 TTFT 与 tokens/s 公式。
 - [ ] 总架构师验证版本固定、参数白名单、Token 不落盘和错误 origin 拒绝。
-- [ ] 总架构师验证 SDK 多实例销毁后没有监听器泄漏。
-- [ ] 所有阻断问题已退回负责人修复并重新验证。
+- [x] 总架构师验证 SDK 多实例销毁后没有监听器泄漏。备注：自动化覆盖共享 window 多实例与 init/append 失败回滚；待真实浏览器复核。
+- [x] 已发现的代码阻断问题已修复并重新验证；浏览器/移动端/运行证据仍是验收门禁。
 - [x] 总架构师记录 M1 第一轮结论及证据。备注：候选 1 不通过，保留有效骨架并退回小范围修订。
-- [ ] M1 前后端分支以可审查的小提交合并到共同基线。
+- [x] M1 前后端分支以可审查的小提交合并到共同验收基线。备注：当前 HEAD `269897c`，尚未合入主干。
 - [ ] 产品负责人确认允许进入 M2。
 
 ## D. M2：Skill 产品化
