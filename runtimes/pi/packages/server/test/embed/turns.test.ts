@@ -30,6 +30,7 @@ import {
 	newTurnId,
 	type PrincipalId,
 	type PublishedAppId,
+	type PublishedAppVersionId,
 	type TenantId,
 } from "../../src/publishing/domain/ids.ts";
 import type { PublishingRepositories } from "../../src/publishing/repositories.ts";
@@ -136,6 +137,8 @@ describe.skipIf(!pgUp)("embed dev turn path", () => {
 	let httpBase: string;
 	let tenantId: TenantId;
 	let appAId: PublishedAppId;
+	/** 发布版本（fake executor 用）；Also carried in every issued access token. */
+	let appVersionId!: PublishedAppVersionId;
 	let tokenKeys: Awaited<ReturnType<typeof generateKeyPair>>;
 	/** 可调 fake executor：延迟模拟执行中，failNext 模拟模型失败。 */
 	let turnDelayMs = 0;
@@ -180,7 +183,7 @@ describe.skipIf(!pgUp)("embed dev turn path", () => {
 			principalId,
 			principalType: "anonymous_visitor",
 			scopes: [],
-			publishedAppVersionId: null,
+			publishedAppVersionId: appVersionId,
 		});
 		return { token: signed.token, principalId };
 	}
@@ -246,21 +249,21 @@ describe.skipIf(!pgUp)("embed dev turn path", () => {
 			createdAt: now,
 			updatedAt: now,
 		});
-		const versionId = newPublishedAppVersionId();
+		appVersionId = newPublishedAppVersionId();
 		await repos.publishedAppVersions.insert({
-			publishedAppVersionId: versionId,
+			publishedAppVersionId: appVersionId,
 			tenantId,
 			publishedAppId: appAId,
 			versionNumber: 1,
 			sourceAgentRevision: 1,
 			snapshot: { prompt: "hi" },
-			runtimeSpec: buildSpec(versionId),
-			runtimeSpecHash: specHash(buildSpec(versionId)),
+			runtimeSpec: buildSpec(appVersionId),
+			runtimeSpecHash: specHash(buildSpec(appVersionId)),
 			status: "ready",
 			validationErrors: [],
 			createdAt: now,
 		});
-		await repos.publishedApps.setCurrentVersion({ tenantId, publishedAppId: appAId }, appAId, versionId);
+		await repos.publishedApps.setCurrentVersion({ tenantId, publishedAppId: appAId }, appAId, appVersionId);
 
 		handler = await newHandler();
 		server = createServer((req, res) => {

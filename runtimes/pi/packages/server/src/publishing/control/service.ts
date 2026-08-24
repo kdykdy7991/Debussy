@@ -40,11 +40,14 @@ import type {
 	ConversationAdminSummaryListResponse,
 	ConversationEventPublicId,
 	ConversationPublicId,
+	ConversationReasoningState,
 	CustomLlmApi,
 	PreviewTicket,
 	PublishedAppLocator,
 	PublishedAppPublicId,
 	PublishedAppVersionPublicId,
+	ReasoningPrincipal,
+	ReasoningUpdateRequest,
 	SaveAgentRevisionRequest,
 	SaveAgentRevisionResponse,
 	SessionEventType,
@@ -68,6 +71,7 @@ import {
 	readStoredTurnMetrics,
 	toConversationTurnMetric,
 } from "../../agent-v2/query.ts";
+import { applyConversationReasoning, reasoningCapabilitiesForVersion } from "../../agent-v2/reasoning.ts";
 import { validateOriginList } from "../../embed/auth/origin.ts";
 import { modelParameterCapabilities, validateModelParameters } from "../../model-parameters.ts";
 import type {
@@ -249,7 +253,10 @@ export type ControlErrorCode =
 	| "INVALID_MODEL_PARAMETERS" // Agent model parameters failed capability validation (400)
 	| "METRICS_UNAVAILABLE" // Agent V2 metrics subsystem disabled/unavailable (503)
 	| "CONTEXT_SNAPSHOT_UNAVAILABLE" // Agent V2 context snapshot subsystem unavailable (503)
-	| "INVALID_METRICS_FILTER"; // metrics/context query params invalid (422)
+	| "INVALID_METRICS_FILTER" // metrics/context query params invalid (422)
+	// Agent V2 §4.3: conversation reasoning effort overrides.
+	| "REASONING_INVALID_EFFORT" // effort not in the model's declared tiers (422)
+	| "REASONING_NOT_CONFIGURABLE"; // policy forbids adjusting this conversation (403)
 
 export interface ControlServiceError {
 	readonly code: ControlErrorCode;
@@ -453,6 +460,22 @@ export class ControlService {
 	): Promise<ControlResult<ImportAgentResult>> {
 		const collected = await source.collect();
 		const sourceHash = sha256Hex(canonicalJson(collected.config));
+		// import 路径与 saveAgentRevision 同口径：模型参数只接受已声明 reasoning 字段，
+		// 非法 effort / 未知字段 / sampling-gen 覆盖一律拒绝（避免未加验证的草稿进入仓库）。
+		if (collected.config.model.params !== undefined) {
+			const parameterCapabilities = modelParameterCapabilities({
+				id: collected.config.model.modelId,
+				api: "openai-completions",
+				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(collected.config.model.modelId),
+			});
+			const parameterErrors = validateModelParameters(
+				collected.config.model.params as import("@earendil-works/pi-protocol").AgentModelParameters,
+				parameterCapabilities,
+			);
+			if (parameterErrors.length > 0) {
+				return fail("INVALID_MODEL_PARAMETERS", 400, parameterErrors.join("; "));
+			}
+		}
 		if (
 			input.expectedSourceHash !== undefined &&
 			input.expectedSourceHash !== null &&
@@ -1879,6 +1902,86 @@ export class ControlService {
 			createdAt: new Date(),
 		});
 		return auditEventId;
+	}
+
+	/**
+	 * GET conversation reasoning effort (Agent V2 §4.3). Reads the dedicated
+	 * fact source `conversation_reasoning_state`; never the event journal, and
+	 * it does not advance the conversation event sequence.
+	 */
+	async getConversationReasoning(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+	}): Promise<ControlResult<ConversationReasoningState>> {
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const state = await this.repos.conversationReasoning.get(
+			{
+				tenantId: conversation.tenantId,
+				publishedAppId: conversation.publishedAppId,
+				principalId: conversation.ownerPrincipalId,
+			},
+			input.conversationId,
+		);
+		const pinnedCapability = await reasoningCapabilitiesForVersion(
+			this.repos,
+			{ tenantId: conversation.tenantId, publishedAppId: conversation.publishedAppId },
+			conversation.publishedAppVersionId,
+		);
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				effort: state?.effort ?? null,
+				updatedAt: (state?.updatedAt ?? conversation.lastActiveAt).toISOString(),
+				configurable: pinnedCapability !== null,
+				pinnedCapability,
+			},
+		};
+	}
+
+	/**
+	 * PUT conversation reasoning effort (Agent V2 §4.3; shared by control admin
+	 * and embed owner, differing only in the authorization gate). Writes the
+	 * fact source and appends the `conversation.reasoning-updated` audit entry.
+	 *
+	 * - cross-tenant / cross-owner → `CONVERSATION_NOT_FOUND` (404);
+	 * - legal owner but policy forbids adjusting → `REASONING_NOT_CONFIGURABLE` (403);
+	 * - effort not in the pinned model's declared tiers → `REASONING_INVALID_EFFORT` (422);
+	 * - `effort: null` clears the override (falls back to the Agent Revision default).
+	 */
+	async setConversationSessionEffort(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly request: ReasoningUpdateRequest;
+		readonly principal: ReasoningPrincipal;
+		readonly configurable?: boolean;
+		readonly requestId?: RequestId;
+	}): Promise<ControlResult<ConversationReasoningState>> {
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const result = await applyConversationReasoning({
+			repos: this.repos,
+			tenantId: conversation.tenantId,
+			publishedAppId: conversation.publishedAppId,
+			publishedAppVersionId: conversation.publishedAppVersionId,
+			ownerPrincipalId: conversation.ownerPrincipalId,
+			conversationId: input.conversationId,
+			request: input.request,
+			principal: input.principal,
+			configurable: input.configurable !== false,
+			requestId: input.requestId,
+		});
+		if (!result.ok) return fail(result.code as never, result.status, result.message);
+		return { ok: true, data: result.data };
 	}
 
 	/** List custom LLM providers configured in models.json (secret-blind). */

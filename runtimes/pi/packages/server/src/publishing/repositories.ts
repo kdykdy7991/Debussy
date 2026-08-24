@@ -10,6 +10,8 @@
  * map it to the uniform "resource unavailable" error, so cross-scope access is
  * indistinguishable from a missing resource (no ID enumeration).
  */
+
+import type { ReasoningEffort } from "@earendil-works/pi-protocol";
 import type {
 	AgentDefinitionId,
 	AttachmentId,
@@ -624,6 +626,43 @@ export interface LaunchKeyRepository {
 	updateStatus(scope: AppScope, launchKeyId: LaunchKeyId, status: EmbedLaunchKeyStatus): Promise<void>;
 }
 
+/**
+ * Conversation-level reasoning effort fact source (V2-README §4.3).
+ *
+ * Dedicated per-conversation state (`conversation_reasoning_state`), NOT a
+ * `conversation_events` row. `effort: null` means the conversation reverts to
+ * the Agent Revision default. Session recovery and `GET .../reasoning` read
+ * here; the append-only audit log carries before/after for accountability.
+ */
+export interface ConversationReasoningStateRecord {
+	readonly conversationId: ConversationId;
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	readonly ownerPrincipalId: PrincipalId;
+	readonly effort: ReasoningEffort | null;
+	readonly updatedBy: string;
+	readonly requestId: RequestId;
+	readonly updatedAt: Date;
+}
+
+export interface ConversationReasoningRepository {
+	/** Scoped get; tenant/app/owner must all match (else undefined → uniform 404). */
+	get(scope: OwnerScope, conversationId: ConversationId): Promise<ConversationReasoningStateRecord | undefined>;
+	/** Upsert the fact source for a conversation. */
+	upsert(record: ConversationReasoningStateRecord): Promise<void>;
+	/**
+	 * Atomically read the prior fact source, upsert the new reasoning state and
+	 * append the reasoning-updated audit row in ONE PostgreSQL transaction. On
+	 * any failure (e.g. audit write error) the whole set — including the state
+	 * upsert — rolls back. Resolves the prior state (or undefined when none).
+	 */
+	setEffortWithAudit(input: {
+		readonly state: ConversationReasoningStateRecord;
+		/** Build the audit row from the prior fact source read inside the transaction. */
+		readonly audit: (before: ConversationReasoningStateRecord | undefined) => AuditEventRecord;
+	}): Promise<ConversationReasoningStateRecord | undefined>;
+}
+
 /** Combined repository set wired to a single Postgres client. */
 export interface PublishingRepositories {
 	readonly tenants: TenantRepository;
@@ -633,6 +672,8 @@ export interface PublishingRepositories {
 	readonly principals: PrincipalRepository;
 	readonly conversations: ConversationRepository;
 	readonly events: ConversationEventRepository;
+	/** Agent V2 M1: conversation-level reasoning effort fact source. */
+	readonly conversationReasoning: ConversationReasoningRepository;
 	/** WB-008: conversation event-log summary snapshot repository. */
 	readonly summaries: ConversationSummaryRepository;
 	readonly idempotency: IdempotencyRepository;

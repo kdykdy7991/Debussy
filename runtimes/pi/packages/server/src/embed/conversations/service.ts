@@ -14,7 +14,14 @@
  * `turn.failed` / `turn.interrupted` 等结构化事件；流式 chunk / 工具调用 /
  * 附件 / 引用 按 RuntimeSpec.contextPolicy.logLevel 决定是否持久化。
  */
-import type { Citation, ConversationRollover, SessionLogLevel, TurnMetrics } from "@earendil-works/pi-protocol";
+import type {
+	Citation,
+	ConversationReasoningState,
+	ConversationRollover,
+	ReasoningUpdateRequest,
+	SessionLogLevel,
+	TurnMetrics,
+} from "@earendil-works/pi-protocol";
 import {
 	assertEventPayloadSafe,
 	DEFAULT_CONVERSATION_LIMITS,
@@ -23,12 +30,13 @@ import {
 } from "@earendil-works/pi-protocol";
 import { estimateContextSnapshot } from "../../agent-v2/context.ts";
 import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
+import { applyConversationReasoning } from "../../agent-v2/reasoning.ts";
 import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
 import {
 	appNotFound,
 	appSuspended,
 	conversationNotFound,
-	type EmbedError,
+	EmbedError,
 	runtimeUnavailable,
 	turnAlreadyRunning,
 	versionUnavailable,
@@ -38,6 +46,7 @@ import {
 	newConversationId,
 	newConversationSummaryId,
 	newTurnId,
+	type RequestId,
 	type TurnId,
 } from "../../publishing/domain/ids.ts";
 import type {
@@ -276,6 +285,38 @@ export class ConversationService {
 	}
 
 	/**
+	 * PUT conversation reasoning effort (Agent V2 §4.3, embed owner surface).
+	 * Reuses the shared reasoning apply (frozen capability + transactional
+	 * fact-source + audit). The conversation is resolved via the embed
+	 * principal's owner scope: a non-owner or cross-app reference yields a
+	 * uniform CONVERSATION_NOT_FOUND (404).
+	 */
+	async setConversationReasoning(input: {
+		readonly principal: EmbedAuthContext;
+		readonly conversationId: ConversationId;
+		readonly request: ReasoningUpdateRequest;
+		readonly configurable?: boolean;
+		readonly requestId?: RequestId;
+	}): Promise<ConversationResult<ConversationReasoningState>> {
+		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
+		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		const result = await applyConversationReasoning({
+			repos: this.repos,
+			tenantId: input.principal.tenantId,
+			publishedAppId: input.principal.publishedAppId,
+			publishedAppVersionId: record.publishedAppVersionId,
+			ownerPrincipalId: record.ownerPrincipalId,
+			conversationId: input.conversationId,
+			request: input.request,
+			principal: { type: "embed-owner", id: input.principal.principalId },
+			configurable: input.configurable !== false,
+			requestId: input.requestId,
+		});
+		if (!result.ok) return { ok: false, error: new EmbedError(result.code, result.message) };
+		return { ok: true, data: result.data };
+	}
+
+	/**
 	 * WB-007: write one event without taking down the calling request. The
 	 * authoritative state lives in the conversation row, so a failed append
 	 * here only loses a side-channel observation — we never throw to the
@@ -424,6 +465,8 @@ export class ConversationService {
 
 			const turnId = newTurnId();
 			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
+			// Agent V2 §4.3：会话级 reasoning effort 覆盖（事实源；缺省=Revision 默认）。
+			const conversationReasoning = await this.repos.conversationReasoning.get(scope, input.conversationId);
 			const turnScope: ScopeContext = {
 				tenantId: input.principal.tenantId,
 				publishedAppId: input.principal.publishedAppId,
@@ -431,6 +474,7 @@ export class ConversationService {
 				principalId: input.principal.principalId,
 				conversationId: input.conversationId,
 				turnId,
+				conversationEffort: conversationReasoning?.effort ?? null,
 				limits: {
 					maxTurns: spec.contextPolicy.maxTurns,
 					maxContextTokens: spec.contextPolicy.maxContextTokens,

@@ -12,6 +12,7 @@ import { createAgentDefinitionRepository } from "./agent-definitions.ts";
 import { createAttachmentRepository } from "./attachments.ts";
 import { createAuditEventRepository } from "./audit.ts";
 import { createConversationEventRepository } from "./conversation-events.ts";
+import { createConversationReasoningRepository } from "./conversation-reasoning.ts";
 import { createConversationSummaryRepository } from "./conversation-summaries.ts";
 import { createConversationRepository } from "./conversations.ts";
 import { createIdempotencyRepository } from "./idempotency.ts";
@@ -30,6 +31,7 @@ export function createPublishingRepositories(client: PostgresClient): Publishing
 		publishedAppVersions: createPublishedAppVersionRepository(client),
 		principals: createPrincipalRepository(client),
 		conversations: createConversationRepository(client),
+		conversationReasoning: createConversationReasoningRepository(client),
 		events: createConversationEventRepository(client),
 		summaries: createConversationSummaryRepository(client),
 		idempotency: createIdempotencyRepository(client),
