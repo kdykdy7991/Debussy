@@ -424,6 +424,8 @@ export class ConversationService {
 
 			const turnId = newTurnId();
 			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
+			// Agent V2 §4.3：会话级 reasoning effort 覆盖（事实源；缺省=Revision 默认）。
+			const conversationReasoning = await this.repos.conversationReasoning.get(scope, input.conversationId);
 			const turnScope: ScopeContext = {
 				tenantId: input.principal.tenantId,
 				publishedAppId: input.principal.publishedAppId,
@@ -431,6 +433,7 @@ export class ConversationService {
 				principalId: input.principal.principalId,
 				conversationId: input.conversationId,
 				turnId,
+				conversationEffort: conversationReasoning?.effort ?? null,
 				limits: {
 					maxTurns: spec.contextPolicy.maxTurns,
 					maxContextTokens: spec.contextPolicy.maxContextTokens,
