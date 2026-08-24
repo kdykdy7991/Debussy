@@ -334,7 +334,7 @@ function httpCall(
 	path: string,
 	body?: unknown,
 	headers: Record<string, string> = {},
-): Promise<{ status: number; data: unknown; code?: string }> {
+): Promise<{ status: number; data: unknown; code?: string; requestId?: string }> {
 	return new Promise((resolve, reject) => {
 		const payload = body === undefined ? undefined : JSON.stringify(body);
 		const req = httpRequest(
@@ -351,11 +351,20 @@ function httpCall(
 			},
 			(res: IncomingMessage) => {
 				const chunks: Buffer[] = [];
+				const headerRequestId =
+					typeof res.headers["x-request-id"] === "string" ? res.headers["x-request-id"] : undefined;
 				res.on("data", (c: Buffer) => chunks.push(c));
 				res.on("end", () => {
 					const raw = Buffer.concat(chunks).toString("utf-8");
-					const json = raw ? (JSON.parse(raw) as { data?: unknown; error?: { code: string } }) : undefined;
-					resolve({ status: res.statusCode ?? 0, data: json?.data, code: json?.error?.code });
+					const json = raw
+						? (JSON.parse(raw) as { data?: unknown; error?: { code: string }; requestId?: string })
+						: undefined;
+					resolve({
+						status: res.statusCode ?? 0,
+						data: json?.data,
+						code: json?.error?.code,
+						requestId: json?.requestId ?? headerRequestId,
+					});
 				});
 			},
 		);
@@ -419,5 +428,7 @@ describe.skipIf(!pgUp)("control reasoning HTTP routes", () => {
 		// HTTP boundary (400) before the service capability check.
 		expect(res.status).toBe(400);
 		expect(res.code).toBe("INVALID_REQUEST");
+		expect(res.requestId).toBeTruthy();
+		expect(res.requestId).toMatch(/^[0-9a-f-]+$/);
 	});
 });
