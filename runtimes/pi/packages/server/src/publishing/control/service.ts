@@ -40,17 +40,22 @@ import type {
 	ConversationAdminSummaryListResponse,
 	ConversationEventPublicId,
 	ConversationPublicId,
+	ConversationReasoningState,
 	CustomLlmApi,
+	ModelParameterCapabilities,
 	PreviewTicket,
 	PublishedAppLocator,
 	PublishedAppPublicId,
 	PublishedAppVersionPublicId,
+	ReasoningPrincipal,
+	ReasoningUpdateRequest,
 	SaveAgentRevisionRequest,
 	SaveAgentRevisionResponse,
 	SessionEventType,
 	TurnPublicId,
 } from "@earendil-works/pi-protocol";
 import {
+	AGENT_V2_REASONING_AUDIT_ACTION,
 	type ContextUsageSnapshot,
 	type ConversationContextResponse,
 	type ConversationMetricsResponse,
@@ -249,7 +254,10 @@ export type ControlErrorCode =
 	| "INVALID_MODEL_PARAMETERS" // Agent model parameters failed capability validation (400)
 	| "METRICS_UNAVAILABLE" // Agent V2 metrics subsystem disabled/unavailable (503)
 	| "CONTEXT_SNAPSHOT_UNAVAILABLE" // Agent V2 context snapshot subsystem unavailable (503)
-	| "INVALID_METRICS_FILTER"; // metrics/context query params invalid (422)
+	| "INVALID_METRICS_FILTER" // metrics/context query params invalid (422)
+	// Agent V2 §4.3: conversation reasoning effort overrides.
+	| "REASONING_INVALID_EFFORT" // effort not in the model's declared tiers (422)
+	| "REASONING_NOT_CONFIGURABLE"; // policy forbids adjusting this conversation (403)
 
 export interface ControlServiceError {
 	readonly code: ControlErrorCode;
@@ -1895,6 +1903,148 @@ export class ControlService {
 			createdAt: new Date(),
 		});
 		return auditEventId;
+	}
+
+	/**
+	 * Resolve the Agent V2 reasoning capability set for a conversation from its
+	 * pinned Published App Version's model.
+	 */
+	private async reasoningCapabilitiesFor(conversation: {
+		readonly tenantId: TenantId;
+		readonly publishedAppId: PublishedAppId;
+		readonly publishedAppVersionId: PublishedAppVersionId;
+	}): Promise<ModelParameterCapabilities> {
+		const version = await this.repos.publishedAppVersions.get(
+			{ tenantId: conversation.tenantId, publishedAppId: conversation.publishedAppId },
+			conversation.publishedAppVersionId,
+		);
+		let modelId = "";
+		if (version !== undefined) {
+			const parsed = parseRuntimeSpec(version.runtimeSpec);
+			if (parsed.ok) modelId = parsed.spec.agent.model.modelId;
+		}
+		if (this.llm !== undefined) {
+			const selected = (await this.llm.listAvailableModels()).find((model) => model.id === modelId);
+			if (selected?.parameterCapabilities !== undefined) return selected.parameterCapabilities;
+		}
+		return modelParameterCapabilities({
+			id: modelId,
+			api: "openai-completions",
+			reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(modelId),
+		});
+	}
+
+	/**
+	 * GET conversation reasoning effort (Agent V2 §4.3). Reads the dedicated
+	 * fact source `conversation_reasoning_state`; never the event journal, and
+	 * it does not advance the conversation event sequence.
+	 */
+	async getConversationReasoning(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+	}): Promise<ControlResult<ConversationReasoningState>> {
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const state = await this.repos.conversationReasoning.get(
+			{
+				tenantId: conversation.tenantId,
+				publishedAppId: conversation.publishedAppId,
+				principalId: conversation.ownerPrincipalId,
+			},
+			input.conversationId,
+		);
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				effort: state?.effort ?? null,
+				updatedAt: (state?.updatedAt ?? conversation.lastActiveAt).toISOString(),
+			},
+		};
+	}
+
+	/**
+	 * PUT conversation reasoning effort (Agent V2 §4.3; shared by control admin
+	 * and embed owner, differing only in the authorization gate). Writes the
+	 * fact source and appends the `conversation.reasoning-updated` audit entry.
+	 *
+	 * - cross-tenant / cross-owner → `CONVERSATION_NOT_FOUND` (404);
+	 * - legal owner but policy forbids adjusting → `REASONING_NOT_CONFIGURABLE` (403);
+	 * - effort not in the pinned model's declared tiers → `REASONING_INVALID_EFFORT` (422);
+	 * - `effort: null` clears the override (falls back to the Agent Revision default).
+	 */
+	async setConversationSessionEffort(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly request: ReasoningUpdateRequest;
+		readonly principal: ReasoningPrincipal;
+		readonly configurable?: boolean;
+		readonly requestId?: RequestId;
+	}): Promise<ControlResult<ConversationReasoningState>> {
+		const conversation = await this.repos.conversations.getByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		if (input.configurable === false)
+			return fail(
+				"REASONING_NOT_CONFIGURABLE",
+				403,
+				"policy forbids adjusting reasoning effort for this conversation",
+			);
+		const capabilities = await this.reasoningCapabilitiesFor(conversation);
+		if (input.request.effort !== null) {
+			const errors = validateModelParameters(
+				{ reasoning: { enabled: true, effort: input.request.effort } },
+				capabilities,
+			);
+			if (errors.length > 0) return fail("REASONING_INVALID_EFFORT", 422, errors.join("; "));
+		}
+		const ownerScope = {
+			tenantId: conversation.tenantId,
+			publishedAppId: conversation.publishedAppId,
+			principalId: conversation.ownerPrincipalId,
+		};
+		const before = (await this.repos.conversationReasoning.get(ownerScope, input.conversationId))?.effort ?? null;
+		const after = input.request.effort;
+		const now = new Date();
+		await this.repos.conversationReasoning.upsert({
+			conversationId: input.conversationId,
+			tenantId: conversation.tenantId,
+			publishedAppId: conversation.publishedAppId,
+			ownerPrincipalId: conversation.ownerPrincipalId,
+			effort: after,
+			updatedBy: `${input.principal.type}:${input.principal.id}`,
+			requestId: input.requestId ?? newRequestId(),
+			updatedAt: now,
+		});
+		await this.writeAudit({
+			tenantId: conversation.tenantId,
+			action: AGENT_V2_REASONING_AUDIT_ACTION,
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId,
+			metadata: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				principal: input.principal,
+				before,
+				after,
+				requestedAt: now.toISOString(),
+			},
+		});
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				effort: after,
+				updatedAt: now.toISOString(),
+			},
+		};
 	}
 
 	/** List custom LLM providers configured in models.json (secret-blind). */

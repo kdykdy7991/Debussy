@@ -94,7 +94,6 @@ describe.skipIf(!pgUp)("conversation reasoning fact-store repository", () => {
 			runtimeSpec: { frozen: true },
 			runtimeSpecHash: "c".repeat(64),
 			createdAt: now,
-			publishedAt: now,
 			status: "ready",
 			validationErrors: [],
 		});
