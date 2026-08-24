@@ -302,11 +302,7 @@ function AssistantTurn({
 					{textBlocks.length > 0 ? (
 						<Prose plain={plain} streaming={streaming}>
 							{textBlocks.map((block, i) => (
-								<MarkdownText
-									key={`${item.id}-${i}`}
-									text={block.text}
-									streaming={streaming}
-								/>
+								<MarkdownText key={`${item.id}-${i}`} text={block.text} streaming={streaming} />
 							))}
 						</Prose>
 					) : null}
@@ -357,13 +353,7 @@ function isSearchTool(tool: ToolTranscriptItem): boolean {
  * 问题），新增 token 整体同时淡入，无段间并行。完成消息传 animation={null} 关闭
  * 动画降低重渲染成本。
  */
-function MarkdownText({
-	text,
-	streaming,
-}: {
-	text: string;
-	streaming: boolean;
-}): React.ReactElement {
+function MarkdownText({ text, streaming }: { text: string; streaming: boolean }): React.ReactElement {
 	return (
 		<div className="ai-prose-block">
 			<AnimatedMarkdown
