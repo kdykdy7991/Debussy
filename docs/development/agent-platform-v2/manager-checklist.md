@@ -52,7 +52,7 @@
 ### 总架构师执行 M0 门禁
 
 - [x] 总架构师确认统计公式、时钟采集位置、空值和样本范围无歧义。备注：后端 `251c89d` 后 M0-A Metrics/Context 已批准冻结。
-- [ ] 总架构师确认 Tenant、管理员/终端用户鉴权和 Secret 边界。
+- [x] 总架构师确认 Tenant、管理员/终端用户鉴权和 Secret 边界。备注：reasoning 双入口分权、跨作用域 404、MCP 仅 Secret ref；transport 仍受 BE-3 门禁。
 - [x] 总架构师确认 Revision、Published App Version 和 Conversation 不发生版本漂移。备注：Skill/MCP 固定 Agent Revision；会话 reasoning 专用状态按发布会话恢复，作用域字段待条件提交写入迁移草案。
 - [x] 总架构师确认迁移可向前执行，失败后有可接受的恢复方式。备注：JSONB 兼容扩展、Metrics 默认关闭、无破坏性 down；M0-A 已批准。
 - [x] 总架构师确认参数暴露范围只有允许的 reasoning 配置，其他生成参数不能由客户端覆盖。备注：双入口仅接受 `ReasoningUpdateRequest.effort`。
@@ -69,11 +69,11 @@
 
 ### M0 合并门禁
 
-- [ ] M0 契约经过总架构师批准并冻结。
-- [ ] M0 契约分支通过相关类型检查和具体测试。
-- [ ] M0 契约已合并到共同基线。
+- [x] M0 契约经过总架构师批准并冻结。备注：最终记录见 `evidence/m0.md` 候选 8。
+- [x] M0 契约分支通过相关类型检查和具体测试。备注：protocol 361 项、两套 tsgo、Biome 均通过。
+- [x] M0 契约已合并到共同基线。备注：验收签核分支包含后端 `66905ed` 与前端 `09d06da`。
 - [ ] 前端和后端均从合并后的共同基线创建 M1 短期分支。
-- [ ] 产品负责人确认允许进入受限 M1（Metrics/Context）；reasoning 与 MCP 仍受条件门禁。
+- [x] 产品负责人确认允许进入 M1。备注：用户已指示前端开始 Metrics/Context adapter、页面骨架和状态壳；MCP 仍受 BE-3 门禁。
 
 ## C. M1：统计、模型参数与 Embed
 

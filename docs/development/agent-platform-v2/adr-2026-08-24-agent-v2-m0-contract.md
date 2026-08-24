@@ -1,6 +1,6 @@
 # ADR-001：Agent 平台 V2 M0 契约
 
-状态：草案（待总架构师批准）
+状态：已批准（M0；MCP transport 仍待 BE-3 ADR）
 
 创建日期：2026-08-24
 
@@ -111,7 +111,7 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
 - [x] M0-A Metrics/Context（received）已冻结
 - [x] 收口条件：统一 PUT 措辞；跨租户/跨属主统一 404（403 仅策略禁止）；迁移草案补
   reasoning 状态/审计的 tenant/app/owner 作用域与同一 PostgreSQL 事务
-- [ ] 总架构师最终签核（完整 M0 有条件通过后的机械条件已闭合）
+- [x] 总架构师最终签核（完整 M0 通过；证据见 `evidence/m0.md` 候选 8）
 - [ ] 前端基于已冻结 Metrics DTO 建 mock；M1 Runtime/MCP 待 BE-3
 
 ## 变更历史
