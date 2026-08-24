@@ -4,17 +4,12 @@
  * 验证 `usagePercent` 的展示口径：协议字段已经是百分比标量（如 3.75），
  * 渲染时只 `toFixed(2)` 加 `%`，**不再乘以 100**——之前 `(v * 100)`
  * 会把 3.75 渲染成 375%。
+ *
+ * 测试与生产组件共用 `formatUsagePercent`：避免复制实现漂移。
  */
 import type { ContextUsageSnapshot } from "@earendil-works/pi-protocol";
 import { describe, expect, it } from "vitest";
-
-/**
- * 与 `context-tab.tsx` 中的展示逻辑等价：纯字符串拼接，无 React 依赖，
- * 可以在 node 下直接断言。
- */
-function renderUsagePercent(snapshot: ContextUsageSnapshot): string {
-	return `${snapshot.usagePercent.toFixed(2)}%`;
-}
+import { formatUsagePercent } from "../../src/admin/user-conversations/context-tab.tsx";
 
 describe("ContextSnapshotCard usagePercent rendering (M1)", () => {
 	it("renders 3.75 as '3.75%', not '375%'", () => {
@@ -35,7 +30,7 @@ describe("ContextSnapshotCard usagePercent rendering (M1)", () => {
 				attachments: 0,
 			},
 		};
-		expect(renderUsagePercent(snapshot)).toBe("3.75%");
+		expect(formatUsagePercent(snapshot)).toBe("3.75%");
 	});
 
 	it("renders 0 as '0.00%'", () => {
@@ -56,7 +51,7 @@ describe("ContextSnapshotCard usagePercent rendering (M1)", () => {
 				attachments: 0,
 			},
 		};
-		expect(renderUsagePercent(snapshot)).toBe("0.00%");
+		expect(formatUsagePercent(snapshot)).toBe("0.00%");
 	});
 
 	it("renders 100 as '100.00%'", () => {
@@ -77,6 +72,6 @@ describe("ContextSnapshotCard usagePercent rendering (M1)", () => {
 				attachments: 0,
 			},
 		};
-		expect(renderUsagePercent(snapshot)).toBe("100.00%");
+		expect(formatUsagePercent(snapshot)).toBe("100.00%");
 	});
 });

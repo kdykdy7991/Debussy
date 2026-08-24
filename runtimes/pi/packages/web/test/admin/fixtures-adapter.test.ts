@@ -15,7 +15,8 @@
 
 import type { ConversationContextResponse, ConversationMetricsResponse } from "@earendil-works/pi-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type DataState, describeError, type FixtureName, loadFixture } from "../../src/admin/fixtures/index.ts";
+import { type DataState, describeError } from "../../src/admin/data-state.ts";
+import { type FixtureName, loadFixture } from "../../src/admin/fixtures/index.ts";
 
 describe("fixtures adapter (M1)", () => {
 	const originalFlag = globalThis.__PI_WEB_FIXTURES_ALLOWED__;

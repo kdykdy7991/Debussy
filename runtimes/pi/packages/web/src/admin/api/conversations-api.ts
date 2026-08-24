@@ -10,14 +10,16 @@
  * `visitorId` / PEM; the list is always redacted (`redacted: true`) and the
  * caller must fetch `/events` to see message bodies.
  */
-import type {
-	ConversationAdminEventListResponse,
-	ConversationAdminListResponse,
-	ConversationAdminSummaryListResponse,
-	ConversationContextResponse,
-	ConversationExportMode,
-	ConversationMetricsQuery,
-	ConversationMetricsResponse,
+import {
+	AGENT_V2_METRICS_ERRORS,
+	type AgentV2MetricsErrorCode,
+	type ConversationAdminEventListResponse,
+	type ConversationAdminListResponse,
+	type ConversationAdminSummaryListResponse,
+	type ConversationContextResponse,
+	type ConversationExportMode,
+	type ConversationMetricsQuery,
+	type ConversationMetricsResponse,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 
@@ -27,16 +29,42 @@ export interface ConversationsApiOptions {
 	readonly fetchImpl?: typeof fetch;
 }
 
+/**
+ * 服务端 `code` 是已知协议码时返回其协议元数据；否则按 HTTP 状态推断重试性。
+ * 已知协议错误码 → `{ retryable: AGENT_V2_METRICS_ERRORS[code].retryable, httpStatus }`。
+ * 未知码：
+ * - 401/403 → 不可重试（凭证/权限错误，再试一次也不会变）；
+ * - 408/425/429/5xx → 可重试；
+ * - 其它 4xx → 不可重试。
+ */
+function resolveRetryable(code: string | null, httpStatus: number): boolean {
+	if (code !== null && code in AGENT_V2_METRICS_ERRORS) {
+		return AGENT_V2_METRICS_ERRORS[code as AgentV2MetricsErrorCode].retryable;
+	}
+	if (httpStatus === 408 || httpStatus === 425 || httpStatus === 429) return true;
+	if (httpStatus >= 500 && httpStatus <= 599) return true;
+	return false;
+}
+
 export class ConversationsApiError extends Error {
 	readonly httpStatus: number;
 	readonly requestId: string | null;
 	readonly code: string | null;
-	constructor(message: string, httpStatus: number, requestId: string | null, code: string | null) {
+	/** 来自协议 `AGENT_V2_METRICS_ERRORS` 或 HTTP 状态推断；UI 直接使用，不需要再查表。 */
+	readonly retryable: boolean;
+	constructor(
+		message: string,
+		httpStatus: number,
+		requestId: string | null,
+		code: string | null,
+		retryable?: boolean,
+	) {
 		super(message);
 		this.name = "ConversationsApiError";
 		this.httpStatus = httpStatus;
 		this.requestId = requestId;
 		this.code = code;
+		this.retryable = retryable ?? resolveRetryable(code, httpStatus);
 	}
 }
 
@@ -73,7 +101,7 @@ export class ConversationsApi {
 		this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	}
 
-	private async request<T>(path: string): Promise<T> {
+	private async request<T>(path: string, init: { readonly signal?: AbortSignal } = {}): Promise<T> {
 		const token = this.auth.getToken();
 		if (token === null || token === "") {
 			throw new ConversationsApiError("Admin token is not set", 401, null, "UNAUTHORIZED");
@@ -85,6 +113,7 @@ export class ConversationsApi {
 				Authorization: `Bearer ${token}`,
 				Accept: "application/json",
 			},
+			...(init.signal !== undefined ? { signal: init.signal } : {}),
 		});
 		const text = await response.text();
 		const parsed: unknown = text === "" ? null : safeParse(text);
@@ -200,8 +229,13 @@ export class ConversationsApi {
 	/**
 	 * M1: 单会话指标（分页 + 全会话 stats）。
 	 * 参数顺序：先 `conversationId`，再 `query`，避免可选字段顺序错位。
+	 * 第三个可选参数 `signal` 用于取消过期请求（tab 切换 / 翻页 / 卸载）。
 	 */
-	getMetrics(conversationId: string, query: ConversationMetricsQuery): Promise<ConversationMetricsResponse> {
+	getMetrics(
+		conversationId: string,
+		query: ConversationMetricsQuery,
+		signal?: AbortSignal,
+	): Promise<ConversationMetricsResponse> {
 		const params = new URLSearchParams();
 		if (query.afterSequence !== undefined && query.afterSequence > 0) {
 			params.set("afterSequence", String(query.afterSequence));
@@ -210,13 +244,15 @@ export class ConversationsApi {
 		const qs = params.toString();
 		return this.request<ConversationMetricsResponse>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/metrics${qs.length > 0 ? `?${qs}` : ""}`,
+			signal !== undefined ? { signal } : {},
 		);
 	}
 
 	/** M1: 单会话最新一帧上下文快照；不存在时返回 `available=false, latest=null`。 */
-	getContext(conversationId: string): Promise<ConversationContextResponse> {
+	getContext(conversationId: string, signal?: AbortSignal): Promise<ConversationContextResponse> {
 		return this.request<ConversationContextResponse>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/context`,
+			signal !== undefined ? { signal } : {},
 		);
 	}
 }

@@ -22,18 +22,10 @@ import type {
 	ConversationMetricsResponse,
 	ConversationMetricsStats,
 } from "@earendil-works/pi-protocol";
+import type { DataState } from "../data-state.ts";
 
-/**
- * 通用数据状态：与 `conversation-detail.tsx` 里的 `DetailState` 同型，
- * 供未来提取为统一 status shell 时直接复用。
- */
-export type DataState<T> =
-	| { readonly kind: "idle" }
-	| { readonly kind: "loading" }
-	| { readonly kind: "empty"; readonly reason: "no_data_yet" | "legacy_session" }
-	| { readonly kind: "partial"; readonly data: T; readonly missing: readonly string[] }
-	| { readonly kind: "loaded"; readonly data: T }
-	| { readonly kind: "error"; readonly code: string; readonly message: string; readonly retryable: boolean };
+// 复用生产模块的 `DataState<T>`，避免两处定义漂移。fixture 适配层仅消费、
+// 不修改生产模块。
 
 /** 已知 fixture 名称（穷举；新增需在此声明）。 */
 export type FixtureName =
@@ -216,34 +208,8 @@ export function loadFixture<T>(name: FixtureName): DataState<T> {
 }
 
 /**
- * 把 `DataState<T>` 映射为 UI 友好的错误描述，仅供状态壳使用；
- * 错误码仍以 `code` 字符串透传到调用方。
+ * 把 `DataState<T>` 映射为 UI 友好的错误描述：消费方直接 import 自
+ * `../data-state.ts`；本文件不再重复实现 `describeError`（fixture 适配层只
+ * 是数据形态适配，不持有 UI 副本）。`UNKNOWN_FIXTURE` 是 fixture 内部码，
+ * 不走协议错误表，调用方按 `code === "UNKNOWN_FIXTURE"` 自行判断。
  */
-export function describeError(state: Extract<DataState<unknown>, { kind: "error" }>): {
-	readonly title: string;
-	readonly description: string;
-} {
-	switch (state.code) {
-		case "METRICS_UNAVAILABLE":
-		case "CONTEXT_SNAPSHOT_UNAVAILABLE":
-			return {
-				title: "指标服务暂不可用",
-				description: "后端采集暂不可用，请稍后重试。",
-			};
-		case "INVALID_METRICS_FILTER":
-			return {
-				title: "查询参数无效",
-				description: "分页参数 `afterSequence` / `limit` 必须为正整数；请调整后重试。",
-			};
-		case "UNKNOWN_FIXTURE":
-			return {
-				title: "未注册的 fixture",
-				description: state.message,
-			};
-		default:
-			return {
-				title: "加载失败",
-				description: state.message,
-			};
-	}
-}

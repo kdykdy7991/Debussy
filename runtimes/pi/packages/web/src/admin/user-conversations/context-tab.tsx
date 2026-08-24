@@ -14,10 +14,10 @@ import type {
 	ContextUsageSnapshot,
 	ConversationContextResponse,
 } from "@earendil-works/pi-protocol";
-import { useCallback, useEffect, useState } from "react";
-import { type ConversationsApi, ConversationsApiError } from "../api/conversations-api.ts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConversationsApi } from "../api/conversations-api.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
-import { type DataState, describeError } from "../fixtures/index.ts";
+import { createStaleResponseGuard, type DataState, describeError, toDataStateError } from "../data-state.ts";
 
 interface ContextTabProps {
 	readonly conversationId: string;
@@ -27,38 +27,48 @@ interface ContextTabProps {
 type ErrorDataState = Extract<DataState<ConversationContextResponse>, { kind: "error" }>;
 
 function mapErrorToDataState(err: unknown): ErrorDataState {
-	if (err instanceof ConversationsApiError) {
-		const code = err.code ?? "UNKNOWN_ERROR";
-		return {
-			kind: "error",
-			code,
-			message: err.message,
-			retryable: code === "METRICS_UNAVAILABLE" || code === "CONTEXT_SNAPSHOT_UNAVAILABLE",
-		};
-	}
-	return {
-		kind: "error",
-		code: "UNKNOWN_ERROR",
-		message: err instanceof Error ? err.message : String(err),
-		retryable: false,
-	};
+	return toDataStateError(err);
+}
+
+/**
+ * 把 `ContextUsageSnapshot.usagePercent` 渲染成 UI 副本。
+ * 协议字段已是百分比标量（如 3.75 表示 3.75%），渲染时只 `toFixed(2)` 加 `%`——
+ * **不要**再乘以 100（之前 `(v * 100)` 会把 3.75 渲染成 375%）。
+ *
+ * 导出本函数使单测可以共享组件的渲染逻辑（避免复制实现导致回归）。
+ */
+export function formatUsagePercent(snapshot: ContextUsageSnapshot): string {
+	return `${snapshot.usagePercent.toFixed(2)}%`;
 }
 
 export function ContextTab({ conversationId, api }: ContextTabProps): React.ReactElement {
 	const [state, setState] = useState<DataState<ConversationContextResponse>>({ kind: "idle" });
 
+	// 防止过期响应覆盖最新请求结果（见 `data-state.ts` StaleResponseGuard）。
+	const guardRef = useRef<ReturnType<typeof createStaleResponseGuard> | null>(null);
+	if (guardRef.current === null) guardRef.current = createStaleResponseGuard();
+	const guard = guardRef.current;
+
 	const load = useCallback(() => {
+		const ticket = guard.begin();
+
 		setState({ kind: "loading" });
-		api.getContext(conversationId)
-			.then((data) => setState({ kind: "loaded", data }))
+		api.getContext(conversationId, ticket.signal)
+			.then((data) => {
+				ticket.commit(() => setState({ kind: "loaded", data }));
+			})
 			.catch((err: unknown) => {
-				setState(mapErrorToDataState(err));
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				ticket.commit(() => setState(mapErrorToDataState(err)));
 			});
-	}, [api, conversationId]);
+	}, [api, conversationId, guard]);
 
 	useEffect(() => {
 		load();
-	}, [load]);
+		return () => {
+			guard.cancel();
+		};
+	}, [load, guard]);
 
 	const onRetry = () => load();
 
@@ -142,13 +152,11 @@ function LoadedContext({
 }
 
 function ContextSnapshotCard({ snapshot }: { readonly snapshot: ContextUsageSnapshot }): React.ReactElement {
-	// 协议 `ContextUsageSnapshot.usagePercent` 是已经以百分比表达的标量（如 3.75 表示 3.75%），
-	// 渲染时只 `toFixed(2)` 后加 "%"，**不再乘以 100**——之前 `(v * 100)` 会把 3.75 渲染成 375%。
 	return (
 		<div className="context-snapshot-card">
 			<p>
 				<strong>{snapshot.usedTokens.toLocaleString()}</strong> / {snapshot.contextWindow.toLocaleString()}{" "}
-				tokens（使用率 {snapshot.usagePercent.toFixed(2)}%，剩余 {snapshot.remainingTokens.toLocaleString()}
+				tokens（使用率 {formatUsagePercent(snapshot)}，剩余 {snapshot.remainingTokens.toLocaleString()}
 				，预留输出 {snapshot.reservedOutputTokens.toLocaleString()}）
 			</p>
 			<BreakdownTable breakdown={snapshot.breakdown} />

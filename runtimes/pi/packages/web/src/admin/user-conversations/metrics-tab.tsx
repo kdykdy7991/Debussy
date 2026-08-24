@@ -11,11 +11,11 @@
  * - `error` → `EmptyState` 错误壳（title/description 由 `describeError` 给出）。
  */
 import type { ConversationMetricsResponse, ConversationTurnMetric } from "@earendil-works/pi-protocol";
-import { useCallback, useEffect, useState } from "react";
-import { type ConversationsApi, ConversationsApiError } from "../api/conversations-api.ts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConversationsApi } from "../api/conversations-api.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
 import { type MetricItem, MetricsRow } from "../components/MetricsRow.tsx";
-import { type DataState, describeError } from "../fixtures/index.ts";
+import { createStaleResponseGuard, type DataState, describeError, toDataStateError } from "../data-state.ts";
 
 interface MetricsTabProps {
 	readonly conversationId: string;
@@ -74,54 +74,52 @@ function buildMetricItems(stats: ConversationMetricsResponse["stats"]): readonly
 }
 
 /**
- * 把 `ConversationsApiError` + 其它未知错误映射为 `DataState.error`，
- * 错误码尽量从 `ConversationsApiError.code` 透传；非 conversations-api 错误
- * 统一落到 `UNKNOWN_ERROR`。
+ * `ConversationsApiError` 已经按协议 `AGENT_V2_METRICS_ERRORS` 携带 `retryable`；
+ * 未知 code 在 `toDataStateError` 内统一归一化为 `UNKNOWN_ERROR`。
  */
-type ErrorDataState = Extract<DataState<ConversationMetricsResponse>, { kind: "error" }>;
-
-function mapErrorToDataState(err: unknown): ErrorDataState {
-	if (err instanceof ConversationsApiError) {
-		const code = err.code ?? "UNKNOWN_ERROR";
-		return {
-			kind: "error",
-			code,
-			message: err.message,
-			retryable: code === "METRICS_UNAVAILABLE" || code === "CONTEXT_SNAPSHOT_UNAVAILABLE",
-		};
-	}
-	return {
-		kind: "error",
-		code: "UNKNOWN_ERROR",
-		message: err instanceof Error ? err.message : String(err),
-		retryable: false,
-	};
+function mapErrorToDataState(err: unknown): Extract<DataState<ConversationMetricsResponse>, { kind: "error" }> {
+	return toDataStateError(err);
 }
 
 export function MetricsTab({ conversationId, api, afterSequence, onNextPage }: MetricsTabProps): React.ReactElement {
 	const [state, setState] = useState<DataState<ConversationMetricsResponse>>({ kind: "idle" });
 
+	// 防止过期响应覆盖最新请求结果（见 `data-state.ts` StaleResponseGuard）。
+	const guardRef = useRef<ReturnType<typeof createStaleResponseGuard> | null>(null);
+	if (guardRef.current === null) guardRef.current = createStaleResponseGuard();
+	const guard = guardRef.current;
+
 	const load = useCallback(
 		(after: number | null) => {
+			const ticket = guard.begin();
+
 			setState({ kind: "loading" });
 			const arg =
 				after !== null && after > 0
 					? { conversationId, afterSequence: after, limit: 50 }
 					: { conversationId, limit: 50 };
-			api.getMetrics(conversationId, arg)
-				.then((data) => setState({ kind: "loaded", data }))
+			api.getMetrics(conversationId, arg, ticket.signal)
+				.then((data) => {
+					ticket.commit(() => setState({ kind: "loaded", data }));
+				})
 				.catch((err: unknown) => {
-					setState(mapErrorToDataState(err));
+					// AbortError 不写 state——上一请求已被显式取消，不是错误。
+					if (err instanceof DOMException && err.name === "AbortError") return;
+					ticket.commit(() => setState(mapErrorToDataState(err)));
 				});
 		},
-		[api, conversationId],
+		[api, conversationId, guard],
 	);
 
 	// 切到本 tab / `afterSequence` 变化 → 拉一次。
 	// 父组件从 `null` → 首次进入；`null → 数字` → 翻页；`数字 → null` → 重置回首页。
 	useEffect(() => {
 		load(afterSequence);
-	}, [load, afterSequence]);
+		// 卸载 / 依赖变化 → abort 当前未完成请求。
+		return () => {
+			guard.cancel();
+		};
+	}, [load, afterSequence, guard]);
 
 	const onRetry = () => load(afterSequence === null ? null : afterSequence > 0 ? afterSequence : null);
 
