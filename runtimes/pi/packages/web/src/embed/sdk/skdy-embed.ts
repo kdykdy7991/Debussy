@@ -275,6 +275,7 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 	const allowedOrigins = new Set([baseOrigin, ...(optionsExtraOrigins ?? [])]);
 
 	let iframe: EmbedIframe | null = null;
+	let listenerRegistered = false;
 	let disposed = false;
 	/**
 	 * R8: `mount()` 失败后置 true。`broken` 实例**不可复用**——所有生命周期
@@ -387,14 +388,33 @@ export function create(options: CreateEmbedOptions): EmbedInstance {
 			broken = true;
 			throw new EmbedInstanceBrokenError("mount failed: appendChild threw", { cause: err });
 		}
-		// Commit iframe reference + listener only after a successful mount.
+		// Listener registration + signed init form one lifecycle transaction.
+		// If either step fails, roll back every side effect and permanently mark
+		// this instance broken: a retry would otherwise send an anonymous init
+		// because the launch token has already been consumed.
 		iframe = built;
-		env.window.addEventListener("message", messageHandler);
-		postInit();
+		try {
+			env.window.addEventListener("message", messageHandler);
+			listenerRegistered = true;
+			postInit();
+		} catch (err) {
+			pendingLaunchToken = undefined;
+			if (listenerRegistered) {
+				env.window.removeEventListener("message", messageHandler);
+				listenerRegistered = false;
+			}
+			built.remove();
+			iframe = null;
+			broken = true;
+			throw new EmbedInstanceBrokenError("mount failed during listener registration or init", { cause: err });
+		}
 	};
 
 	const unmount = (): void => {
-		env.window.removeEventListener("message", messageHandler);
+		if (listenerRegistered) {
+			env.window.removeEventListener("message", messageHandler);
+			listenerRegistered = false;
+		}
 		if (iframe !== null) {
 			iframe.remove();
 			iframe = null;

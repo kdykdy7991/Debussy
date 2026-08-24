@@ -4,7 +4,7 @@
  * 数据契约：
  * - 请求：`ReasoningUpdateRequest = { effort: ReasoningEffort | null }`，
  *   `null` 表示清除会话覆盖 → 回到 Agent Revision 默认。
- * - 响应：`ConversationReasoningState = { conversationId, effort, updatedAt }`。
+ * - 响应同时携带会话固定 Published App Version 的 capability 快照。
  * - 错误码：
  *   - 404 `CONVERSATION_NOT_FOUND` → 跨租户，**不**暴露归属；
  *   - 422 `REASONING_INVALID_EFFORT` → 档位不在模型能力目录内；
@@ -17,16 +17,8 @@
  * 会话显示 v2 档位（这与"会话级覆盖"语义冲突：用户改 v1 会话的努力
  * 不能因为 Agent 升级而漂移）。
  *
- * 当前**后端只读契约待架构师确认**（M1 R8 Blocker 2 留 TODO）。FE 不能
- * 在协议未冻结前自行扩展 DTO。**临时方案**：tab 进入"等待后端契约"态，
- * 不展示档位编辑入口；只读 `getReasoning` 仍加载（事实源 + 写接口
- * 仍可用，但 UI 不暴露输入）。详见
- * `docs/development/agent-platform-v2/evidence/m1-r8-blocker2.md`。
- *
- * 一旦 BE 契约冻结（建议 endpoint
- * `GET /api/control/v1/conversations/{id}/capability` 返回
- * `{ publishedAppVersionId, modelId, parameterCapabilities }`），把
- * `loadCapability` 重新接入；`getReasoning` / `putReasoning` 不变。
+ * capability 与 effort 由同一个 GET DTO 原子返回，不额外调用 Agent 或
+ * live LLM catalog，也没有第二个 capability 请求的竞态。
  *
  * # 过期请求保护
  *
@@ -69,7 +61,7 @@ function routeMismatchError(raw: string): ErrorDataState {
  * - `ready`：BE 契约冻结后接入——R8 暂未实现，留占位说明。
  */
 export type CapabilityState =
-	| { readonly kind: "awaiting-contract"; readonly reason: string }
+	| { readonly kind: "unavailable"; readonly reason: string }
 	| { readonly kind: "ready"; readonly configuredEfforts: readonly ReasoningEffort[] };
 
 /** Save 操作的本地状态。`saving` 时禁用输入；失败时 `code` 透传到错误壳。 */
@@ -93,9 +85,15 @@ export function formatReasoningEffort(effort: ReasoningEffort): string {
 	return effort;
 }
 
-/** Capability 当前是否阻塞写操作（save）。R8 永远为 `true`（BE 契约未冻结）。 */
+export function capabilityStateFromReasoning(state: ConversationReasoningState): CapabilityState {
+	if (!state.configurable || state.pinnedCapability === null) {
+		return { kind: "unavailable", reason: "该会话固定版本没有可配置的 reasoning capability。" };
+	}
+	return { kind: "ready", configuredEfforts: state.pinnedCapability.reasoning.efforts };
+}
+
 function isCapabilityBlockingSave(capability: CapabilityState): boolean {
-	return capability.kind === "awaiting-contract";
+	return capability.kind !== "ready";
 }
 
 export function ReasoningTab({ conversationId, api }: ReasoningTabProps): React.ReactElement {
@@ -177,20 +175,17 @@ export function ReasoningTab({ conversationId, api }: ReasoningTabProps): React.
 			return;
 		}
 		const nextEffort: ReasoningEffort | null = draft === "" ? null : draft;
-		// R8：capability 永远阻塞非空档位保存（BE 契约未冻结）。等到契约
-		// 接入后，这里改成"如果 `nextEffort` 不在 `configuredEfforts` 内
-		// 则 reject"。
-		if (nextEffort !== null) {
+		const capability = capabilityStateFromReasoning(state.data);
+		if (capability.kind !== "ready" || (nextEffort !== null && !capability.configuredEfforts.includes(nextEffort))) {
 			setSaveState({
 				kind: "error",
-				code: "REASONING_INVALID_EFFORT",
-				message: "前端 capability 数据源待后端契约冻结（详见 m1-r8-blocker2.md）；暂不允许保存档位。",
+				code: capability.kind === "ready" ? "REASONING_INVALID_EFFORT" : "REASONING_NOT_CONFIGURABLE",
+				message:
+					capability.kind === "ready" ? "所选档位不在该会话固定版本声明的 capability 中。" : capability.reason,
 				lastEffort: nextEffort,
 			});
 			return;
 		}
-		// `null` 清除覆盖在 capability 未就绪时**仍可发**——服务端 422 是
-		// 最终防线，前端不阻塞。
 		setSaveState({ kind: "saving", effort: nextEffort });
 		saveGuard.cancel();
 		const ticket = saveGuard.begin();
@@ -214,13 +209,7 @@ export function ReasoningTab({ conversationId, api }: ReasoningTabProps): React.
 				setSaveState({ kind: "error", code, message, lastEffort: nextEffort });
 			});
 		}
-	}, [api, cid, conversationId, draft, saveGuard, state.kind]);
-
-	// R8：capability 固定为 awaiting-contract（BE 契约待架构师确认）。
-	const capability: CapabilityState = {
-		kind: "awaiting-contract",
-		reason: "本会话 capability 需通过会话固定 PublishedAppVersion 的只读契约获取；BE 契约冻结前前端不展示档位编辑。",
-	};
+	}, [api, cid, conversationId, draft, saveGuard, state]);
 
 	if (state.kind === "loading" || state.kind === "idle") {
 		return (
@@ -275,17 +264,17 @@ export function ReasoningTab({ conversationId, api }: ReasoningTabProps): React.
 
 	// loaded 分支：渲染只读事实 + capability 等待契约提示（不暴露档位输入）。
 	const currentState = state.data;
+	const capability = capabilityStateFromReasoning(currentState);
 	const isSaving = saveState.kind === "saving";
 	const canClear = !isSaving && draft !== "";
 	// 写能力受限：draft === ""（清除覆盖）允许；非空 draft 在 capability
 	// 阻塞期间不允许 save。
-	const saveBlocked = isCapabilityBlockingSave(capability) && draft !== "";
+	const saveBlocked = isCapabilityBlockingSave(capability);
 	const canSave = !isSaving && !saveBlocked;
 	return (
 		<div className="card reasoning-tab">
 			<p className="conversation-meta">
-				会话 {currentState.conversationId} · 最近覆盖时间{" "}
-				{new Date(currentState.updatedAt).toLocaleString()}
+				会话 {currentState.conversationId} · 最近覆盖时间 {new Date(currentState.updatedAt).toLocaleString()}
 			</p>
 			{currentState.effort === null ? (
 				<p>当前未设置覆盖，使用 Agent Revision 默认 effort。</p>
@@ -295,18 +284,31 @@ export function ReasoningTab({ conversationId, api }: ReasoningTabProps): React.
 				</p>
 			)}
 
-			{capability.kind === "awaiting-contract" && (
-				<EmptyState
-					kind="empty"
-					title="档位编辑待后端契约冻结"
-					description={capability.reason}
-					compact
-				/>
+			{capability.kind === "unavailable" && (
+				<EmptyState kind="empty" title="此会话不可调整思考强度" description={capability.reason} compact />
+			)}
+			{capability.kind === "ready" && (
+				<label htmlFor="reasoning-effort-draft">
+					思考强度
+					<select
+						id="reasoning-effort-draft"
+						value={draft}
+						onChange={(event) => setDraft(event.currentTarget.value as ReasoningEffort | "")}
+						disabled={isSaving}
+					>
+						<option value="">使用 Agent Revision 默认值</option>
+						{capability.configuredEfforts.map((effort) => (
+							<option key={effort} value={effort}>
+								{formatReasoningEffort(effort)}
+							</option>
+						))}
+					</select>
+				</label>
 			)}
 
 			<div>
 				<button type="button" onClick={onSave} disabled={!canSave}>
-					{isSaving ? "保存中…" : saveBlocked ? "档位编辑未开放" : "保存覆盖（清除）"}
+					{isSaving ? "保存中…" : saveBlocked ? "档位编辑未开放" : "保存覆盖"}
 				</button>
 				<button type="button" onClick={() => setDraft("")} disabled={!canClear}>
 					清除 draft

@@ -35,8 +35,9 @@
  *   `conversation_events` 事件类型**、不进 `SESSION_EVENT_TYPES`、不推进事件序列号、
  *   不参与 turn 回放。commit（写事实源）与 audit（追加日志）在服务层同一事务内完成。
  */
-import type { ConversationPublicId } from "./admin-workbench.ts";
+import type { ConversationPublicId, PublishedAppVersionPublicId } from "./admin-workbench.ts";
 import type { ReasoningEffort } from "./admin-workbench-agents.ts";
+import type { ModelParameterCapabilities } from "./admin-workbench-llm.ts";
 
 /** 会话 effort 的两个授权平面。 */
 export type ReasoningPrincipalType = "admin" | "embed-owner";
@@ -68,6 +69,12 @@ export interface ConversationReasoningState {
 	readonly effort: ReasoningEffort | null;
 	/** 最近一次覆盖的时间（ISO 8601 / UTC）。 */
 	readonly updatedAt: string;
+	readonly configurable: boolean;
+	readonly pinnedCapability: {
+		readonly publishedAppVersionId: PublishedAppVersionPublicId;
+		readonly modelId: string;
+		readonly reasoning: ModelParameterCapabilities["reasoning"];
+	} | null;
 }
 
 /**

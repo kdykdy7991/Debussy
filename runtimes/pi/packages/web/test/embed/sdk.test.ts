@@ -370,6 +370,36 @@ describe("lifecycle", () => {
 		expect(iframe.posted).toEqual([]);
 	});
 
+	test("init postMessage failure rolls back iframe and listener and leaves a broken instance", () => {
+		const { env, iframe, win } = makeEnv();
+		const originalErr = new Error("postMessage boom");
+		(iframe.contentWindow as { postMessage: () => void }).postMessage = () => {
+			throw originalErr;
+		};
+		const inst = create({
+			appId: APP,
+			baseUrl: BASE,
+			launchToken: "tok_signed",
+			container: container() as unknown as HTMLElement,
+			env,
+		});
+		let caught: unknown;
+		try {
+			inst.open();
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(EmbedInstanceBrokenError);
+		expect((caught as { cause?: unknown }).cause).toBe(originalErr);
+		expect(win.handlers).toHaveLength(0);
+		expect(iframe.removed).toEqual([true]);
+		expect(() => inst.open()).toThrow(EmbedInstanceBrokenError);
+		expect(() => inst.logout()).toThrow(EmbedInstanceBrokenError);
+		expect(() => inst.requestResize()).toThrow(EmbedInstanceBrokenError);
+		expect(() => inst.destroy()).not.toThrow();
+		expect(iframe.removed).toEqual([true]);
+	});
+
 	/**
 	 * R8 阻断项 #3：mount 失败后**不可复用**——后续 `open()` 必须抛
 	 * `EmbedInstanceBrokenError`，**禁止**降级为匿名 init（即不能再

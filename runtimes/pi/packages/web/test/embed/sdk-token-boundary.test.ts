@@ -362,19 +362,17 @@ describe("Launch Token boundary (M1 R7)", () => {
 			container: container() as unknown as HTMLElement,
 			env,
 		});
-		// init 抛错——但 SDK 没有 try/catch 在 postInit 外部（postInit 是同步），
-		// 错误会冒泡到 open() 调用方。**关键**：即便如此，
-		// pendingLaunchToken 已经被 snapshot 后立即清空（postInit 的语义）。
-		expect(() => inst.open()).toThrow(/postMessage boom/);
+		// init 抛错会把实例置为 broken 并保留原始 cause；token 同时清空。
+		expect(() => inst.open()).toThrow(/mount failed during listener registration or init/);
 		// init 已被 push（push 在 throw 之前），但 payload.launchToken
 		// 不在后续任何出站消息里出现。
 		expect(iframe.posted).toHaveLength(1);
 		expect(iframe.posted[0]?.type).toBe("init");
 		expect((iframe.posted[0]?.payload as Record<string, unknown>).launchToken).toBe(SENTINEL);
 
-		// 后续 logout / requestResize 不应让 SENTINEL 出现。
-		expect(() => inst.logout()).not.toThrow();
-		expect(() => inst.requestResize()).not.toThrow();
+		// broken 实例禁止后续出站，不能匿名降级。
+		expect(() => inst.logout()).toThrow(/broken instance/);
+		expect(() => inst.requestResize()).toThrow(/broken instance/);
 		const allNonInit = iframe.posted.filter((m) => m.type !== "init");
 		for (const m of allNonInit) {
 			expect(JSON.stringify(m)).not.toContain(SENTINEL);
