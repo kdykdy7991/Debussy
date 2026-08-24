@@ -17,7 +17,7 @@
 3. `ContextUsageSnapshot.measurement` 在哪些模型/场景标 `estimated`？旧会话（采集功能上线之前）服务端是否直接给"未采集"标志位？前端文案要写"该会话创建时尚未采集"，还是由前端推断 `createdAt`？
 4. `breakdown` 七项是否包含尚未识别的项（如 `userProvidedFiles` 与 `attachments` 合并/分开）？不可归类内容的扩展字段是否在白名单中？
 5. 会话分页聚合的口径与边界：当前实现是否在服务端基于完整数据集聚合？分页参数（`pageSize` 上限、游标格式）、`aggregates` 字段（`totalTokens`、`avgTotalLatencyMs`、`sampleSize` 等）由谁、何时给出？
-6. `TurnMetrics` 的成功/失败/取消状态枚举与事件名（包括 `turn/succeeded`、`turn/failed` 等）由谁维护？前端消费时是否使用统一的事件枚举？
+6. `TurnMetrics` 的成功/失败/取消状态枚举与事件名（包括 `turn/succeeded`、`turn/failed` 等）由谁维护？前端消费时是否使用统一的事件枚举？注：第三轮反馈称 `turn/failed` 已加入权威事件枚举；该条 R2 跟踪表已同步。
 
 ## 5.2 模型生成参数
 
@@ -43,7 +43,7 @@
 
 ## 5.5 Embed SDK / 通用
 
-20. SDK 包名/导出名是否冻结为 `@earendil-works/embed-sdk` + `createEmbed` / `EmbedInstance`？若需 v2 postMessage，是否要双轨支持 v1？
+20. SDK 包名/导出名是否冻结为 `@earendil-works/pi-embed-sdk` + `createEmbed` / `EmbedInstance`？若需 v2 postMessage，是否要双轨支持 v1？
 21. 控制台"接入方式"示例代码片段是否需要由 SDK 文档示例与 `app-detail.tsx` 双向对齐？展示哪些事件默认监听？
 22. Admin / Embed 错误信封是否统一为 `{ code, message, requestId }`？Metrics / Context / Skill / MCP 是否沿用？
 23. Admin/Embed 各模块静态检查：`backend typecheck / test` 与前端 `npm run check` 顺序在 [README §8](./README.md) 已列，是否需要把 protocol typecheck 单独提早跑（DTO 变化最频繁）？注：protocol package 没有 `typecheck` script，类型检查需用两个 tsconfig（`tsconfig.build.json` / `tsconfig.test.json`）的 `tsgo --noEmit`，不得写入不存在的 `npm run typecheck --workspace=@earendil-works/pi-protocol`。
@@ -59,7 +59,7 @@
 | # | 缺口 | 责任人 |
 |---|---|---|
 | R1 | 会话分页聚合（当前按当前页错误聚合） | 后端 |
-| R2 | `turn/failed` 等事件不在权威事件枚举 | 后端 |
+| R2 | `turn/failed` 等事件不在权威事件枚举 | 后端（已加入权威枚举） |
 | R3 | 单调时钟采集点与持久字段 | 后端 + 总架构师 |
 | R4 | Skill / MCP / `reasoningEffort` 持久化 DTO 与错误码 | 后端 + 总架构师 |
 | R5 | Reasoning Provider 映射 + 互斥约束 | 后端 + 总架构师 |
