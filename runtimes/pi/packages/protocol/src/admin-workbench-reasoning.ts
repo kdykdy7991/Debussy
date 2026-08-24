@@ -15,7 +15,15 @@
  * - **Embed 属主**：`PUT /api/embed/v1/conversations/:conversationId/reasoning`
  *   （会话属主 Embed principal 调整自己的会话）。
  *
- * 两者请求体都是 {@link ReasoningUpdateRequest}，返回 {@link ConversationReasoningState}。
+ * 两者请求体都是 {@link ReasoningUpdateRequest}，返回 {@link ConversationReasoningState}
+ * （PUT 幂等；请求体即 `ReasoningUpdateRequest`）。
+ *
+ * ## 授权与 404/403 语义
+ *
+ * - **跨租户 / 跨属主**（会话不属于调用方可访问的范围）→ 统一 **404
+ *   `CONVERSATION_NOT_FOUND`**，不暴露会话归属/存在性；
+ * - **403 `REASONING_NOT_CONFIGURABLE`** 仅用于：会话属主（或具访问权的调用方）是
+ *   合法主体，但**策略禁止其调整**（如租户/企业策略对该会话关闭了 reasoning 调整）。
  *
  * ## 事实源与审计分离（第 4 轮裁定）
  *
@@ -63,7 +71,7 @@ export interface ConversationReasoningState {
 }
 
 /**
- * 更新请求体（两个入口共用）。`PATCH` 语义：设置单个 `effort`；请求体即本对象。
+ * 更新请求体（两个入口共用）。PUT 语义（幂等）：设置单个 `effort`；请求体即本对象。
  */
 export interface ReasoningUpdateRequest {
 	/**
@@ -93,7 +101,7 @@ export interface ReasoningEffortAuditRecord {
 export const AGENT_V2_REASONING_ERROR_CODES = [
 	// 档位非法（不在模型能力目录声明档位内）。
 	"REASONING_INVALID_EFFORT",
-	// 调用方无权调整该会话的思考强度（从任一平面均拒绝）。
+	// 合法属主/具访问权，但策略禁止其调整该会话思考强度。
 	"REASONING_NOT_CONFIGURABLE",
 ] as const;
 export type AgentV2ReasoningErrorCode = (typeof AGENT_V2_REASONING_ERROR_CODES)[number];
@@ -112,9 +120,12 @@ export type AgentV2ReasoningAuditAction = typeof AGENT_V2_REASONING_AUDIT_ACTION
 
 /**
  * 更新边界（候选）：
+ * - 跨租户 / 跨属主 → 统一 **404 `CONVERSATION_NOT_FOUND`**（不暴露归属）；
+ * - **403 `REASONING_NOT_CONFIGURABLE`** 仅表示合法属主但策略禁止调整；
  * - 控制面管理员：Admin Token 授权（debug/管理员调试会话）；
- * - Embed 属主：会话属主调整自己的会话；跨属主/无权限 → 403 `REASONING_NOT_CONFIGURABLE`；
+ * - Embed 属主：会话属主调整自己的会话；策略禁止 → 403 `REASONING_NOT_CONFIGURABLE`；
  * - 档位须在模型能力目录声明支持档位内（`REASONING_INVALID_EFFORT` 422）；
- * - 提交事实源与追加审计在服务层同一事务；审计不参与 turn 回放；
+ * - 写事实源（`conversation_reasoning_state`）与追加审计在同一 **PostgreSQL 事务**；
+ *   审计不参与 turn 回放；
  * - 会话 effort 可写入/恢复/审计，但不得改写 Agent Revision 或其它采样参数。
  */

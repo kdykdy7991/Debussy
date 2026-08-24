@@ -109,7 +109,9 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
 
 - [x] 后端自检（protocol tsgo、vitest 354 项、biome 零告警、git diff --check）
 - [x] M0-A Metrics/Context（received）已冻结
-- [ ] 总架构师审查剩余 D8–D9（reasoning / Skill / MCP 契约）
+- [x] 收口条件：统一 PUT 措辞；跨租户/跨属主统一 404（403 仅策略禁止）；迁移草案补
+  reasoning 状态/审计的 tenant/app/owner 作用域与同一 PostgreSQL 事务
+- [ ] 总架构师最终签核（完整 M0 有条件通过后的机械条件已闭合）
 - [ ] 前端基于已冻结 Metrics DTO 建 mock；M1 Runtime/MCP 待 BE-3
 
 ## 变更历史
@@ -121,3 +123,4 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
   transport 不导出 stdio、reasoning 更新/权限/错误码/审计）。
 - 2026-08-24　第四轮收口（D9，M0-A 冻结、reasoning 双入口+事实源/审计分离、
   MCP 禁明文/连接配置待 BE-3）。
+- 2026-08-24　第五轮机械收口（PUT 措辞统一、404/403 语义、reasoning 迁移作用域）。
