@@ -447,13 +447,21 @@ export class ConversationService {
 			});
 			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
 
+			// TASK-032：先计算会话级引用检索（RuntimeSpec 门控），使上下文快照能覆盖
+			// retrieval context。这里只做检索，不落事件；citation/updated 仍在 user/message
+			// 之后落（保持既有事件顺序）。
+			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
+
 			// Agent V2 M1：写上下文快照（turn/start 之后、user/message 之前，符合契约顺序）。
 			// 开关关（默认）不采集；开时用 chars→tokens 估算为 `ContextUsageSnapshot`。
+			// 快照覆盖最终请求上下文：system prompt + 已恢复历史 + 当前用户消息 + retrieval。
 			if (metricsTiming !== undefined) {
+				const conversationMessagesText = [...history.messages.map((m) => m.text), input.text].join("\n");
 				const snapshot = estimateContextSnapshot({
 					contextWindow: spec.contextPolicy.maxContextTokens,
 					systemPromptText: spec.agent.systemPrompt,
-					conversationMessagesText: history.messages.map((m) => m.text).join("\n"),
+					conversationMessagesText,
+					retrievalContextText: retrieval?.context,
 					toolDefinitionsText: spec.capabilities.tools.map((t) => JSON.stringify(t)).join("\n"),
 				});
 				const snapshotAppended = await this.safeAppend(scope, input.conversationId, {
@@ -472,8 +480,6 @@ export class ConversationService {
 			});
 			if (userEvent === undefined) return { ok: false, error: conversationNotFound() };
 
-			// TASK-032：会话级引用检索（RuntimeSpec 门控），注入 retrieval。
-			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
 			if (retrieval !== undefined) {
 				await this.safeAppend(scope, input.conversationId, {
 					eventType: "citation/updated",
@@ -489,8 +495,9 @@ export class ConversationService {
 			}
 
 			// Agent V2 M1：捕获 provider 开始（同步执行器=模型请求开始）与终态时点。
-			// 同步路径无逐块首 Token，firstOutput ≈ terminal（burst），generation=0；
-			// 真实 TTFT 属流式路径（后续 M1 触点，见 agent-v2/turn-metrics.ts 说明）。
+			// 同步执行器不产生“首个可展示文本”的独立时点（无流式增量），故
+			// firstOutput=null → ttft/generation/tps 均为 null，绝不把“整个同步
+			// 请求完成时间”当作真实 TTFT 混入聚合；totalLatencyMs 仍有效值。
 			const providerStartAtMs = metricsTiming === undefined ? undefined : performance.now();
 			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history, retrieval });
 			const completedAtMs = metricsTiming === undefined ? undefined : performance.now();
@@ -499,7 +506,7 @@ export class ConversationService {
 				turnMetrics = buildTurnMetrics({
 					outcome: result.ok ? "success" : "failed",
 					base: metricsTiming,
-					events: { providerStartAtMs, firstOutputAtMs: completedAtMs, completedAtMs },
+					events: { providerStartAtMs, firstOutputAtMs: null, completedAtMs },
 					usage: usageCountsFromProtocolUsage(result.ok ? result.usage : undefined),
 				});
 			}

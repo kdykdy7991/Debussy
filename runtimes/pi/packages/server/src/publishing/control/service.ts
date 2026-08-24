@@ -58,6 +58,7 @@ import {
 	computeConversationMetricsStats,
 	resolveMetricsPage,
 	SESSION_EVENT_TYPES,
+	turnOutcomeFromTerminalEvent,
 } from "@earendil-works/pi-protocol";
 import { importSPKI } from "jose";
 import {
@@ -77,6 +78,7 @@ import type {
 	PublishedAppVersionId,
 	RequestId,
 	TenantId,
+	TurnId,
 } from "../domain/ids.ts";
 import {
 	idPrefix,
@@ -1424,7 +1426,13 @@ export class ControlService {
 		const rows = await this.collectTurnMetrics(input.tenantId, input.conversationId);
 		const stats = computeConversationMetricsStats(rows);
 		const page = rows.filter((r) => r.sequence > resolved.afterSequence).slice(0, resolved.limit);
-		const nextAfterSequence = page.length === 0 ? null : page[page.length - 1]!.sequence;
+		// 契约：只有本页之后仍有轮才返回游标；本页即是最后一页（或空页）时为 null。
+		const lastGlobal = rows[rows.length - 1];
+		const pageLast = page.length === 0 ? undefined : page[page.length - 1];
+		const nextAfterSequence =
+			pageLast === undefined || (lastGlobal !== undefined && pageLast.sequence >= lastGlobal.sequence)
+				? null
+				: pageLast.sequence;
 		return {
 			ok: true,
 			data: {
@@ -1513,16 +1521,29 @@ export class ControlService {
 			const model = payload === undefined ? undefined : payload.model;
 			if (typeof model === "string" && model.length > 0) modelByTurn.set(event.turnId, model);
 		}
-		const rows: ConversationTurnMetric[] = [];
+		// 先按 turnId 统计全部终态事件（含 malformed / outcome 不匹配者），再逐轮判定：
+		// 同轮终态事件数不等于 1 → 重复/冲突终态，整轮排除，绝不因先过滤而漏掉重复。
+		const terminalByTurn = new Map<TurnId, ConversationEventRecord[]>();
 		for (const event of allEvents) {
 			if (event.turnId === null || !isTerminalTurnEvent(event.eventType)) continue;
+			const list = terminalByTurn.get(event.turnId);
+			if (list === undefined) terminalByTurn.set(event.turnId, [event]);
+			else list.push(event);
+		}
+		const rows: ConversationTurnMetric[] = [];
+		for (const [turnId, terminal] of terminalByTurn) {
+			if (terminal.length !== 1) continue;
+			const event = terminal[0]!;
 			const metrics = readStoredTurnMetrics(event.payload);
 			if (metrics === undefined) continue;
+			// 终态事件必须与 metrics.outcome 一致（turn/end→success、turn/failed→failed、
+			// turn/interrupted→cancelled），否则整轮排除。
+			if (metrics.outcome !== turnOutcomeFromTerminalEvent(event.eventType)) continue;
 			rows.push(
 				toConversationTurnMetric({
-					turnId: toPublicId("TurnId", event.turnId) as string,
+					turnId: toPublicId("TurnId", turnId) as string,
 					sequence: event.sequence,
-					modelId: modelByTurn.get(event.turnId) ?? "",
+					modelId: modelByTurn.get(turnId) ?? "",
 					metrics,
 				}),
 			);

@@ -5,21 +5,24 @@
  * （契约允许）。估算基于 `CHARS_PER_TOKEN = 4` 启发式（与 runtime `context-restore`
  * 的 `trimToBudget` 一致），`usedTokens` 恒等于 `breakdown` 各分类之和。
  *
- * 能拿到的分类才估算：systemPrompt / conversationMessages / toolDefinitions 取实际
- * 文本；skillInstructions / toolResults / retrievalContext / attachments 在 M1 无独立
- * 来源，如实写 0（不伪造）。`reservedOutputTokens` 无来源，M1 写 0。
+ * 能拿到的分类才估算：systemPrompt / conversationMessages（含当前用户消息）/
+ * retrievalContext / toolDefinitions 取实际文本估算；skillInstructions / toolResults /
+ * attachments 在 M1 无独立来源，如实写 0（不伪造）。`reservedOutputTokens` 无来源，M1 写 0。
  */
 import type { ContextUsageSnapshot } from "@earendil-works/pi-protocol";
 
 /** 与 runtime/context-restore 一致的字符→token 启发式。 */
 export const CHARS_PER_TOKEN = 4 as const;
 
-/** 输入：写入 `context/snapshot` 时该 turn 可见的上下文（保守估算来源）。 */
+/** 输入：写入 `context/snapshot` 时该 turn 的最终请求上下文（保守估算来源）。 */
 export interface ContextSnapshotEstimateInput {
 	/** 会话级 context window（token），取自 `contextPolicy.maxContextTokens`。 */
 	readonly contextWindow: number;
 	readonly systemPromptText: string;
+	/** 会话历史消息文本 + 当前用户消息（最终请求上下文）。 */
 	readonly conversationMessagesText: string;
+	/** 未提供则按 0 计。 */
+	readonly retrievalContextText?: string;
 	/** 未提供则按 0 计。 */
 	readonly toolDefinitionsText?: string;
 }
@@ -32,6 +35,7 @@ function estimateTokens(text: string): number {
 export function estimateContextSnapshot(input: ContextSnapshotEstimateInput): ContextUsageSnapshot {
 	const systemPrompt = estimateTokens(input.systemPromptText);
 	const conversationMessages = estimateTokens(input.conversationMessagesText);
+	const retrievalContext = estimateTokens(input.retrievalContextText ?? "");
 	const toolDefinitions = estimateTokens(input.toolDefinitionsText ?? "");
 	const breakdown = {
 		systemPrompt,
@@ -39,10 +43,10 @@ export function estimateContextSnapshot(input: ContextSnapshotEstimateInput): Co
 		toolDefinitions,
 		conversationMessages,
 		toolResults: 0,
-		retrievalContext: 0,
+		retrievalContext,
 		attachments: 0,
 	};
-	const usedTokens = systemPrompt + conversationMessages + toolDefinitions;
+	const usedTokens = systemPrompt + conversationMessages + retrievalContext + toolDefinitions;
 	const reservedOutputTokens = 0;
 	const contextWindow = Math.max(1, input.contextWindow);
 	const remainingTokens = Math.max(0, contextWindow - usedTokens - reservedOutputTokens);
