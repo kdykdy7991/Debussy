@@ -57,9 +57,13 @@ curl -sS \
 旧会话/无快照（HTTP 200，`available=false`、`latest=null`、`atSequence=null`）：
 分项之和必须等于 `usedTokens`（21430 = 3200 + 16980 + 1250）。
 
-## 3. 空值语义提示
+## 3. 空值、空态与错误分界
 
 - `latest.breakdown` 缺省分项为 0，但“无该来源”与“值为 0”在调用端语义一致。
 - `TurnMetrics` 中 `ttftMs/generationMs/outputTokensPerSecond` 无值必须为 `null`
-  而非 0；`totalLatencyMs` 恒有值。
-- 完整错误码表见 `m0-contract-2026-08-24.md` §3。
+  而非 0；`totalLatencyMs` 恒有值。failed/cancelled 回合以前三者均为 `null` 表达。
+- 空态 ≠ 错误：会话存在但无指标/快照 → HTTP 200 `available=false`；子系统不可用 →
+  HTTP 503 `METRICS_UNAVAILABLE`/`CONTEXT_SNAPSHOT_UNAVAILABLE`；会话不存在/越权 →
+  HTTP 404 `CONVERSATION_NOT_FOUND`。
+- `nextAfterSequence` 为 metrics 列表分页游标；为 `null` 表示没有下一页。
+- 完整错误码表见 `m0-contract-2026-08-24.md` §3，`turn/end` payload 扩展见同一文档 §4。

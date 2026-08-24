@@ -46,6 +46,24 @@ metrics 采集留到 M1，避免契约未完全冻结前触碰运行时。
 沿用 `migrate.ts`（`_migrations` + advisory lock，无 down 执行器）。jsonb 扩字段免
 DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列的 down migration。
 
+### D6　Metrics 空值/分页/终态/单调时钟语义（首轮审查修订）
+
+- `TurnMetrics` 增加 `outcome: "success"|"failed"|"cancelled"`；仅 success 的派生时序
+  有值，failed/cancelled 一律 `null`，不得写 0。
+- 时间测量使用**单调时钟**（`TurnMonotonicDelays`），墙上时间戳（`TurnWallClockStamps`）
+  仅用于展示/追溯，二者显式分离，杜绝 NTP 跳变污染推导。
+- `turn/end` payload 扩 `metrics`（保留 `ok`/`usage`，用量聚合继续读 `payload->'usage'`）。
+- 逐轮列表带 `nextAfterSequence` 分页游标。
+- 空态（200 `available=false`）与子系统不可用（503 `*_UNAVAILABLE`）语义分界明确。
+- 终态事件边界冻结：`turn/end`→success、`turn/interrupted`→cancelled、legacy 只读映射
+  （`turnOutcomeFromTerminalEvent`）。
+
+## 待办（第 8 项阻断）
+
+- **Skill / MCP / reasoning 持久化其余 M0 契约**：尚未提交。MCP 首期 Transport 需按
+  BE-3 在 ADR 明确后才能避免臆造；reasoning 持久化会话 thinking-level 在 M1 接线。
+  该项列入下一批契约，不含在 Metrics/Context 候选内。
+
 ## 批准状态
 
 - [ ] 后端自检

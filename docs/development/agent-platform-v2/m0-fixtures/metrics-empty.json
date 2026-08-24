@@ -9,5 +9,6 @@
     "totalLatencyMs": { "mean": null, "count": 0, "p50": null, "p95": null },
     "outputTokensPerSecond": { "mean": null, "count": 0, "p50": null, "p95": null }
   },
-  "items": []
+  "items": [],
+  "nextAfterSequence": null
 }
