@@ -91,9 +91,11 @@ curl -sS \
 ```json
 { "conversationId": "conv_8f3a2e", "effort": "high", "updatedAt": "2026-08-24T09:35:00.000Z" }
 ```
-`effort: null` 清除会话覆盖，回到 Agent Revision 默认。每次更新写
-`conversation.reasoning-updated` 审计事件（before/after + 生效快照）。档位不在模型
-能力目录 → 422 `REASONING_INVALID_EFFORT`；无权调整 → 403 `REASONING_NOT_CONFIGURABLE`。
+`effort: null` 清除会话覆盖，回到 Agent Revision 默认。PUT 幂等，两入口请求体一致。
+每次更新写 `conversation.reasoning-updated` 审计事件（before/after + 生效快照；
+独立审计日志，非会话事件）。档位不在模型能力目录 → 422 `REASONING_INVALID_EFFORT`；
+跨租户/跨属主 → 404 `CONVERSATION_NOT_FOUND`；合法属主但策略禁止调整 →
+403 `REASONING_NOT_CONFIGURABLE`。
 
 ### 5b. reasoning 双入口（第四轮修订）
 
