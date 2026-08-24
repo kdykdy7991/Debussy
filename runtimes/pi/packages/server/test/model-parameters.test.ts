@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
 	modelParameterCapabilities,
 	resolveModelStreamOptions,
+	resolveReasoningEffort,
 	validateModelParameters,
 } from "../src/model-parameters.ts";
 
@@ -85,5 +86,34 @@ describe("model parameters", () => {
 		expect(
 			resolveModelStreamOptions({ reasoning: { enabled: true, effort: "high" } }, "generic-reasoner").thinkingLevel,
 		).toBe("high");
+	});
+
+	test("rejects reasoning parameters for a model that does not support reasoning", () => {
+		const plain = modelParameterCapabilities({ id: "gpt-4", api: "openai-completions", reasoning: false });
+		expect(plain.reasoning.supported).toBe(false);
+		expect(plain.reasoning.efforts).toEqual([]);
+		expect(validateModelParameters({ reasoning: { enabled: true } }, plain)).toContain(
+			"parameters.reasoning is not supported by this model",
+		);
+		expect(validateModelParameters({ reasoning: { effort: "high" } }, plain)).toContain(
+			"parameters.reasoning is not supported by this model",
+		);
+	});
+
+	test("rejects unknown top-level and nested reasoning fields", () => {
+		const unknownTop = { reasoning: { effort: "high" }, temperature: 0.9 } as unknown as AgentModelParameters;
+		expect(validateModelParameters(unknownTop, qwen)).toContain("parameters.temperature is not supported");
+		const unknownNested = { reasoning: { effort: "high", budget_tokens: 100 } } as unknown as AgentModelParameters;
+		expect(validateModelParameters(unknownNested, qwen)).toContain(
+			"parameters.reasoning.budget_tokens is not supported",
+		);
+	});
+
+	test("resolveReasoningEffort maps stable tiers to concrete model levels", () => {
+		expect(resolveReasoningEffort("high", "Qwen3.8-Agent")).toBe("xhigh");
+		expect(resolveReasoningEffort("minimal", "Qwen3.8-Agent")).toBe("low");
+		expect(resolveReasoningEffort("max", "Qwen3.8-Agent")).toBe("xhigh");
+		expect(resolveReasoningEffort("high", "generic-reasoner")).toBe("high");
+		expect(resolveReasoningEffort("medium", "generic-reasoner")).toBe("medium");
 	});
 });

@@ -391,4 +391,97 @@ describe.skipIf(!pgUp)("control service", () => {
 			repos.audit.insert = savedInsert;
 		}
 	});
+
+	test("saveAgentRevision rejects model-unsupported reasoning parameters (INVALID_MODEL_PARAMETERS)", async () => {
+		const imported = await service.importAgent({ tenantId: tenantA }, source(baseConfig()));
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const result = await service.saveAgentRevision({
+			tenantId: tenantA,
+			agentDefinitionId: imported.data.agentDefinitionId,
+			request: {
+				modelId: "pi-chat", // 非 reasoning 模型
+				systemPrompt: "You are a helpful assistant.",
+				parameters: { reasoning: { effort: "high" } },
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: {
+					liveSpeech: false,
+					avatar: false,
+					attachments: false,
+					citations: false,
+					realtime: false,
+					webSearch: false,
+				},
+				changeSummary: "invalid reasoning",
+			},
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.code).toBe("INVALID_MODEL_PARAMETERS");
+		expect(result.error.httpStatus).toBe(400);
+	});
+
+	test("saveAgentRevision rejects unknown parameter fields and sampling overrides", async () => {
+		const imported = await service.importAgent({ tenantId: tenantA }, source(baseConfig()));
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const bad = {
+			reasoning: { effort: "high" },
+			sampling: { topP: 0.9 },
+		} as unknown as import("@earendil-works/pi-protocol").AgentModelParameters;
+		const result = await service.saveAgentRevision({
+			tenantId: tenantA,
+			agentDefinitionId: imported.data.agentDefinitionId,
+			request: {
+				modelId: "Qwen3.8-Agent", // 支持 reasoning，但 sampling 覆盖仍被拒
+				systemPrompt: "You are a helpful assistant.",
+				parameters: bad,
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: {
+					liveSpeech: false,
+					avatar: false,
+					attachments: false,
+					citations: false,
+					realtime: false,
+					webSearch: false,
+				},
+				changeSummary: "unknown fields",
+			},
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.code).toBe("INVALID_MODEL_PARAMETERS");
+		expect(result.error.httpStatus).toBe(400);
+	});
+
+	test("saveAgentRevision persists a valid reasoning configuration for a reasoning model", async () => {
+		const imported = await service.importAgent({ tenantId: tenantA }, source(baseConfig()));
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const result = await service.saveAgentRevision({
+			tenantId: tenantA,
+			agentDefinitionId: imported.data.agentDefinitionId,
+			request: {
+				modelId: "Qwen3.8-Agent",
+				systemPrompt: "You are a helpful assistant.",
+				parameters: { reasoning: { enabled: true, effort: "high" } },
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: {
+					liveSpeech: false,
+					avatar: false,
+					attachments: false,
+					citations: false,
+					realtime: false,
+					webSearch: false,
+				},
+				changeSummary: "valid reasoning",
+			},
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.data.revision).toBeGreaterThan(imported.data.revision);
+	});
 });
