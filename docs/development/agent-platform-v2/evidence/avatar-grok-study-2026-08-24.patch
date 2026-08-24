@@ -51,5 +51,5 @@ index 617b2fd..5b41751 100644
 -    dragging: [3, 15, 0], "powering-down": [13, 22],
 +    dragging: [15, 0], "powering-down": [13, 22],
    };
- 
+
    const EYE_HOLD_MS = {

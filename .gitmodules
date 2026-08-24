@@ -1,3 +1,6 @@
 [submodule "runtimes/pi/design/references/grok-icon-study"]
 	path = runtimes/pi/design/references/grok-icon-study
 	url = https://github.com/blessonism/grok-icon-study.git
+[submodule "packages/avatar/grok-icon-study"]
+	path = packages/avatar/grok-icon-study
+	url = https://github.com/blessonism/grok-icon-study.git
