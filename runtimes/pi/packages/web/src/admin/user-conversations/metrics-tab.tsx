@@ -1,9 +1,9 @@
 /**
  * WB-006/M1: 会话详情"性能"（metrics）tab。
  *
- * 当前阶段：通过 fixtures 适配层取占位 DTO；真实接口接通后
- * 改为调用 `ConversationsApi.getMetrics` 并填充同一 `DataState`。
- * 因此组件只对 `DataState` 判别渲染，不与 fixture 实现耦合。
+ * 调用 `ConversationsApi.getMetrics` 真实接口；分页通过 `afterSequence` 实现；
+ * 重试复用 `api.getMetrics` + `useEffect` 触发。错误码直接来自协议
+ * `admin-workbench-metrics.ts`，按 HTTP 状态映射到 `DataState.error`。
  *
  * 渲染口径：
  * - `loaded` 且 `stats.available=false` → 200 但空态（合法分支，不是错误）；
@@ -11,14 +11,25 @@
  * - `error` → `EmptyState` 错误壳（title/description 由 `describeError` 给出）。
  */
 import type { ConversationMetricsResponse, ConversationTurnMetric } from "@earendil-works/pi-protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConversationsApi } from "../api/conversations-api.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
 import { type MetricItem, MetricsRow } from "../components/MetricsRow.tsx";
-import { type DataState, describeError, loadFixture } from "../fixtures/index.ts";
+import { createStaleResponseGuard, type DataState, describeError, toDataStateError } from "../data-state.ts";
 
 interface MetricsTabProps {
-	readonly state: DataState<ConversationMetricsResponse>;
-	readonly onRetry: () => void;
 	readonly conversationId: string;
+	readonly api: ConversationsApi;
+	/**
+	 * 父组件递增的游标：每次 `onNextPage(sequence)` 后下次 effect 触发新请求。
+	 * 第一次进入 tab 时传 `null` → 触发首页请求。
+	 */
+	readonly afterSequence: number | null;
+	/**
+	 * 子组件通过此函数告知父组件"下一页游标"，由父组件写入 state。
+	 * 必须保证幂等：父组件不可在 `onNextPage` 内同步写入（避免 effect 重入）。
+	 */
+	readonly onNextPage: (sequence: number) => void;
 }
 
 /**
@@ -62,7 +73,56 @@ function buildMetricItems(stats: ConversationMetricsResponse["stats"]): readonly
 	];
 }
 
-export function MetricsTab({ state, onRetry, conversationId }: MetricsTabProps): React.ReactElement {
+/**
+ * `ConversationsApiError` 已经按协议 `AGENT_V2_METRICS_ERRORS` 携带 `retryable`；
+ * 未知 code 在 `toDataStateError` 内统一归一化为 `UNKNOWN_ERROR`。
+ */
+function mapErrorToDataState(err: unknown): Extract<DataState<ConversationMetricsResponse>, { kind: "error" }> {
+	return toDataStateError(err);
+}
+
+export function MetricsTab({ conversationId, api, afterSequence, onNextPage }: MetricsTabProps): React.ReactElement {
+	const [state, setState] = useState<DataState<ConversationMetricsResponse>>({ kind: "idle" });
+
+	// 防止过期响应覆盖最新请求结果（见 `data-state.ts` StaleResponseGuard）。
+	const guardRef = useRef<ReturnType<typeof createStaleResponseGuard> | null>(null);
+	if (guardRef.current === null) guardRef.current = createStaleResponseGuard();
+	const guard = guardRef.current;
+
+	const load = useCallback(
+		(after: number | null) => {
+			const ticket = guard.begin();
+
+			setState({ kind: "loading" });
+			const arg =
+				after !== null && after > 0
+					? { conversationId, afterSequence: after, limit: 50 }
+					: { conversationId, limit: 50 };
+			api.getMetrics(conversationId, arg, ticket.signal)
+				.then((data) => {
+					ticket.commit(() => setState({ kind: "loaded", data }));
+				})
+				.catch((err: unknown) => {
+					// AbortError 不写 state——上一请求已被显式取消，不是错误。
+					if (err instanceof DOMException && err.name === "AbortError") return;
+					ticket.commit(() => setState(mapErrorToDataState(err)));
+				});
+		},
+		[api, conversationId, guard],
+	);
+
+	// 切到本 tab / `afterSequence` 变化 → 拉一次。
+	// 父组件从 `null` → 首次进入；`null → 数字` → 翻页；`数字 → null` → 重置回首页。
+	useEffect(() => {
+		load(afterSequence);
+		// 卸载 / 依赖变化 → abort 当前未完成请求。
+		return () => {
+			guard.cancel();
+		};
+	}, [load, afterSequence, guard]);
+
+	const onRetry = () => load(afterSequence === null ? null : afterSequence > 0 ? afterSequence : null);
+
 	switch (state.kind) {
 		case "idle":
 			return <EmptyState kind="empty" title="尚未开始加载" description="切换到此标签后会自动拉取指标。" compact />;
@@ -98,7 +158,7 @@ export function MetricsTab({ state, onRetry, conversationId }: MetricsTabProps):
 				/>
 			);
 		case "loaded":
-			return <LoadedMetrics data={state.data} onRetry={onRetry} conversationId={conversationId} />;
+			return <LoadedMetrics data={state.data} conversationId={conversationId} onNextPage={onNextPage} />;
 		case "error":
 			return <ErrorShell state={state} onRetry={onRetry} />;
 	}
@@ -106,12 +166,12 @@ export function MetricsTab({ state, onRetry, conversationId }: MetricsTabProps):
 
 function LoadedMetrics({
 	data,
-	onRetry,
 	conversationId,
+	onNextPage,
 }: {
 	readonly data: ConversationMetricsResponse;
-	readonly onRetry: () => void;
 	readonly conversationId: string;
+	readonly onNextPage: (sequence: number) => void;
 }): React.ReactElement {
 	if (!data.stats.available) {
 		return (
@@ -123,6 +183,9 @@ function LoadedMetrics({
 			/>
 		);
 	}
+	const handleNextPage = () => {
+		if (data.nextAfterSequence !== null) onNextPage(data.nextAfterSequence);
+	};
 	return (
 		<div className="card">
 			<p className="conversation-meta">
@@ -130,7 +193,14 @@ function LoadedMetrics({
 			</p>
 			<MetricsRow items={buildMetricItems(data.stats)} />
 			<MetricsTable items={data.items} />
-			<Pagination data={data} onRetry={onRetry} />
+			{data.nextAfterSequence !== null && (
+				<div className="metrics-pagination">
+					<p>本页最末序号 {data.nextAfterSequence}（下一游标）。</p>
+					<button type="button" onClick={handleNextPage}>
+						加载下一页
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -172,24 +242,6 @@ function MetricsTable({ items }: { readonly items: readonly ConversationTurnMetr
 	);
 }
 
-function Pagination({
-	data,
-	onRetry,
-}: {
-	readonly data: ConversationMetricsResponse;
-	readonly onRetry: () => void;
-}): React.ReactElement | null {
-	if (data.nextAfterSequence === null) return null;
-	return (
-		<div className="metrics-pagination">
-			<p>本页最末序号 {data.nextAfterSequence}（下一游标）。</p>
-			<button type="button" onClick={onRetry}>
-				加载下一页（M1 接线后启用）
-			</button>
-		</div>
-	);
-}
-
 function ErrorShell({
 	state,
 	onRetry,
@@ -211,42 +263,4 @@ function ErrorShell({
 			compact
 		/>
 	);
-}
-
-/**
- * 数据入口：组件通过此入口获取 `DataState<ConversationMetricsResponse>`。
- *
- * 当前阶段按 `scenario` 路由到不同 fixture 或错误状态；真实接口接通后改为：
- * `useEffect` 触发 `api.getMetrics`，按 HTTP 状态码映射到 `DataState` 的
- * `loading / loaded / empty / error` 四态。该函数的签名（`DataState<T>`）保持不变，
- * 调用方零迁移。
- *
- * `unavailable` / `invalid` 是错误路径，直接构造 `error` 状态；fixture 表保留
- * 这些条目供单元测试与未来错误注入场景使用，不在此函数内重复。
- *
- * 注意：此函数不带 `use*` 前缀——它本身不调用任何 React hooks；按同步函数使用。
- */
-export function getMetricsTabData(
-	scenario: "ok" | "empty" | "unavailable" | "invalid",
-): DataState<ConversationMetricsResponse> {
-	switch (scenario) {
-		case "ok":
-			return loadFixture<ConversationMetricsResponse>("conversation/metrics/loaded-with-sample");
-		case "empty":
-			return loadFixture<ConversationMetricsResponse>("conversation/metrics/loaded-empty");
-		case "unavailable":
-			return {
-				kind: "error",
-				code: "METRICS_UNAVAILABLE",
-				message: "指标服务暂不可用",
-				retryable: true,
-			};
-		case "invalid":
-			return {
-				kind: "error",
-				code: "INVALID_METRICS_FILTER",
-				message: "分页参数非法",
-				retryable: false,
-			};
-	}
 }

@@ -1,8 +1,8 @@
 /**
  * WB-006/M1: 会话详情"上下文"（context）tab。
  *
- * 当前阶段：通过 fixtures 适配层取占位 DTO；真实接口接通后
- * 改为调用 `ConversationsApi.getContext` 并填充同一 `DataState`。
+ * 调用 `ConversationsApi.getContext` 真实接口；切换 tab / 重试都触发新请求。
+ * 错误码直接来自协议 `admin-workbench-metrics.ts` 的错误表，按 HTTP 状态映射。
  *
  * 渲染口径：
  * - `loaded` 且 `available=false` → 200 但空态（合法分支：旧会话/未生成快照）；
@@ -14,16 +14,64 @@ import type {
 	ContextUsageSnapshot,
 	ConversationContextResponse,
 } from "@earendil-works/pi-protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConversationsApi } from "../api/conversations-api.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
-import { type DataState, describeError, loadFixture } from "../fixtures/index.ts";
+import { createStaleResponseGuard, type DataState, describeError, toDataStateError } from "../data-state.ts";
 
 interface ContextTabProps {
-	readonly state: DataState<ConversationContextResponse>;
-	readonly onRetry: () => void;
 	readonly conversationId: string;
+	readonly api: ConversationsApi;
 }
 
-export function ContextTab({ state, onRetry, conversationId }: ContextTabProps): React.ReactElement {
+type ErrorDataState = Extract<DataState<ConversationContextResponse>, { kind: "error" }>;
+
+function mapErrorToDataState(err: unknown): ErrorDataState {
+	return toDataStateError(err);
+}
+
+/**
+ * 把 `ContextUsageSnapshot.usagePercent` 渲染成 UI 副本。
+ * 协议字段已是百分比标量（如 3.75 表示 3.75%），渲染时只 `toFixed(2)` 加 `%`——
+ * **不要**再乘以 100（之前 `(v * 100)` 会把 3.75 渲染成 375%）。
+ *
+ * 导出本函数使单测可以共享组件的渲染逻辑（避免复制实现导致回归）。
+ */
+export function formatUsagePercent(snapshot: ContextUsageSnapshot): string {
+	return `${snapshot.usagePercent.toFixed(2)}%`;
+}
+
+export function ContextTab({ conversationId, api }: ContextTabProps): React.ReactElement {
+	const [state, setState] = useState<DataState<ConversationContextResponse>>({ kind: "idle" });
+
+	// 防止过期响应覆盖最新请求结果（见 `data-state.ts` StaleResponseGuard）。
+	const guardRef = useRef<ReturnType<typeof createStaleResponseGuard> | null>(null);
+	if (guardRef.current === null) guardRef.current = createStaleResponseGuard();
+	const guard = guardRef.current;
+
+	const load = useCallback(() => {
+		const ticket = guard.begin();
+
+		setState({ kind: "loading" });
+		api.getContext(conversationId, ticket.signal)
+			.then((data) => {
+				ticket.commit(() => setState({ kind: "loaded", data }));
+			})
+			.catch((err: unknown) => {
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				ticket.commit(() => setState(mapErrorToDataState(err)));
+			});
+	}, [api, conversationId, guard]);
+
+	useEffect(() => {
+		load();
+		return () => {
+			guard.cancel();
+		};
+	}, [load, guard]);
+
+	const onRetry = () => load();
+
 	switch (state.kind) {
 		case "idle":
 			return (
@@ -97,20 +145,19 @@ function LoadedContext({
 			</p>
 			<ContextSnapshotCard snapshot={data.latest} />
 			<button type="button" onClick={onRetry}>
-				刷新（M1 接线后启用）
+				刷新
 			</button>
 		</div>
 	);
 }
 
 function ContextSnapshotCard({ snapshot }: { readonly snapshot: ContextUsageSnapshot }): React.ReactElement {
-	const usagePercent = `${(snapshot.usagePercent * 100).toFixed(2)}%`;
 	return (
 		<div className="context-snapshot-card">
 			<p>
 				<strong>{snapshot.usedTokens.toLocaleString()}</strong> / {snapshot.contextWindow.toLocaleString()}{" "}
-				tokens（使用率 {usagePercent}，剩余 {snapshot.remainingTokens.toLocaleString()}，预留输出{" "}
-				{snapshot.reservedOutputTokens.toLocaleString()}）
+				tokens（使用率 {formatUsagePercent(snapshot)}，剩余 {snapshot.remainingTokens.toLocaleString()}
+				，预留输出 {snapshot.reservedOutputTokens.toLocaleString()}）
 			</p>
 			<BreakdownTable breakdown={snapshot.breakdown} />
 		</div>
@@ -151,7 +198,7 @@ function ErrorShell({
 	state,
 	onRetry,
 }: {
-	readonly state: Extract<DataState<ConversationContextResponse>, { kind: "error" }>;
+	readonly state: ErrorDataState;
 	readonly onRetry: () => void;
 }): React.ReactElement {
 	const { title, description } = describeError(state);
@@ -168,36 +215,4 @@ function ErrorShell({
 			compact
 		/>
 	);
-}
-
-/**
- * 数据入口：组件通过此入口获取 `DataState<ConversationContextResponse>`。
- *
- * 当前阶段按 `scenario` 路由到不同 fixture 或错误状态；真实接口接通后改为
- * `useEffect` + `api.getContext`，按 HTTP 状态码映射到 `DataState`。
- * 该函数签名（`DataState<T>`）保持不变，调用方零迁移。
- *
- * `unavailable` 是错误路径，直接构造 `error` 状态；fixture 表保留该条目供单元测试
- * 使用，不在此函数内重复。
- *
- * 注意：此函数不带 `use*` 前缀——它本身不调用任何 React hooks；按同步函数使用。
- */
-export function getContextTabData(
-	scenario: "ok" | "no-snapshot" | "legacy" | "unavailable",
-): DataState<ConversationContextResponse> {
-	switch (scenario) {
-		case "ok":
-			return loadFixture<ConversationContextResponse>("conversation/context/loaded-with-snapshot");
-		case "no-snapshot":
-			return loadFixture<ConversationContextResponse>("conversation/context/loaded-no-snapshot");
-		case "legacy":
-			return loadFixture<ConversationContextResponse>("conversation/context/legacy-no-snapshot");
-		case "unavailable":
-			return {
-				kind: "error",
-				code: "CONTEXT_SNAPSHOT_UNAVAILABLE",
-				message: "上下文快照暂不可用",
-				retryable: true,
-			};
-	}
 }

@@ -9,27 +9,23 @@
  *   （token 数、TTFT、生成耗时等）。真实数字由后端采集口径给定。
  * - 通过 `loadFixture(name)` 进入组件；函数按 `name` 选择 fixture
  *   并返回只读快照；调用方按 `kind` 字段决定如何渲染。
+ * - **生产 bundle 不可用**：`loadFixture` 必须由调用方显式置
+ *   `globalThis.__PI_WEB_FIXTURES_ALLOWED__ = true` 才放行；生产代码
+ *   永远不会置这个标志，因此走真实 `ConversationsApi.getMetrics` /
+ *   `api.getContext` 路径。test 代码（vitest）按需在 `beforeEach` 打开标志
+ *   验证 fixture 形状。
  *
  * 不在本目录范围：发请求、改 AdminAuth 状态、改 React 路由。
  */
 import type {
-	ContextUsageSnapshot,
 	ConversationContextResponse,
 	ConversationMetricsResponse,
 	ConversationMetricsStats,
 } from "@earendil-works/pi-protocol";
+import type { DataState } from "../data-state.ts";
 
-/**
- * 通用数据状态：与 `conversation-detail.tsx` 里的 `DetailState` 同型，
- * 供未来提取为统一 status shell 时直接复用。
- */
-export type DataState<T> =
-	| { readonly kind: "idle" }
-	| { readonly kind: "loading" }
-	| { readonly kind: "empty"; readonly reason: "no_data_yet" | "legacy_session" }
-	| { readonly kind: "partial"; readonly data: T; readonly missing: readonly string[] }
-	| { readonly kind: "loaded"; readonly data: T }
-	| { readonly kind: "error"; readonly code: string; readonly message: string; readonly retryable: boolean };
+// 复用生产模块的 `DataState<T>`，避免两处定义漂移。fixture 适配层仅消费、
+// 不修改生产模块。
 
 /** 已知 fixture 名称（穷举；新增需在此声明）。 */
 export type FixtureName =
@@ -82,30 +78,17 @@ function noopMetricsResponse(
 	};
 }
 
-/** 完整结构占位（不出数字）：measurement 标 `estimated`，breakdown 各项为 0 视为"未拆分"。 */
-function placeholderContextSnapshot(): ContextUsageSnapshot {
-	return {
-		usedTokens: 0,
-		contextWindow: 0,
-		remainingTokens: 0,
-		reservedOutputTokens: 0,
-		usagePercent: 0,
-		measurement: "estimated",
-		breakdown: {
-			systemPrompt: 0,
-			skillInstructions: 0,
-			toolDefinitions: 0,
-			conversationMessages: 0,
-			toolResults: 0,
-			retrievalContext: 0,
-			attachments: 0,
-		},
-	};
-}
+/**
+ * 真实占位说明：协议 `ContextUsageSnapshot` 要求 `breakdown` 之和能解释
+ * `usedTokens`。因此 `available=true` 但 `breakdown` 全部为 0 直接违反协议；
+ * fixture 表禁止放入"全零快照冒充 available=true"。当前所有 context fixture
+ * 一律返回 `available=false, latest=null`，由 `getContext` 真实接口接通后
+ * 提供真值。
+ */
 
 /**
  * 集中维护的 fixture 表。新增条目必须在此注册并在 `FixtureName` 中声明；
- * 组件调用 `useFixtureData(name)` 时按表查找。
+ * 组件调用 `loadFixture(name)` 时按表查找。
  *
  * 注：fixture 的 `conversationId` 字段在真实场景由调用方填入；本表只放占位值，
  * 组件拿到 fixture 后立即用真实 conversationId 覆盖。
@@ -139,12 +122,14 @@ const CONTEXT_FIXTURES: Readonly<Record<string, FixtureEntry<ConversationContext
 			atSequence: null,
 		},
 	},
+	// 严格遵循契约：`available=true` 必须配套 `latest` 非空，breakdown 之和能解释 usedTokens。
+	// `loaded-with-snapshot` 在 fixture 阶段也必须走 `available=false`，避免前端页面被误导成"有快照"。
 	"conversation/context/loaded-with-snapshot": {
 		name: "conversation/context/loaded-with-snapshot",
 		data: {
 			conversationId: "conv_placeholder",
-			available: true,
-			latest: placeholderContextSnapshot(),
+			available: false,
+			latest: null,
 			atSequence: null,
 		},
 	},
@@ -169,16 +154,43 @@ const CONTEXT_FIXTURES: Readonly<Record<string, FixtureEntry<ConversationContext
 };
 
 /**
+ * 开发期开关：fixtures 适配层**永远不**在生产 bundle 中可用。
+ *
+ * 唯一放行条件：调用方显式置 `globalThis.__PI_WEB_FIXTURES_ALLOWED__ = true`。
+ * 生产构建里**没有任何调用方会置这个标志**，因此 `loadFixture` 一律抛错，
+ * 引导组件走真实 `ConversationsApi.getMetrics` / `api.getContext` 路径。
+ *
+ * 测试：在 `vitest` 下由测试代码按需 `beforeEach` 打开标志，验证 fixture 形状。
+ * 注意：vitest 注入的 `import.meta.env.DEV` 总是 `true`，不能作为门控依据——
+ * 因此本函数**不**读 `import.meta.env`，只信 globalThis 标志。
+ */
+declare global {
+	// eslint-disable-next-line no-var
+	var __PI_WEB_FIXTURES_ALLOWED__: boolean | undefined;
+}
+
+function isFixtureEnvironmentAllowed(): boolean {
+	return globalThis.__PI_WEB_FIXTURES_ALLOWED__ === true;
+}
+
+/**
  * 单 typed adapter：组件只通过此函数取 fixture，**禁止**绕过本适配层
  * 在组件内硬编码数据。
  *
  * 当前阶段返回 `DataState<T>` 的 `loaded` 分支；真实接入后此函数改为薄包装，
  * 由 API 调用结果直接构造 `DataState<T>`。本函数的语义在两个阶段保持稳定。
  *
+ * 生产环境直接抛 `FIXTURES_DISABLED_IN_PROD`，引导调用方走真实 API 路径。
+ *
  * 注意：本函数不带 `use*` 前缀——它本身不调用任何 React hooks；调用方按
  * 普通同步函数使用。命名区别于 hook，避免误触发 lint 规则。
  */
 export function loadFixture<T>(name: FixtureName): DataState<T> {
+	if (!isFixtureEnvironmentAllowed()) {
+		throw new Error(
+			`[fixtures] loadFixture("${name}") is dev/test only. Production must call ConversationsApi.getMetrics / getContext directly.`,
+		);
+	}
 	if (name in METRICS_FIXTURES) {
 		const entry = METRICS_FIXTURES[name]!;
 		return { kind: "loaded", data: entry.data as unknown as T };
@@ -196,34 +208,8 @@ export function loadFixture<T>(name: FixtureName): DataState<T> {
 }
 
 /**
- * 把 `DataState<T>` 映射为 UI 友好的错误描述，仅供状态壳使用；
- * 错误码仍以 `code` 字符串透传到调用方。
+ * 把 `DataState<T>` 映射为 UI 友好的错误描述：消费方直接 import 自
+ * `../data-state.ts`；本文件不再重复实现 `describeError`（fixture 适配层只
+ * 是数据形态适配，不持有 UI 副本）。`UNKNOWN_FIXTURE` 是 fixture 内部码，
+ * 不走协议错误表，调用方按 `code === "UNKNOWN_FIXTURE"` 自行判断。
  */
-export function describeError(state: Extract<DataState<unknown>, { kind: "error" }>): {
-	readonly title: string;
-	readonly description: string;
-} {
-	switch (state.code) {
-		case "METRICS_UNAVAILABLE":
-		case "CONTEXT_SNAPSHOT_UNAVAILABLE":
-			return {
-				title: "指标服务暂不可用",
-				description: "后端采集暂不可用，请稍后重试。",
-			};
-		case "INVALID_METRICS_FILTER":
-			return {
-				title: "查询参数无效",
-				description: "分页参数 `afterSequence` / `limit` 必须为正整数；请调整后重试。",
-			};
-		case "UNKNOWN_FIXTURE":
-			return {
-				title: "未注册的 fixture",
-				description: state.message,
-			};
-		default:
-			return {
-				title: "加载失败",
-				description: state.message,
-			};
-	}
-}

@@ -216,12 +216,162 @@ describe("ConversationsApi", () => {
 				fetchImpl: fetchMock as unknown as typeof fetch,
 			});
 
-			await expect(api.getMetrics("conv_5", { conversationId: "conv_5", afterSequence: -1 })).rejects.toMatchObject(
-				{
-					code: "INVALID_METRICS_FILTER",
-					httpStatus: 422,
-				},
+			await expect(api.getMetrics("conv_5", { conversationId: "conv_5", afterSequence: -1 })).rejects.toMatchObject({
+				code: "INVALID_METRICS_FILTER",
+				httpStatus: 422,
+			});
+		});
+
+		/**
+		 * 分页回环：模拟 MetricsTab 在 `onNextPage(data.nextAfterSequence)` 之后
+		 * 重新调用 `api.getMetrics` 的连续两次请求，断言游标严格按服务端字段推进，
+		 * 且第一次默认不传 `afterSequence`（首页）。
+		 */
+		it("advances afterSequence on successive paginated calls", async () => {
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_p",
+								stats: {
+									available: true,
+									turnCount: 100,
+									sampleCount: 80,
+									ttftMs: { mean: 10, count: 80, p50: 9, p95: 20 },
+									generationMs: { mean: 100, count: 80, p50: 95, p95: 200 },
+									totalLatencyMs: { mean: 110, count: 80, p50: 104, p95: 220 },
+									outputTokensPerSecond: { mean: 50, count: 80, p50: 45, p95: 90 },
+								},
+								items: [],
+								nextAfterSequence: 50,
+							},
+							requestId: "req_p1",
+						}),
+					),
+				)
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_p",
+								stats: {
+									available: true,
+									turnCount: 100,
+									sampleCount: 80,
+									ttftMs: { mean: 10, count: 80, p50: 9, p95: 20 },
+									generationMs: { mean: 100, count: 80, p50: 95, p95: 200 },
+									totalLatencyMs: { mean: 110, count: 80, p50: 104, p95: 220 },
+									outputTokensPerSecond: { mean: 50, count: 80, p50: 45, p95: 90 },
+								},
+								items: [],
+								nextAfterSequence: null,
+							},
+							requestId: "req_p2",
+						}),
+					),
+				);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			// 第一次：MetricsTab 首次挂载，afterSequence=null → 不传参数
+			const page1 = await api.getMetrics("conv_p", { conversationId: "conv_p", limit: 50 });
+			expect(page1.nextAfterSequence).toBe(50);
+			let [url1] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			let parsed1 = new URL(url1);
+			expect(parsed1.pathname).toBe("/api/control/v1/conversations/conv_p/metrics");
+			expect(parsed1.searchParams.has("afterSequence")).toBe(false);
+
+			// 第二次：MetricsTab `onNextPage(50)` 后 → afterSequence=50
+			const page2 = await api.getMetrics("conv_p", {
+				conversationId: "conv_p",
+				afterSequence: page1.nextAfterSequence ?? 0,
+				limit: 50,
+			});
+			expect(page2.nextAfterSequence).toBeNull();
+			[url1] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+			parsed1 = new URL(url1);
+			expect(parsed1.searchParams.get("afterSequence")).toBe("50");
+		});
+
+		/**
+		 * retryable 一致性：handleApiError 与抛出的 ConversationsApiError 必须
+		 * 看到同一个 retryable 值；这是 R3 修订项（之前 handleApiError 固定 false，
+		 * ConversationsApiError 已按协议计算，导致 UI/认证控制器两套语义）。
+		 */
+		it("passes the same retryable to handleApiError and the thrown ConversationsApiError", async () => {
+			const handleApiError = vi.fn();
+			controller.handleApiError = handleApiError;
+
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							error: { code: "METRICS_UNAVAILABLE", message: "offline", requestId: "req_retry" },
+						}),
+						{ status: 503 },
+					),
 			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			let thrown: unknown;
+			try {
+				await api.getMetrics("conv_retry", { conversationId: "conv_retry" });
+			} catch (err) {
+				thrown = err;
+			}
+			expect(thrown).toBeInstanceOf(Error);
+			const thrownErr = thrown as { readonly retryable: boolean };
+			expect(thrownErr.retryable).toBe(true);
+			expect(handleApiError).toHaveBeenCalledTimes(1);
+			const callArg = handleApiError.mock.calls[0]?.[0] as { readonly retryable: boolean };
+			expect(callArg.retryable).toBe(thrownErr.retryable);
+		});
+
+		/**
+		 * AbortSignal 透传：metrics/context 第三个参数 signal 必须真正进入 fetch 的
+		 * RequestInit.signal——这是过期请求保护（StaleResponseGuard）链路上的
+		 * 关键一环。
+		 */
+		it("forwards AbortSignal to fetch RequestInit.signal", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_sig",
+								stats: {
+									available: false,
+									turnCount: 0,
+									sampleCount: 0,
+									ttftMs: { mean: null, count: 0, p50: null, p95: null },
+									generationMs: { mean: null, count: 0, p50: null, p95: null },
+									totalLatencyMs: { mean: null, count: 0, p50: null, p95: null },
+									outputTokensPerSecond: { mean: null, count: 0, p50: null, p95: null },
+								},
+								items: [],
+								nextAfterSequence: null,
+							},
+							requestId: "req_sig",
+						}),
+					),
+			);
+			const api = new ConversationsApi({
+				auth: controller,
+				fetchImpl: fetchMock as unknown as typeof fetch,
+			});
+
+			const controller2 = new AbortController();
+			await api.getMetrics("conv_sig", { conversationId: "conv_sig" }, controller2.signal);
+
+			const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(init.signal).toBe(controller2.signal);
 		});
 	});
 });
