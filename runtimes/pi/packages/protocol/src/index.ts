@@ -5,6 +5,7 @@ export * from "./admin-workbench-conversations.ts";
 export * from "./admin-workbench-llm.ts";
 export * from "./admin-workbench-mcp.ts";
 export * from "./admin-workbench-metrics.ts";
+export * from "./admin-workbench-reasoning.ts";
 export * from "./admin-workbench-skills.ts";
 export * from "./admin-workbench-usage.ts";
 export * from "./cbor/index.ts";

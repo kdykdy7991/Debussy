@@ -94,3 +94,18 @@ curl -sS \
 `effort: null` 清除会话覆盖，回到 Agent Revision 默认。每次更新写
 `conversation.reasoning-updated` 审计事件（before/after + 生效快照）。档位不在模型
 能力目录 → 422 `REASONING_INVALID_EFFORT`；无权调整 → 403 `REASONING_NOT_CONFIGURABLE`。
+
+### 5b. reasoning 双入口（第四轮修订）
+
+同一服务操作经两个入口暴露，仅授权门不同：
+
+- 控制面管理员：`PUT /api/control/v1/conversations/:conversationId/reasoning`（Admin Token）
+- Embed 属主：`PUT /api/embed/v1/conversations/:conversationId/reasoning`（会话属主）
+
+请求体/响应同上（`ReasoningUpdateRequest` → `ConversationReasoningState`）。
+
+事实源与审计分离：当前生效 effort 的**事实源**是专用持久状态
+`conversation_reasoning_state`（恢复/查询读它，非事件日志）；
+`conversation.reasoning-updated` 是**独立只追加审计日志**（记录
+`{ principal, before, after, requestedAt, auditEventId }`），**不进** `SESSION_EVENT_TYPES`、
+不推进事件序列号、不参与 turn 回放。

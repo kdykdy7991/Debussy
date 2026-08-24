@@ -1,46 +1,34 @@
 /**
  * Agent 平台 V2：MCP Server 管理契约（候选，待总架构师冻结）。
  *
- * 对应总计划 §6 共享接口中的 MCP 能力：列表、详情、创建、更新、测试、同步
- * Tool、启停、Agent Revision 绑定与 Tool 白名单。本模块只冻结管理/控制面 DTO 形状。
+ * 对应总计划 §6 共享接口中的 MCP 能力：列表、详情、创建、更新、测试、同步 Tool、
+ * 启停、Agent Revision 绑定与 Tool 白名单。本模块只冻结**与 transport 无关**的管理/
+ * 控制面 DTO 形状。
  *
- * **transport 未评审**：BE-3 ADR 尚未定案前，本文件**不**把 transport 集合当公共契约
- * 导出。当前仅给出管理形状与候选的 `streamable-http` 目标描述（`McpHttpTarget`）；
- * 任何新增 transport（如 stdio）必须经 BE-3 ADR 批准后再扩展。接线 (M1) 在 transport
- * 定案后再实现。
+ * **Transport / 连接配置未冻结**：BE-3 安全 ADR 定案前，本文件**不把任何 transport
+ * 当作冻结的公共契约**（不导出 streamable-http/stdio 等 union），也不接受自由文本
+ * headers/端点配置——尤其禁止在 headers（如 `Authorization`）中携带明文凭据。M0 阶段
+ * 的 upsert 配置只是占位（`McpServerConfig`），仅允许引用服务端 Secret 库的秘密名。
+ * 具体连接语义（端点、tls、鉴权方式、允许的头集合）待 BE-3 决定后以扩展字段补入。
  *
- * **Secret 只以引用保存**：请求/详情中没有接受或回传明文密钥的字段。凭据以
- * `bearerTokenRef` 等 `*Ref` 引用存储（服务端 Secret 库）；所有读取只回 `secretConfigured`
- * 布尔，绝不含秘密值。Secret 不进入 RuntimeSpec、日志、事件 payload 或导出文件。
+ * **Secret 只以引用保存**：线上请求/详情没有接受或回传明文密钥的字段。凭据以
+ * `secretRefs` 引用存储（服务端 Secret 库）；所有读取只回 `secretConfigured: boolean`，
+ * 绝不含秘密值。Secret 不进入 RuntimeSpec、日志、事件 payload 或导出文件。
  */
 import type { AgentPublicId } from "./admin-workbench.ts";
 import type { AgentBindingRef } from "./admin-workbench-skills.ts";
 
 /**
- * 候选 transport 描述（**未冻结**）。只有当前建议首推的 `streamable-http`；
- * 其它 transport 待 BE-3 ADR 批准后以扩展 union 加入，不得先写死。
+ * MCP Server 连接配置。**BE-3 安全 ADR 前不冻结**：M0 只承载对服务端 Secret 库的引用，
+ * 不写死端点/headers/tls/transport。任何后续扩展必须在 BE-3 批准后以显式字段加入，
+ * 且禁止明文凭据与自由文本 headers（杜绝 `Authorization` 头携带明文）。
  */
-export type McpTransportKind = "streamable-http";
-
-/**
- * HTTP (streamable) 目标配置。可保存 URL 与静态非密钥请求头；任何凭据必须以
- * `bearerTokenRef` 引用服务端已存秘密，**请求体不得含明文密钥**。
- */
-export interface McpHttpTarget {
-	readonly transport: McpTransportKind;
-	readonly url: string;
-	/** 静态且非密钥的头（如 Content-Type）；不得放凭据。 */
-	readonly headers?: Readonly<Record<string, string>>;
-	/**
-	 * 服务端 Secret 库中已存秘密的引用名。线上请求只带引用名；读取仅回
-	 * `secretConfigured: boolean`，绝不回传值。
-	 */
-	readonly bearerTokenRef?: string;
-}
-
-/** MCP Server 创建/更新时的配置载体（单一候选 transport）。 */
 export interface McpServerConfig {
-	readonly target: McpHttpTarget;
+	/**
+	 * Secret 库中已存秘密的引用名（如 `{ "bearerTokenRef": "mcp-token-x" }`）。
+	 * wire 只带引用名，绝不含秘密值；读取仅回 `secretConfigured`。
+	 */
+	readonly secretRefs?: Readonly<Record<string, string>>;
 }
 
 /** MCP Tool 引用（发现/同步后由服务端持有 schema 快照）。 */
@@ -54,7 +42,11 @@ export interface McpServerSummary {
 	/** `mcp_<uuid>`，传输层禁止裸 UUID。 */
 	readonly id: string;
 	readonly name: string;
-	readonly transport: McpTransportKind;
+	/**
+	 * Server 当前记录的 transport 标识（仅供展示）。**非冻结 union**：transport 集合
+	 * 在 BE-3 安全 ADR 定案前不作枚举契约。
+	 */
+	readonly transport: string;
 	readonly status: "disabled" | "connecting" | "connected" | "error";
 	readonly toolCount: number;
 	/** 引用凭据是否需要补配（`true` = 已配置，密钥值永不下行）。 */
@@ -74,7 +66,10 @@ export interface McpServerDetail extends McpServerSummary {
 	} | null;
 }
 
-/** `POST /api/control/v1/mcp-servers`（创建/更新）。 */
+/**
+ * `POST /api/control/v1/mcp-servers`（创建/更新）。M0 只更新名称与 Secret 引用，
+ * 不传送 transport/端点/headers 配置（待 BE-3）。
+ */
 export interface McpServerUpsertRequest {
 	readonly name: string;
 	readonly config: McpServerConfig;
@@ -131,6 +126,8 @@ export const AGENT_V2_MCP_ERROR_CODES = [
 	"MCP_BINDING_VIOLATION",
 	// 配置载入引用了未配置的凭据（需先补配置 `secretConfigured=false`）。
 	"MCP_SECRET_NOT_CONFIGURED",
+	// 尝试提交不被允许的连接配置（如自由 headers/明文凭据）→ 拒绝，待 BE-3。
+	"MCP_CONFIG_NOT_APPROVED",
 ] as const;
 export type AgentV2McpErrorCode = (typeof AGENT_V2_MCP_ERROR_CODES)[number];
 
@@ -143,4 +140,5 @@ export const AGENT_V2_MCP_ERRORS: Readonly<
 	MCP_SYNC_FAILED: { httpStatus: 422, retryable: true },
 	MCP_BINDING_VIOLATION: { httpStatus: 409, retryable: false },
 	MCP_SECRET_NOT_CONFIGURED: { httpStatus: 409, retryable: false },
+	MCP_CONFIG_NOT_APPROVED: { httpStatus: 422, retryable: false },
 } as const;

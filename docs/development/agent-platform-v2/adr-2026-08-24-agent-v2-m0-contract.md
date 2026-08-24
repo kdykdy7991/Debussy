@@ -80,22 +80,37 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
 - MCP 配置结构化（`McpServerConfig`/`McpHttpTarget`），**Secret 只以 `*Ref` 引用保存**，
   读取仅回 `secretConfigured`；新增 `MCP_SECRET_NOT_CONFIGURED`（409）。
 - **MCP transport 未评审**：不以公共类型导出 stdio；当前仅 `streamable-http` 候选描述，
-  其它 transport 待 BE-3 ADR。
+  其它 transport 待 BE-3 ADR（transport 最终形态见 D9）。
 - reasoning 补齐会话更新端点（`PUT .../reasoning`）、权限边界、
   `REASONING_INVALID_EFFORT`/`REASONING_NOT_CONFIGURABLE` 错误码与
-  `conversation.reasoning-updated` 审计动作。
+  `conversation.reasoning-updated` 审计动作（入口拆分与审计定性见 D9）。
 
-## 待办（MCP transport 收口）
+### D9　第四轮收口
 
-- MCP **transport 集合**（当前仅 `streamable-http` 候选）与连接生命周期仍待 BE-3 ADR
-  明确后才能视为完整冻结，不在本 ADR 拍板。
-- reasoning 会话 thinking-level 的运行时持久化接线属 M1。
+- **M0-A Metrics/Context 冻结**：`admin-workbench-metrics.ts`（turn metrics、context
+  快照、分页/聚合、`AGENT_V2_METRICS_ERRORS`）冻结，不再改动。
+- **reasoning 双入口共享服务语义**：Control Admin（`/api/control/v1/.../reasoning`）与
+  Embed 属主（`/api/embed/v1/.../reasoning`）两个入口落到同一服务操作，避免权限混用；
+  契约移至独立模块 `admin-workbench-reasoning.ts`。
+- **事实源与审计分离**：当前 effort 事实源 = `conversation_reasoning_state` 专用持久状态
+  （恢复/查询读它）；`conversation.reasoning-updated` 为独立只追加审计日志，**不是**
+  `conversation_events` 事件类型、不进 `SESSION_EVENT_TYPES`、不推进序列号、不参与回放。
+- **MCP 连接配置不冻结 + 禁明文**：不导出任何 transport union；`McpServerConfig` 仅承载
+  Secret 引用，禁止自由文本 headers 与明文凭据（不含 `Authorization` 头）；新增
+  `MCP_CONFIG_NOT_APPROVED`。完整连接语义待 BE-3 安全 ADR。
+
+## 待办（BE-3 安全 ADR）
+
+- MCP **连接配置 / transport / 鉴权方式**待 BE-3 安全 ADR 明确后冻结；M0 仅固定管理 DTO
+  与“禁明文 headers/凭据”安全边界（D8/D9）。
+- reasoning 会话 thinking-level 的运行时持久化接线属 M1（M0 仅契约）。
 
 ## 批准状态
 
-- [x] 后端自检（protocol tsgo、vitest 352 项、biome 零告警、git diff --check）
-- [ ] 总架构师审查 D1–D8
-- [ ] 前端基于本契约建 mock
+- [x] 后端自检（protocol tsgo、vitest 354 项、biome 零告警、git diff --check）
+- [x] M0-A Metrics/Context（received）已冻结
+- [ ] 总架构师审查剩余 D8–D9（reasoning / Skill / MCP 契约）
+- [ ] 前端基于已冻结 Metrics DTO 建 mock；M1 Runtime/MCP 待 BE-3
 
 ## 变更历史
 
@@ -104,3 +119,5 @@ DDL；未来索引回退=关闭开关 + 索引非关键。不做任何删除列�
 - 2026-08-24　第二轮修订（D7，turn/failed 枚举、类型收紧、单调校验、Skill/MCP 契约）。
 - 2026-08-24　第三轮修订（D8，分页边界、Agent Revision 绑定、MCP Secret 引用、
   transport 不导出 stdio、reasoning 更新/权限/错误码/审计）。
+- 2026-08-24　第四轮收口（D9，M0-A 冻结、reasoning 双入口+事实源/审计分离、
+  MCP 禁明文/连接配置待 BE-3）。
