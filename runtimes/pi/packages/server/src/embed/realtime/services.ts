@@ -30,6 +30,12 @@ export function conversationRealtimeServices(service: ConversationService): Real
 				citations: result.data.citations,
 			};
 		},
+		async cancelTurn({ principal, conversationId }) {
+			const result = await service.cancelTurn({ principal, conversationId });
+			return result.ok
+				? { ok: true, cancelled: result.data.cancelled }
+				: { ok: false, message: result.error.message };
+		},
 		async getConversation({ principal, conversationId }) {
 			const result = await service.getConversation({ principal, conversationId });
 			return result.ok ? result.data : undefined;

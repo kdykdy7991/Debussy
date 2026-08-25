@@ -226,6 +226,15 @@ export class EmbedChatController {
 		}
 	}
 
+	/** Stop 只发送取消命令；界面仍保持运行态，直到服务端确认真正中止。 */
+	cancel(): void {
+		const conversationId = this.state.activeId;
+		if (conversationId === null || !this.state.sending) return;
+		if (!this.transport.cancelTurn(conversationId)) {
+			this.setState({ error: { code: "NOT_CONNECTED", message: "连接已断开，无法停止生成", retryable: true } });
+		}
+	}
+
 	/** 上传附件（会话固定版本能力 + 服务端全 scope/配额校验）。 */
 	async uploadFile(input: {
 		readonly filename: string;

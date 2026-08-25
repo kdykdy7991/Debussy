@@ -24,6 +24,7 @@ export function PublishedConversationWorkspace(props: {
 	readonly state: EmbedChatState;
 	readonly error: string | null;
 	readonly onSend: (text: string) => void;
+	readonly onAbort: () => void;
 	readonly onNew: () => void;
 	readonly onSelect: (conversationId: string) => void;
 	readonly onUpload: (file: File) => void;
@@ -179,13 +180,17 @@ export function PublishedConversationWorkspace(props: {
 							/>
 						</div>
 						<div className="composer-submit">
-							<button
-								className="send-button"
-								type="submit"
-								disabled={props.state.sending || props.state.activeId === null || props.state.connectionStatus !== "connected" || message.trim() === ""}
-							>
-								Send <span aria-hidden="true">↵</span>
-							</button>
+							{props.state.sending ? (
+								<button className="stop-button" type="button" onClick={props.onAbort}>Stop</button>
+							) : (
+								<button
+									className="send-button"
+									type="submit"
+									disabled={props.state.activeId === null || props.state.connectionStatus !== "connected" || message.trim() === ""}
+								>
+									Send <span aria-hidden="true">↵</span>
+								</button>
+							)}
 						</div>
 					</div>
 				</form>

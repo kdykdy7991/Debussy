@@ -96,6 +96,7 @@ const noopServices: RealtimeServices = {
 	getConversation: async () => undefined,
 	listEvents: async () => [],
 	executeTurn: async () => okTurn("ok"),
+	cancelTurn: async () => ({ ok: true, cancelled: false }),
 };
 
 function makeConnection(options: { services?: RealtimeServices; limits: EmbedLimits }): {
@@ -167,6 +168,33 @@ describe("embed realtime connection limits", () => {
 		await flush();
 		expect(limits.turnSlots.active).toBe(0);
 		expect(harness.ws.sent.some((e) => e.type === "turn.failed")).toBe(true);
+	});
+
+	test("confirms cancellation only after the runtime accepts the abort", async () => {
+		const limits = createEmbedLimits({ turnSlotCapacity: 1, config: {} });
+		const turn = deferredTurn();
+		let cancelCalls = 0;
+		const harness = makeConnection({
+			limits,
+			services: {
+				...noopServices,
+				executeTurn: async () => turn.promise,
+				cancelTurn: async () => {
+					cancelCalls += 1;
+					return { ok: true, cancelled: true };
+				},
+			},
+		});
+		sendTurn(harness.ws);
+		await flush();
+		harness.ws.emit("message", JSON.stringify({ type: "turn.cancel", conversationId: publicConvId }));
+		await flush();
+		expect(cancelCalls).toBe(1);
+		expect(harness.ws.sent.some((event) => event.type === "turn.cancelled")).toBe(true);
+		turn.resolve(okTurn("must not be sent after cancellation"));
+		await flush();
+		expect(harness.ws.sent.some((event) => event.type === "message.completed")).toBe(false);
+		expect(limits.turnSlots.active).toBe(0);
 	});
 
 	test("when the slot is exhausted the next turn.start fails immediately (no queue)", async () => {

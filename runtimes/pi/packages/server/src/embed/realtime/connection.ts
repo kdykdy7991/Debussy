@@ -46,6 +46,11 @@ export interface RealtimeServices {
 		readonly conversationId: ConversationId;
 		readonly text: string;
 	}): Promise<TurnOutcome>;
+	/** 真正中止当前底层执行；仅在服务确认接受中止后才发送 turn.cancelled。 */
+	cancelTurn(input: {
+		readonly principal: EmbedAuthContext;
+		readonly conversationId: ConversationId;
+	}): Promise<{ readonly ok: true; readonly cancelled: boolean } | { readonly ok: false; readonly message: string }>;
 	/** 会话最近事件序号（conversation.sync / subscribe 快照用）。 */
 	getConversation(input: {
 		readonly principal: EmbedAuthContext;
@@ -96,6 +101,9 @@ export class EmbedRealtimeConnection {
 	/** 协议消息使用 public 形式（`conv_<uuid>`），claims 存裸 UUID。 */
 	private readonly publicConversationId: string;
 	private closed = false;
+	/** 同一连接可能收到并发 start；服务层仍是会话唯一写者，此处只用于 Stop 可用性。 */
+	private activeTurnCount = 0;
+	private cancellationRequested = false;
 
 	constructor(options: EmbedRealtimeConnectionOptions) {
 		this.ws = options.ws;
@@ -148,7 +156,7 @@ export class EmbedRealtimeConnection {
 				await this.handleTurnStart(command.requestId, command.message.text);
 				return;
 			case "turn.cancel":
-				this.send({ type: "turn.cancelled", ...this.eventBase(0), reason: "cancelled" });
+				await this.handleTurnCancel();
 				return;
 			case "conversation.sync":
 				await this.handleSync(command.lastSeenSequence);
@@ -175,9 +183,12 @@ export class EmbedRealtimeConnection {
 	}
 
 	private async handleTurnStart(_requestId: string, text: string): Promise<void> {
-		// TASK-034：先发 accepted（客户端用于回显/loading），再走限流与并发槽。
-		this.send({ type: "turn.accepted", ...this.eventBase(0) });
-		if (this.limits !== undefined) {
+		this.activeTurnCount += 1;
+		this.cancellationRequested = false;
+		try {
+			// TASK-034：先发 accepted（客户端用于回显/loading），再走限流与并发槽。
+			this.send({ type: "turn.accepted", ...this.eventBase(0) });
+			if (this.limits !== undefined) {
 			// turn 维度分层限流（System/Tenant/App/Principal/Conversation 最严格）。
 			const limited = await this.limits.limiter.check({
 				dimension: "turn",
@@ -204,9 +215,27 @@ export class EmbedRealtimeConnection {
 			} finally {
 				await owner.close();
 			}
+				return;
+			}
+			await this.runTurn(text);
+		} finally {
+			this.activeTurnCount -= 1;
+		}
+	}
+
+	private async handleTurnCancel(): Promise<void> {
+		if (this.activeTurnCount === 0) {
+			this.send({ type: "turn.failed", ...this.eventBase(0), error: "no active turn to cancel" });
 			return;
 		}
-		await this.runTurn(text);
+		const result = await this.services.cancelTurn({ principal: this.principal, conversationId: this.conversationId });
+		if (!result.ok) {
+			this.send({ type: "turn.failed", ...this.eventBase(0), error: result.message });
+			return;
+		}
+		if (!result.cancelled) return;
+		this.cancellationRequested = true;
+		this.send({ type: "turn.cancelled", ...this.eventBase(0), reason: "cancelled" });
 	}
 
 	private async runTurn(text: string): Promise<void> {
@@ -220,6 +249,10 @@ export class EmbedRealtimeConnection {
 			text,
 		});
 		if (this.closed) return;
+		if (this.cancellationRequested) {
+			this.cancellationRequested = false;
+			return;
+		}
 		if (!outcome.ok) {
 			this.send({ type: "turn.failed", ...this.eventBase(0), error: outcome.message });
 			report("failed");

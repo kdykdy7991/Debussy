@@ -90,6 +90,14 @@ export class EmbedRealtimeTransport {
 		return true;
 	}
 
+	/** 请求服务端中止当前 Turn；是否真正取消由服务端事件确认。 */
+	cancelTurn(conversationId: string): boolean {
+		const ws = this.ws;
+		if (ws === undefined || this.conversationId !== conversationId) return false;
+		ws.send(JSON.stringify({ type: "turn.cancel", conversationId }));
+		return true;
+	}
+
 	/** 主动关闭：停止重连、关闭连接、清理订阅。 */
 	close(): void {
 		this.closed = true;

@@ -125,6 +125,18 @@ describe("embed realtime transport", () => {
 		harness.transport.close();
 	});
 
+	test("sends an explicit cancellation command only for the active conversation", async () => {
+		const harness = makeHarness();
+		harness.transport.connect("conv_1", 0);
+		await Promise.resolve();
+		const ws = harness.sockets[0]!;
+		ws.emit("open");
+		expect(harness.transport.cancelTurn("conv_other")).toBe(false);
+		expect(harness.transport.cancelTurn("conv_1")).toBe(true);
+		expect(ws.lastMessage()).toEqual({ type: "turn.cancel", conversationId: "conv_1" });
+		harness.transport.close();
+	});
+
 	test("reconnects with exponential backoff and stops after max retries", async () => {
 		vi.useFakeTimers();
 		const harness = makeHarness({ maxRetries: 2, backoffBaseMs: 10 });

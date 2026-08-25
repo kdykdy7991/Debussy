@@ -32,7 +32,10 @@ export type TurnExecutionResult =
 	| { readonly ok: true; readonly outputText: string; readonly usage?: Usage }
 	| { readonly ok: false; readonly error: string };
 
-export type TurnExecutor = (input: TurnExecutionInput) => Promise<TurnExecutionResult>;
+export type TurnExecutor = ((input: TurnExecutionInput) => Promise<TurnExecutionResult>) & {
+	/** 可选取消入口；无此能力的测试/同步执行器安全地保持不可取消。 */
+	cancel?(conversationId: ScopeContext["conversationId"]): Promise<boolean>;
+};
 
 /** 基于 PiRuntimeAdapter 的默认执行器（open -> prompt -> 提取输出 -> close）。 */
 export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
@@ -59,7 +62,7 @@ export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
  * HTTP 请求。
  */
 export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnExecutor {
-	return async ({ scope, spec, text, history, retrieval }) => {
+	const execute: TurnExecutor = async ({ scope, spec, text, history, retrieval }) => {
 		const acquired = await manager.acquire(spec, scope);
 		const runtime = acquired.runtime;
 		try {
@@ -72,6 +75,13 @@ export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnEx
 			manager.release(scope.conversationId);
 		}
 	};
+	execute.cancel = async (conversationId) => {
+		const runtime = manager.get(conversationId);
+		if (runtime === undefined) return false;
+		await runtime.abort();
+		return true;
+	};
+	return execute;
 }
 
 /** 从会话快照提取最后一条 status=complete 的 assistant 文本（拼接 text content）。 */

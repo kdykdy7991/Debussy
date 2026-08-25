@@ -215,6 +215,10 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		controllersRef.current?.chat.send(text);
 	}, []);
 
+	const handleAbort = useCallback((): void => {
+		controllersRef.current?.chat.cancel();
+	}, []);
+
 	const handleNew = useCallback((): void => {
 		void controllersRef.current?.chat.newConversation().then(() => {
 			setShowList(false);
@@ -281,6 +285,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			state={chatState}
 			error={errorBanner?.message ?? null}
 			onSend={handleSend}
+			onAbort={handleAbort}
 			onNew={handleNew}
 			onSelect={handleSelect}
 			onUpload={handleUpload}

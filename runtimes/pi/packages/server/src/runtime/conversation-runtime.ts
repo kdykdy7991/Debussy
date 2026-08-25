@@ -107,6 +107,12 @@ export class ConversationRuntime {
 		});
 	}
 
+	/** 中止当前底层 Agent 操作；由已授权 Conversation 的 Stop 命令调用。 */
+	async abort(): Promise<void> {
+		if (this.closed) return;
+		await this.session.abort();
+	}
+
 	/** 幂等关闭：flush + owner LIFO 释放全部资源；多次调用返回同一 Promise。 */
 	close(): Promise<void> {
 		if (this.closePromise) return this.closePromise;

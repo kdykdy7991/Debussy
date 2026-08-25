@@ -670,6 +670,21 @@ export class ConversationService {
 			this.runningTurns.delete(input.conversationId);
 		}
 	}
+
+	/**
+	 * 中止当前会话正在执行的 Turn。先按 owner scope 校验，避免通过取消接口
+	 * 枚举会话；只有底层执行器实际接受中止时才报告 cancelled。
+	 */
+	async cancelTurn(input: GetConversationInput): Promise<ConversationResult<{ readonly cancelled: boolean }>> {
+		const scope = ownerScope(input.principal);
+		const record = await this.repos.conversations.get(scope, input.conversationId);
+		if (record === undefined || record.status !== "active") return { ok: false, error: conversationNotFound() };
+		if (!this.runningTurns.has(input.conversationId)) return { ok: true, data: { cancelled: false } };
+		if (this.turnExecutor.cancel === undefined) {
+			return { ok: false, error: runtimeUnavailable("Turn cancellation is unavailable") };
+		}
+		return { ok: true, data: { cancelled: await this.turnExecutor.cancel(input.conversationId) } };
+	}
 }
 
 export interface ExecuteTurnInput {
