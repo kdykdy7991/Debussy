@@ -1,15 +1,28 @@
 /**
- * Publish drawer (WB-004 / SPEC §6.1).
+ * Publish drawer (WB-004 / SPEC §6.1；阶段一收口)。
  *
- * Force admin to explicitly select:
- * 1. A target PublishedApp from the agent's associated apps (no default)
- * 2. A saved AgentRevision
- * 3. Shows diff/config summary of the chosen revision
- * 4. Creates an immutable PublishedAppVersion (NOT auto-activating)
+ * 关键语义（阶段一）：
  *
- * If the agent has unsaved draft, publish is disabled with "请先保存".
+ * - "创建 Published App Version" 与 "激活上线" 是**两个独立动作**。
+ *   本抽屉只负责创建版本，**绝不**自动激活。
+ * - 创建成功后标题为「应用版本已创建，尚未激活」，并提供
+ *   「前往应用详情」/「关闭」两个明确出口。
+ * - 配置摘要按字段展示（Model / 思考 / Prompt 摘要 / Avatar / 附件 /
+ *   语音 / 工具 / 知识库）；能力字段禁止 `JSON.stringify`，逐项渲染。
+ * - 工具 / 知识库在此处只展示「已引用 ID 数」与「阻断」标记，不在抽屉
+ *   内做新增 / 移除。
+ * - 草稿未保存时禁用发布并明示原因（与已有 banner 文案一致）。
+ *
+ * 不修改：管理台 Chat 与发布 Chat 的共享消息组件和样式；Runtime 的
+ * text/thinking 流式语义。
  */
-import type { AgentDefinitionAssociatedApp, AgentDefinitionRevision, AgentPublicId } from "@earendil-works/pi-protocol";
+import type {
+	AgentConfigSnapshot,
+	AgentDefinitionAssociatedApp,
+	AgentDefinitionRevision,
+	AgentPublicId,
+	ReasoningEffort,
+} from "@earendil-works/pi-protocol";
 import { useEffect, useRef, useState } from "react";
 import { AgentApi } from "../api/agent-api.ts";
 import { AppApi, AppApiError } from "../api/app-api.ts";
@@ -27,6 +40,8 @@ export interface PublishDrawerProps {
 }
 
 type Step = "select-app" | "select-revision" | "confirm" | "done" | "error";
+
+const PROMPT_SUMMARY_LIMIT = 160;
 
 export function PublishDrawer({
 	agentId,
@@ -46,14 +61,16 @@ export function PublishDrawer({
 	const [revisionsLoading, setRevisionsLoading] = useState(false);
 	const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
 	const [revisionDetail, setRevisionDetail] = useState<AgentDefinitionRevision | null>(null);
+	const [revisionDetailLoading, setRevisionDetailLoading] = useState(false);
+	const [revisionDetailError, setRevisionDetailError] = useState<string | null>(null);
+	const [createdAppId, setCreatedAppId] = useState<string | null>(null);
 	const [step, setStep] = useState<Step>("select-app");
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
-	// Reset state when opening
+	// Escape closes the drawer.
 	useEffect(() => {
 		if (mode === "open") {
-			// Allow Escape to close the drawer
 			const onKey = (e: KeyboardEvent) => {
 				if (e.key === "Escape") onClose();
 			};
@@ -62,12 +79,15 @@ export function PublishDrawer({
 		}
 	}, [mode, onClose]);
 
+	// Reset state when opening.
 	useEffect(() => {
 		if (mode === "open") {
 			setStep("select-app");
 			setSelectedApp(null);
 			setSelectedRevision(null);
 			setRevisionDetail(null);
+			setRevisionDetailError(null);
+			setCreatedAppId(null);
 			setError(null);
 			setAppsLoading(true);
 			let cancelled = false;
@@ -91,12 +111,13 @@ export function PublishDrawer({
 		}
 	}, [mode, agentId, agentApi]);
 
-	// Load revisions when app is selected
+	// Load revisions when app is selected.
 	useEffect(() => {
 		if (selectedApp === null) return;
 		setRevisionsLoading(true);
 		setSelectedRevision(null);
 		setRevisionDetail(null);
+		setRevisionDetailError(null);
 		let cancelled = false;
 		void agentApi.listRevisions(agentId, { limit: 50 }).then(
 			(res) => {
@@ -117,32 +138,47 @@ export function PublishDrawer({
 		};
 	}, [selectedApp, agentId, agentApi]);
 
-	// Load revision detail when selected
+	// Load revision detail when selected.
 	useEffect(() => {
 		if (selectedRevision === null || selectedRevision < 1) {
 			setRevisionDetail(null);
+			setRevisionDetailError(null);
+			setRevisionDetailLoading(false);
 			return;
 		}
 		let cancelled = false;
-		void agentApi.getRevision(agentId, selectedRevision).then(
-			(detail) => {
-				if (!cancelled) setRevisionDetail(detail);
-			},
-			() => {
-				// silently fail, diff is optional
-			},
-		);
+		setRevisionDetailLoading(true);
+		setRevisionDetailError(null);
+		void agentApi
+			.getRevision(agentId, selectedRevision)
+			.then((detail) => {
+				if (cancelled) return;
+				setRevisionDetail(detail);
+				setRevisionDetailLoading(false);
+			})
+			.catch((err: unknown) => {
+				if (cancelled) return;
+				const message =
+					err instanceof AppApiError
+						? err.message
+						: err instanceof Error
+							? err.message
+							: String(err);
+				setRevisionDetailError(message);
+				setRevisionDetailLoading(false);
+			});
 		return () => {
 			cancelled = true;
 		};
 	}, [selectedRevision, agentId, agentApi]);
 
-	const doPublish = async () => {
+	const doCreateVersion = async () => {
 		if (selectedApp === null || selectedRevision === null) return;
 		setBusy(true);
 		setError(null);
 		try {
 			await appApi.createVersion({ appId: selectedApp, sourceAgentRevision: selectedRevision });
+			setCreatedAppId(selectedApp);
 			setStep("done");
 			onPublished();
 		} catch (err) {
@@ -155,12 +191,14 @@ export function PublishDrawer({
 
 	if (mode !== "open") return null;
 
+	const blockedByDraft = hasDraft;
+
 	return (
 		<div
 			className="drawer-overlay"
 			role="dialog"
 			aria-modal="true"
-			aria-label="发布"
+			aria-label="创建应用版本"
 			onClick={onClose}
 			onKeyDown={(e) => {
 				if (e.key === "Escape") onClose();
@@ -169,22 +207,32 @@ export function PublishDrawer({
 			<div
 				className="drawer"
 				role="dialog"
-				aria-label="发布"
+				aria-label="创建应用版本"
 				aria-modal="true"
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={(e) => e.stopPropagation()}
 			>
-				<h2>发布</h2>
-				<p className="drawer-subtitle">Agent: {agentId}</p>
+				<header className="drawer-header">
+					<h2>创建 Published App Version</h2>
+					<p className="drawer-subtitle">
+						Agent: {agentId}
+						<span className="drawer-subtitle__hint">
+							此操作仅创建不可变版本，**不会**自动激活。激活请到应用详情页。
+						</span>
+					</p>
+				</header>
 
-				{hasDraft && <div className="banner warning">Agent 存在未保存的草稿。请先保存后再发布。</div>}
+				{blockedByDraft ? (
+					<div className="banner warning" role="alert">
+						Agent 存在未保存的草稿。请先保存为新 Revision，再创建应用版本。
+					</div>
+				) : null}
 
-				{error !== null && <div className="banner error">{error}</div>}
+				{error !== null ? <div className="banner error" role="alert">{error}</div> : null}
 
-				{/* Step 1: Select app */}
-				{step === "select-app" && (
+				{step === "select-app" ? (
 					<div className="drawer-step">
-						<h3>选择目标应用</h3>
+						<h3>1. 选择目标应用</h3>
 						{appsLoading ? (
 							<p>加载应用列表…</p>
 						) : apps.length === 0 ? (
@@ -211,29 +259,30 @@ export function PublishDrawer({
 											name="target-app"
 											checked={selectedApp === app.appId}
 											onChange={() => setSelectedApp(app.appId)}
-											disabled={hasDraft}
+											disabled={blockedByDraft}
 										/>
 										<span>
 											<strong>{app.name}</strong>
 											<small>{app.publicAppId}</small>
-											<small>{app.status}</small>
+											<small>状态：{app.status}</small>
 										</span>
 									</label>
 								))}
 							</div>
 						)}
-						{selectedApp !== null && !hasDraft && (
-							<button type="button" onClick={() => setStep("select-revision")}>
-								下一步：选择 Revision
-							</button>
-						)}
+						{selectedApp !== null && !blockedByDraft ? (
+							<div className="drawer-actions">
+								<button type="button" onClick={() => setStep("select-revision")}>
+									下一步：选择 Revision
+								</button>
+							</div>
+						) : null}
 					</div>
-				)}
+				) : null}
 
-				{/* Step 2: Select revision */}
-				{step === "select-revision" && (
+				{step === "select-revision" ? (
 					<div className="drawer-step">
-						<h3>选择 Agent Revision</h3>
+						<h3>2. 选择 Agent Revision</h3>
 						{revisionsLoading ? (
 							<p>加载 Revision 列表…</p>
 						) : revisions.length === 0 ? (
@@ -261,73 +310,79 @@ export function PublishDrawer({
 							<button type="button" onClick={() => setStep("select-app")}>
 								返回
 							</button>
-							{selectedRevision !== null && (
+							{selectedRevision !== null ? (
 								<button type="button" onClick={() => setStep("confirm")}>
 									下一步：确认
 								</button>
-							)}
+							) : null}
 						</div>
 					</div>
-				)}
+				) : null}
 
-				{/* Step 3: Confirm */}
-				{step === "confirm" && (
+				{step === "confirm" ? (
 					<div className="drawer-step">
-						<h3>确认发布</h3>
-						{revisionDetail !== null && (
-							<div className="diff-summary">
-								<h4>配置摘要</h4>
-								<dl>
-									<dt>Model</dt>
-									<dd>{revisionDetail.configSnapshot?.modelId ?? "—"}</dd>
-									<dt>System Prompt</dt>
-									<dd>
-										<pre>{revisionDetail.configSnapshot?.systemPrompt?.slice(0, 200)}</pre>
-									</dd>
-									<dt>工具</dt>
-									<dd>{revisionDetail.configSnapshot?.toolIds?.join(", ") ?? "—"}</dd>
-									<dt>知识库</dt>
-									<dd>{revisionDetail.configSnapshot?.knowledgeBaseIds?.join(", ") ?? "—"}</dd>
-									<dt>能力</dt>
-									<dd>{JSON.stringify(revisionDetail.configSnapshot?.capabilities ?? {})}</dd>
-								</dl>
-								{revisionDetail.diffFromPrevious && (
-									<>
-										<h4>变更字段</h4>
-										<p>{revisionDetail.diffFromPrevious.changedFields?.join(", ") ?? "无"}</p>
-									</>
-								)}
+						<h3>3. 确认创建版本（不激活）</h3>
+						{revisionDetailLoading ? (
+							<p aria-busy="true">正在加载 Revision #{selectedRevision} 配置快照…</p>
+						) : revisionDetailError !== null ? (
+							<div role="alert">
+								<p>加载 Revision 详情失败：{revisionDetailError}</p>
+								<p>可返回上一步重新选择。</p>
 							</div>
-						)}
+						) : revisionDetail !== null ? (
+							<ConfigSummary snapshot={revisionDetail.configSnapshot} />
+						) : null}
 						<div className="drawer-actions">
 							<button type="button" onClick={() => setStep("select-revision")}>
 								返回
 							</button>
-							<button type="button" className="primary" disabled={busy} onClick={doPublish}>
-								{busy ? "发布中…" : "确认发布（不自动激活）"}
+							<button
+								type="button"
+								className="primary"
+								disabled={busy || blockedByDraft || revisionDetail === null || revisionDetailLoading === true}
+								onClick={doCreateVersion}
+							>
+								{busy ? "创建中…" : "创建版本（不激活）"}
 							</button>
 						</div>
 					</div>
-				)}
+				) : null}
 
-				{/* Step done */}
-				{step === "done" && (
-					<div className="drawer-step">
-						<h3>发布成功</h3>
-						<p>版本已创建，尚未激活。请在应用详情中激活版本。</p>
+				{step === "done" ? (
+					<div className="drawer-step" data-step="done">
+						<h3>应用版本已创建，尚未激活</h3>
+						<p>
+							新版本已基于 Revision #{selectedRevision} 写入应用
+							{createdAppId !== null ? `（${createdAppId}）` : ""}。
+							该版本<strong>不会</strong>自动激活，需要在应用详情中激活才会对用户生效。
+						</p>
 						<div className="drawer-actions">
+							<button
+								type="button"
+								className="primary"
+								onClick={() => {
+									if (createdAppId !== null) {
+										onClose();
+										navigate(`/apps/${createdAppId}`);
+									} else {
+										onClose();
+										navigate("/apps");
+									}
+								}}
+							>
+								前往应用详情
+							</button>
 							<button type="button" onClick={onClose}>
 								关闭
 							</button>
 						</div>
 					</div>
-				)}
+				) : null}
 
-				{/* Error state */}
-				{step === "error" && (
+				{step === "error" ? (
 					<div className="drawer-step">
-						<h3>发布失败</h3>
-						<p className="banner error">{error}</p>
+						<h3>创建失败</h3>
+						<p className="banner error" role="alert">{error}</p>
 						<div className="drawer-actions">
 							<button type="button" onClick={() => setStep("confirm")}>
 								重试
@@ -337,7 +392,7 @@ export function PublishDrawer({
 							</button>
 						</div>
 					</div>
-				)}
+				) : null}
 			</div>
 		</div>
 	);
@@ -348,4 +403,89 @@ function cappedDiff(diff: unknown): React.ReactNode {
 	const d = diff as { changedFields?: readonly string[] };
 	if (!d.changedFields || d.changedFields.length === 0) return null;
 	return <small>变更: {d.changedFields.join(", ")}</small>;
+}
+
+/**
+ * 按字段渲染 Revision 的配置摘要。绝不直接 `JSON.stringify` 整个对象。
+ * 工具 / 知识库在此处只显示 ID 数量，避免伪造名称或健康状态。
+ */
+function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.ReactElement {
+	const reasoning = snapshot.parameters.reasoning;
+	return (
+		<section className="diff-summary" aria-label="配置摘要">
+			<h4>配置摘要</h4>
+			<dl className="diff-summary__list">
+				<dt>Model</dt>
+				<dd>
+					<code>{snapshot.modelId ?? "—"}</code>
+				</dd>
+				<dt>思考</dt>
+				<dd>
+					{reasoning === undefined ? (
+						"—"
+					) : (
+						<span>
+							{reasoning.enabled === false ? "关闭" : "开启"}
+							{reasoning.effort !== undefined ? ` · 默认强度 ${reasoningEffortLabel(reasoning.effort)}` : ""}
+						</span>
+					)}
+				</dd>
+				<dt>System Prompt</dt>
+				<dd>
+					{snapshot.systemPrompt.length === 0 ? (
+						"（空）"
+					) : snapshot.systemPrompt.length > PROMPT_SUMMARY_LIMIT ? (
+						<details>
+							<summary>
+								{snapshot.systemPrompt.slice(0, PROMPT_SUMMARY_LIMIT)}…（共 {snapshot.systemPrompt.length} 字）
+							</summary>
+							<pre>{snapshot.systemPrompt}</pre>
+						</details>
+					) : (
+						<pre className="diff-summary__prompt">{snapshot.systemPrompt}</pre>
+					)}
+				</dd>
+				<dt>Avatar</dt>
+				<dd>{snapshot.capabilities.avatar ? "启用" : "关闭"}</dd>
+				<dt>附件</dt>
+				<dd>{snapshot.capabilities.attachments ? "启用" : "关闭"}</dd>
+				<dt>实时语音</dt>
+				<dd>
+					{snapshot.capabilities.liveSpeech ? (
+						<span>
+							启用<span className="diff-summary__experimental">（实验性）</span>
+						</span>
+					) : (
+						"关闭"
+					)}
+				</dd>
+				<dt>工具</dt>
+				<dd>
+					{snapshot.toolIds.length === 0 ? (
+						"未引用"
+					) : (
+						<span>
+							已引用 {snapshot.toolIds.length} 项
+							<span className="diff-summary__muted">（抽屉内不展示名称）</span>
+						</span>
+					)}
+				</dd>
+				<dt>知识库</dt>
+				<dd>
+					{snapshot.knowledgeBaseIds.length === 0 ? (
+						"未引用"
+					) : (
+						<span>
+							已引用 {snapshot.knowledgeBaseIds.length} 项
+							<span className="diff-summary__muted">（抽屉内不展示名称）</span>
+						</span>
+					)}
+				</dd>
+			</dl>
+		</section>
+	);
+}
+
+function reasoningEffortLabel(effort: ReasoningEffort): string {
+	return effort;
 }

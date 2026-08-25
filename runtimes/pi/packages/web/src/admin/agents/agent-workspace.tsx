@@ -6,7 +6,7 @@
  * 1. 配置：表单 + dirty/saving/saved/error 状态机
  * 2. Revision：历史 revision 列表 + Diff
  * 3. 关联应用：使用此 Agent 的 PublishedApp 列表
- * 4. 调试记录：占位（WB-006/WB-007 实施时填充）
+ * 4. 最近调试：本浏览器记住的管理员调试入口（阶段一收口）
  */
 
 import type {
@@ -22,6 +22,7 @@ import { LlmApi } from "../api/llm-api.ts";
 import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { createDebugSessionStore } from "../conversation/debug-session-store.ts";
+import { navigate } from "../router.ts";
 import { AgentForm } from "./agent-form.tsx";
 import {
 	type AgentState,
@@ -173,8 +174,13 @@ export function AgentWorkspace({ agentId, api, llmApi }: AgentWorkspaceProps): R
 					{detail.associatedAppCount}
 				</p>
 				<button type="button" onClick={() => setPublishDrawerMode("open")} disabled={state.status !== "saved"}>
-					发布
+					{state.status === "saved" ? "发布" : "发布（请先保存草稿）"}
 				</button>
+				{state.status !== "saved" ? (
+					<p className="agent-publish__blocked" role="note">
+						当前有未保存的草稿；请先保存为新 Revision，才能创建应用版本（抽屉也会再次校验）。
+					</p>
+				) : null}
 			</header>
 			<nav aria-label="Agent tabs">
 				{(
@@ -182,7 +188,7 @@ export function AgentWorkspace({ agentId, api, llmApi }: AgentWorkspaceProps): R
 						["config", "配置"],
 						["revisions", "Revision"],
 						["apps", "关联应用"],
-						["debug", "调试记录"],
+						["debug", "最近调试"],
 					] as const
 				).map(([id, label]) => (
 					<button key={id} type="button" aria-current={tab === id ? "true" : undefined} onClick={() => setTab(id)}>
@@ -296,7 +302,7 @@ function RevisionTab({ agentId, api }: { agentId: AgentPublicId; api: AgentApi }
 	if (error !== null) return <output role="alert">{error}</output>;
 	if (revisions === null) return <output>正在加载 Revision…</output>;
 	if (revisions.length === 0) return <p>暂无 Revision 记录</p>;
-	return <RevisionList items={revisions} />;
+	return <RevisionList items={revisions} agentId={agentId} api={api} />;
 }
 
 function AppsTab({ agentId, api }: { agentId: AgentPublicId; api: AgentApi }): React.ReactElement {
@@ -331,17 +337,19 @@ function AppsTab({ agentId, api }: { agentId: AgentPublicId; api: AgentApi }): R
 }
 
 /**
- * Debug records tab (MVP-05).
+ * "最近调试" Tab（阶段一收口；MVP-05）。
  *
- * Shows the administrator's own DebugSession mapping for this Agent, read
- * from `debug-session-store` (the same per-agent source used by the admin
- * chat page). It deliberately does NOT surface enterprise user sessions —
- * those live under the "用户会话" module, never here.
+ * 这里**只**展示当前浏览器为该 Agent 记住的最近一次管理员调试入口，
+ * 不展示历史日志，也不展示无法指导用户操作的内部 UUID。
  *
- * Because the real Pi debug WebSocket round-trip is gated until MVP-08, the
- * tab reflects what the browser actually holds: a `agentId -> sessionId`
- * mapping. When no debug session has been opened for this Agent, it shows an
- * empty state with a link to the debug chat page.
+ * 设计取舍（M1）：
+ *
+ * - "继续上次调试"按钮只在有缓存会话时出现；点击跳到 Admin Chat。
+ * - 当前 Chat 页路由不接受 `agentId` 形参，无法保证自动选中当前 Agent。
+ *   因此按钮文案与说明明确"手动从下拉里选这个 Agent"。
+ * - 没有缓存时给出空态：「该 Agent 在本浏览器还没有调试入口」+ 操作指引。
+ *
+ * 不展示：内部 sessionId UUID、企业用户会话（属于"用户会话"模块）。
  */
 function DebugTab({ agentId }: { readonly agentId: AgentPublicId }): React.ReactElement {
 	const [sessionId, setSessionId] = useState<string | null>(null);
@@ -352,18 +360,39 @@ function DebugTab({ agentId }: { readonly agentId: AgentPublicId }): React.React
 			// ephemeral store instance; no persistent handles to release.
 		};
 	}, [agentId]);
+
+	const goToChat = () => navigate("/chat");
+	const hasSession = sessionId !== null;
+
 	return (
-		<div className="debug-records">
-			<h3>管理员调试记录</h3>
-			{sessionId === null ? (
-				<p>该 Agent 还没有管理员调试会话。请到「对话」页为这个 Agent 开启一次调试。</p>
+		<section className="debug-records" aria-label="最近调试">
+			<header>
+				<h3>最近调试</h3>
+				<p className="debug-records__hint">
+					这里只显示当前浏览器为本 Agent 记住的最近一次管理员调试入口，不是历史日志，也不是用户侧会话。
+				</p>
+			</header>
+			{hasSession ? (
+				<div className="debug-records__panel" data-state="has-session">
+					<p>你最近在这个浏览器里调试过这个 Agent。</p>
+					<p className="debug-records__caveat">
+						管理台 Chat 路由暂不接收 agentId 参数，进入后请从 Agent 下拉里手动选择本 Agent。
+					</p>
+					<button type="button" onClick={goToChat}>
+						继续调试（进入管理台 Chat）
+					</button>
+				</div>
 			) : (
-				<ul>
-					<li>
-						<strong>最近 DebugSession</strong> · <code>{sessionId}</code>
-					</li>
-				</ul>
+				<div className="debug-records__panel" data-state="empty">
+					<p>该 Agent 在本浏览器还没有调试入口。</p>
+					<p className="debug-records__caveat">
+						请到「对话」页手动选择本 Agent 开启一次调试；之后这里会显示返回入口。
+					</p>
+					<button type="button" onClick={goToChat}>
+						打开管理台 Chat
+					</button>
+				</div>
 			)}
-		</div>
+		</section>
 	);
 }
