@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { EmbedChatController, EmbedChatState } from "../../src/embed/chat-controller.ts";
-import { EmbedConversationWorkspace } from "../../src/embed/conversation-workspace-adapter.tsx";
+import {
+	createEmbedWorkspaceStores,
+	EmbedConversationWorkspace,
+} from "../../src/embed/conversation-workspace-adapter.tsx";
 
 function controllerWith(state: EmbedChatState): EmbedChatController {
 	return {
@@ -19,6 +22,43 @@ function controllerWith(state: EmbedChatState): EmbedChatController {
 }
 
 describe("embed ConversationWorkspace adapter", () => {
+	test("keeps external-store snapshots stable until the controller publishes a change", () => {
+		let state: EmbedChatState = {
+			conversations: [],
+			activeId: null,
+			messages: [],
+			sending: false,
+			uploading: false,
+			connectionStatus: "connected",
+			attachments: [],
+			uploadsEnabled: false,
+			error: null,
+			rolloverNotice: null,
+		};
+		const listeners = new Set<() => void>();
+		const controller = controllerWith(state);
+		controller.getState = () => state;
+		controller.subscribe = (listener) => {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		};
+		const stores = createEmbedWorkspaceStores(controller);
+		const connectionBefore = stores.connection.getSnapshot();
+		const sessionsBefore = stores.sessions.getSnapshot();
+
+		expect(stores.connection.getSnapshot()).toBe(connectionBefore);
+		expect(stores.sessions.getSnapshot()).toBe(sessionsBefore);
+
+		const unsubscribe = stores.sessions.subscribe(() => {});
+		state = { ...state, sending: true };
+		for (const listener of listeners) listener();
+
+		expect(stores.connection.getSnapshot()).not.toBe(connectionBefore);
+		expect(stores.sessions.getSnapshot()).not.toBe(sessionsBefore);
+		expect(stores.sessions.getSnapshot().submitting).toBe(true);
+		unsubscribe();
+	});
+
 	test("renders published data through the shared control Chat workspace", () => {
 		const state: EmbedChatState = {
 			conversations: [

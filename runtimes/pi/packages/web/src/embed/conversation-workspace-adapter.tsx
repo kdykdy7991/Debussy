@@ -67,20 +67,28 @@ function EmbedConnectionStatus({ controller }: { readonly controller: EmbedChatC
 	);
 }
 
-function createEmbedWorkspaceStores(controller: EmbedChatController): {
+export function createEmbedWorkspaceStores(controller: EmbedChatController): {
 	readonly connection: PiConnectionStore;
 	readonly sessions: SessionBrowserStore;
 } {
-	const subscribe = (listener: () => void): (() => void) => controller.subscribe(listener);
+	let cachedConnection = connectionSnapshot(controller.getState());
+	let cachedSessions = sessionSnapshot(controller.getState());
+	const subscribe = (listener: () => void): (() => void) =>
+		controller.subscribe(() => {
+			const state = controller.getState();
+			cachedConnection = connectionSnapshot(state);
+			cachedSessions = sessionSnapshot(state);
+			listener();
+		});
 	const connection: PiConnectionStore = {
 		subscribe,
-		getSnapshot: (): PiConnectionSnapshot => connectionSnapshot(controller.getState()),
+		getSnapshot: (): PiConnectionSnapshot => cachedConnection,
 		connect: () => controller.reconnect(),
 		disconnect: () => controller.close(),
 	};
 	const sessions: SessionBrowserStore = {
 		subscribe,
-		getSnapshot: (): SessionBrowserSnapshot => sessionSnapshot(controller.getState()),
+		getSnapshot: (): SessionBrowserSnapshot => cachedSessions,
 		createSession: async (_model?: ModelRef) => controller.newConversation(),
 		openDefaultSession: async () => {
 			const first = controller.getState().conversations[0];
