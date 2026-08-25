@@ -275,17 +275,17 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	}
 	const errorBanner = chatState.error;
 	const activeConversationId = chatState.activeId;
-	if (errorBanner === null) {
-		return (
-			<PublishedConversationWorkspace
-				title={summary.name}
-				state={chatState}
-				onSend={handleSend}
-				onNew={handleNew}
-				onSelect={handleSelect}
-			/>
-		);
-	}
+	return (
+		<PublishedConversationWorkspace
+			title={summary.name}
+			state={chatState}
+			error={errorBanner?.message ?? null}
+			onSend={handleSend}
+			onNew={handleNew}
+			onSelect={handleSelect}
+		/>
+	);
+	/* Legacy EmbedShell fallback retained below temporarily for migration reference.
 	return (
 		<>
 			{props.previewTicket !== undefined && (
@@ -364,7 +364,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 				</div>
 			</EmbedShell>
 		</>
-	);
+	); */
 }
 
 function MessageBubble(props: { readonly message: ChatMessage }): React.JSX.Element {

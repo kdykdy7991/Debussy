@@ -11,6 +11,7 @@ import type { ChatMessage, ConversationSummary } from "./types.ts";
 export function PublishedConversationWorkspace(props: {
 	readonly title: string;
 	readonly state: EmbedChatState;
+	readonly error: string | null;
 	readonly onSend: (text: string) => void;
 	readonly onNew: () => void;
 	readonly onSelect: (conversationId: string) => void;
@@ -65,6 +66,11 @@ export function PublishedConversationWorkspace(props: {
 						{props.state.connectionStatus === "connected" ? "已连接" : "连接中"}
 					</output>
 				</div>
+				{props.error !== null ? (
+					<div className="connection-error" role="alert">
+						<span>{props.error}</span>
+					</div>
+				) : null}
 				<div className="conversation-scroll">
 					<article className="conversation-article">
 						<section className="message-flow" aria-live="polite">
