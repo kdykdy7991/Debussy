@@ -6,6 +6,7 @@ import { ConversationList } from "./conversation-list.tsx";
 import { EmbedShell } from "./embed-shell.tsx";
 import { EmbedErrorState } from "./error-state.tsx";
 import { EmbedPostMessageChannel } from "./post-message.ts";
+import { PublishedConversationWorkspace } from "./published-conversation-workspace.tsx";
 import type { WebSocketLike } from "./realtime-transport.ts";
 import type { BootstrapResponse, ChatMessage } from "./types.ts";
 
@@ -274,6 +275,17 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	}
 	const errorBanner = chatState.error;
 	const activeConversationId = chatState.activeId;
+	if (errorBanner === null) {
+		return (
+			<PublishedConversationWorkspace
+				title={summary.name}
+				state={chatState}
+				onSend={handleSend}
+				onNew={handleNew}
+				onSelect={handleSelect}
+			/>
+		);
+	}
 	return (
 		<>
 			{props.previewTicket !== undefined && (
