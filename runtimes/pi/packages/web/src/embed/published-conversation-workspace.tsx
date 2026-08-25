@@ -7,6 +7,7 @@ import {
 	AssistantResponse,
 	Prose,
 	preloadAgentStatusAvatar,
+	Sources,
 	UserMessage,
 } from "../ai-kit/index.ts";
 import type { EmbedChatState } from "./chat-controller.ts";
@@ -323,6 +324,20 @@ function PublishedMessage({ message }: { readonly message: ChatMessage }): React
 	return (
 		<AssistantResponse rail={rail}>
 			<div className="assistant-output-card">
+				{!message.streaming ? (
+					<button
+						className="assistant-output-copy"
+						type="button"
+						onClick={() => void navigator.clipboard?.writeText(message.text).catch(() => {})}
+						aria-label="复制本条回答正文"
+						title="复制本条回答正文"
+					>
+						<svg viewBox="0 0 16 16" fill="none" focusable="false" aria-hidden="true">
+							<rect x="5.25" y="5.25" width="7.5" height="7.5" rx="1" stroke="currentColor" strokeWidth="1.25" />
+							<path d="M10.75 5.25v-1a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1" stroke="currentColor" strokeWidth="1.25" />
+						</svg>
+					</button>
+				) : null}
 				<div className="ai-reading-content">
 					<Prose plain={message.text.length <= 120 && !message.text.includes("\n")} streaming={message.streaming}>
 						<AnimatedMarkdown
@@ -332,6 +347,16 @@ function PublishedMessage({ message }: { readonly message: ChatMessage }): React
 						/>
 					</Prose>
 				</div>
+				{message.citations && message.citations.length > 0 ? (
+					<Sources
+						sources={message.citations.map((citation, index) => ({
+							id: index + 1,
+							title: citation.title,
+							meta: citation.excerpt,
+							type: "引用",
+						}))}
+					/>
+				) : null}
 			</div>
 		</AssistantResponse>
 	);
