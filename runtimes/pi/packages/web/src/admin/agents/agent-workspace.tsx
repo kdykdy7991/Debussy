@@ -21,22 +21,18 @@
  *   - 页面专属样式收敛到 `agent-workspace.module.css`，
  *     不再追加到 admin/styles.css。
  */
-import type {
-	AgentDefinitionDetail,
-	AgentPublicId,
-	LlmAvailableModel,
-} from "@earendil-works/pi-protocol";
+import type { AgentDefinitionDetail, AgentPublicId, LlmAvailableModel } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
 import { AppApi } from "../api/app-api.ts";
 import { LlmApi } from "../api/llm-api.ts";
 import { PublishDrawer } from "../apps/publish-drawer.tsx";
+import { type AuroraPillTabItem, AuroraPillTabs } from "../aurora/index.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
-import { AuroraButton, AuroraPageHeader, AuroraPillTabs, type AuroraPillTabItem } from "../aurora/index.ts";
-import { navigate } from "../router.ts";
 import { AgentAppsTab } from "./agent-apps-tab.tsx";
 import { AgentDebugTab } from "./agent-debug-tab.tsx";
 import { AgentDesignTab } from "./agent-design-tab.tsx";
+import type { ModelCatalogState } from "./agent-form.tsx";
 import { AgentRevisionTab } from "./agent-revision-tab.tsx";
 import { AgentSaveBar } from "./agent-save-bar.tsx";
 import {
@@ -49,7 +45,6 @@ import {
 	saveFailed,
 	saveSucceeded,
 } from "./agent-state.ts";
-import type { ModelCatalogState } from "./agent-form.tsx";
 import styles from "./agent-workspace.module.css";
 
 type Tab = "design" | "revisions" | "apps" | "debug";
@@ -80,10 +75,7 @@ export function AgentWorkspace({ agentId, api, llmApi, appApi }: AgentWorkspaceP
 		() => llmApi ?? (api === undefined ? new LlmApi({ auth: controller }) : null),
 		[api, controller, llmApi],
 	);
-	const resolvedAppApi = useMemo(
-		() => appApi ?? new AppApi({ auth: controller }),
-		[api, appApi, controller],
-	);
+	const resolvedAppApi = useMemo(() => appApi ?? new AppApi({ auth: controller }), [appApi, controller]);
 	const [models, setModels] = useState<ModelCatalogState>({ kind: "loading" });
 	const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 	const [tab, setTab] = useState<Tab>("design");
@@ -213,60 +205,21 @@ export function AgentWorkspace({ agentId, api, llmApi, appApi }: AgentWorkspaceP
 			data-unsaved={isUnsaved}
 			data-saving={isSaving}
 		>
-			<AuroraPageHeader
-				title={detail.name}
-				meta={
-					<div className={styles.headerNote}>
-						<span>
-							当前 Revision <code>#{state.display.currentRevision}</code>
-						</span>
-						<span className={styles.headerNoteSep} aria-hidden="true">·</span>
-						<span>
-							最近更新 <time dateTime={detail.updatedAt}>{detail.updatedAt}</time>
-						</span>
-						<span className={styles.headerNoteSep} aria-hidden="true">·</span>
-						<span>
-							关联应用 <strong>{detail.associatedAppCount}</strong>
-						</span>
-					</div>
-				}
-				actions={
-					<div className={styles.headerActions}>
-						<AuroraButton variant="default" size="md" onClick={() => navigate("/chat")}>
-							继续调试
-						</AuroraButton>
-						<AuroraButton
-							variant="primary"
-							size="md"
-							onClick={() => setPublishDrawerMode("open")}
-							disabled={state.status !== "saved"}
-						>
-							{state.status === "saved" ? "发布" : "发布（请先保存草稿）"}
-						</AuroraButton>
-						{state.status !== "saved" ? (
-							<div className={styles.publishBlockNote} role="note">
-								当前有未保存的草稿；请先保存为新 Revision，才能创建应用版本（抽屉也会再次校验）。
-							</div>
-						) : null}
-					</div>
-				}
-			/>
-
-			<AuroraPillTabs<Tab>
-				items={TAB_ITEMS}
-				value={tab}
-				onChange={setTab}
-				ariaLabel="Agent Workspace"
-			/>
+			<AuroraPillTabs<Tab> items={TAB_ITEMS} value={tab} onChange={setTab} ariaLabel="Agent Workspace" />
 
 			<div className={styles.body}>
 				{tab === "design" ? (
-					<AgentDesignTab detail={detail} draft={state.draft} onEdit={onEdit} catalog={models} />
+					<AgentDesignTab
+						detail={detail}
+						draft={state.draft}
+						onEdit={onEdit}
+						catalog={models}
+						canPublish={state.status === "saved"}
+						onPublish={() => setPublishDrawerMode("open")}
+					/>
 				) : null}
 				{tab === "revisions" ? <AgentRevisionTab agentId={agentId} api={resolvedApi} /> : null}
-				{tab === "apps" ? (
-					<AgentAppsTab agentId={agentId} agentApi={resolvedApi} appApi={resolvedAppApi} />
-				) : null}
+				{tab === "apps" ? <AgentAppsTab agentId={agentId} agentApi={resolvedApi} appApi={resolvedAppApi} /> : null}
 				{tab === "debug" ? <AgentDebugTab agentId={agentId} /> : null}
 			</div>
 

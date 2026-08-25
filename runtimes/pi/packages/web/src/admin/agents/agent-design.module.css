@@ -16,22 +16,311 @@
  * 注意：CSS Modules 类名驼峰（避免与 React 属性访问冲突），不使用 kebab。
  */
 
-.design {
+.designWorkspace {
+	display: grid;
+	grid-template-columns: 210px minmax(420px, 1fr) minmax(300px, 380px);
+	align-items: start;
+	min-height: 680px;
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md);
+	background: var(--aurora-surface);
+	overflow: clip;
+	min-width: 0;
+}
+
+.designNav {
+	position: sticky;
+	top: 0;
 	display: flex;
 	flex-direction: column;
-	gap: var(--aurora-space-5);
+	align-self: start;
+	min-height: 680px;
+	border-right: 1.5px solid var(--aurora-line-soft);
+	background: var(--aurora-surface);
+}
+
+.designNavTitle {
+	padding: 20px;
+	border-bottom: 1.5px solid var(--aurora-line-soft);
+	font-size: var(--aurora-text-lg);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+}
+
+.designNav nav {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px;
+}
+
+.designNav a {
+	display: grid;
+	grid-template-columns: 26px 1fr;
+	align-items: center;
+	gap: 10px;
+	padding: 10px;
+	border-radius: var(--aurora-radius-sm);
+	color: var(--aurora-ink-2);
+	text-decoration: none;
+}
+
+.designNav a:hover,
+.designNavActive {
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink);
+}
+
+.designNav a strong,
+.designNav a small {
+	display: block;
+}
+
+.designNav a strong {
+	font-size: var(--aurora-text-md);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.designNav a small {
+	margin-top: 2px;
+	font-size: 11px;
+	color: var(--aurora-ink-3);
+}
+
+.designNavIcon {
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	color: var(--aurora-ink-2);
+}
+
+.designNav a:hover .designNavIcon,
+.designNavActive .designNavIcon {
+	color: var(--aurora-ink);
+}
+
+.designEditor {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
 	min-width: 0;
+	padding: 20px;
+	background: #fafafa;
+}
+
+.sectionAnchor {
+	scroll-margin-top: 20px;
 }
 
 .section {
 	background: var(--aurora-surface);
-	border: 1.5px solid var(--aurora-line);
+	border: 1.5px solid var(--aurora-line-soft);
 	border-radius: var(--aurora-radius-md);
 	padding: var(--aurora-space-5) var(--aurora-space-6);
 	display: flex;
 	flex-direction: column;
 	gap: var(--aurora-space-3);
 	min-width: 0;
+}
+
+.designPreview {
+	position: sticky;
+	top: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	min-width: 0;
+	padding: 20px;
+	border-left: 1.5px solid var(--aurora-line-soft);
+	background: var(--aurora-surface);
+}
+
+.previewHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding-bottom: 16px;
+	border-bottom: 1.5px solid var(--aurora-line-soft);
+}
+
+.previewHeader h2 {
+	margin: 3px 0 0;
+	font-size: var(--aurora-text-lg);
+	color: var(--aurora-ink);
+}
+
+.previewKicker,
+.previewBlock > span,
+.previewCapabilities > span {
+	font-size: 11px;
+	font-weight: var(--aurora-weight-semibold);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--aurora-ink-3);
+}
+
+.previewStatus {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+	font-size: 11px;
+	color: var(--aurora-ink-3);
+}
+
+.previewStatus i {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--aurora-green);
+}
+
+.previewIdentity {
+	display: grid;
+	grid-template-columns: 48px 1fr;
+	gap: 12px;
+	align-items: center;
+}
+
+.previewIdentity strong {
+	color: var(--aurora-ink);
+}
+
+.previewIdentity p,
+.previewBlock p,
+.previewNotice p {
+	margin: 4px 0 0;
+	font-size: var(--aurora-text-sm);
+	line-height: 1.5;
+	color: var(--aurora-ink-3);
+}
+
+.previewAvatar {
+	display: grid;
+	place-items: center;
+	width: 48px;
+	height: 48px;
+	border-radius: 12px;
+	background: var(--aurora-ink);
+	color: white;
+	font-size: 19px;
+	font-weight: var(--aurora-weight-semibold);
+}
+
+.previewBlock,
+.previewNotice {
+	padding: 14px;
+	border: 1.5px solid var(--aurora-line-soft);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface-soft);
+}
+
+.previewBlock p {
+	display: -webkit-box;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 6;
+	color: var(--aurora-ink-2);
+}
+
+.previewFacts {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+	margin: 0;
+}
+
+.previewFacts div {
+	min-width: 0;
+	padding: 10px;
+	border: 1.5px solid var(--aurora-line-soft);
+	border-radius: var(--aurora-radius-sm);
+}
+
+.previewFacts dt {
+	font-size: 11px;
+	color: var(--aurora-ink-3);
+}
+
+.previewFacts dd {
+	overflow: hidden;
+	margin: 4px 0 0;
+	color: var(--aurora-ink);
+	font-size: var(--aurora-text-sm);
+	font-weight: var(--aurora-weight-medium);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.previewCapabilities div {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.previewCapabilities b {
+	padding: 4px 8px;
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-pill);
+	font-size: 11px;
+	font-weight: var(--aurora-weight-medium);
+	color: var(--aurora-ink-2);
+}
+
+.previewCapabilities em {
+	font-size: var(--aurora-text-sm);
+	font-style: normal;
+	color: var(--aurora-ink-3);
+}
+
+.previewNotice strong {
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink);
+}
+
+.previewButton {
+	width: 100%;
+	height: 38px;
+	border: 1px solid var(--aurora-ink);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-ink);
+	color: white;
+	font: inherit;
+	font-weight: var(--aurora-weight-medium);
+	cursor: pointer;
+}
+
+.previewButton:hover {
+	background: #000;
+}
+
+.previewActions {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+}
+
+.previewSecondaryButton {
+	height: 38px;
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	font: inherit;
+	font-weight: var(--aurora-weight-medium);
+	cursor: pointer;
+}
+
+.previewSecondaryButton:hover {
+	background: var(--aurora-surface-soft);
+}
+
+.previewButton:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
 }
 
 .sectionHeader {
@@ -315,6 +604,38 @@
    -------------------------------------------------------------------------- */
 
 @media (max-width: 768px) {
+	.designWorkspace {
+		display: block;
+	}
+
+	.designNav,
+	.designPreview {
+		position: static;
+		min-height: 0;
+		border: 0;
+	}
+
+	.designNav nav {
+		flex-direction: row;
+		overflow-x: auto;
+	}
+
+	.designNav a {
+		flex: 0 0 auto;
+	}
+
+	.designNav a small {
+		display: none;
+	}
+
+	.designEditor {
+		padding: 12px;
+	}
+
+	.designPreview {
+		border-top: 1.5px solid var(--aurora-line-soft);
+	}
+
 	.section {
 		padding: var(--aurora-space-4);
 	}
