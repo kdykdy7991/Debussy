@@ -39,6 +39,28 @@ trap cleanup INT TERM EXIT
 
 ./node_modules/.bin/tsx packages/server/src/web/cli.ts --port "$server_port" --allow-origin "$allowed_origin" "$@" &
 server_pid=$!
+
+# Do not expose Vite until its API/WebSocket proxy has a live backend.  Starting
+# both processes concurrently made browsers that restored the last Embed page
+# race the server boot and show a spurious ECONNREFUSED banner.
+server_ready=false
+for _ in $(seq 1 150); do
+	if node -e "const socket=require('node:net').connect(${server_port}, '127.0.0.1'); socket.once('connect', () => { socket.end(); process.exit(0); }); socket.once('error', () => process.exit(1));"; then
+		server_ready=true
+		break
+	fi
+	if ! kill -0 "$server_pid" 2>/dev/null; then
+		echo "Backend exited before it became ready." >&2
+		wait "$server_pid"
+		exit 1
+	fi
+	sleep 0.1
+done
+if [[ "$server_ready" != "true" ]]; then
+	echo "Backend did not start listening on 127.0.0.1:${server_port} within 15 seconds." >&2
+	exit 1
+fi
+
 npm run dev --workspace=@earendil-works/pi-web -- --host 127.0.0.1 --port "$web_ui_port" --strictPort &
 web_pid=$!
 
