@@ -5,189 +5,80 @@
  * 卡片套壳，section 直接铺在 .admin-shell__main 内；PageHeader 仅保留
  * 右上「新建 Agent」操作，下方即紧凑表格 + 分页。
  *
- * 数据沿用既有 MOCK_AGENTS（status / modelId / tools / revision /
- * updatedAt / updatedBy 字段不变）；后续接入 AgentApi 时只替换数据源，
- * 组件结构与布局不再变更。
+ * 数据只来自 Control API 的 AgentDefinitionSummary。设计页不展示示例、推断
+ * 或拼装的数据：当前 API 没有返回的模型、工具、状态、会话数和操作者均不渲染。
  */
-import type { AgentPublicId } from "@earendil-works/pi-protocol";
-import { useMemo, useState } from "react";
+import type { AgentDefinitionSummary } from "@earendil-works/pi-protocol";
+import { useEffect, useMemo, useState } from "react";
+import { AgentApi } from "../api/agent-api.ts";
+import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { navigate } from "../router.ts";
 import styles from "./agent-list-view.module.css";
-import { AuroraButton, AuroraPageHeader, AuroraPill } from "./index.ts";
+import { AuroraButton, AuroraPageHeader } from "./index.ts";
 
-type AgentStatus = "active" | "draft" | "archived";
-
-interface AgentRow {
-	readonly id: AgentPublicId;
-	readonly name: string;
-	readonly description: string;
-	readonly modelId: string;
-	readonly tools: readonly string[];
-	readonly revision: number;
-	readonly status: AgentStatus;
-	readonly sessionsToday: number;
-	readonly updatedAt: string;
-	readonly updatedBy: string;
-}
-
-const MOCK_AGENTS: readonly AgentRow[] = [
-	{
-		id: "agent_demo_customer_service" as AgentPublicId,
-		name: "客服 Agent",
-		description: "面向 C 端用户的智能客服，整合知识库检索与多轮上下文。",
-		modelId: "claude-sonnet-4.5",
-		tools: ["知识库检索", "工单创建", "退款查询", "意图识别", "多轮上下文"],
-		revision: 12,
-		status: "active",
-		sessionsToday: 1247,
-		updatedAt: "2026-08-15 10:32",
-		updatedBy: "alice@example.com",
-	},
-	{
-		id: "agent_demo_contract_review" as AgentPublicId,
-		name: "合同审查 Agent",
-		description: "法务助手，自动审查合同条款、识别潜在风险并给出修订建议。",
-		modelId: "claude-opus-5",
-		tools: ["条款比对", "风险条款识别", "修订建议生成"],
-		revision: 8,
-		status: "active",
-		sessionsToday: 412,
-		updatedAt: "2026-08-12 09:14",
-		updatedBy: "bob@example.com",
-	},
-	{
-		id: "agent_demo_data_analyst" as AgentPublicId,
-		name: "数据分析 Agent",
-		description: "支持自然语言查询数据库，输出 SQL 与可视化图表。",
-		modelId: "claude-sonnet-4.5",
-		tools: ["SQL 生成", "Schema 检索", "可视化图表", "数据采样", "异常检测"],
-		revision: 21,
-		status: "draft",
-		sessionsToday: 128,
-		updatedAt: "2026-08-16 18:01",
-		updatedBy: "carol@example.com",
-	},
-	{
-		id: "agent_demo_knowledge_qa" as AgentPublicId,
-		name: "知识问答 Agent",
-		description: "基于内部知识库的语义检索与回答。",
-		modelId: "claude-haiku-4.5",
-		tools: ["语义检索", "引用标注"],
-		revision: 5,
-		status: "active",
-		sessionsToday: 87,
-		updatedAt: "2026-08-10 14:48",
-		updatedBy: "alice@example.com",
-	},
-	{
-		id: "agent_demo_sales" as AgentPublicId,
-		name: "销售助手",
-		description: "辅助销售跟进客户、生成报价与会议纪要。",
-		modelId: "claude-sonnet-4.5",
-		tools: ["客户画像", "报价生成", "会议纪要", "邮件草稿"],
-		revision: 9,
-		status: "active",
-		sessionsToday: 341,
-		updatedAt: "2026-08-09 16:22",
-		updatedBy: "dave@example.com",
-	},
-	{
-		id: "agent_demo_voice_concierge" as AgentPublicId,
-		name: "语音客服",
-		description: "实时语音对话，支持多语种识别与打断处理。",
-		modelId: "claude-sonnet-4.5",
-		tools: ["语音识别", "TTS", "多语种", "打断处理"],
-		revision: 4,
-		status: "draft",
-		sessionsToday: 0,
-		updatedAt: "2026-08-14 11:05",
-		updatedBy: "carol@example.com",
-	},
-	{
-		id: "agent_demo_internal_assistant" as AgentPublicId,
-		name: "内部知识助手",
-		description: "面向员工，集成 wiki / 工单 / 表单检索。",
-		modelId: "claude-haiku-4.5",
-		tools: ["Wiki 检索", "工单创建", "日历读取"],
-		revision: 3,
-		status: "archived",
-		sessionsToday: 0,
-		updatedAt: "2026-06-30 11:11",
-		updatedBy: "alice@example.com",
-	},
-];
-
-function statusMetaLeft(row: AgentRow): React.ReactNode {
-	if (row.status === "active") {
-		return (
-			<AuroraPill tone="live">
-				<span>Live</span>
-				<span style={{ opacity: 0.7 }}>· v{row.revision}</span>
-			</AuroraPill>
-		);
-	}
-	if (row.status === "draft") {
-		return (
-			<AuroraPill tone="amber">
-				<span>v{row.revision}</span>
-				<span style={{ opacity: 0.75 }}>· 草稿</span>
-			</AuroraPill>
-		);
-	}
-	return (
-		<AuroraPill tone="neutral">
-			<span>已归档</span>
-			<span style={{ opacity: 0.7 }}>· v{row.revision}</span>
-		</AuroraPill>
-	);
-}
+type LoadState =
+	| { readonly kind: "loading" }
+	| { readonly kind: "loaded"; readonly items: readonly AgentDefinitionSummary[] }
+	| { readonly kind: "error"; readonly message: string };
 
 export function AgentListView(): React.ReactElement {
+	const { controller } = useAdminAuth();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(9);
+	const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 
-	const counts = useMemo(() => {
-		const byStatus = (s: AgentStatus) => MOCK_AGENTS.filter((r) => r.status === s).length;
-		return {
-			total: MOCK_AGENTS.length,
-			active: byStatus("active"),
-			draft: byStatus("draft"),
-			archived: byStatus("archived"),
+	useEffect(() => {
+		let cancelled = false;
+		const api = new AgentApi({ auth: controller });
+		void api
+			.listAgents({ limit: 100 })
+			.then((result) => {
+				if (!cancelled) setLoad({ kind: "loaded", items: result.items });
+			})
+			.catch((error: unknown) => {
+				if (!cancelled) setLoad({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+			});
+		return () => {
+			cancelled = true;
 		};
-	}, []);
+	}, [controller]);
 
-	const totalPages = Math.max(1, Math.ceil(MOCK_AGENTS.length / pageSize));
+	const items = load.kind === "loaded" ? load.items : [];
+	const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
 	const safePage = Math.min(page, totalPages);
-	const pagedRows = MOCK_AGENTS.slice((safePage - 1) * pageSize, safePage * pageSize);
+	const pagedRows = useMemo(
+		() => items.slice((safePage - 1) * pageSize, safePage * pageSize),
+		[items, pageSize, safePage],
+	);
 
 	return (
 		<section className={styles.shell} aria-label="Agent 列表">
 			<AuroraPageHeader
 				title="Agent 设计"
 				description="配置 Agent 能力、保存 Revision，并查看它被哪些发布应用使用。"
-				meta="示例数据"
 			/>
 
-			<TableFallback rows={pagedRows} onOpen={(id) => navigate(`/agents/${id}`)} />
+			{load.kind === "loading" ? <div className={styles.empty}>正在加载 Agent…</div> : null}
+			{load.kind === "error" ? <div className={styles.empty}>加载 Agent 失败：{load.message}</div> : null}
+			{load.kind === "loaded" ? <TableFallback rows={pagedRows} onOpen={(id) => navigate(`/agents/${id}`)} /> : null}
 
-			<footer className={styles.footer}>
-				<div className={styles.totalCount}>
-					共 <strong>{counts.total}</strong> 个 Agent
-					<span className={styles.totalSub}>
-						· {counts.active} 已发布 · {counts.draft} 有草稿 · {counts.archived} 已归档
-					</span>
-				</div>
-				<Pagination
-					page={safePage}
-					totalPages={totalPages}
-					pageSize={pageSize}
-					onPageChange={setPage}
-					onPageSizeChange={(s) => {
-						setPageSize(s);
-						setPage(1);
-					}}
-				/>
-			</footer>
+			{load.kind === "loaded" ? (
+				<footer className={styles.footer}>
+					<div className={styles.totalCount}>
+						共 <strong>{items.length}</strong> 个 Agent
+					</div>
+					<Pagination
+						page={safePage}
+						totalPages={totalPages}
+						pageSize={pageSize}
+						onPageChange={setPage}
+						onPageSizeChange={(s) => {
+							setPageSize(s);
+							setPage(1);
+						}}
+					/>
+				</footer>
+			) : null}
 		</section>
 	);
 }
@@ -197,8 +88,8 @@ export function AgentListView(): React.ReactElement {
 // --------------------------------------------------------------------------
 
 interface TableFallbackProps {
-	readonly rows: readonly AgentRow[];
-	readonly onOpen: (id: AgentPublicId) => void;
+	readonly rows: readonly AgentDefinitionSummary[];
+	readonly onOpen: (id: string) => void;
 }
 
 /**
@@ -228,10 +119,8 @@ function TableFallback({ rows, onOpen }: TableFallbackProps): React.ReactElement
 				<thead>
 					<tr>
 						<th>名称</th>
-						<th>模型</th>
-						<th>状态</th>
 						<th>修订</th>
-						<th>今日会话</th>
+						<th>创建时间</th>
 						<th className={styles.colActions} />
 					</tr>
 				</thead>
@@ -242,16 +131,12 @@ function TableFallback({ rows, onOpen }: TableFallbackProps): React.ReactElement
 								<button type="button" className={styles.tableName} onClick={() => onOpen(row.id)}>
 									{row.name}
 								</button>
-								<div className={styles.tableDesc}>{row.description}</div>
+								<div className={styles.tableDesc}>{row.id}</div>
 							</td>
-							<td>
-								<code className={styles.mono}>{row.modelId}</code>
-							</td>
-							<td>{statusMetaLeft(row)}</td>
 							<td>
 								<code className={styles.mono}>v{row.revision}</code>
 							</td>
-							<td className={styles.tabular}>{row.sessionsToday.toLocaleString()}</td>
+							<td className={styles.tabular}>{new Date(row.createdAt).toLocaleString()}</td>
 							<td className={styles.colActions}>
 								<AuroraButton variant="ghost" size="sm" onClick={() => onOpen(row.id)}>
 									打开 →

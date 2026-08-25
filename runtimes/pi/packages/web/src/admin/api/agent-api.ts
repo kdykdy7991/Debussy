@@ -12,6 +12,7 @@ import type {
 	AgentCapabilities,
 	AgentDefinitionAssociatedApp,
 	AgentDefinitionDetail,
+	AgentDefinitionListResponse,
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
 	AgentModelParameters,
@@ -114,10 +115,13 @@ export class AgentApi {
 		return envelope.data;
 	}
 
-	listAgents(input: { limit: number; cursor?: string }): Promise<unknown> {
+	listAgents(input: { limit: number; cursor?: string }): Promise<AgentDefinitionListResponse> {
 		const params = new URLSearchParams({ limit: String(input.limit) });
 		if (input.cursor !== undefined && input.cursor !== "") params.set("cursor", input.cursor);
-		return this.request({ method: "GET", path: `/api/control/v1/agent-definitions?${params.toString()}` });
+		return this.request<AgentDefinitionListResponse>({
+			method: "GET",
+			path: `/api/control/v1/agent-definitions?${params.toString()}`,
+		});
 	}
 
 	getAgentDetail(agentId: AgentPublicId): Promise<AgentDefinitionDetail> {
