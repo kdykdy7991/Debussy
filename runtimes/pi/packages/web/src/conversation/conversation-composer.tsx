@@ -15,6 +15,7 @@ export interface ConversationComposerProps {
 	readonly voice: VoiceCapability | undefined;
 	readonly voiceEnabled: boolean;
 	readonly voiceAvailable: boolean;
+	readonly uploadsEnabled: boolean;
 	readonly onVoiceChange: (enabled: boolean) => void;
 	readonly onSubmit: FormEventHandler<HTMLFormElement>;
 	readonly onMessageChange: ChangeEventHandler<HTMLTextAreaElement>;
@@ -105,7 +106,13 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 							className="composer-tool composer-attach"
 							type="button"
 							onClick={() => props.fileInputRef.current?.click()}
-							disabled={!props.connected || active === undefined || props.running || props.sessions.loading}
+							disabled={
+								!props.uploadsEnabled ||
+								!props.connected ||
+								active === undefined ||
+								props.running ||
+								props.sessions.loading
+							}
 							title="上传文件附件"
 							aria-label="上传文件附件"
 						>

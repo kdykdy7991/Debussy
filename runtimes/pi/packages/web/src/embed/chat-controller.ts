@@ -235,6 +235,15 @@ export class EmbedChatController {
 		}
 	}
 
+	/** Re-open the active conversation transport after an unexpected close. */
+	async reconnect(): Promise<void> {
+		const conversationId = this.state.activeId;
+		if (conversationId === null) return;
+		this.closing = false;
+		this.setState({ error: null });
+		this.transport.connect(conversationId);
+	}
+
 	/** 上传附件（会话固定版本能力 + 服务端全 scope/配额校验）。 */
 	async uploadFile(input: {
 		readonly filename: string;
@@ -264,6 +273,8 @@ export class EmbedChatController {
 				contentType: view.contentType,
 				sizeBytes: view.sizeBytes,
 				status: view.status,
+				checksumSha256: view.checksumSha256,
+				createdAt: view.createdAt,
 			};
 			this.setState({ attachments: [...this.state.attachments, attachment] });
 		} catch (error) {

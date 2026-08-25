@@ -39,6 +39,8 @@ export interface ChatAttachment {
 	readonly contentType: string;
 	readonly sizeBytes: number;
 	readonly status: string;
+	readonly checksumSha256: string;
+	readonly createdAt: string;
 }
 
 /** 由 Embed Realtime 的真实 tool 事件驱动；不从 UI 侧虚构调用记录。 */

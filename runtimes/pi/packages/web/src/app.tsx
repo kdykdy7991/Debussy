@@ -31,6 +31,7 @@ export interface AppProps {
 	variant?: "standalone" | "admin";
 	contextHeader?: ReactNode;
 	enableVoice?: boolean;
+	enableUploads?: boolean;
 }
 
 const EMPTY_PROMPTS = [
@@ -48,6 +49,7 @@ export function ConversationWorkspace({
 	variant = "standalone",
 	contextHeader,
 	enableVoice = true,
+	enableUploads = true,
 }: AppProps) {
 	const connectionSnapshot = useSyncExternalStore(
 		connection.subscribe,
@@ -425,6 +427,7 @@ export function ConversationWorkspace({
 				voice={enableVoice ? speech?.voice : undefined}
 				voiceEnabled={live.enabled}
 				voiceAvailable={live.available}
+				uploadsEnabled={enableUploads}
 				onVoiceChange={live.setEnabled}
 				onSubmit={submitMessage}
 				onMessageChange={handleMessageChange}

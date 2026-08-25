@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmbedApi, EmbedApiError } from "./api.ts";
 import { EmbedAuthController } from "./auth-controller.ts";
-import { EmbedChatController, type EmbedChatState } from "./chat-controller.ts";
-import { ConversationList } from "./conversation-list.tsx";
+import { EmbedChatController } from "./chat-controller.ts";
 import { EmbedShell } from "./embed-shell.tsx";
 import { EmbedErrorState } from "./error-state.tsx";
 import { EmbedPostMessageChannel } from "./post-message.ts";
-import { PublishedConversationWorkspace } from "./published-conversation-workspace.tsx";
+import { EmbedConversationWorkspace } from "./conversation-workspace-adapter.tsx";
 import type { WebSocketLike } from "./realtime-transport.ts";
-import type { BootstrapResponse, ChatMessage } from "./types.ts";
+import type { BootstrapResponse } from "./types.ts";
 
 type Phase = "loading" | "error" | "ready";
 type EmbedMode = "anonymous" | "signed_user" | "preview";
@@ -27,19 +26,6 @@ export interface EmbedAppProps {
 	readonly wsFactory?: (url: string) => WebSocketLike;
 }
 
-const EMPTY_STATE: EmbedChatState = {
-	conversations: [],
-	activeId: null,
-	messages: [],
-	sending: false,
-	uploading: false,
-	rolloverNotice: null,
-	connectionStatus: "idle",
-	attachments: [],
-	uploadsEnabled: false,
-	error: null,
-};
-
 /** 宿主可接受的 resize 高度上限（与协议包 POST_MESSAGE_RESIZE_MAX_HEIGHT 一致）。 */
 const RESIZE_MAX_HEIGHT = 100000;
 
@@ -48,11 +34,8 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const [phase, setPhase] = useState<Phase>("loading");
 	const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [chatState, setChatState] = useState<EmbedChatState>(EMPTY_STATE);
-	const [showList, setShowList] = useState(false);
 	const controllersRef = useRef<{ auth: EmbedAuthController; chat: EmbedChatController } | null>(null);
 	const channelRef = useRef<EmbedPostMessageChannel | null>(null);
-	const inputRef = useRef<HTMLInputElement | null>(null);
 
 	/** 计算 iframe 内容高度并回发宿主（resize-request / 尺寸变化 / ready 后）。 */
 	const reportHeight = useCallback((): void => {
@@ -63,7 +46,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	}, []);
 
 	const focusComposer = useCallback((): void => {
-		inputRef.current?.focus();
+		document.getElementById("message")?.focus();
 	}, []);
 
 	/** 认证 + 会话加载（匿名直接进入；signed_user 用宿主 init 的 Launch Token）。 */
@@ -83,7 +66,6 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 						: await controllers.auth.signIn(props.publicAppId);
 			// PD-18：launchToken 即用即弃（此处不留存任何引用）。
 			await controllers.chat.initialize(state.features);
-			setChatState(controllers.chat.getState());
 			setPhase("ready");
 			if (mode !== "preview") {
 				// WB-005: preview never postMessages the host (admin-only tab).
@@ -101,7 +83,6 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			await controllers.auth.logout();
 			controllers.chat.reset();
 			setBootstrap(null);
-			setChatState(controllers.chat.getState());
 			setPhase("loading");
 			if (mode === "anonymous") {
 				// 匿名模式无宿主会话：logout 后直接重新匿名进入。
@@ -141,8 +122,6 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			wsFactory: props.wsFactory,
 		});
 		controllersRef.current = { auth, chat };
-		setChatState(chat.getState());
-		const unsubscribe = chat.subscribe(() => setChatState(chat.getState()));
 		let channel: EmbedPostMessageChannel | undefined;
 		let mode: EmbedMode = "anonymous";
 
@@ -196,7 +175,6 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		return () => {
 			window.removeEventListener("resize", onWindowResize);
 			channel?.stop();
-			unsubscribe();
 			chat.close();
 		};
 	}, [
@@ -211,53 +189,9 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		signInAndLoad,
 	]);
 
-	const handleSend = useCallback((text: string): void => {
-		controllersRef.current?.chat.send(text);
-	}, []);
-
-	const handleAbort = useCallback((): void => {
-		controllersRef.current?.chat.cancel();
-	}, []);
-
-	const handleNew = useCallback((): void => {
-		void controllersRef.current?.chat.newConversation().then(() => {
-			setShowList(false);
-			focusComposer();
-		});
-	}, [focusComposer]);
-
-	const handleSelect = useCallback(
-		(conversationId: string): void => {
-			void controllersRef.current?.chat.openConversation(conversationId).then(() => {
-				setShowList(false);
-				focusComposer();
-			});
-		},
-		[focusComposer],
-	);
-
-	const handleArchive = useCallback((): void => {
-		void controllersRef.current?.chat.archiveActive().then(focusComposer);
-	}, [focusComposer]);
-
-	const handleUpload = useCallback((file: File): void => {
-		void file
-			.arrayBuffer()
-			.then((buffer) =>
-				controllersRef.current?.chat.uploadFile({
-					filename: file.name,
-					contentType: file.type || "application/octet-stream",
-					data: new Uint8Array(buffer),
-				}),
-			)
-			.catch(() => {
-				// uploadFile 内部已把错误写入 chatState.error。
-			});
-	}, []);
-
 	if (phase === "loading") {
 		return (
-			<EmbedShell title="加载中…" onSend={handleSend} sending={false} disabled>
+			<EmbedShell title="加载中…" onSend={() => {}} sending={false} disabled>
 				<p className="embed-empty">正在连接…</p>
 			</EmbedShell>
 		);
@@ -277,21 +211,9 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			</div>
 		);
 	}
-	const errorBanner = chatState.error;
-	const activeConversationId = chatState.activeId;
-	return (
-		<PublishedConversationWorkspace
-			title={summary.name}
-			state={chatState}
-			error={errorBanner?.message ?? null}
-			onSend={handleSend}
-			onAbort={handleAbort}
-			onNew={handleNew}
-			onSelect={handleSelect}
-			onUpload={handleUpload}
-			onRemoveAttachment={(attachmentId) => void controllersRef.current?.chat.removeAttachment(attachmentId)}
-		/>
-	);
+	const chatController = controllersRef.current?.chat;
+	if (chatController === undefined) return <EmbedErrorState message="会话控制器未就绪" onRetry={() => window.location.reload()} />;
+	return <EmbedConversationWorkspace title={summary.name} controller={chatController} />;
 	/* Legacy EmbedShell fallback retained below temporarily for migration reference.
 	return (
 		<>
@@ -372,23 +294,4 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			</EmbedShell>
 		</>
 	); */
-}
-
-function MessageBubble(props: { readonly message: ChatMessage }): React.JSX.Element {
-	const message = props.message;
-	return (
-		<div className={`embed-message embed-${message.role}${message.streaming === true ? " is-streaming" : ""}`}>
-			<span className="embed-message-text">{message.text}</span>
-			{message.citations !== undefined && message.citations.length > 0 && (
-				<ul className="embed-citations" aria-label="引用来源">
-					{message.citations.map((citation, index) => (
-						<li key={`${citation.sourceId}-${citation.chunkId ?? index}`} className="embed-citation">
-							<span className="embed-citation-title">{citation.title}</span>
-							<span className="embed-citation-excerpt">{citation.excerpt}</span>
-						</li>
-					))}
-				</ul>
-			)}
-		</div>
-	);
 }
