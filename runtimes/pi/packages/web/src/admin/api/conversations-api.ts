@@ -107,6 +107,11 @@ export interface ConversationListArgs {
 }
 
 export class ConversationsApi {
+	/** reasoning 端点的请求超时（与 stale guard 取消信号正交）。 */
+	private static readonly REASONING_TIMEOUT_MS = 30_000 as const;
+	/** 超时错误的稳定 transport code（前端 API 层；非协议码）。 */
+	private static readonly REQUEST_TIMEOUT_CODE = "REQUEST_TIMEOUT" as const;
+
 	private readonly auth: AdminAuthController;
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
@@ -343,11 +348,17 @@ export class ConversationsApi {
 	 *
 	 * 不复制 DTO——直接 import `ConversationReasoningState` / `ReasoningUpdateRequest`
 	 * 给上层组件。
+	 *
+	 * 请求受 **30 秒超时** 守护；超时（与 caller signal 来自 stale guard
+	 * 的取消正交）以 `ConversationsApiError.code = "REQUEST_TIMEOUT"` 抛出，
+	 * `retryable=true`，由 UI 引导用户手动重试。
 	 */
 	getReasoning(conversationId: string, signal?: AbortSignal): Promise<ConversationReasoningState> {
-		return this.request<ConversationReasoningState>(
-			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
-			signal !== undefined ? { signal } : {},
+		return this.withReasoningTimeout(signal, (combined) =>
+			this.request<ConversationReasoningState>(
+				`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
+				{ signal: combined },
+			),
 		);
 	}
 
@@ -360,17 +371,65 @@ export class ConversationsApi {
 	 * 两者都不可重试，UI 应展示错误码 + 当前 draft，不进入 loading 态。
 	 *
 	 * 第三个参数 `signal` 用于过期保存保护（tab 切换 / 卸载 / 重新打开表单
-	 * 时取消旧保存，避免旧请求覆盖新会话状态）。
+	 * 时取消旧保存，避免旧请求覆盖新会话状态）；与 30s 超时并联工作（任一
+	 * 触发即取消），超时时映射为 `REQUEST_TIMEOUT`。
 	 */
 	putReasoning(
 		conversationId: string,
 		body: ReasoningUpdateRequest,
 		signal?: AbortSignal,
 	): Promise<ConversationReasoningState> {
-		return this.requestWithBody<ConversationReasoningState>(
-			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
-			{ method: "PUT", body, ...(signal !== undefined ? { signal } : {}) },
+		return this.withReasoningTimeout(signal, (combined) =>
+			this.requestWithBody<ConversationReasoningState>(
+				`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/reasoning`,
+				{ method: "PUT", body, signal: combined },
+			),
 		);
+	}
+
+	/**
+	 * reasoning 端点的 30 秒超时；与 caller 的 `signal`（来自 `createStaleResponseGuard`）
+	 * **并联** 组合——任一触发即取消 fetch。
+	 *
+	 * 取消语义区分：
+	 * - **stale guard / 切换会话 / 卸载** → 抛 `DOMException("AbortError")`，
+	 *   透传，UI 静默吞掉；
+	 * - **30 秒超时** → 抛 `ConversationsApiError{ code: "REQUEST_TIMEOUT",
+	 *   retryable: true }`，UI 展示手动重试。
+	 *
+	 * 不直接以 timeout signal 替换 caller signal：切会话仍是 stale guard
+	 * 的语义，超时是另一条独立触发路径；两者通过 `AbortSignal.any` 合并。
+	 */
+	private async withReasoningTimeout<T>(
+		callerSignal: AbortSignal | undefined,
+		fn: (signal: AbortSignal) => Promise<T>,
+	): Promise<T> {
+		const timeoutController = new AbortController();
+		const timeoutId = setTimeout(() => {
+			timeoutController.abort(new DOMException("reasoning request timed out", "TimeoutError"));
+		}, ConversationsApi.REASONING_TIMEOUT_MS);
+		try {
+			const combinedSignal =
+				callerSignal !== undefined
+					? AbortSignal.any([callerSignal, timeoutController.signal])
+					: timeoutController.signal;
+			return await fn(combinedSignal);
+		} catch (err) {
+			// 只把"我们启用的 timeout"翻译成 REQUEST_TIMEOUT；stale guard /
+			// 卸载产生的 abort 不归我们所有，原样抛出让调用方静默吞掉。
+			if (timeoutController.signal.aborted && err instanceof DOMException && err.name === "AbortError") {
+				throw new ConversationsApiError(
+					"reasoning 请求超时（30s），请重试",
+					408,
+					null,
+					ConversationsApi.REQUEST_TIMEOUT_CODE,
+					true,
+				);
+			}
+			throw err;
+		} finally {
+			clearTimeout(timeoutId);
+		}
 	}
 }
 

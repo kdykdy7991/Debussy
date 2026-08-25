@@ -10,13 +10,21 @@
  * （`setConversationSessionEffort`），仅授权门不同，避免把 Control Admin 与 Embed
  * 会话权限混在一个路由里：
  *
- * - **控制面管理员**：`PUT /api/control/v1/conversations/:conversationId/reasoning`
+ * - **控制面管理员**：`GET + PUT /api/control/v1/conversations/:conversationId/reasoning`
  *   （Admin Token；用于 admin-debug/管理员调试会话）。
- * - **Embed 属主**：`PUT /api/embed/v1/conversations/:conversationId/reasoning`
- *   （会话属主 Embed principal 调整自己的会话）。
+ * - **Embed 属主**：`GET + PUT /api/embed/v1/conversations/:conversationId/reasoning`
+ *   （会话属主 Embed principal 读取或调整自己的会话；GET 与 Control 面复用
+ *   {@link ConversationReasoningState}）。
  *
  * 两者请求体都是 {@link ReasoningUpdateRequest}，返回 {@link ConversationReasoningState}
  * （PUT 幂等；请求体即 `ReasoningUpdateRequest`）。
+ *
+ * ## capability 数据源（契约已冻结）
+ *
+ * capability 与 `effort` **同 DTO 原子返回**——`GET /reasoning` 的响应里嵌
+ * `pinnedCapability: { publishedAppVersionId, modelId, reasoning }`，由会话
+ * 创建时一次性写入 `Published App Version`，**不**查实时 LLM catalog。
+ * 不提供独立 `GET /conversations/{id}/capability` 端点。
  *
  * ## 授权与 404/403 语义
  *
@@ -69,9 +77,17 @@ export interface ConversationReasoningState {
 	readonly effort: ReasoningEffort | null;
 	/** 最近一次覆盖的时间（ISO 8601 / UTC）。 */
 	readonly updatedAt: string;
-	/** Whether this pinned version permits a conversation-level override. */
+	/**
+	 * 会话是否允许覆盖（`pinnedCapability !== null`）。`false` 时
+	 * capability 永远 unavailable，UI 禁用编辑入口；前端不引入额外
+	 * 状态分支（与协议冻结状态一致）。
+	 */
 	readonly configurable: boolean;
-	/** Capability snapshot frozen into the Published App Version at publish time. */
+	/**
+	 * Capability 快照，发布时一次性写入 Published App Version；
+	 * **不**查实时 LLM catalog。`null` 即"该版本没沉淀 capability"，
+	 * 与 `configurable:false` 等价触发 unavailable（legacy 分支）。
+	 */
 	readonly pinnedCapability: {
 		readonly publishedAppVersionId: PublishedAppVersionPublicId;
 		readonly modelId: string;

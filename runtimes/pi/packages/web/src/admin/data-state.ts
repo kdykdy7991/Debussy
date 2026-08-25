@@ -36,18 +36,19 @@ export type DataState<T> =
 	  };
 
 /**
- * 已知错误码（协议冻结，metrics + reasoning 联合集合）。
+ * 已知错误码（metrics + reasoning 协议冻结码 + API 层 transport code +
+ * 兜底 `UNKNOWN_ERROR`）。
  *
- * `UNKNOWN_ERROR` 是前端兜底，**非**协议码——`isKnownErrorCode` 返回 false
- * 时调用方应把错误码字符串收敛到该字面量，避免把任意上游字符串当成"已知"。
- *
- * 为什么不合并成单表：协议层 metrics 与 reasoning 是**两条独立 endpoint
- * 家族**（`/conversations/:id/metrics` vs `/conversations/:id/reasoning`），
- * 各自有 `AGENT_V2_*_ERRORS` 表。前端用 union 类型 + `isKnownErrorCode` /
- * `isKnownMetricsErrorCode` / `isKnownReasoningErrorCode` 三个守卫，
- * 把两个集合视为"生产模块已识别的协议码全集"，不允许把"未知码"放进任一表。
+ * `REQUEST_TIMEOUT` 是 **API 层 transport code**（前端 `ConversationsApi`
+ * 30s 超时），非协议码——单独列出是因为它有稳定的语义与文案需求，
+ * 不能被 `UNKNOWN_ERROR` 兜底吃掉。`isKnownErrorCode` 守卫仅识别协议
+ * 子集，transport code 由 `readCode` 内联识别。
  */
-export type KnownErrorCode = AgentV2MetricsErrorCode | AgentV2ReasoningErrorCode | "UNKNOWN_ERROR";
+export type KnownErrorCode =
+	| AgentV2MetricsErrorCode
+	| AgentV2ReasoningErrorCode
+	| "REQUEST_TIMEOUT"
+	| "UNKNOWN_ERROR";
 
 /**
  * 已知错误码 → HTTP/retryable 映射（metrics + reasoning 联合）。
@@ -123,8 +124,11 @@ function readCode(err: unknown): KnownErrorCode {
 		const raw = (err as { code?: unknown }).code;
 		if (typeof raw === "string" && raw.length > 0) {
 			// 把"已知协议码"（metrics 或 reasoning 子集）保留为字面量；
-			// 其它字符串（HTTP 兜底消息、未知上游代码）一律收敛为 `UNKNOWN_ERROR`。
-			return isKnownErrorCode(raw) ? raw : "UNKNOWN_ERROR";
+			// transport code（`REQUEST_TIMEOUT`）也保留；其它字符串（HTTP 兜底
+			// 消息、未知上游代码）一律收敛为 `UNKNOWN_ERROR`。
+			if (isKnownErrorCode(raw)) return raw;
+			if (raw === "REQUEST_TIMEOUT") return "REQUEST_TIMEOUT";
+			return "UNKNOWN_ERROR";
 		}
 	}
 	return "UNKNOWN_ERROR";
@@ -141,6 +145,8 @@ function readRetryable(err: unknown, code: KnownErrorCode): boolean {
 	if (isKnownReasoningErrorCode(code)) {
 		return AGENT_V2_REASONING_ERRORS[code].retryable;
 	}
+	// API 层 transport code（REQUEST_TIMEOUT）→ 可重试，由 UI 引导手动重试。
+	if (code === "REQUEST_TIMEOUT") return true;
 	if (err && typeof err === "object" && "retryable" in err) {
 		const raw = (err as { retryable?: unknown }).retryable;
 		if (typeof raw === "boolean") return raw;
@@ -193,13 +199,20 @@ export function describeError(state: Extract<DataState<unknown>, { kind: "error"
 				title: "策略禁止调整 thinking effort",
 				description: "该会话受租户/企业策略限制，不可调整；请联系策略管理员。",
 			};
+		case "REQUEST_TIMEOUT":
+			// API 层 transport code：30s 超时（与 stale guard 取消信号正交）。
+			// PUT 幂等，重试安全；UI 引导用户手动重试。
+			return {
+				title: "请求超时",
+				description: "reasoning 请求在 30 秒内未收到响应，请手动重试（PUT 幂等，重试安全）。",
+			};
 		case "UNKNOWN_ERROR":
 			return {
 				title: "加载失败",
 				description: state.message,
 			};
 		default:
-			// 穷举防御：`isKnownErrorCode` 已限定上面四类，这里不应进入。
+			// 穷举防御：`KnownErrorCode` 已限定上面五类，这里不应进入。
 			return {
 				title: "加载失败",
 				description: state.message,

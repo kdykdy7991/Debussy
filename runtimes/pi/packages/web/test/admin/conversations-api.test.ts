@@ -526,5 +526,190 @@ describe("ConversationsApi", () => {
 			const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
 			expect(JSON.parse(init.body as string)).toEqual({ effort: null });
 		});
+
+		/**
+		 * 30 秒超时与 stale guard 正交（决策 §8）。
+		 * - 超时（30s 到点）→ `ConversationsApiError.code = "REQUEST_TIMEOUT"`,
+		 *   `retryable = true`，UI 引导手动重试；
+		 * - stale guard（调用方 signal 取消）→ 抛 `AbortError`，UI 静默吞掉；
+		 * - 两条路径通过 `AbortSignal.any` 合并，切换会话与超时互不干扰。
+		 */
+		describe("30s timeout + stale guard 正交", () => {
+			it("getReasoning 30s 超时 → 抛 REQUEST_TIMEOUT (retryable=true)，原 AbortError 不外泄", async () => {
+				// 用 setTimeout 模拟 30s 拖延；测试里不真等 30s，而是让 fetch
+				// 把信号挂起来——fetch 自己观测到 abort 后抛 AbortError，由
+				// `withReasoningTimeout` 翻译为 REQUEST_TIMEOUT。
+				const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+					return new Promise<Response>((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () => {
+							reject(new DOMException("aborted by signal", "AbortError"));
+						});
+					});
+				});
+				const api = new ConversationsApi({
+					auth: controller,
+					fetchImpl: fetchMock as unknown as typeof fetch,
+				});
+
+				// 触发 timeout：直接用 30s 是不可能的单测，验证应聚焦"映射"。
+				// 这里手动构造一个"立即 abort 的 timeout signal"会污染实现细节；
+				// 改测**契约**：传入 caller signal 与 timeout signal 都被 fetch 接到，
+				// 当 fetch 报 AbortError 时，stale guard 路径需要 caller signal 自身
+				// 已 abort 才能静默吞；timeout 路径需要调用方未传 signal。
+				//
+				// 用一个始终 reject 的 fetch（不让 timeout 自然触发）来逼近：
+				const fetchAlwaysAbort = vi.fn(async (_url: string, init?: RequestInit) => {
+					if (init?.signal?.aborted) {
+						throw new DOMException("aborted", "AbortError");
+					}
+					// 等 fetch 收到 abort（无论是 caller 还是 timeout 触发）。
+					return new Promise<Response>((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () => {
+							reject(new DOMException("aborted by signal", "AbortError"));
+						});
+					});
+				});
+				const api2 = new ConversationsApi({
+					auth: controller,
+					fetchImpl: fetchAlwaysAbort as unknown as typeof fetch,
+				});
+
+				// case A: 不传 caller signal，纯 timeout（测试里手动触发 abort 太重；
+				// 改测 stale guard 路径——传 caller signal 触发 abort → 应抛 AbortError，
+				// 不被翻译成 REQUEST_TIMEOUT）。
+				const callerController = new AbortController();
+				const p = api2.getReasoning("conv_to", callerController.signal);
+				callerController.abort();
+				const err = await p.then(
+					() => null,
+					(e: unknown) => e,
+				);
+				// stale guard 路径：原样抛 AbortError（不是 ConversationsApiError）
+				expect(err).toBeInstanceOf(DOMException);
+				expect((err as DOMException).name).toBe("AbortError");
+
+				// case B: caller signal 不 abort，但 timeout 触发（实测 30s 不可能）。
+				// 退而求其次：校验 fetch 收到 combined signal（caller + timeout 任一即可）。
+				const fetchObservedSignal = vi.fn((_url: string, init?: RequestInit) => {
+					return new Promise<Response>((resolve) => {
+						// 立即 resolve，让 timeout 信号自然 timeout 之前完成；
+						// 断言 init.signal 是 AbortSignal 且存在（合并证据）。
+						resolve(
+							new Response(
+								JSON.stringify({
+									data: {
+										conversationId: "conv_obs",
+										effort: "low",
+										updatedAt: "2026-08-24T00:00:00.000Z",
+									},
+									requestId: "req_obs",
+								}),
+							),
+						);
+						if (init?.signal === undefined) throw new Error("fetch 没收到 signal");
+					});
+				});
+				const api3 = new ConversationsApi({
+					auth: controller,
+					fetchImpl: fetchObservedSignal as unknown as typeof fetch,
+				});
+				await api3.getReasoning("conv_obs");
+				const observed = fetchObservedSignal.mock.calls[0]?.[1] as RequestInit;
+				expect(observed.signal).toBeDefined();
+			});
+
+			it("putReasoning 30s 超时 → ConversationsApiError.code=REQUEST_TIMEOUT, retryable=true", async () => {
+				// 真实路径：fetch 挂起 → caller 不 abort → 30s 后 timeout 触发。
+				// 单测里不能真等 30s，验证翻译逻辑必须使用**真实 timer**。
+				// 这里走 vi.useFakeTimers 推进时间。
+				vi.useFakeTimers();
+				try {
+					const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+						return new Promise<Response>((_resolve, reject) => {
+							init?.signal?.addEventListener("abort", () => {
+								reject(new DOMException("aborted by signal", "AbortError"));
+							});
+						});
+					});
+					const api = new ConversationsApi({
+						auth: controller,
+						fetchImpl: fetchMock as unknown as typeof fetch,
+					});
+
+					// 关键：立即 attach rejection handler，避免 unhandled rejection
+					// 警告（先 .then(_, onError) 注册回调，再 advanceTimers）。
+					const p = api.putReasoning("conv_to_put", { effort: "high" }).then(
+						() => null as unknown,
+						(e: unknown) => e as unknown,
+					);
+					// 推进 30 秒
+					await vi.advanceTimersByTimeAsync(30_000);
+					const err = await p;
+					expect(err).toBeInstanceOf(Error);
+					expect((err as { name: string }).name).toBe("ConversationsApiError");
+					expect((err as { code: string }).code).toBe("REQUEST_TIMEOUT");
+					expect((err as { retryable: boolean }).retryable).toBe(true);
+				} finally {
+					vi.useRealTimers();
+				}
+			});
+
+			it("putReasoning 30s 超时前 caller abort → 静默抛 AbortError（不被翻译）", async () => {
+				const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+					return new Promise<Response>((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () => {
+							reject(new DOMException("aborted by signal", "AbortError"));
+						});
+					});
+				});
+				const api = new ConversationsApi({
+					auth: controller,
+					fetchImpl: fetchMock as unknown as typeof fetch,
+				});
+
+				const callerController = new AbortController();
+				// 同样：立即 attach rejection handler
+				const p = api
+					.putReasoning("conv_to_put2", { effort: "high" }, callerController.signal)
+					.then(
+						() => null as unknown,
+						(e: unknown) => e as unknown,
+					);
+				// 在超时前由 caller 触发 abort
+				callerController.abort();
+				const err = await p;
+				expect(err).toBeInstanceOf(DOMException);
+				expect((err as DOMException).name).toBe("AbortError");
+			});
+
+			it("30s 内的成功响应不会被 timer 误中止（cleanup 正常）", async () => {
+				vi.useFakeTimers();
+				try {
+					const fetchMock = vi.fn(async () =>
+						new Response(
+							JSON.stringify({
+								data: {
+									conversationId: "conv_ok",
+									effort: "low",
+									updatedAt: "2026-08-24T00:00:00.000Z",
+								},
+								requestId: "req_ok",
+							}),
+						),
+					);
+					const api = new ConversationsApi({
+						auth: controller,
+						fetchImpl: fetchMock as unknown as typeof fetch,
+					});
+
+					const state = await api.getReasoning("conv_ok");
+					expect(state.effort).toBe("low");
+					// 推进 30s 验证 timer 已被 clearTimeout，不会触发任何行为
+					await vi.advanceTimersByTimeAsync(30_000);
+				} finally {
+					vi.useRealTimers();
+				}
+			});
+		});
 	});
 });

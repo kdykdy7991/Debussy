@@ -44,6 +44,48 @@ describe("conversation pinned reasoning capability", () => {
 			configurable: false,
 			pinnedCapability: null,
 		};
-		expect(capabilityStateFromReasoning(legacy).kind).toBe("unavailable");
+		expect(capabilityStateFromReasoning(legacy)).toEqual({
+			kind: "unavailable",
+			reason: "legacy",
+			message: expect.any(String) as unknown as string,
+		});
+	});
+
+	it("model without reasoning support maps to unavailable + reason='unsupported'", () => {
+		const unsupported: ConversationReasoningState = {
+			conversationId: "conv_unsup",
+			effort: null,
+			updatedAt: "2026-08-24T00:00:00.000Z",
+			configurable: true,
+			pinnedCapability: {
+				publishedAppVersionId: "pav_unsup",
+				modelId: "model-no-reasoning",
+				reasoning: { supported: false, toggle: false, efforts: [] },
+			},
+		};
+		const cap = capabilityStateFromReasoning(unsupported);
+		expect(cap.kind).toBe("unavailable");
+		if (cap.kind === "unavailable") {
+			expect(cap.reason).toBe("unsupported");
+		}
+	});
+
+	it("model with supported=true but empty efforts maps to unavailable + reason='no-efforts'", () => {
+		const noEfforts: ConversationReasoningState = {
+			conversationId: "conv_no_efforts",
+			effort: null,
+			updatedAt: "2026-08-24T00:00:00.000Z",
+			configurable: true,
+			pinnedCapability: {
+				publishedAppVersionId: "pav_no_efforts",
+				modelId: "model-no-efforts",
+				reasoning: { supported: true, toggle: false, efforts: [] },
+			},
+		};
+		const cap = capabilityStateFromReasoning(noEfforts);
+		expect(cap.kind).toBe("unavailable");
+		if (cap.kind === "unavailable") {
+			expect(cap.reason).toBe("no-efforts");
+		}
 	});
 });
