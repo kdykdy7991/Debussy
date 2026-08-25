@@ -151,6 +151,18 @@ describe("WebSocket transport conformance", () => {
 		expect(status).toBe(404);
 	});
 
+	test("forwards a non-primary upgrade to the configured extension handler", async () => {
+		const { server } = await startServer(new TestSessionBackend(), {
+			onUnhandledUpgrade: (_request, socket) => {
+				socket.write("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+				socket.destroy();
+				return true;
+			},
+		});
+		const address = server.addresses[0]!;
+		expect(await rawUpgrade(`ws://${address}/api/embed/v1/realtime`)).toBe(204);
+	});
+
 	test("rejects upgrades from disallowed origins and hosts", async () => {
 		const { server } = await startServer(new TestSessionBackend(), {
 			allowedOrigins: ["http://127.0.0.1:5173"],

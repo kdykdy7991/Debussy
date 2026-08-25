@@ -16,6 +16,7 @@ export function createWebSocketServer(backend: PiSessionBackend, options: WebSoc
 		maxPendingBytes: options.maxPendingBytes,
 		gracefulCloseTimeoutMs: options.gracefulCloseTimeoutMs,
 		httpHandler: options.httpHandler,
+		onUnhandledUpgrade: options.onUnhandledUpgrade,
 		onError: options.onError,
 	});
 	return new PiServer(backend, {
