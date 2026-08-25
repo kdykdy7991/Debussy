@@ -18,10 +18,7 @@
  * `AbortError`（静默吞掉），30s 超时抛 `EmbedApiError.code =
  * "REQUEST_TIMEOUT"` `retryable=true`，由调用方引导手动重试（PUT 幂等）。
  */
-import type {
-	ConversationReasoningState,
-	ReasoningUpdateRequest,
-} from "@earendil-works/pi-protocol";
+import type { ConversationReasoningState, ReasoningUpdateRequest } from "@earendil-works/pi-protocol";
 import type {
 	BootstrapResponse,
 	ConversationDetailResponse,
@@ -29,7 +26,6 @@ import type {
 	ConversationSummary,
 	CreateConversationResponse,
 	DeleteAttachmentResponse,
-	DevTurnResponse,
 	EmbedAttachmentView,
 	EmbedErrorEnvelope,
 	ExchangeRequest,
@@ -164,16 +160,6 @@ export class EmbedApi {
 		return this.request<WsTicketResponse>(`/api/embed/v1/conversations/${conversationId}/ws-ticket`, {
 			method: "POST",
 			token,
-		});
-	}
-
-	/** TASK-018 临时文本 Turn 路径（最终由 Realtime 取代）。 */
-	async sendTurn(token: string, conversationId: string, text: string): Promise<DevTurnResponse> {
-		return this.request<DevTurnResponse>(`/api/embed/v1/dev/conversations/${conversationId}/turn`, {
-			method: "POST",
-			token,
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ text }),
 		});
 	}
 

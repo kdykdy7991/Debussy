@@ -46,24 +46,13 @@ export function EmbedConversationWorkspace(props: {
 						<span className="workspace-context-kicker">PUBLISHED CHAT</span>
 						<strong>{props.title}</strong>
 					</div>
-					<EmbedConnectionStatus controller={props.controller} />
+					<output className="workspace-connection-status">
+						<span aria-hidden="true" />
+						{connectionLabel(state.connectionStatus)}
+					</output>
 				</>
 			}
 		/>
-	);
-}
-
-function EmbedConnectionStatus({ controller }: { readonly controller: EmbedChatController }): React.JSX.Element {
-	const state = useSyncExternalStore(
-		(listener) => controller.subscribe(listener),
-		() => controller.getState(),
-		() => controller.getState(),
-	);
-	return (
-		<output className="workspace-connection-status">
-			<span aria-hidden="true" />
-			{connectionLabel(state.connectionStatus)}
-		</output>
 	);
 }
 

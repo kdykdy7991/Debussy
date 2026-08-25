@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EmbedApi, EmbedApiError } from "../../src/embed/api.ts";
 import { EmbedAuthController } from "../../src/embed/auth-controller.ts";
-import { EmbedConversationController, messagesFromEvents } from "../../src/embed/conversation-controller.ts";
+import { messagesFromEvents } from "../../src/embed/conversation-controller.ts";
 import { createVisitorStorage, newVisitorId, type StorageLike } from "../../src/embed/storage.ts";
 
 function memoryStorage(): StorageLike {
@@ -189,7 +189,7 @@ describe("embed auth controller", () => {
 	});
 });
 
-describe("embed conversation controller", () => {
+describe("embed conversation events", () => {
 	test("derives chat messages from persistent events", () => {
 		const messages = messagesFromEvents([
 			{ id: "e1", sequence: 1, eventType: "user.message", turnId: "t1", payload: { text: "hi" }, createdAt: "" },
@@ -280,13 +280,13 @@ describe("embed conversation controller", () => {
 			throw new Error(`unexpected ${path}`);
 		});
 		const api = new EmbedApi({ fetchImpl: fetchImpl as unknown as typeof fetch });
-		const controller = new EmbedConversationController(api);
-		const list = await controller.list("tok");
-		expect(list[0]?.id).toBe("conv_1");
-		const created = await controller.create("tok", "t");
+		const list = await api.listConversations("tok", 20);
+		expect(list.items[0]?.id).toBe("conv_1");
+		const created = await api.createConversation("tok", "t");
 		expect(created.conversation.id).toBe("conv_2");
-		const opened = await controller.open("tok", "conv_1");
-		expect(opened.messages).toHaveLength(2);
-		expect(opened.messages[1]?.text).toBe("hello");
+		const opened = await api.getConversation("tok", "conv_1");
+		const messages = messagesFromEvents(opened.events);
+		expect(messages).toHaveLength(2);
+		expect(messages[1]?.text).toBe("hello");
 	});
 });
