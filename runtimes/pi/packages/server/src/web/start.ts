@@ -128,6 +128,16 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	}
 
 	const backend = await CodingAgentPiSessionBackend.create(resolved.backend);
+	// Published conversations must never share the admin/debug session index.
+	// Sharing the directory makes embed runtimes appear in the main Chat sidebar
+	// and can cause the admin client to attach to a locked public conversation.
+	const embedBackend = publishing.enabled
+		? await CodingAgentPiSessionBackend.create({
+				...resolved.backend,
+				sessionDir: join(resolved.sessionDir, "embed"),
+				services: backend.getServices(),
+			})
+		: undefined;
 
 	// 附件与引用索引是进程级共享资源：内部会话流与 embed 引用流共用同一
 	// CitationService 实例（TASK-032 完成条件），因此必须先于控制面/数据面
@@ -152,13 +162,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		});
 		log("control plane HTTP handler mounted");
 		// 24.2: missing pepper / access-token keys fails startup; the embed
-		// data plane reuses the control plane's Postgres connection/repos and
-		// runs turns on the same Agent backend (one runtime per conversation).
+		// data plane reuses the control plane's Postgres connection/repos while
+		// its Agent sessions remain isolated from the admin/debug session index.
 		embedPlane = await composeEmbedPlane({
 			publishing,
 			repositories: controlPlane.repositories,
 			createSession: (options) =>
-				backend.createSession({
+				(embedBackend ?? backend).createSession({
 					id: options.id,
 					model: options.model,
 					thinkingLevel: options.thinkingLevel,
@@ -226,6 +236,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	log(`pi web server listening on ${url}`);
 	log(`agent dir: ${resolved.agentDir}`);
 	log(`session dir: ${resolved.sessionDir}`);
+	if (embedBackend !== undefined) log(`embed session dir: ${join(resolved.sessionDir, "embed")}`);
 	log(`allowed cwds: ${resolved.allowedCwds.join(", ")}`);
 	if (speech) log(`voice proxy enabled (default profile: ${options.voice?.defaultProfile})`);
 

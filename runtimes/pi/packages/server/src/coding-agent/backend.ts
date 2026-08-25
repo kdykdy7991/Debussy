@@ -110,8 +110,14 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 	async listSessions(): Promise<SessionSummary[]> {
 		const records = await this.loadSessionIndex();
 		const summaries: SessionSummary[] = [];
+		const seenIds = new Set<string>();
 		for (const record of records) {
 			const id = this.idForRecord(record);
+			// Older builds could create more than one JSONL file for the same
+			// caller-assigned id. Keep the newest record (scan order) so React and
+			// attach/select semantics always see a unique session identity.
+			if (seenIds.has(id)) continue;
+			seenIds.add(id);
 			const runtime = this.liveRuntimes.get(id);
 			if (runtime) {
 				const snapshot = runtime.snapshot();

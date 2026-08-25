@@ -419,7 +419,7 @@ export function AdminConversationsIndexView(): React.ReactElement {
 
 	const apiFilters = useMemo<ConversationListArgs>(
 		() => ({
-			limit: 200,
+			limit: 100,
 			status: statusFilter as ConversationListArgs["status"],
 			appId: appFilter,
 			agentId: agentFilter,

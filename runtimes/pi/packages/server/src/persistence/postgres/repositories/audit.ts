@@ -76,10 +76,10 @@ export function createAuditEventRepository(client: PostgresClient): AuditEventRe
 				appWhere =
 					"and ((resource_type = 'published_app' and resource_id = $" +
 					idx +
-					") or (resource_type = 'embed_launch_key' and resource_id in " +
+					"::text) or (resource_type = 'embed_launch_key' and resource_id in " +
 					"(select key_id from embed_launch_keys where tenant_id = $1 and published_app_id = $" +
 					idx +
-					")))";
+					"::uuid)))";
 				values.push(params.appId);
 			}
 			let cursorWhere = "";

@@ -424,6 +424,11 @@ describe.skipIf(!pgUp)("launch key management", () => {
 		expect(createEvent?.resourceId).toBe("audited-key");
 		expect(createEvent?.actorType).toBe("platform_admin");
 		expect(revokeEvent?.resourceId).toBe("audited-key");
+		// App-scoped console query reuses one parameter as text resource_id and
+		// uuid published_app_id; explicit repository casts must keep it valid.
+		const appEvents = await repos.audit.list({ scope: { tenantId }, appId: appA, limit: 50 });
+		expect(appEvents.some((event) => event.action === "app.launch-key.create")).toBe(true);
+		expect(appEvents.some((event) => event.action === "app.launch-key.revoke")).toBe(true);
 	});
 
 	test("HTTP: POST launch-keys creates a key (201) and echoes an audit id", async () => {

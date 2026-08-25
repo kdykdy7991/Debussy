@@ -145,6 +145,25 @@ describe("CodingAgentPiSessionBackend", () => {
 		expect(fauxModels.map((m) => m.id).sort()).toEqual(["faux-1", "faux-2"]);
 	});
 
+	test("listSessions returns one row when legacy files reuse the same assigned id", async () => {
+		const { backend, faux } = await makeHarness();
+		faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+		const first = await backend.createSession({
+			id: "shared-id",
+			model: { provider: "faux", id: "faux-1" },
+		});
+		await first.prompt({ text: "first" });
+		await first.dispose();
+		const second = await backend.createSession({
+			id: "shared-id",
+			model: { provider: "faux", id: "faux-1" },
+		});
+		await second.prompt({ text: "second" });
+		await second.dispose();
+		const matching = (await backend.listSessions()).filter((session) => session.id === "shared-id");
+		expect(matching).toHaveLength(1);
+	});
+
 	test("create + prompt streams progress and settles a snapshot", async () => {
 		const { backend, faux } = await makeHarness();
 		faux.setResponses([
