@@ -89,7 +89,7 @@ export function PublishedConversationWorkspace(props: {
 					</div>
 					<output className="workspace-connection-status">
 						<span aria-hidden="true" />
-						{props.state.connectionStatus === "connected" ? "已连接" : "连接中"}
+						{connectionLabel(props.state.connectionStatus)}
 					</output>
 				</div>
 				{props.error !== null ? (
@@ -197,6 +197,21 @@ export function PublishedConversationWorkspace(props: {
 			</div>
 		</div>
 	);
+}
+
+function connectionLabel(status: EmbedChatState["connectionStatus"]): string {
+	switch (status) {
+		case "connected":
+			return "已连接";
+		case "reconnecting":
+			return "正在重连";
+		case "closed":
+			return "连接已断开";
+		case "idle":
+			return "等待连接";
+		case "connecting":
+			return "正在连接";
+	}
 }
 
 function PublishedAttachment({ attachment, onRemove }: { readonly attachment: ChatAttachment; readonly onRemove: (id: string) => void }) {
