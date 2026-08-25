@@ -2,22 +2,26 @@
  * Conversation HTTP API（spec 27.5 / 8.2，TASK-016）。
  *
  * 端点：
- * - `POST   /api/embed/v1/conversations`             创建（服务端固定版本；Idempotency-Key）
- * - `GET    /api/embed/v1/conversations`             列表（opaque cursor 分页）
- * - `GET    /api/embed/v1/conversations/:id`         会话 + 增量事件恢复
- * - `POST   /api/embed/v1/conversations/:id/archive` 归档
+ * - `POST   /api/embed/v1/conversations`                              创建（服务端固定版本；Idempotency-Key）
+ * - `GET    /api/embed/v1/conversations`                              列表（opaque cursor 分页）
+ * - `GET    /api/embed/v1/conversations/:id`                          会话 + 增量事件恢复
+ * - `POST   /api/embed/v1/conversations/:id/archive`                  归档
+ * - `GET    /api/embed/v1/conversations/:id/reasoning`               会话 reasoning 状态读取
+ * - `PUT    /api/embed/v1/conversations/:id/reasoning`               会话 reasoning effort 覆盖
  *
  * 每个请求先经 `EmbedAuthenticator` 认证（Bearer Access Token，失败统一
  * 401），再以 Principal 为 scope 走 `ConversationService`；HTTP 层只负责
  * 解析/校验/信封，授权在 Service 内完成（越权 = 统一不可用）。
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ReasoningEffort, ReasoningUpdateRequest } from "@earendil-works/pi-protocol";
 import { type EmbedError, runtimeUnavailable } from "../../publishing/domain/errors.ts";
 import {
 	type ConversationEventId,
 	type ConversationId,
 	fromPublicId,
 	type PublishedAppVersionId,
+	type RequestId,
 	toPublicId,
 } from "../../publishing/domain/ids.ts";
 import type { PublishingRepositories } from "../../publishing/repositories.ts";
@@ -80,6 +84,7 @@ interface Route {
 const CREATE_PATTERN = /^\/api\/embed\/v1\/conversations$/;
 const GET_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)$/;
 const ARCHIVE_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/archive$/;
+const REASONING_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/reasoning$/;
 /** TASK-018 internal/dev 文本 Turn 路径，不作为最终公开协议。 */
 const DEV_TURN_PATTERN = /^\/api\/embed\/v1\/dev\/conversations\/([^/]+)\/turn$/;
 /** TASK-024：一次性 WebSocket Ticket 申请端点（spec 27.6）。 */
@@ -292,6 +297,63 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		});
 	}
 
+	async function updateReasoningRoute(ctx: RouteContext): Promise<void> {
+		const conversationId = parseConversationId(ctx);
+		if (conversationId === null) return;
+		const body = await readJsonBody(ctx.request, maxBodyBytes);
+		if (body.kind === "too_large") {
+			jsonBody(
+				ctx.response,
+				413,
+				errorEnvelope("PAYLOAD_TOO_LARGE", "Request body too large", ctx.requestId, false),
+			);
+			return;
+		}
+		if (body.kind === "invalid_json") {
+			jsonBody(
+				ctx.response,
+				400,
+				errorEnvelope("INVALID_JSON", "Request body must be valid JSON", ctx.requestId, false),
+			);
+			return;
+		}
+		const parsed = parseReasoningUpdate(body.value, ctx.requestId);
+		if (!parsed.ok) {
+			jsonBody(ctx.response, parsed.status, parsed.envelope);
+			return;
+		}
+		const result = await service.setConversationReasoning({
+			principal: ctx.principal,
+			conversationId,
+			request: parsed.body,
+			requestId: ctx.requestId as RequestId,
+		});
+		if (!result.ok) {
+			jsonBody(
+				ctx.response,
+				result.error.httpStatus,
+				errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
+			);
+			return;
+		}
+		jsonBody(ctx.response, 200, { data: result.data, requestId: ctx.requestId });
+	}
+
+	async function getReasoningRoute(ctx: RouteContext): Promise<void> {
+		const conversationId = parseConversationId(ctx);
+		if (conversationId === null) return;
+		const result = await service.getConversationReasoning({ principal: ctx.principal, conversationId });
+		if (!result.ok) {
+			jsonBody(
+				ctx.response,
+				result.error.httpStatus,
+				errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
+			);
+			return;
+		}
+		jsonBody(ctx.response, 200, { data: result.data, requestId: ctx.requestId });
+	}
+
 	async function archiveRoute(ctx: RouteContext): Promise<void> {
 		const conversationId = parseConversationId(ctx);
 		if (conversationId === null) return;
@@ -487,6 +549,10 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		if (getMatch !== null) return { conversationId: getMatch[1], handler: getRoute };
 		const archiveMatch = method === "POST" ? pathname.match(ARCHIVE_PATTERN) : null;
 		if (archiveMatch !== null) return { conversationId: archiveMatch[1], handler: archiveRoute };
+		const reasoningMatch = method === "PUT" ? pathname.match(REASONING_PATTERN) : null;
+		if (reasoningMatch !== null) return { conversationId: reasoningMatch[1], handler: updateReasoningRoute };
+		const reasoningGetMatch = method === "GET" ? pathname.match(REASONING_PATTERN) : null;
+		if (reasoningGetMatch !== null) return { conversationId: reasoningGetMatch[1], handler: getReasoningRoute };
 		const devTurnMatch = method === "POST" ? pathname.match(DEV_TURN_PATTERN) : null;
 		if (devTurnMatch !== null) return { conversationId: devTurnMatch[1], handler: devTurnRoute };
 		const wsTicketMatch = method === "POST" ? pathname.match(WS_TICKET_PATTERN) : null;
@@ -615,4 +681,67 @@ function readIdempotencyKey(request: IncomingMessage): string | undefined {
 	const header = request.headers["idempotency-key"];
 	const value = Array.isArray(header) ? header[0] : header;
 	return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+/** Stable Agent V2 reasoning tiers accepted at the embed HTTP boundary. */
+const EMBED_REASONING_EFFORTS = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** Parse + shape-validate a `ReasoningUpdateRequest`. Shape errors map to 400;
+ * a string effort that is not a protocol tier maps to 422 REASONING_INVALID_EFFORT. */
+function parseReasoningUpdate(
+	value: unknown,
+	requestId: string,
+):
+	| { readonly ok: true; readonly body: ReasoningUpdateRequest }
+	| { readonly ok: false; readonly status: number; readonly envelope: unknown } {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return {
+			ok: false,
+			status: 400,
+			envelope: errorEnvelope("INVALID_REQUEST", "reasoning body must be an object", requestId, false),
+		};
+	}
+	const record = value as Record<string, unknown>;
+	if (!Object.hasOwn(record, "effort")) {
+		return {
+			ok: false,
+			status: 400,
+			envelope: errorEnvelope("INVALID_REQUEST", "reasoning body must contain an effort field", requestId, false),
+		};
+	}
+	const extra = Object.keys(record).filter((key) => key !== "effort");
+	if (extra.length > 0) {
+		return {
+			ok: false,
+			status: 400,
+			envelope: errorEnvelope(
+				"INVALID_REQUEST",
+				"reasoning body must not contain additional fields",
+				requestId,
+				false,
+			),
+		};
+	}
+	const effort = record.effort;
+	if (effort === null) return { ok: true, body: { effort: null } };
+	if (typeof effort !== "string") {
+		return {
+			ok: false,
+			status: 400,
+			envelope: errorEnvelope("INVALID_REQUEST", "effort must be null or a string", requestId, false),
+		};
+	}
+	if (!EMBED_REASONING_EFFORTS.has(effort as ReasoningEffort)) {
+		return {
+			ok: false,
+			status: 422,
+			envelope: errorEnvelope(
+				"REASONING_INVALID_EFFORT",
+				"effort is not one of the supported reasoning tiers",
+				requestId,
+				false,
+			),
+		};
+	}
+	return { ok: true, body: { effort: effort as ReasoningEffort } };
 }

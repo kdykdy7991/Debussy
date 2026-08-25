@@ -16,13 +16,17 @@
 - [x] 产品负责人确认当前目标仍是 10～20 人内部可用的文本 Agent 闭环。备注：语音和数字人不阻断首版。
 - [x] 产品负责人确认本次实际开发范围与 [ROADMAP](../../product/ROADMAP.md) 一致。
 - [x] 将当前产品、开发、质量和 SOP 文档评审为团队共同基线并提交 Git。备注：共同基线为 `f404570`，三人必须从该提交开始。
-- [ ] 确认三个角色已分别阅读自己的必读文档，并能复述职责边界。
+- [x] 确认三个角色已分别阅读自己的必读文档，并能复述职责边界。备注：前端提交 `656a5d8`，后端提交 `0408b88`，总架构师完成第一轮 M0 记录 `evidence/m0.md`。
 - [x] 为前端、后端、验收分别建立独立 Git worktree。备注：不要在同一目录切换三个角色的分支。
 - [x] 为三个 worktree 配置互不冲突的 Web、Server、PostgreSQL 和 Redis 端口。备注：当前 Compose 项目名固定，三套完整基础设施仍须串行启动，见下表。
 - [x] 建立 `feature/agent-v2-m0-contract` 短期分支，由后端负责 M0 契约草案。
 - [x] 约定分支按里程碑创建和合并，不保留长期 `frontend`、`backend` 大分支。
 - [x] 约定统一的证据记录位置。备注：使用 [`evidence/`](./evidence/README.md)，至少记录提交、命令、结果、截图/日志位置和遗留项。
-- [ ] 产品负责人宣布进入 M0；在此之前不开始持久化、Runtime 或正式页面字段实现。
+- [x] 产品负责人宣布进入 M0；在此之前不开始持久化、Runtime 或正式页面字段实现。
+
+> 当前共同集成基线：`origin/verify/agent-v2-m0-acceptance` @ `269897c`。M1
+> 统计/上下文及 reasoning/Embed 自动化验收候选均已合入；完成 M1 真实浏览器、
+> 移动端与运行场景验收前不直接合入 `origin/main`。
 
 ### A 阶段工作区记录
 
@@ -40,85 +44,94 @@
 
 ### 后端提交契约草案
 
-- [ ] 后端梳理 Control Plane、Data Plane、Runtime Plane 和发布版本调用链。
-- [ ] 后端提交 DTO、错误码、事件顺序和 `null`/旧数据语义。
-- [ ] 后端提交 reasoning 能力契约和 Provider 映射边界。
-- [ ] 后端提交数据库迁移、索引、兼容和回退草案。
-- [ ] 后端提交功能开关及回退到 `chat-only` 的路径。
-- [ ] 后端为每个接口提供成功、空状态、权限失败、验证失败、服务不可用五组 fixture。
-- [ ] 后端提交 API 调用示例和可控 fake provider 方案。
-- [ ] 后端完成现有方案调研与选型记录。备注：涉及通用能力或新增依赖时必须比较仓库能力、成熟方案和自研。
+- [x] 后端梳理 Control Plane、Data Plane、Runtime Plane 和发布版本调用链。备注：第一轮候选已提交，仍有验收阻断项。
+- [x] 后端提交 DTO、错误码、事件顺序和 `null`/旧数据语义。备注：第三轮已关闭结果、时钟、强类型和事件枚举问题；分页输入边界与两页 fixture 仍待补。
+- [x] 后端提交 reasoning 能力契约和 Provider 映射边界。备注：读取状态 DTO 已提交；会话写入、权限、错误码、审计与并发契约仍待补。
+- [x] 后端提交数据库迁移、索引、兼容和回退草案。备注：JSONB 方向有条件批准。
+- [x] 后端提交功能开关及回退到 `chat-only` 的路径。备注：Metrics 开关批准，未实现 reasoning 开关不批准。
+- [x] 后端为每个接口提供成功、空状态、权限失败、验证失败、服务不可用五组 fixture。备注：空状态/错误码冲突待修订。
+- [x] 后端提交 API 调用示例和可控 fake provider 方案。
+- [x] 后端完成现有方案调研与选型记录。备注：复用事件日志和既有 reasoning，未重复实现；最终决定见验收记录。
 
 ### 总架构师执行 M0 门禁
 
-- [ ] 总架构师确认统计公式、时钟采集位置、空值和样本范围无歧义。
-- [ ] 总架构师确认 Tenant、管理员/终端用户鉴权和 Secret 边界。
-- [ ] 总架构师确认 Revision、Published App Version 和 Conversation 不发生版本漂移。
-- [ ] 总架构师确认迁移可向前执行，失败后有可接受的恢复方式。
-- [ ] 总架构师确认参数暴露范围只有允许的 reasoning 配置，其他生成参数不能由客户端覆盖。
-- [ ] 总架构师记录 M0 结论及证据：通过 / 有条件通过 / 不通过。
-- [ ] 所有“有条件通过”项均已标明负责人和最晚解决里程碑。
+- [x] 总架构师确认统计公式、时钟采集位置、空值和样本范围无歧义。备注：后端 `251c89d` 后 M0-A Metrics/Context 已批准冻结。
+- [x] 总架构师确认 Tenant、管理员/终端用户鉴权和 Secret 边界。备注：reasoning 双入口分权、跨作用域 404、MCP 仅 Secret ref；transport 仍受 BE-3 门禁。
+- [x] 总架构师确认 Revision、Published App Version 和 Conversation 不发生版本漂移。备注：Skill/MCP 固定 Agent Revision；会话 reasoning 专用状态按发布会话恢复，作用域字段待条件提交写入迁移草案。
+- [x] 总架构师确认迁移可向前执行，失败后有可接受的恢复方式。备注：JSONB 兼容扩展、Metrics 默认关闭、无破坏性 down；M0-A 已批准。
+- [x] 总架构师确认参数暴露范围只有允许的 reasoning 配置，其他生成参数不能由客户端覆盖。备注：双入口仅接受 `ReasoningUpdateRequest.effort`。
+- [x] 总架构师记录 M0 结论及证据：第二轮仍不通过，详见 `evidence/m0.md`；门禁保持关闭，修订后需再次审查。
+- [x] 所有“有条件通过”项均已标明负责人和最晚解决里程碑。备注：后端三项须在 reasoning M1 接线前完成；前端三处文档勘误须在正式 adapter 前完成；BE-3 须在 MCP 实现前批准。
 
 ### 前端在 M0 的并行工作
 
-- [ ] 前端完成管理端、Embed 和 protocol 现有代码梳理。
+- [x] 前端完成管理端、Embed 和 protocol 现有代码梳理。备注：`m0-survey.md`。
 - [ ] 前端基于契约草案建立单一、可删除的 fixture 适配层。
 - [ ] 前端完成页面骨架和加载、空态、错误、无权限状态设计。
 - [ ] 前端未在组件中复制 DTO 或自行计算 Token、TTFT、tokens/s。
-- [ ] 前端完成相关 UI/SDK 现有方案调研和最小验证。
+- [x] 前端完成相关 UI/SDK 现有方案调研和最小验证。备注：第四轮代码范围通过；SDK 单一来源、protocol 直接边界测试和越界撤回均完成。仅剩包名、已关闭事件项和常量措辞三处文档勘误，可随最终契约同步。
 
 ### M0 合并门禁
 
-- [ ] M0 契约经过总架构师批准并冻结。
-- [ ] M0 契约分支通过相关类型检查和具体测试。
-- [ ] M0 契约已合并到共同基线。
+- [x] M0 契约经过总架构师批准并冻结。备注：最终记录见 `evidence/m0.md` 候选 8。
+- [x] M0 契约分支通过相关类型检查和具体测试。备注：protocol 361 项、两套 tsgo、Biome 均通过。
+- [x] M0 契约已合并到共同基线。备注：验收签核分支包含后端 `66905ed` 与前端 `09d06da`。
 - [ ] 前端和后端均从合并后的共同基线创建 M1 短期分支。
-- [ ] 产品负责人确认允许进入 M1。
+- [x] 产品负责人确认允许进入 M1。备注：用户已指示前端开始 Metrics/Context adapter、页面骨架和状态壳；MCP 仍受 BE-3 门禁。
 
 ## C. M1：统计、模型参数与 Embed
 
+> 进度快照（2026-08-24）：统计/上下文后端 `b3d5afb`、前端 `a2af75e`；
+> reasoning 后端 `dbe175e`、前端/Embed `0afd8f4`。后两项合并提交为
+> `04b6e11`、`269897c`。合并后后端定向 4 套件 36 测试、前端定向 6 套件
+> 53 测试通过，Biome clean，原 3 个 capability skip 已改为执行测试。
+>
+> 尚未完成：真实浏览器 8 场景、Android Chrome/iOS Safari、连续 ≥10 轮指标
+> 运行证据及 M1 总体验收。API 前置证据和浏览器 runner 阻断详见
+> [`evidence/m1-browser-acceptance-2026-08-24.md`](./evidence/m1-browser-acceptance-2026-08-24.md)。
+
 ### 里程碑启动
 
-- [ ] 建立 `feature/agent-v2-m1-backend` 分支和后端 worktree 工作区。
-- [ ] 建立 `feature/agent-v2-m1-frontend` 分支和前端 worktree 工作区。
+- [x] 建立 `feature/agent-v2-m1-backend` 分支和后端 worktree 工作区。
+- [x] 建立 `feature/agent-v2-m1-frontend` 分支和前端 worktree 工作区。
 - [ ] 三人确认 M1 只包含统计、reasoning 参数和 Embed SDK，不夹带 Skill/MCP 正式实现。
-- [ ] 前后端确认冻结 DTO、fixture 和错误语义版本一致。
+- [x] 前后端确认冻结 DTO、fixture 和错误语义版本一致。
 
 ### 后端交付
 
-- [ ] 上下文快照在最终模型请求组装完成后、发送前生成。
-- [ ] TTFT、generation、总耗时和 tokens/s 按冻结口径采集。
+- [x] 上下文快照在最终模型请求组装完成后、发送前生成。
+- [x] TTFT、generation、总耗时和 tokens/s 按冻结口径采集。备注：同步执行器没有独立首 Token 时点，相关值为 `null`。
 - [ ] 成功、Tool-only、失败、取消、重试、断流和恢复均有测试。
-- [ ] 旧会话返回不可用/空样本，不伪造为 0。
-- [ ] Revision 和对话请求只接受模型支持的 reasoning 字段。
-- [ ] 非法 effort、未知字段和 sampling/generation 覆盖被服务端明确拒绝。
-- [ ] 实际 Provider wire payload 有捕获测试，能证明参数优先级和固化值。
-- [ ] 发布版本修改后，旧会话仍使用原固定版本。
+- [x] 旧会话返回不可用/空样本，不伪造为 0。
+- [x] Revision 和对话请求只接受模型支持的 reasoning 字段。备注：会话只读取 Published App Version 冻结 capability；旧产物缺快照时只读。
+- [x] 非法 effort、未知字段和 sampling/generation 覆盖被服务端明确拒绝。
+- [x] 实际 Provider wire payload 有捕获测试，能证明参数优先级和固化值。
+- [x] 发布版本修改后，旧会话仍使用原固定版本。
 - [ ] 后端向前端提供真实 API、五组 fixture、请求示例和特性开关。
 
 ### 前端交付
 
-- [ ] 会话上下文展示已用、总量、剩余、分项和 exact/estimated。
-- [ ] 会话性能展示输入/输出 Token、TTFT、tokens/s、完整耗时和样本数。
+- [x] 会话上下文展示已用、总量、剩余、分项和 exact/estimated。
+- [x] 会话性能展示输入/输出 Token、TTFT、tokens/s、完整耗时和样本数。
 - [ ] 成功、空态、旧数据、部分数据、错误和无权限状态均有测试。
-- [ ] reasoning 表单只显示模型支持的思考开关和档位。
-- [ ] 未配置、Provider 默认、不支持和校验失败四种状态不混淆。
-- [ ] reasoning 进入保存 Revision、diff、发布和会话覆盖流程。
-- [ ] 正式 Embed SDK 支持 mount/destroy、事件、resize 和 origin 校验。
-- [ ] Token 不进入 URL、持久化存储、DOM、前端日志或错误上报。
+- [x] reasoning 表单只显示模型支持的思考开关和档位。备注：档位来自会话固定版本随 reasoning DTO 返回的快照。
+- [x] 未配置、Provider 默认、不支持和校验失败四种状态不混淆。
+- [x] reasoning 进入保存 Revision、diff、发布和会话覆盖流程。
+- [x] 正式 Embed SDK 支持 mount/destroy、事件、resize 和 origin 校验。备注：append/listener/init 失败完整回滚并进入 broken 态。
+- [x] Token 不进入 URL、持久化存储、DOM、前端日志或错误上报。备注：SDK 出站路径已覆盖；iframe producer 仍负责入站错误脱敏。
 - [ ] 发布对话页在电脑 Chrome、Android Chrome 和 iOS Safari 完成移动端核心流程验证。
-- [ ] 本地 fixture 已替换为后端真实 fixture/API，生产代码无占位统计。
+- [x] 本地 fixture 已替换为后端真实 fixture/API，生产代码无占位统计。
 
 ### M1 联调与验收
 
-- [ ] 前后端分别提交候选提交号和相关测试结果。
+- [x] 前后端分别提交候选提交号和相关测试结果。备注：统计/上下文后端 `b3d5afb`、前端 `a2af75e`；reasoning 后端 `dbe175e`、前端/Embed `0afd8f4`。
 - [ ] 在同一候选版本完成真实浏览器联调，记录请求 ID、会话 ID 和失败证据。
 - [ ] 总架构师用可控 fake provider 验证 TTFT 与 tokens/s 公式。
 - [ ] 总架构师验证版本固定、参数白名单、Token 不落盘和错误 origin 拒绝。
-- [ ] 总架构师验证 SDK 多实例销毁后没有监听器泄漏。
-- [ ] 所有阻断问题已退回负责人修复并重新验证。
-- [ ] 总架构师记录 M1 结论及完整证据。
-- [ ] M1 前后端分支以可审查的小提交合并到共同基线。
+- [x] 总架构师验证 SDK 多实例销毁后没有监听器泄漏。备注：自动化覆盖共享 window 多实例与 init/append 失败回滚；待真实浏览器复核。
+- [x] 已发现的代码阻断问题已修复并重新验证；浏览器/移动端/运行证据仍是验收门禁。
+- [x] 总架构师记录 M1 第一轮结论及证据。备注：候选 1 不通过，保留有效骨架并退回小范围修订。
+- [x] M1 前后端分支以可审查的小提交合并到共同验收基线。备注：当前 HEAD `269897c`，尚未合入主干。
 - [ ] 产品负责人确认允许进入 M2。
 
 ## D. M2：Skill 产品化

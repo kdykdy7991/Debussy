@@ -21,7 +21,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline, Readable } from "node:stream";
 import { createGzip } from "node:zlib";
-import type { ConversationExportMode, CustomLlmApi } from "@earendil-works/pi-protocol";
+import type {
+	ConversationExportMode,
+	CustomLlmApi,
+	ReasoningEffort,
+	ReasoningUpdateRequest,
+} from "@earendil-works/pi-protocol";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
@@ -71,7 +76,7 @@ export interface ControlHttpHandlerOptions {
 }
 
 interface Route {
-	readonly method: "GET" | "POST";
+	readonly method: "GET" | "POST" | "PUT";
 	readonly pattern: RegExp;
 	readonly operation: string;
 	readonly handler: (ctx: {
@@ -528,6 +533,72 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				});
 				if (!listed.ok) return serviceError(listed.error, requestId);
 				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/reasoning$/,
+			operation: "conversations.get-reasoning",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const state = await service.getConversationReasoning({ tenantId, conversationId });
+				if (!state.ok) return serviceError(state.error, requestId);
+				return { status: 200, body: { data: state.data, requestId } };
+			},
+		},
+		{
+			method: "PUT",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/reasoning$/,
+			operation: "conversations.update-reasoning",
+			handler: async ({ requestId, body, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const parsed = parseReasoningUpdate(body, requestId);
+				if (!parsed.ok) return parsed.failure;
+				const updated = await service.setConversationSessionEffort({
+					tenantId,
+					conversationId,
+					request: parsed.body,
+					principal: { type: "admin", id: "admin" },
+					requestId: requestId as RequestId,
+				});
+				if (!updated.ok) return serviceError(updated.error, requestId);
+				return { status: 200, body: { data: updated.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/metrics$/,
+			operation: "conversations.metrics",
+			handler: async ({ requestId, query, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const afterRaw = query.get("afterSequence");
+				const afterSequence = afterRaw === null || afterRaw.trim() === "" ? undefined : Number(afterRaw);
+				const limitRaw = query.get("limit");
+				const limit = limitRaw === null || limitRaw.trim() === "" ? undefined : Number(limitRaw);
+				const result = await service.getConversationMetrics({
+					tenantId,
+					conversationId,
+					afterSequence,
+					limit,
+					requestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/context$/,
+			operation: "conversations.context",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const result = await service.getConversationContext({ tenantId, conversationId, requestId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
 			},
 		},
 		{
@@ -1269,6 +1340,50 @@ function serviceError(error: { code: string; httpStatus: number; message: string
 
 function badRequest(message: string, requestId: string): Envelope {
 	return { status: 400, body: errorEnvelope("INVALID_REQUEST", message, requestId, false) };
+}
+
+/** Stable Agent V2 reasoning tiers accepted at the HTTP boundary. */
+const REASONING_EFFORTS = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** Parse and validate the shared `ReasoningUpdateRequest` body. Shape errors
+ * (non-object, missing/extra fields, wrong field type) map to 400; an effort
+ * that is a string but not a protocol tier maps to 422 REASONING_INVALID_EFFORT
+ * (model-capability mismatches are validated by the service with the same code). */
+function parseReasoningUpdate(
+	value: unknown,
+	requestId: string,
+): { readonly ok: true; readonly body: ReasoningUpdateRequest } | { readonly ok: false; readonly failure: Envelope } {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return { ok: false, failure: badRequest("reasoning body must be an object", requestId) };
+	}
+	const record = value as Record<string, unknown>;
+	if (!Object.hasOwn(record, "effort")) {
+		return { ok: false, failure: badRequest("reasoning body must contain an effort field", requestId) };
+	}
+	const extra = Object.keys(record).filter((key) => key !== "effort");
+	if (extra.length > 0) {
+		return { ok: false, failure: badRequest("reasoning body must not contain additional fields", requestId) };
+	}
+	const effort = record.effort;
+	if (effort === null) return { ok: true, body: { effort: null } };
+	if (typeof effort !== "string") {
+		return { ok: false, failure: badRequest("effort must be null or a string", requestId) };
+	}
+	if (!REASONING_EFFORTS.has(effort as ReasoningEffort)) {
+		return {
+			ok: false,
+			failure: {
+				status: 422,
+				body: errorEnvelope(
+					"REASONING_INVALID_EFFORT",
+					"effort is not one of the supported reasoning tiers",
+					requestId,
+					false,
+				),
+			},
+		};
+	}
+	return { ok: true, body: { effort: effort as ReasoningEffort } };
 }
 
 function errorEnvelope(

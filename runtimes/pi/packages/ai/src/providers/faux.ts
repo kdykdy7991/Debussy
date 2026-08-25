@@ -107,6 +107,11 @@ export interface RegisterFauxProviderOptions {
 	provider?: string;
 	models?: FauxModelDefinition[];
 	tokensPerSecond?: number;
+	/**
+	 * Agent V2 M1：确定性首 Token 延时（ms）。>0 时流式首块输出推迟该时长，
+	 * 以便在日志/指标侧捕获可复现的 TTFT。缺省 0（不改变既有行为）。
+	 */
+	firstOutputDelayMs?: number;
 	tokenSize?: {
 		min?: number;
 		max?: number;
@@ -311,6 +316,7 @@ async function streamWithDeltas(
 	minTokenSize: number,
 	maxTokenSize: number,
 	tokensPerSecond: number | undefined,
+	firstOutputDelayMs: number,
 	signal: AbortSignal | undefined,
 ): Promise<void> {
 	const partial: AssistantMessage = { ...message, content: [], stopReason: "pending" };
@@ -322,6 +328,24 @@ async function streamWithDeltas(
 	}
 
 	stream.push({ type: "start", partial: { ...partial } });
+
+	// Agent V2 M1：确定性首 Token 延时。`start` 立即可达，首个内容块推迟
+	// `firstOutputDelayMs`，供指标侧捕获可复现 TTFT；中途 abort 提前放行。
+	if (firstOutputDelayMs > 0) {
+		await new Promise<void>((resolve) => {
+			const timer = setTimeout(resolve, firstOutputDelayMs);
+			if (signal) {
+				signal.addEventListener(
+					"abort",
+					() => {
+						clearTimeout(timer);
+						resolve();
+					},
+					{ once: true },
+				);
+			}
+		});
+	}
 
 	for (let index = 0; index < message.content.length; index++) {
 		if (signal?.aborted) {
@@ -413,6 +437,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 	const maxTokenSize = Math.max(minTokenSize, options.tokenSize?.max ?? DEFAULT_MAX_TOKEN_SIZE);
 	let pendingResponses: FauxResponseStep[] = [];
 	const tokensPerSecond = options.tokensPerSecond;
+	const firstOutputDelayMs = options.firstOutputDelayMs ?? 0;
 	const state = { callCount: 0 };
 	const promptCache = new Map<string, string>();
 
@@ -467,7 +492,15 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 					typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
 				let message = cloneMessage(resolved, api, provider, requestModel.id);
 				message = withUsageEstimate(message, context, streamOptions, promptCache);
-				await streamWithDeltas(outer, message, minTokenSize, maxTokenSize, tokensPerSecond, streamOptions?.signal);
+				await streamWithDeltas(
+					outer,
+					message,
+					minTokenSize,
+					maxTokenSize,
+					tokensPerSecond,
+					firstOutputDelayMs,
+					streamOptions?.signal,
+				);
 			} catch (error) {
 				const message = createErrorMessage(error, api, provider, requestModel.id);
 				outer.push({ type: "error", reason: "error", error: message });

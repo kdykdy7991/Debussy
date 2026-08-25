@@ -20,7 +20,15 @@ const catalog: CapabilityCatalog = {
 		{ id: "web.search", name: "Web Search" },
 		{ id: "doc.read", name: "Document Reader" },
 	],
-	models: [{ provider: "skdy", modelId: "pi-chat" }],
+	models: [
+		{
+			provider: "skdy",
+			modelId: "pi-chat",
+			parameterCapabilities: {
+				reasoning: { supported: true, toggle: false, efforts: ["low", "medium", "high"] },
+			},
+		},
+	],
 	knowledgeBases: [{ id: "kb-legal" }],
 };
 
@@ -115,6 +123,15 @@ describe("runtime spec compiler", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(parseRuntimeSpec(JSON.parse(result.canonicalJson)).ok).toBe(true);
+	});
+
+	test("model parameter capabilities are frozen into the published runtime spec", () => {
+		const result = compile();
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.spec.agent.model.parameterCapabilities).toEqual({
+			reasoning: { supported: true, toggle: false, efforts: ["low", "medium", "high"] },
+		});
 	});
 
 	test("theme is copied into the compiled spec", () => {

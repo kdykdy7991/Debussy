@@ -28,8 +28,11 @@ import { ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { ConfirmModal } from "../components/confirm-modal.tsx";
 import { navigate } from "../router.ts";
+import { ContextTab } from "./context-tab.tsx";
+import { MetricsTab } from "./metrics-tab.tsx";
+import { ReasoningTab } from "./reasoning-tab.tsx";
 
-type Tab = "overview" | "events" | "summary" | "attachments";
+type Tab = "overview" | "events" | "summary" | "attachments" | "metrics" | "context" | "reasoning";
 
 interface DetailData {
 	readonly conversation: ConversationAdminSummary;
@@ -71,6 +74,8 @@ function statusLabel(status: string): string {
 export function AdminConversationDetail({ conversationId }: { conversationId: string }): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
+	// R8 修订：ReasoningTab 不再需要 AgentApi / LlmApi——capability 数据
+	// 源待 BE 契约冻结（详见 reasoning-tab.tsx 顶部 TODO + m1-r8-blocker2.md）。
 	const [tab, setTab] = useState<Tab>("overview");
 	const [detail, setDetail] = useState<DetailState>({ kind: "loading" });
 	const [events, setEvents] = useState<EventState>({ kind: "idle" });
@@ -81,6 +86,8 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		| { kind: "loaded"; data: ConversationAdminAttachmentListResponse }
 		| { kind: "error"; message: string }
 	>({ kind: "idle" });
+	// M1: 分页游标；metrics tab 暴露"加载下一页"按此递增触发新一轮请求。
+	const [metricsAfter, setMetricsAfter] = useState<number | null>(null);
 	const [fullExportOpen, setFullExportOpen] = useState(false);
 	const [exporting, setExporting] = useState<ConversationExportMode | null>(null);
 	const [exportError, setExportError] = useState<string | null>(null);
@@ -127,6 +134,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		setEvents({ kind: "idle" });
 		setSummaries({ kind: "idle" });
 		setAttachments({ kind: "idle" });
+		setMetricsAfter(null);
 		setExportError(null);
 		loadDetail();
 	}, [loadDetail]);
@@ -251,6 +259,20 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 						>
 							附件
 						</button>
+						<button type="button" role="tab" aria-selected={tab === "metrics"} onClick={() => setTab("metrics")}>
+							性能
+						</button>
+						<button type="button" role="tab" aria-selected={tab === "context"} onClick={() => setTab("context")}>
+							上下文
+						</button>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={tab === "reasoning"}
+							onClick={() => setTab("reasoning")}
+						>
+							思考强度
+						</button>
 					</div>
 
 					{tab === "overview" && <Overview conversation={detail.data.conversation} />}
@@ -259,6 +281,18 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 					)}
 					{tab === "summary" && <SummaryTab state={summaries} reload={loadSummaries} />}
 					{tab === "attachments" && <AttachmentsTab state={attachments} />}
+					{tab === "metrics" && (
+						<MetricsTab
+							conversationId={conversationId}
+							api={api}
+							afterSequence={metricsAfter}
+							onNextPage={(sequence) => setMetricsAfter(sequence)}
+						/>
+					)}
+					{tab === "context" && <ContextTab conversationId={conversationId} api={api} />}
+					{tab === "reasoning" && (
+						<ReasoningTab conversationId={conversationId} api={api} />
+					)}
 				</>
 			)}
 		</section>

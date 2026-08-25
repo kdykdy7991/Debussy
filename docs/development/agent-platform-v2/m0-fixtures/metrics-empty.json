@@ -1,0 +1,14 @@
+{
+  "conversationId": "conv_00000001",
+  "stats": {
+    "available": false,
+    "turnCount": 0,
+    "sampleCount": 0,
+    "ttftMs": { "mean": null, "count": 0, "p50": null, "p95": null },
+    "generationMs": { "mean": null, "count": 0, "p50": null, "p95": null },
+    "totalLatencyMs": { "mean": null, "count": 0, "p50": null, "p95": null },
+    "outputTokensPerSecond": { "mean": null, "count": 0, "p50": null, "p95": null }
+  },
+  "items": [],
+  "nextAfterSequence": null
+}

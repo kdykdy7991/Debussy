@@ -17,6 +17,7 @@
  * that), and the same input always yields the same hash (draft edits never
  * change already-compiled outputs because compilation is deterministic).
  */
+import type { ModelParameterCapabilities } from "@earendil-works/pi-protocol";
 import { canonicalJson, sha256Hex } from "./hash.ts";
 import { parseRuntimeSpec, type RuntimeSpec } from "./schema.ts";
 
@@ -28,6 +29,7 @@ export interface ToolCatalogEntry {
 export interface ModelCatalogEntry {
 	readonly provider: string;
 	readonly modelId: string;
+	readonly parameterCapabilities?: ModelParameterCapabilities;
 }
 export interface KnowledgeBaseCatalogEntry {
 	readonly id: string;
@@ -123,6 +125,9 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 			model: {
 				provider: agent.model.provider,
 				modelId: agent.model.modelId,
+				...(model?.parameterCapabilities === undefined
+					? {}
+					: { parameterCapabilities: model.parameterCapabilities }),
 				...("params" in agent.model && agent.model.params !== undefined ? { params: agent.model.params } : {}),
 			},
 		},

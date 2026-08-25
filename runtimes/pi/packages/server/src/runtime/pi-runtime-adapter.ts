@@ -17,7 +17,7 @@
  * 恢复链路时统一注入（记录于交接文档）。
  */
 import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
-import { resolveModelStreamOptions } from "../model-parameters.ts";
+import { resolveModelStreamOptions, withConversationEffort } from "../model-parameters.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { PiSessionRuntime } from "../types.ts";
 import { ConversationRuntime } from "./conversation-runtime.ts";
@@ -50,7 +50,12 @@ export function createPiRuntimeAdapter(deps: { readonly createSession: RuntimeSe
 		async open(spec, scope) {
 			const rejection = chatOnlyRejection(spec);
 			if (rejection !== null) return { ok: false, reason: rejection };
-			const resolved = resolveModelStreamOptions(spec.agent.model.params ?? {}, spec.agent.model.modelId);
+			// 会话覆盖 > Revision 配置 > 默认：会话 effort 叠加到冻结参数后再解析。
+			const base = spec.agent.model.params ?? {};
+			const resolved = resolveModelStreamOptions(
+				withConversationEffort(base, scope.conversationEffort ?? null),
+				spec.agent.model.modelId,
+			);
 			const thinkingLevel = resolved.thinkingLevel ?? thinkingLevelFrom(spec);
 			const session = await deps.createSession({
 				id: scope.conversationId,

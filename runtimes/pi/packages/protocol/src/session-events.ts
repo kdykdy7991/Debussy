@@ -34,6 +34,7 @@ export const SESSION_EVENT_TYPES = [
 	"attachment/added",
 	"citation/updated",
 	"turn/end",
+	"turn/failed",
 	"turn/interrupted",
 	"conversation/summary",
 	"conversation/rollover",

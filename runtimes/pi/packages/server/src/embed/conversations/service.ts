@@ -14,18 +14,30 @@
  * `turn.failed` / `turn.interrupted` 等结构化事件；流式 chunk / 工具调用 /
  * 附件 / 引用 按 RuntimeSpec.contextPolicy.logLevel 决定是否持久化。
  */
-import type { Citation, ConversationRollover, SessionLogLevel } from "@earendil-works/pi-protocol";
+import type {
+	Citation,
+	ConversationPublicId,
+	ConversationReasoningState,
+	ConversationRollover,
+	ReasoningUpdateRequest,
+	SessionLogLevel,
+	TurnMetrics,
+} from "@earendil-works/pi-protocol";
 import {
 	assertEventPayloadSafe,
 	DEFAULT_CONVERSATION_LIMITS,
 	shouldPersistAssistantChunk,
 	shouldRolloverConversation,
 } from "@earendil-works/pi-protocol";
+import { estimateContextSnapshot } from "../../agent-v2/context.ts";
+import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
+import { applyConversationReasoning, reasoningCapabilitiesForVersion } from "../../agent-v2/reasoning.ts";
+import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
 import {
 	appNotFound,
 	appSuspended,
 	conversationNotFound,
-	type EmbedError,
+	EmbedError,
 	runtimeUnavailable,
 	turnAlreadyRunning,
 	versionUnavailable,
@@ -35,6 +47,8 @@ import {
 	newConversationId,
 	newConversationSummaryId,
 	newTurnId,
+	type RequestId,
+	toPublicId,
 	type TurnId,
 } from "../../publishing/domain/ids.ts";
 import type {
@@ -273,6 +287,73 @@ export class ConversationService {
 	}
 
 	/**
+	 * PUT conversation reasoning effort (Agent V2 §4.3, embed owner surface).
+	 * Reuses the shared reasoning apply (frozen capability + transactional
+	 * fact-source + audit). The conversation is resolved via the embed
+	 * principal's owner scope: a non-owner or cross-app reference yields a
+	 * uniform CONVERSATION_NOT_FOUND (404).
+	 */
+	async setConversationReasoning(input: {
+		readonly principal: EmbedAuthContext;
+		readonly conversationId: ConversationId;
+		readonly request: ReasoningUpdateRequest;
+		readonly configurable?: boolean;
+		readonly requestId?: RequestId;
+	}): Promise<ConversationResult<ConversationReasoningState>> {
+		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
+		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		const result = await applyConversationReasoning({
+			repos: this.repos,
+			tenantId: input.principal.tenantId,
+			publishedAppId: input.principal.publishedAppId,
+			publishedAppVersionId: record.publishedAppVersionId,
+			ownerPrincipalId: record.ownerPrincipalId,
+			conversationId: input.conversationId,
+			request: input.request,
+			principal: { type: "embed-owner", id: input.principal.principalId },
+			configurable: input.configurable !== false,
+			requestId: input.requestId,
+		});
+		if (!result.ok) return { ok: false, error: new EmbedError(result.code, result.message) };
+		return { ok: true, data: result.data };
+	}
+
+	/**
+	 * GET conversation reasoning effort (Agent V2 §4.3, embed owner surface).
+	 * Reads the dedicated fact source `conversation_reasoning_state` and the
+	 * conversation's PINNED published version capability (frozen at publish
+	 * time, not the live LLM catalog). This is the recover path for the
+	 * "刷新/重连可恢复" requirement: a fresh reload restores the current
+	 * override from here. Resolution is via the embed owner scope, so a
+	 * non-owner or cross-app reference yields a uniform CONVERSATION_NOT_FOUND
+	 * (404) like every other embed conversation operation.
+	 */
+	async getConversationReasoning(input: {
+		readonly principal: EmbedAuthContext;
+		readonly conversationId: ConversationId;
+	}): Promise<ConversationResult<ConversationReasoningState>> {
+		const scope = ownerScope(input.principal);
+		const record = await this.repos.conversations.get(scope, input.conversationId);
+		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		const state = await this.repos.conversationReasoning.get(scope, input.conversationId);
+		const pinnedCapability = await reasoningCapabilitiesForVersion(
+			this.repos,
+			{ tenantId: record.tenantId, publishedAppId: record.publishedAppId },
+			record.publishedAppVersionId,
+		);
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				effort: state?.effort ?? null,
+				updatedAt: (state?.updatedAt ?? record.lastActiveAt).toISOString(),
+				configurable: pinnedCapability !== null,
+				pinnedCapability,
+			},
+		};
+	}
+
+	/**
 	 * WB-007: write one event without taking down the calling request. The
 	 * authoritative state lives in the conversation row, so a failed append
 	 * here only loses a side-channel observation — we never throw to the
@@ -401,6 +482,9 @@ export class ConversationService {
 		// 请求只有一个能进入执行段（PD-13）。
 		if (this.runningTurns.has(input.conversationId)) return { ok: false, error: turnAlreadyRunning() };
 		this.runningTurns.add(input.conversationId);
+		// Agent V2 M1：PI_AGENT_V2_METRICS 关闭时不采集。开启时在 turn 开始时取一次
+		// 单调+墙上基准，供 turn/end / turn/failed 写入 TurnMetrics。
+		const metricsTiming = agentV2MetricsEnabled() ? startTurnTiming() : undefined;
 		try {
 			const version = await this.repos.publishedAppVersions.get(scope, record.publishedAppVersionId);
 			if (version === undefined) return { ok: false, error: versionUnavailable() };
@@ -418,6 +502,8 @@ export class ConversationService {
 
 			const turnId = newTurnId();
 			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
+			// Agent V2 §4.3：会话级 reasoning effort 覆盖（事实源；缺省=Revision 默认）。
+			const conversationReasoning = await this.repos.conversationReasoning.get(scope, input.conversationId);
 			const turnScope: ScopeContext = {
 				tenantId: input.principal.tenantId,
 				publishedAppId: input.principal.publishedAppId,
@@ -425,6 +511,7 @@ export class ConversationService {
 				principalId: input.principal.principalId,
 				conversationId: input.conversationId,
 				turnId,
+				conversationEffort: conversationReasoning?.effort ?? null,
 				limits: {
 					maxTurns: spec.contextPolicy.maxTurns,
 					maxContextTokens: spec.contextPolicy.maxContextTokens,
@@ -441,6 +528,31 @@ export class ConversationService {
 			});
 			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
 
+			// TASK-032：先计算会话级引用检索（RuntimeSpec 门控），使上下文快照能覆盖
+			// retrieval context。这里只做检索，不落事件；citation/updated 仍在 user/message
+			// 之后落（保持既有事件顺序）。
+			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
+
+			// Agent V2 M1：写上下文快照（turn/start 之后、user/message 之前，符合契约顺序）。
+			// 开关关（默认）不采集；开时用 chars→tokens 估算为 `ContextUsageSnapshot`。
+			// 快照覆盖最终请求上下文：system prompt + 已恢复历史 + 当前用户消息 + retrieval。
+			if (metricsTiming !== undefined) {
+				const conversationMessagesText = [...history.messages.map((m) => m.text), input.text].join("\n");
+				const snapshot = estimateContextSnapshot({
+					contextWindow: spec.contextPolicy.maxContextTokens,
+					systemPromptText: spec.agent.systemPrompt,
+					conversationMessagesText,
+					retrievalContextText: retrieval?.context,
+					toolDefinitionsText: spec.capabilities.tools.map((t) => JSON.stringify(t)).join("\n"),
+				});
+				const snapshotAppended = await this.safeAppend(scope, input.conversationId, {
+					eventType: "context/snapshot",
+					turnId,
+					payload: { snapshot },
+				});
+				if (snapshotAppended === undefined) return { ok: false, error: conversationNotFound() };
+			}
+
 			const userEvent = await this.repos.events.append(scope, {
 				conversationId: input.conversationId,
 				eventType: "user/message",
@@ -449,8 +561,6 @@ export class ConversationService {
 			});
 			if (userEvent === undefined) return { ok: false, error: conversationNotFound() };
 
-			// TASK-032：会话级引用检索（RuntimeSpec 门控），注入 retrieval。
-			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
 			if (retrieval !== undefined) {
 				await this.safeAppend(scope, input.conversationId, {
 					eventType: "citation/updated",
@@ -465,7 +575,22 @@ export class ConversationService {
 				});
 			}
 
+			// Agent V2 M1：捕获 provider 开始（同步执行器=模型请求开始）与终态时点。
+			// 同步执行器不产生“首个可展示文本”的独立时点（无流式增量），故
+			// firstOutput=null → ttft/generation/tps 均为 null，绝不把“整个同步
+			// 请求完成时间”当作真实 TTFT 混入聚合；totalLatencyMs 仍有效值。
+			const providerStartAtMs = metricsTiming === undefined ? undefined : performance.now();
 			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history, retrieval });
+			const completedAtMs = metricsTiming === undefined ? undefined : performance.now();
+			let turnMetrics: TurnMetrics | undefined;
+			if (metricsTiming !== undefined && providerStartAtMs !== undefined && completedAtMs !== undefined) {
+				turnMetrics = buildTurnMetrics({
+					outcome: result.ok ? "success" : "failed",
+					base: metricsTiming,
+					events: { providerStartAtMs, firstOutputAtMs: null, completedAtMs },
+					usage: usageCountsFromProtocolUsage(result.ok ? result.usage : undefined),
+				});
+			}
 			if (result.ok) {
 				// WB-007: write the final assistant message at the standard
 				// level regardless of log level; this is the authoritative
@@ -496,7 +621,11 @@ export class ConversationService {
 				await this.safeAppend(scope, input.conversationId, {
 					eventType: "turn/end",
 					turnId,
-					payload: { ok: true, ...(result.usage ? { usage: result.usage } : {}) },
+					payload: {
+						ok: true,
+						...(result.usage ? { usage: result.usage } : {}),
+						...(turnMetrics ? { metrics: turnMetrics } : {}),
+					},
 				});
 				// WB-008: post-turn rollover check. Re-read the conversation
 				// row so the freshly-advanced counters reflect the events we
@@ -534,7 +663,7 @@ export class ConversationService {
 			await this.safeAppend(scope, input.conversationId, {
 				eventType: "turn/failed",
 				turnId,
-				payload: { error: result.error },
+				payload: { error: result.error, ...(turnMetrics ? { metrics: turnMetrics } : {}) },
 			});
 			return { ok: false, error: runtimeUnavailable(`Turn failed: ${result.error}`) };
 		} finally {

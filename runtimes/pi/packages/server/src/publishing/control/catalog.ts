@@ -11,6 +11,7 @@
  * global settings) and carries no secrets: only ids and display names.
  */
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
+import { modelParameterCapabilities } from "../../model-parameters.ts";
 import type { CapabilityCatalog } from "../runtime-spec/compiler.ts";
 
 /** Build the capability whitelist from the current agent services. */
@@ -25,13 +26,22 @@ export function buildCapabilityCatalog(services: AgentSessionServices): Capabili
 		}
 	}
 
-	const models: { provider: string; modelId: string }[] = [];
+	const models: CapabilityCatalog["models"][number][] = [];
 	const seenModels = new Set<string>();
 	for (const model of services.modelRuntime.getAvailableSnapshot()) {
 		const key = `${model.provider}/${model.id}`;
 		if (seenModels.has(key)) continue;
 		seenModels.add(key);
-		models.push({ provider: model.provider, modelId: model.id });
+		models.push({
+			provider: model.provider,
+			modelId: model.id,
+			parameterCapabilities: modelParameterCapabilities({
+				id: model.id,
+				api: model.api,
+				reasoning: model.reasoning,
+				thinkingLevelMap: model.thinkingLevelMap,
+			}),
+		});
 	}
 
 	const knowledgeBases: { id: string }[] = [];
