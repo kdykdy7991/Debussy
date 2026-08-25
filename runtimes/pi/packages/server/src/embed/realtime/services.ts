@@ -10,8 +10,8 @@ import type { RealtimeServices } from "./connection.ts";
 
 export function conversationRealtimeServices(service: ConversationService): RealtimeServices {
 	return {
-		async executeTurn({ principal, conversationId, text }) {
-			const result = await service.executeTurn({ principal, conversationId, text });
+		async executeTurn({ principal, conversationId, text, onProgress }) {
+			const result = await service.executeTurn({ principal, conversationId, text, onProgress });
 			if (!result.ok) {
 				return {
 					ok: false,
@@ -26,6 +26,7 @@ export function conversationRealtimeServices(service: ConversationService): Real
 				userMessageSequence: result.data.userMessageSequence,
 				assistantSequence: result.data.assistantSequence,
 				outputText: result.data.outputText,
+				...(result.data.thinkingText ? { thinkingText: result.data.thinkingText } : {}),
 				// TASK-033：本 turn 实际使用的引用（citation.updated 事件来源）。
 				citations: result.data.citations,
 			};

@@ -31,7 +31,7 @@ type Listener = (...args: unknown[]) => void;
 
 class FakeWebSocket {
 	readonly readyState = 1 as Ws["readyState"];
-	sent: { type?: string; error?: string }[] = [];
+	sent: Record<string, unknown>[] = [];
 	private readonly listeners = new Map<string, Set<Listener>>();
 	on(event: string, listener: Listener): void {
 		let set = this.listeners.get(event);
@@ -42,7 +42,7 @@ class FakeWebSocket {
 		set.add(listener);
 	}
 	send(data: unknown): void {
-		this.sent.push(JSON.parse(String(data)) as { type?: string; error?: string });
+		this.sent.push(JSON.parse(String(data)) as Record<string, unknown>);
 	}
 	close(): void {}
 	terminate(): void {}
@@ -139,6 +139,42 @@ function sendTurn(ws: FakeWebSocket): void {
 }
 
 describe("embed realtime connection limits", () => {
+	test("forwards real text and thinking deltas before the durable completion", async () => {
+		const limits = createEmbedLimits({ turnSlotCapacity: 1, config: {} });
+		const harness = makeConnection({
+			limits,
+			services: {
+				...noopServices,
+				executeTurn: async ({ onProgress }) => {
+					onProgress?.({
+						type: "assistant_delta",
+						messageId: "msg_1",
+						contentIndex: 0,
+						kind: "thinking",
+						delta: "先分析",
+					});
+					onProgress?.({
+						type: "assistant_delta",
+						messageId: "msg_1",
+						contentIndex: 1,
+						kind: "text",
+						delta: "答案",
+					});
+					return { ...okTurn("答案"), thinkingText: "先分析" };
+				},
+			},
+		});
+		sendTurn(harness.ws);
+		await flush();
+		const relevant = harness.ws.sent.filter((event) =>
+			["message.delta", "message.completed"].includes(String(event.type)),
+		);
+		expect(relevant.map((event) => event.type)).toEqual(["message.delta", "message.delta", "message.completed"]);
+		expect(relevant[0]).toMatchObject({ kind: "thinking", delta: "先分析" });
+		expect(relevant[1]).toMatchObject({ kind: "text", delta: "答案" });
+		expect(relevant[2]).toMatchObject({ text: "答案", thinking: "先分析" });
+	});
+
 	test("a normal turn releases the concurrency slot", async () => {
 		const limits = createEmbedLimits({ turnSlotCapacity: 2, config: {} });
 		const turn = deferredTurn();

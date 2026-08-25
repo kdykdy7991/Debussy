@@ -549,9 +549,7 @@ function EmptyConversation({
 
 function deriveSpeechHttpBaseUrl(): string {
 	if (typeof window === "undefined") return "";
-	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-	const webSocketUrl = import.meta.env.VITE_PI_WS_URL ?? `${protocol}//${window.location.host}/api/pi/v1/ws`;
-	return new URL(webSocketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+	return import.meta.env.VITE_PI_SPEECH_HTTP_BASE_URL ?? window.location.origin;
 }
 
 function deriveSpeechWebToken(): string | undefined {

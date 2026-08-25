@@ -5,8 +5,8 @@
  * Conversation；`turn.start` 经 `RealtimeServices.executeTurn` 执行（复用
  * ConversationService：持久化 user.message + assistant.completed、单写者
  * PD-13），流式事件带 sequence；`message.completed` 永远来自持久事件
- * （流式 delta 不是唯一真相，spec 禁止条件）。MVP 的 delta 为单帧全文
- * （Realtime 正式流式由后续优化补充，事件语义已冻结）。
+ * （流式 delta 不是唯一真相，spec 禁止条件）。Runtime 的结构化增量在生成
+ * 期间实时转发，最终持久事件负责断线恢复。
  *
  * 背压：MVP 依赖 ws 库的 maxPayload/缓冲；pending bytes 限额留待 TASK-034。
  */
@@ -16,6 +16,7 @@ import {
 	decodeClientCommand,
 	type EmbedServerEvent,
 	type RealtimeDecodeError,
+	type TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { WebSocket } from "ws";
 import type { ConversationId, TurnId } from "../../publishing/domain/ids.ts";
@@ -34,6 +35,7 @@ export type TurnOutcome =
 			readonly userMessageSequence: number;
 			readonly assistantSequence: number | null;
 			readonly outputText: string;
+			readonly thinkingText?: string;
 			/** 本 turn 实际使用的引用（TASK-033；无检索为空数组）。 */
 			readonly citations: readonly Citation[];
 	  }
@@ -45,6 +47,7 @@ export interface RealtimeServices {
 		readonly principal: EmbedAuthContext;
 		readonly conversationId: ConversationId;
 		readonly text: string;
+		readonly onProgress?: (progress: TranscriptProgress) => void;
 	}): Promise<TurnOutcome>;
 	/** 真正中止当前底层执行；仅在服务确认接受中止后才发送 turn.cancelled。 */
 	cancelTurn(input: {
@@ -189,32 +192,32 @@ export class EmbedRealtimeConnection {
 			// TASK-034：先发 accepted（客户端用于回显/loading），再走限流与并发槽。
 			this.send({ type: "turn.accepted", ...this.eventBase(0) });
 			if (this.limits !== undefined) {
-			// turn 维度分层限流（System/Tenant/App/Principal/Conversation 最严格）。
-			const limited = await this.limits.limiter.check({
-				dimension: "turn",
-				scope: this.rateScope(),
-			});
-			if (!limited.allowed) {
-				this.observability?.onTurnResult("rate_limited", 0);
-				this.send({ type: "turn.failed", ...this.eventBase(0), error: "turn rate limit exceeded" });
-				return;
-			}
-			// 并发槽：进程级上限；超限立即失败，不排队（禁止继续条件）。
-			const slot = this.limits.turnSlots.acquire();
-			if (slot === null) {
-				this.observability?.onTurnResult("rate_limited", 0);
-				this.send({ type: "turn.failed", ...this.eventBase(0), error: "too many concurrent turns" });
-				return;
-			}
-			// Turn 槽必须在 EffectOwner 中释放（spec 14）：注册为 effect，LIFO
-			// 在 finally 中 close，保证正常/异常/取消路径都归还槽。
-			const owner = createEffectOwner();
-			owner.register(() => slot.release());
-			try {
-				await this.runTurn(text);
-			} finally {
-				await owner.close();
-			}
+				// turn 维度分层限流（System/Tenant/App/Principal/Conversation 最严格）。
+				const limited = await this.limits.limiter.check({
+					dimension: "turn",
+					scope: this.rateScope(),
+				});
+				if (!limited.allowed) {
+					this.observability?.onTurnResult("rate_limited", 0);
+					this.send({ type: "turn.failed", ...this.eventBase(0), error: "turn rate limit exceeded" });
+					return;
+				}
+				// 并发槽：进程级上限；超限立即失败，不排队（禁止继续条件）。
+				const slot = this.limits.turnSlots.acquire();
+				if (slot === null) {
+					this.observability?.onTurnResult("rate_limited", 0);
+					this.send({ type: "turn.failed", ...this.eventBase(0), error: "too many concurrent turns" });
+					return;
+				}
+				// Turn 槽必须在 EffectOwner 中释放（spec 14）：注册为 effect，LIFO
+				// 在 finally 中 close，保证正常/异常/取消路径都归还槽。
+				const owner = createEffectOwner();
+				owner.register(() => slot.release());
+				try {
+					await this.runTurn(text);
+				} finally {
+					await owner.close();
+				}
 				return;
 			}
 			await this.runTurn(text);
@@ -247,6 +250,7 @@ export class EmbedRealtimeConnection {
 			principal: this.principal,
 			conversationId: this.conversationId,
 			text,
+			onProgress: (progress) => this.forwardProgress(progress),
 		});
 		if (this.closed) return;
 		if (this.cancellationRequested) {
@@ -267,12 +271,45 @@ export class EmbedRealtimeConnection {
 		if (outcome.citations.length > 0) {
 			this.send({ type: "citation.updated", ...this.eventBase(0), citations: outcome.citations });
 		}
-		// MVP：delta 为瞬时流式事件（sequence 0，不可恢复；spec 9.2 中 delta 不是
-		// 持久真相）；completed 来自持久事件（sequence = 持久序号，客户端用它
-		// 推进 lastSeenSequence 并做断线补齐）。
-		this.send({ type: "message.delta", ...this.eventBase(0), text: outcome.outputText });
-		this.send({ type: "message.completed", ...this.eventBase(outcome.assistantSequence), text: outcome.outputText });
+		// completed 来自持久事件；真实增量已在 Runtime 生成期间转发。
+		this.send({
+			type: "message.completed",
+			...this.eventBase(outcome.assistantSequence),
+			text: outcome.outputText,
+			...(outcome.thinkingText ? { thinking: outcome.thinkingText } : {}),
+		});
 		report("completed");
+	}
+
+	private forwardProgress(progress: TranscriptProgress): void {
+		if (this.closed) return;
+		if (progress.type === "assistant_delta" && progress.kind !== "toolCall") {
+			this.send({
+				type: "message.delta",
+				...this.eventBase(0),
+				messageId: progress.messageId,
+				contentIndex: progress.contentIndex,
+				kind: progress.kind,
+				delta: progress.delta,
+			});
+			return;
+		}
+		if (progress.type === "item_started" && progress.item.role === "tool") {
+			this.send({ type: "tool.started", ...this.eventBase(0), tool: progress.item.toolName });
+			return;
+		}
+		if (
+			(progress.type === "item_updated" || progress.type === "item_finished") &&
+			progress.item.role === "tool" &&
+			progress.item.status !== "running"
+		) {
+			this.send({
+				type: "tool.completed",
+				...this.eventBase(0),
+				tool: progress.item.toolName,
+				ok: progress.item.status === "complete",
+			});
+		}
 	}
 
 	/** 分层限流 scope：Principal 标识 + 当前会话（conversation 层适用）。 */
@@ -304,12 +341,13 @@ export class EmbedRealtimeConnection {
 				afterSequence: lastSeenSequence,
 			});
 			for (const event of events) {
-				if (event.eventType !== "assistant.completed") continue;
-				const payload = (event.payload ?? {}) as { text?: unknown };
+				if (event.eventType !== "assistant.completed" && event.eventType !== "assistant/message") continue;
+				const payload = (event.payload ?? {}) as { text?: unknown; thinking?: unknown };
 				this.send({
 					type: "message.completed",
 					...this.eventBase(event.sequence),
 					text: typeof payload.text === "string" ? payload.text : "",
+					...(typeof payload.thinking === "string" ? { thinking: payload.thinking } : {}),
 				});
 			}
 		}

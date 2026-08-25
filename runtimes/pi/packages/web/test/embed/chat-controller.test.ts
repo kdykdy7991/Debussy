@@ -243,10 +243,28 @@ describe("embed chat controller", () => {
 		expect(sent?.message).toEqual({ text: "你好", attachmentIds: [] });
 		// delta 是瞬时事件（sequence 0）：流式文本更新。
 		harness.sockets[0]!.emit("message", {
-			data: JSON.stringify(baseEvent({ type: "message.delta", text: "你", sequence: 0 })),
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_1",
+					contentIndex: 0,
+					kind: "text",
+					delta: "你",
+					sequence: 0,
+				}),
+			),
 		});
 		harness.sockets[0]!.emit("message", {
-			data: JSON.stringify(baseEvent({ type: "message.delta", text: "你好世界", sequence: 0 })),
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_1",
+					contentIndex: 0,
+					kind: "text",
+					delta: "好世界",
+					sequence: 0,
+				}),
+			),
 		});
 		state = harness.controller.getState();
 		expect(state.messages.at(-1)).toMatchObject({ role: "assistant", text: "你好世界", streaming: true });
@@ -258,6 +276,51 @@ describe("embed chat controller", () => {
 		const assistant = state.messages.at(-1);
 		expect(assistant).toMatchObject({ role: "assistant", text: "你好世界", sequence: 2, streaming: false });
 		expect(state.sending).toBe(false);
+		harness.controller.close();
+	});
+
+	test("preserves thinking and text as separate incremental content", async () => {
+		const harness = makeHarness();
+		await harness.controller.initialize();
+		await connectFirstSocket(harness);
+		harness.controller.send("请分析");
+		harness.sockets[0]!.emit("message", {
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_reason",
+					contentIndex: 0,
+					kind: "thinking",
+					delta: "第一步",
+					sequence: 0,
+				}),
+			),
+		});
+		harness.sockets[0]!.emit("message", {
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_reason",
+					contentIndex: 1,
+					kind: "text",
+					delta: "结论",
+					sequence: 0,
+				}),
+			),
+		});
+		expect(harness.controller.getState().messages.at(-1)).toMatchObject({
+			thinking: "第一步",
+			text: "结论",
+			streaming: true,
+		});
+		harness.sockets[0]!.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "message.completed", text: "结论", thinking: "第一步", sequence: 2 })),
+		});
+		expect(harness.controller.getState().messages.at(-1)).toMatchObject({
+			thinking: "第一步",
+			text: "结论",
+			streaming: false,
+		});
 		harness.controller.close();
 	});
 
@@ -306,7 +369,16 @@ describe("embed chat controller", () => {
 			data: JSON.stringify(baseEvent({ type: "citation.updated", citations: [citation], sequence: 0 })),
 		});
 		harness.sockets[0]!.emit("message", {
-			data: JSON.stringify(baseEvent({ type: "message.delta", text: "来自文档", sequence: 0 })),
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_2",
+					contentIndex: 0,
+					kind: "text",
+					delta: "来自文档",
+					sequence: 0,
+				}),
+			),
 		});
 		harness.sockets[0]!.emit("message", {
 			data: JSON.stringify(baseEvent({ type: "message.completed", text: "来自文档", sequence: 4 })),
@@ -323,7 +395,16 @@ describe("embed chat controller", () => {
 		await connectFirstSocket(harness);
 		harness.controller.send("hi");
 		harness.sockets[0]!.emit("message", {
-			data: JSON.stringify(baseEvent({ type: "message.delta", text: "a", sequence: 0 })),
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_3",
+					contentIndex: 0,
+					kind: "text",
+					delta: "a",
+					sequence: 0,
+				}),
+			),
 		});
 		harness.sockets[0]!.emit("message", {
 			data: JSON.stringify(

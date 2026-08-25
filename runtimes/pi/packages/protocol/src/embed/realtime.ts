@@ -32,8 +32,14 @@ export type ClientCommand =
 export type EmbedServerEvent =
 	| (RecoverableEventBase & { readonly type: "conversation.snapshot"; readonly payload: unknown })
 	| (RecoverableEventBase & { readonly type: "turn.accepted" })
-	| (RecoverableEventBase & { readonly type: "message.delta"; readonly text: string })
-	| (RecoverableEventBase & { readonly type: "message.completed"; readonly text: string })
+	| (RecoverableEventBase & {
+			readonly type: "message.delta";
+			readonly messageId: string;
+			readonly contentIndex: number;
+			readonly kind: "text" | "thinking";
+			readonly delta: string;
+	  })
+	| (RecoverableEventBase & { readonly type: "message.completed"; readonly text: string; readonly thinking?: string })
 	| (RecoverableEventBase & { readonly type: "tool.started"; readonly tool: string })
 	| (RecoverableEventBase & { readonly type: "tool.completed"; readonly tool: string; readonly ok: boolean })
 	| (RecoverableEventBase & { readonly type: "citation.updated"; readonly citations: readonly unknown[] })
@@ -177,9 +183,27 @@ export function decodeServerEvent(input: unknown): RealtimeDecodeResult<EmbedSer
 				return ok({ ...base, type: "conversation.snapshot", payload: record.payload });
 			case "turn.accepted":
 				return ok({ ...base, type: "turn.accepted" });
-			case "message.delta":
+			case "message.delta": {
+				const kind = stringField(record, "kind");
+				if (kind !== "text" && kind !== "thinking") {
+					return err("INVALID_FIELD", "kind must be text or thinking");
+				}
+				return ok({
+					...base,
+					type: "message.delta",
+					messageId: stringField(record, "messageId"),
+					contentIndex: nonNegativeIntField(record, "contentIndex"),
+					kind,
+					delta: stringField(record, "delta"),
+				});
+			}
 			case "message.completed":
-				return ok({ ...base, type, text: stringField(record, "text") });
+				return ok({
+					...base,
+					type: "message.completed",
+					text: stringField(record, "text"),
+					...(record.thinking !== undefined ? { thinking: stringField(record, "thinking") } : {}),
+				});
 			case "tool.started":
 				return ok({ ...base, type: "tool.started", tool: stringField(record, "tool") });
 			case "tool.completed":

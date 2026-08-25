@@ -81,7 +81,7 @@ describe("embed ConversationWorkspace adapter", () => {
 			activeId: "conv_1",
 			messages: [
 				{ id: "user-1", role: "user", text: "真实问题", sequence: 1 },
-				{ id: "assistant-1", role: "assistant", text: "真实回答", sequence: 2 },
+				{ id: "assistant-1", role: "assistant", text: "真实回答", thinking: "真实思考", sequence: 2 },
 			],
 			sending: false,
 			uploading: false,
@@ -99,6 +99,8 @@ describe("embed ConversationWorkspace adapter", () => {
 		expect(markup).toContain("真实会话");
 		expect(markup).toContain("真实问题");
 		expect(markup).toContain("真实回答");
+		expect(markup).toContain("思考过程");
+		expect(markup).toContain("真实思考");
 		expect(markup).toContain("active-agent-presence");
 		expect(markup).toContain("editorial-composer");
 		expect(markup).toContain("PUBLISHED CHAT");

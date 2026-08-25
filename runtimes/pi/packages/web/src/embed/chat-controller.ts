@@ -15,7 +15,14 @@
 import { type EmbedApi, EmbedApiError } from "./api.ts";
 import { messagesFromEvents } from "./conversation-controller.ts";
 import { EmbedRealtimeTransport, type WebSocketLike } from "./realtime-transport.ts";
-import type { ChatAttachment, ChatMessage, ChatToolCall, Citation, ConversationSummary, EmbedServerEvent } from "./types.ts";
+import type {
+	ChatAttachment,
+	ChatMessage,
+	ChatToolCall,
+	Citation,
+	ConversationSummary,
+	EmbedServerEvent,
+} from "./types.ts";
 
 export type EmbedConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed";
 
@@ -350,11 +357,12 @@ export class EmbedChatController {
 			case "message.delta": {
 				const messages = [...this.state.messages];
 				if (this.streamingId === null) {
-					this.streamingId = nextLocalId("assistant");
+					this.streamingId = event.messageId;
 					const streamed: ChatMessage = {
 						id: this.streamingId,
 						role: "assistant",
-						text: event.text,
+						text: event.kind === "text" ? event.delta : "",
+						...(event.kind === "thinking" ? { thinking: event.delta } : {}),
 						sequence: 0,
 						streaming: true,
 						...(this.pendingCitations !== null ? { citations: this.pendingCitations } : {}),
@@ -366,7 +374,11 @@ export class EmbedChatController {
 				} else {
 					for (let i = 0; i < messages.length; i += 1) {
 						const message = messages[i];
-						if (message?.id === this.streamingId) messages[i] = { ...message, text: event.text };
+						if (message?.id !== this.streamingId) continue;
+						messages[i] =
+							event.kind === "thinking"
+								? { ...message, thinking: `${message.thinking ?? ""}${event.delta}` }
+								: { ...message, text: `${message.text}${event.delta}` };
 					}
 				}
 				this.setState({ messages });
@@ -377,7 +389,13 @@ export class EmbedChatController {
 				const messages = finalized
 					? this.state.messages.map((message) =>
 							message.id === this.streamingId
-								? { ...message, text: event.text, sequence: event.sequence, streaming: false }
+								? {
+										...message,
+										text: event.text,
+										...(event.thinking !== undefined ? { thinking: event.thinking } : {}),
+										sequence: event.sequence,
+										streaming: false,
+									}
 								: message,
 						)
 					: [
@@ -386,6 +404,7 @@ export class EmbedChatController {
 								id: `evt-${event.sequence}`,
 								role: "assistant" as const,
 								text: event.text,
+								...(event.thinking !== undefined ? { thinking: event.thinking } : {}),
 								sequence: event.sequence,
 							},
 						];
@@ -453,7 +472,9 @@ export class EmbedChatController {
 
 	private updateTools(id: string, name: string, status: ChatToolCall["status"]): void {
 		const apply = (tools: readonly ChatToolCall[]): readonly ChatToolCall[] => {
-			const existing = tools.findIndex((tool) => tool.id === id || (tool.name === name && tool.status === "running"));
+			const existing = tools.findIndex(
+				(tool) => tool.id === id || (tool.name === name && tool.status === "running"),
+			);
 			if (existing < 0) return [...tools, { id, name, status }];
 			return tools.map((tool, index) => (index === existing ? { ...tool, id, name, status } : tool));
 		};

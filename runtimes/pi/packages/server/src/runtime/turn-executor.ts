@@ -10,7 +10,7 @@
  * 本路径标记为 internal/dev，不作为最终公开协议（TASK-025 的 Realtime
  * 通道建成后关闭或仅测试可用）。
  */
-import type { SessionSnapshot, Usage } from "@earendil-works/pi-protocol";
+import type { SessionSnapshot, TranscriptProgress, Usage } from "@earendil-works/pi-protocol";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { RetrievalInput } from "../types.ts";
 import type { RestoredContext } from "./context-restore.ts";
@@ -26,10 +26,12 @@ export interface TurnExecutionInput {
 	readonly history?: RestoredContext;
 	/** 会话级引用检索结果（TASK-032）；缺省为无（不注入 retrieval）。 */
 	readonly retrieval?: RetrievalInput;
+	/** Runtime 的真实结构化增量；调用方必须在 prompt 前完成订阅。 */
+	readonly onProgress?: (progress: TranscriptProgress) => void;
 }
 
 export type TurnExecutionResult =
-	| { readonly ok: true; readonly outputText: string; readonly usage?: Usage }
+	| { readonly ok: true; readonly outputText: string; readonly thinkingText?: string; readonly usage?: Usage }
 	| { readonly ok: false; readonly error: string };
 
 export type TurnExecutor = ((input: TurnExecutionInput) => Promise<TurnExecutionResult>) & {
@@ -39,17 +41,26 @@ export type TurnExecutor = ((input: TurnExecutionInput) => Promise<TurnExecution
 
 /** 基于 PiRuntimeAdapter 的默认执行器（open -> prompt -> 提取输出 -> close）。 */
 export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
-	return async ({ scope, spec, text, history, retrieval }) => {
+	return async ({ scope, spec, text, history, retrieval, onProgress }) => {
 		const opened = await adapter.open(spec, scope);
 		if (!opened.ok) return { ok: false, error: opened.reason };
 		const runtime = opened.runtime;
+		const unsubscribe = runtime.subscribe((event) => {
+			if (event.event.type === "progress") onProgress?.(event.event.progress);
+		});
 		try {
 			await runtime.prompt(text, { history, retrieval });
 			const result = lastAssistantResult(runtime.snapshot());
-			return { ok: true, outputText: result.outputText, ...(result.usage ? { usage: result.usage } : {}) };
+			return {
+				ok: true,
+				outputText: result.outputText,
+				...(result.thinkingText ? { thinkingText: result.thinkingText } : {}),
+				...(result.usage ? { usage: result.usage } : {}),
+			};
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
+			unsubscribe();
 			await runtime.close().catch(() => {});
 		}
 	};
@@ -62,16 +73,25 @@ export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
  * HTTP 请求。
  */
 export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnExecutor {
-	const execute: TurnExecutor = async ({ scope, spec, text, history, retrieval }) => {
+	const execute: TurnExecutor = async ({ scope, spec, text, history, retrieval, onProgress }) => {
 		const acquired = await manager.acquire(spec, scope);
 		const runtime = acquired.runtime;
+		const unsubscribe = runtime.subscribe((event) => {
+			if (event.event.type === "progress") onProgress?.(event.event.progress);
+		});
 		try {
 			await runtime.prompt(text, { history, retrieval });
 			const result = lastAssistantResult(runtime.snapshot());
-			return { ok: true, outputText: result.outputText, ...(result.usage ? { usage: result.usage } : {}) };
+			return {
+				ok: true,
+				outputText: result.outputText,
+				...(result.thinkingText ? { thinkingText: result.thinkingText } : {}),
+				...(result.usage ? { usage: result.usage } : {}),
+			};
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
+			unsubscribe();
 			manager.release(scope.conversationId);
 		}
 	};
@@ -92,6 +112,7 @@ export function lastAssistantText(snapshot: SessionSnapshot): string {
 /** Extract final assistant text and provider-reported usage from one snapshot. */
 export function lastAssistantResult(snapshot: SessionSnapshot): {
 	readonly outputText: string;
+	readonly thinkingText?: string;
 	readonly usage?: Usage;
 } {
 	for (let i = snapshot.transcript.length - 1; i >= 0; i -= 1) {
@@ -102,7 +123,15 @@ export function lastAssistantResult(snapshot: SessionSnapshot): {
 			.filter((content) => content.type === "text")
 			.map((content) => (content as { type: "text"; text: string }).text)
 			.join("\n");
-		return { outputText, ...(item.usage ? { usage: item.usage } : {}) };
+		const thinkingText = item.content
+			.filter((content) => content.type === "thinking" && !content.redacted)
+			.map((content) => (content as { type: "thinking"; thinking: string }).thinking)
+			.join("\n");
+		return {
+			outputText,
+			...(thinkingText ? { thinkingText } : {}),
+			...(item.usage ? { usage: item.usage } : {}),
+		};
 	}
 	return { outputText: "" };
 }

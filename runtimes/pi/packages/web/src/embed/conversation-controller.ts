@@ -52,10 +52,11 @@ export function messagesFromEvents(events: readonly ConversationEvent[]): ChatMe
 				sequence: event.sequence,
 			});
 		} else if (event.eventType === "assistant.completed") {
-			const payload = event.payload as { text?: unknown };
+			const payload = event.payload as { text?: unknown; thinking?: unknown };
 			messages.push({
 				role: "assistant",
 				text: typeof payload.text === "string" ? payload.text : "",
+				...(typeof payload.thinking === "string" ? { thinking: payload.thinking } : {}),
 				sequence: event.sequence,
 			});
 		} else if (event.eventType === "turn.failed") {

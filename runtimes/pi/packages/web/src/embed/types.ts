@@ -54,6 +54,8 @@ export interface ChatToolCall {
 export interface ChatMessage {
 	readonly role: "user" | "assistant" | "system";
 	readonly text: string;
+	/** 模型真实提供的可展示思考内容；缺失时不渲染。 */
+	readonly thinking?: string;
 	readonly sequence: number;
 	/** React key 与流式更新定位；由控制器生成，事件推导消息为 `evt-<sequence>`。 */
 	readonly id?: string;

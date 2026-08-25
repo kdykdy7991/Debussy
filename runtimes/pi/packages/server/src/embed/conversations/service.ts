@@ -21,6 +21,7 @@ import type {
 	ConversationRollover,
 	ReasoningUpdateRequest,
 	SessionLogLevel,
+	TranscriptProgress,
 	TurnMetrics,
 } from "@earendil-works/pi-protocol";
 import {
@@ -575,12 +576,17 @@ export class ConversationService {
 				});
 			}
 
-			// Agent V2 M1：捕获 provider 开始（同步执行器=模型请求开始）与终态时点。
-			// 同步执行器不产生“首个可展示文本”的独立时点（无流式增量），故
-			// firstOutput=null → ttft/generation/tps 均为 null，绝不把“整个同步
-			// 请求完成时间”当作真实 TTFT 混入聚合；totalLatencyMs 仍有效值。
+			// Agent V2 M1：捕获 provider 开始与终态时点。真实首增量指标后续由
+			// metrics collector 接入 onProgress；这里仍不以整个请求完成时间伪造 TTFT。
 			const providerStartAtMs = metricsTiming === undefined ? undefined : performance.now();
-			const result = await this.turnExecutor({ scope: turnScope, spec, text: input.text, history, retrieval });
+			const result = await this.turnExecutor({
+				scope: turnScope,
+				spec,
+				text: input.text,
+				history,
+				retrieval,
+				onProgress: input.onProgress,
+			});
 			const completedAtMs = metricsTiming === undefined ? undefined : performance.now();
 			let turnMetrics: TurnMetrics | undefined;
 			if (metricsTiming !== undefined && providerStartAtMs !== undefined && completedAtMs !== undefined) {
@@ -594,13 +600,15 @@ export class ConversationService {
 			if (result.ok) {
 				// WB-007: write the final assistant message at the standard
 				// level regardless of log level; this is the authoritative
-				// payload restored by `context-restore`. Streaming chunks
-				// would have been written before this point in a streaming
-				// path; the sync executor only emits the final message.
+				// payload restored by `context-restore`. Runtime 增量已通过
+				// onProgress 实时传输，最终消息仍是恢复时的权威事实。
 				const completed = await this.safeAppend(scope, input.conversationId, {
 					eventType: "assistant/message",
 					turnId,
-					payload: { text: result.outputText },
+					payload: {
+						text: result.outputText,
+						...(result.thinkingText ? { thinking: result.thinkingText } : {}),
+					},
 				});
 				// First-chunk / last-chunk pseudo events to honour the
 				// `diagnostic` log level (only when the executor exposes any
@@ -654,6 +662,7 @@ export class ConversationService {
 						userMessageSequence: userEvent.sequence,
 						assistantSequence: completed?.sequence ?? null,
 						outputText: result.outputText,
+						...(result.thinkingText ? { thinkingText: result.thinkingText } : {}),
 						// TASK-033：本 turn 实际使用的引用（citation.updated 事件的
 						// 数据来源；无检索时为 []）。仅传输，不持久化（HANDOFF 记录）。
 						citations: retrieval?.citations ?? [],
@@ -691,6 +700,7 @@ export interface ExecuteTurnInput {
 	readonly principal: EmbedAuthContext;
 	readonly conversationId: ConversationId;
 	readonly text: string;
+	readonly onProgress?: (progress: TranscriptProgress) => void;
 }
 
 export interface ExecuteTurnData {
@@ -698,6 +708,7 @@ export interface ExecuteTurnData {
 	readonly userMessageSequence: number;
 	readonly assistantSequence: number | null;
 	readonly outputText: string;
+	readonly thinkingText?: string;
 	/** 本 turn 实际使用的引用（TASK-033；无检索为空数组）。 */
 	readonly citations: readonly Citation[];
 }

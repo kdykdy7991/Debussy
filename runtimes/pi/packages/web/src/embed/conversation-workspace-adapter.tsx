@@ -169,10 +169,7 @@ function snapshotFromConversation(conversation: ConversationSummary, state: Embe
 	};
 }
 
-function transcriptFromMessages(
-	messages: readonly ChatMessage[],
-	conversation: ConversationSummary,
-): TranscriptItem[] {
+function transcriptFromMessages(messages: readonly ChatMessage[], conversation: ConversationSummary): TranscriptItem[] {
 	const model = publishedModel(conversation);
 	const transcript: TranscriptItem[] = [];
 	for (const [index, message] of messages.entries()) {
@@ -182,12 +179,16 @@ function transcriptFromMessages(
 			transcript.push({ id, role: "user", content: [{ type: "text", text: message.text }], timestamp });
 			continue;
 		}
+		const assistantContent = [
+			...(message.thinking ? [{ type: "thinking" as const, thinking: message.thinking }] : []),
+			...(message.text ? [{ type: "text" as const, text: message.text }] : []),
+		];
 		transcript.push(
 			message.role === "system"
 				? {
 						id,
 						role: "assistant",
-						content: [{ type: "text", text: message.text }],
+						content: assistantContent,
 						model,
 						timestamp,
 						status: "error",
@@ -195,11 +196,11 @@ function transcriptFromMessages(
 						errorMessage: message.text,
 					}
 				: message.streaming
-					? { id, role: "assistant", content: [{ type: "text", text: message.text }], model, timestamp, status: "streaming" }
+					? { id, role: "assistant", content: assistantContent, model, timestamp, status: "streaming" }
 					: {
 							id,
 							role: "assistant",
-							content: [{ type: "text", text: message.text }],
+							content: assistantContent,
 							model,
 							timestamp,
 							status: "complete",

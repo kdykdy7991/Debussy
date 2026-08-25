@@ -165,7 +165,18 @@ describe("embed realtime transport", () => {
 		ws.emit("message", {
 			data: JSON.stringify(baseEvent({ type: "message.completed", text: "duplicate", sequence: 2 })),
 		});
-		ws.emit("message", { data: JSON.stringify(baseEvent({ type: "message.delta", text: "stale", sequence: 1 })) });
+		ws.emit("message", {
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_0",
+					contentIndex: 0,
+					kind: "text",
+					delta: "stale",
+					sequence: 1,
+				}),
+			),
+		});
 		ws.emit("message", {
 			data: JSON.stringify(baseEvent({ type: "message.completed", text: "second", sequence: 3 })),
 		});
@@ -183,7 +194,16 @@ describe("embed realtime transport", () => {
 			data: JSON.stringify(baseEvent({ type: "turn.accepted", sequence: 0 })),
 		});
 		ws.emit("message", {
-			data: JSON.stringify(baseEvent({ type: "message.delta", text: "hello", sequence: 0 })),
+			data: JSON.stringify(
+				baseEvent({
+					type: "message.delta",
+					messageId: "msg_1",
+					contentIndex: 0,
+					kind: "text",
+					delta: "hello",
+					sequence: 0,
+				}),
+			),
 		});
 		// completed 与 delta 同 turn（不同 sequence）：不得被 delta 屏蔽。
 		ws.emit("message", {

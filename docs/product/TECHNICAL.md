@@ -7,12 +7,14 @@
 - 管理员工作台使用 React 与 Vite，并以独立管理入口运行。
 - Embed Chat 是独立构建入口，不与管理员页面共享访问语义。
 - Chat 通过 WebSocket 管理实时会话，通过 HTTP 完成控制面请求和文件上传。
+- 管理员与 Embed 可以使用不同鉴权和传输入口，但进入共享消息视图前必须归一为同一结构化 transcript：`text`、`thinking`、tool item 与 streaming/terminal 状态语义一致。
 
 ## 服务端边界
 
 - Control Plane 管理租户、Agent、发布应用、版本、Usage 和管理员会话能力。
 - Data Plane 提供 Embed bootstrap、凭据交换、企业用户 Conversation 和附件能力。
 - Runtime Plane 执行 Agent 会话、工具调用和流式事件。
+- Embed Realtime 必须转发 Runtime 的真实增量，不得在执行完成后用全文单帧 `message.delta` 替代真实流式事件；最终持久事件仍是断线恢复的权威事实。
 - PostgreSQL 保存发布、租户、企业会话和用量等持久数据。
 - Redis 承担需要跨实例共享的短期状态与协调能力。
 

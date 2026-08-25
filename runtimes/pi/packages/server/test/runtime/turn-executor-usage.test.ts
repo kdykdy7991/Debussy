@@ -1,6 +1,6 @@
 import type { SessionSnapshot, Usage } from "@earendil-works/pi-protocol";
 import { describe, expect, it } from "vitest";
-import { lastAssistantResult } from "../../src/runtime/turn-executor.ts";
+import { lastAssistantResult, managedTurnExecutor } from "../../src/runtime/turn-executor.ts";
 
 const USAGE: Usage = {
 	input: 120,
@@ -36,5 +36,80 @@ describe("lastAssistantResult", () => {
 		} as unknown as SessionSnapshot;
 
 		expect(lastAssistantResult(snapshot)).toEqual({ outputText: "done" });
+	});
+
+	it("preserves non-redacted thinking for the shared transcript", () => {
+		const snapshot = {
+			transcript: [
+				{
+					id: "msg_1",
+					role: "assistant",
+					status: "complete",
+					content: [
+						{ type: "thinking", thinking: "reasoning", redacted: false },
+						{ type: "text", text: "done" },
+					],
+				},
+			],
+		} as unknown as SessionSnapshot;
+
+		expect(lastAssistantResult(snapshot)).toEqual({ outputText: "done", thinkingText: "reasoning" });
+	});
+});
+
+describe("managedTurnExecutor progress", () => {
+	it("subscribes before prompt and forwards the runtime's real structured deltas", async () => {
+		const progress = {
+			type: "assistant_delta" as const,
+			messageId: "msg_1",
+			contentIndex: 0,
+			kind: "thinking" as const,
+			delta: "reasoning",
+		};
+		let listener: ((event: unknown) => void) | undefined;
+		let released = false;
+		const runtime = {
+			subscribe(next: (event: unknown) => void) {
+				listener = next;
+				return () => {
+					listener = undefined;
+				};
+			},
+			async prompt() {
+				listener?.({ type: "progress", event: { type: "progress", progress } });
+			},
+			snapshot() {
+				return {
+					transcript: [
+						{
+							id: "msg_1",
+							role: "assistant",
+							status: "complete",
+							content: [
+								{ type: "thinking", thinking: "reasoning", redacted: false },
+								{ type: "text", text: "done" },
+							],
+						},
+					],
+				};
+			},
+		};
+		const executor = managedTurnExecutor({
+			acquire: async () => ({ runtime, created: true }),
+			release: () => {
+				released = true;
+			},
+		} as never);
+		const seen: unknown[] = [];
+		const result = await executor({
+			scope: { conversationId: "conv_1" } as never,
+			spec: {} as never,
+			text: "hello",
+			onProgress: (event) => seen.push(event),
+		});
+
+		expect(seen).toEqual([progress]);
+		expect(result).toMatchObject({ ok: true, outputText: "done", thinkingText: "reasoning" });
+		expect(released).toBe(true);
 	});
 });

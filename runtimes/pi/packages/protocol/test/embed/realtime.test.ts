@@ -148,8 +148,21 @@ describe("decodeServerEvent", () => {
 		const cases: { input: unknown; type: string }[] = [
 			{ input: { ...BASE_EVENT, type: "conversation.snapshot", payload: {} }, type: "conversation.snapshot" },
 			{ input: { ...BASE_EVENT, type: "turn.accepted" }, type: "turn.accepted" },
-			{ input: { ...BASE_EVENT, type: "message.delta", text: "hel" }, type: "message.delta" },
-			{ input: { ...BASE_EVENT, type: "message.completed", text: "hello" }, type: "message.completed" },
+			{
+				input: {
+					...BASE_EVENT,
+					type: "message.delta",
+					messageId: "msg_1",
+					contentIndex: 0,
+					kind: "text",
+					delta: "hel",
+				},
+				type: "message.delta",
+			},
+			{
+				input: { ...BASE_EVENT, type: "message.completed", text: "hello", thinking: "reason" },
+				type: "message.completed",
+			},
 			{ input: { ...BASE_EVENT, type: "tool.started", tool: "web.search" }, type: "tool.started" },
 			{ input: { ...BASE_EVENT, type: "tool.completed", tool: "web.search", ok: true }, type: "tool.completed" },
 			{ input: { ...BASE_EVENT, type: "citation.updated", citations: [{ id: "c1" }] }, type: "citation.updated" },
@@ -201,8 +214,28 @@ describe("decodeServerEvent", () => {
 	});
 
 	test("rejects over-long event text", () => {
-		const result = decodeServerEvent({ ...BASE_EVENT, type: "message.delta", text: "x".repeat(32_001) });
+		const result = decodeServerEvent({
+			...BASE_EVENT,
+			type: "message.delta",
+			messageId: "msg_1",
+			contentIndex: 0,
+			kind: "text",
+			delta: "x".repeat(32_001),
+		});
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.code).toBe("TOO_LONG");
+	});
+
+	test("rejects a delta without a supported content kind", () => {
+		const result = decodeServerEvent({
+			...BASE_EVENT,
+			type: "message.delta",
+			messageId: "msg_1",
+			contentIndex: 0,
+			kind: "toolCall",
+			delta: "x",
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.code).toBe("INVALID_FIELD");
 	});
 });
