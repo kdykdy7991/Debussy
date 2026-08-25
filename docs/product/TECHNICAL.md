@@ -15,6 +15,7 @@
 - Data Plane 提供 Embed bootstrap、凭据交换、企业用户 Conversation 和附件能力。
 - Runtime Plane 执行 Agent 会话、工具调用和流式事件。
 - Embed Realtime 必须转发 Runtime 的真实增量，不得在执行完成后用全文单帧 `message.delta` 替代真实流式事件；最终持久事件仍是断线恢复的权威事实。
+- 发布 Runtime 的思考档位解析顺序固定为：会话覆盖 > Revision 显式参数 > 冻结 capability 的 `defaultEffort`。当冻结能力为 `supported:true`、`toggle:false` 且前述值均缺失时，必须使用冻结 `efforts` 的首个档位，不能静默按“关闭思考”运行；可关闭模型没有默认值时才交由 Provider 默认行为。
 - PostgreSQL 保存发布、租户、企业会话和用量等持久数据。
 - Redis 承担需要跨实例共享的短期状态与协调能力。
 

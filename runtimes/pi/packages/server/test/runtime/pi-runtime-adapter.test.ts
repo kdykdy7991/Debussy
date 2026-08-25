@@ -280,6 +280,73 @@ describe("pi runtime adapter", () => {
 		await a.runtime.close();
 	});
 
+	test("uses the frozen capability default for a reasoning model that cannot disable thinking", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		const result = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "published Qwen",
+					model: {
+						provider: "oneapi",
+						modelId: "Qwen",
+						params: {},
+						parameterCapabilities: {
+							reasoning: {
+								supported: true,
+								toggle: false,
+								efforts: ["low", "medium", "high"],
+							},
+						},
+					},
+				},
+			}),
+			scope("conv-published-qwen"),
+		);
+		expect(result.ok).toBe(true);
+		expect(calls[0]?.thinkingLevel).toBe("low");
+		if (result.ok) await result.runtime.close();
+	});
+
+	test("prefers a frozen capability defaultEffort over the first supported effort", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		const result = await adapter.open(
+			chatOnlySpec({
+				agent: {
+					systemPrompt: "published default",
+					model: {
+						provider: "oneapi",
+						modelId: "Qwen",
+						params: {},
+						parameterCapabilities: {
+							reasoning: {
+								supported: true,
+								toggle: false,
+								efforts: ["low", "medium", "high"],
+								defaultEffort: "high",
+							},
+						},
+					},
+				},
+			}),
+			scope("conv-published-default"),
+		);
+		expect(result.ok).toBe(true);
+		expect(calls[0]?.thinkingLevel).toBe("high");
+		if (result.ok) await result.runtime.close();
+	});
+
 	test("two conversations get independent runtimes with their own models", async () => {
 		const calls: RuntimeSessionOptions[] = [];
 		const adapter = createPiRuntimeAdapter({

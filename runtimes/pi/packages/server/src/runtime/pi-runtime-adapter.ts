@@ -16,7 +16,7 @@
  * 沿用 Agent 自身配置；发布版本编译自同一 Agent，二者一致，待 TASK-022
  * 恢复链路时统一注入（记录于交接文档）。
  */
-import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
+import type { ModelRef, ReasoningEffort, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { resolveModelStreamOptions, withConversationEffort } from "../model-parameters.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { PiSessionRuntime } from "../types.ts";
@@ -50,13 +50,24 @@ export function createPiRuntimeAdapter(deps: { readonly createSession: RuntimeSe
 		async open(spec, scope) {
 			const rejection = chatOnlyRejection(spec);
 			if (rejection !== null) return { ok: false, reason: rejection };
-			// 会话覆盖 > Revision 配置 > 默认：会话 effort 叠加到冻结参数后再解析。
+			// 会话覆盖 > Revision 配置 > 冻结 capability 默认：先解析显式配置，
+			// 仅在它和兼容字段都没有给出档位时才补 capability fallback。
 			const base = spec.agent.model.params ?? {};
-			const resolved = resolveModelStreamOptions(
+			let resolved = resolveModelStreamOptions(
 				withConversationEffort(base, scope.conversationEffort ?? null),
 				spec.agent.model.modelId,
 			);
-			const thinkingLevel = resolved.thinkingLevel ?? thinkingLevelFrom(spec);
+			const legacyThinkingLevel = thinkingLevelFrom(spec);
+			if (resolved.thinkingLevel === undefined && legacyThinkingLevel === undefined) {
+				const fallbackEffort = capabilityDefaultEffort(spec);
+				if (fallbackEffort !== undefined) {
+					resolved = resolveModelStreamOptions(
+						withConversationEffort(base, fallbackEffort),
+						spec.agent.model.modelId,
+					);
+				}
+			}
+			const thinkingLevel = resolved.thinkingLevel ?? legacyThinkingLevel;
 			const session = await deps.createSession({
 				id: scope.conversationId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
@@ -66,6 +77,20 @@ export function createPiRuntimeAdapter(deps: { readonly createSession: RuntimeSe
 			return { ok: true, runtime: new ConversationRuntime({ scope, spec, session }) };
 		},
 	};
+}
+
+/**
+ * 冻结能力的运行时默认值。
+ *
+ * 可关闭模型没有显式默认时仍交给 provider；不可关闭模型则必须选择一个冻结
+ * 档位，否则会出现“发布配置声明支持思考，实际请求却没有启用思考”的漂移。
+ */
+function capabilityDefaultEffort(spec: RuntimeSpec): ReasoningEffort | undefined {
+	const reasoning = spec.agent.model.parameterCapabilities?.reasoning;
+	if (reasoning === undefined || !reasoning.supported) return undefined;
+	if (reasoning.defaultEffort !== undefined) return reasoning.defaultEffort;
+	if (!reasoning.toggle) return reasoning.efforts[0];
+	return undefined;
 }
 
 /** MVP chat-only 白名单校验；返回 null 表示允许。 */
