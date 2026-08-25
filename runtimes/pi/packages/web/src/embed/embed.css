@@ -2,6 +2,7 @@
 
 @import "../styles.css";
 @import "../ai-kit/styles/index.css";
+@import "flowtoken/dist/styles.css";
 
 .embed-shell {
 	display: flex;

@@ -283,6 +283,8 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			onSend={handleSend}
 			onNew={handleNew}
 			onSelect={handleSelect}
+			onUpload={handleUpload}
+			onRemoveAttachment={(attachmentId) => void controllersRef.current?.chat.removeAttachment(attachmentId)}
 		/>
 	);
 	/* Legacy EmbedShell fallback retained below temporarily for migration reference.

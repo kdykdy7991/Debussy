@@ -41,6 +41,13 @@ export interface ChatAttachment {
 	readonly status: string;
 }
 
+/** 由 Embed Realtime 的真实 tool 事件驱动；不从 UI 侧虚构调用记录。 */
+export interface ChatToolCall {
+	readonly id: string;
+	readonly name: string;
+	readonly status: "running" | "completed" | "failed";
+}
+
 /** 会话内展示用消息（由事件推导；Web 展示层专用）。 */
 export interface ChatMessage {
 	readonly role: "user" | "assistant" | "system";
@@ -52,4 +59,6 @@ export interface ChatMessage {
 	readonly streaming?: boolean;
 	/** 本 turn 实际使用的引用（citation.updated；仅实时展示，不持久化）。 */
 	readonly citations?: readonly Citation[];
+	/** 本轮 Realtime 实际收到的工具执行轨迹。 */
+	readonly tools?: readonly ChatToolCall[];
 }

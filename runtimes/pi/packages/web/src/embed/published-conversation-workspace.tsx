@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { AgentStatusAvatar, preloadAgentStatusAvatar } from "../ai-kit/index.ts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatedMarkdown } from "flowtoken";
+import {
+	AgentStatusAvatar,
+	AgentTrace,
+	AgentTraceEvent,
+	AssistantResponse,
+	Prose,
+	preloadAgentStatusAvatar,
+	UserMessage,
+} from "../ai-kit/index.ts";
 import type { EmbedChatState } from "./chat-controller.ts";
-import type { ChatMessage, ConversationSummary } from "./types.ts";
+import type { ChatAttachment, ChatMessage, ConversationSummary } from "./types.ts";
 
 /**
  * Published counterpart of the admin Chat workspace. It deliberately owns no
@@ -16,10 +25,13 @@ export function PublishedConversationWorkspace(props: {
 	readonly onSend: (text: string) => void;
 	readonly onNew: () => void;
 	readonly onSelect: (conversationId: string) => void;
+	readonly onUpload: (file: File) => void;
+	readonly onRemoveAttachment: (attachmentId: string) => void;
 }): React.JSX.Element {
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [query, setQuery] = useState("");
 	const [message, setMessage] = useState("");
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const conversations = useMemo(() => {
 		const needle = query.trim().toLocaleLowerCase();
 		return needle === ""
@@ -91,6 +103,17 @@ export function PublishedConversationWorkspace(props: {
 			</main>
 			<div className="composer-dock">
 				<form className={`editorial-composer ${props.state.sending ? "running" : ""}`} onSubmit={submit}>
+					{props.state.attachments.length > 0 ? (
+						<div className="composer-attachments">
+							{props.state.attachments.map((attachment) => (
+								<PublishedAttachment
+									key={attachment.attachmentId}
+									attachment={attachment}
+									onRemove={props.onRemoveAttachment}
+								/>
+							))}
+						</div>
+					) : null}
 					<div className="composer-line">
 						<textarea
 							rows={1}
@@ -107,7 +130,30 @@ export function PublishedConversationWorkspace(props: {
 						/>
 					</div>
 					<div className="composer-toolbar">
-						<div />
+						<div className="composer-tools">
+							<button
+								className="composer-tool composer-attach"
+								type="button"
+								onClick={() => fileInputRef.current?.click()}
+								disabled={!props.state.uploadsEnabled || props.state.sending || props.state.activeId === null}
+								title="上传文件附件"
+								aria-label="上传文件附件"
+							>
+								<svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+									<path d="M10 4.5v11M4.5 10h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+								</svg>
+							</button>
+							<input
+								ref={fileInputRef}
+								type="file"
+								multiple
+								hidden
+								onChange={(event) => {
+									for (const file of event.currentTarget.files ? [...event.currentTarget.files] : []) props.onUpload(file);
+									event.currentTarget.value = "";
+								}}
+							/>
+						</div>
 						<div className="composer-submit">
 							<button
 								className="send-button"
@@ -121,6 +167,15 @@ export function PublishedConversationWorkspace(props: {
 				</form>
 			</div>
 		</div>
+	);
+}
+
+function PublishedAttachment({ attachment, onRemove }: { readonly attachment: ChatAttachment; readonly onRemove: (id: string) => void }) {
+	return (
+		<span className="attachment-chip ready">
+			<span className="attachment-chip__name" title={attachment.filename}>{attachment.filename}</span>
+			<button type="button" onClick={() => onRemove(attachment.attachmentId)} aria-label={`移除 ${attachment.filename}`}>×</button>
+		</span>
 	);
 }
 
@@ -218,16 +273,39 @@ function PublishedSidebar(props: {
 }
 
 function PublishedMessage({ message }: { readonly message: ChatMessage }): React.JSX.Element {
+	if (message.role === "user") {
+		const plain = message.text.length <= 24 && !message.text.includes("\n");
+		return <UserMessage variant={plain ? "plain" : "default"}>{message.text}</UserMessage>;
+	}
+	if (message.role === "system") {
+		return <output className="connection-error">{message.text}</output>;
+	}
+	const rail =
+		message.tools && message.tools.length > 0 ? (
+			<AgentTrace status={message.tools.some((tool) => tool.status === "running") ? "running" : "completed"}>
+				{message.tools.map((tool) => (
+					<AgentTraceEvent
+						key={tool.id}
+						status={tool.status}
+						title={tool.name}
+						detail={tool.status === "running" ? "执行中" : tool.status === "failed" ? "失败" : "完成"}
+					/>
+				))}
+			</AgentTrace>
+		) : undefined;
 	return (
-		<div className={`ai-turn ${message.role === "user" ? "user-turn" : ""}`}>
-			<div className="ai-prose">
-				<p>{message.text}</p>
-				{message.streaming ? (
-					<output className="ai-cursor" aria-label="正在生成">
-						▋
-					</output>
-				) : null}
+		<AssistantResponse rail={rail}>
+			<div className="assistant-output-card">
+				<div className="ai-reading-content">
+					<Prose plain={message.text.length <= 120 && !message.text.includes("\n")} streaming={message.streaming}>
+						<AnimatedMarkdown
+							content={message.text}
+							animation={message.streaming ? "fadeIn" : undefined}
+							sep={message.streaming ? "diff" : undefined}
+						/>
+					</Prose>
+				</div>
 			</div>
-		</div>
+		</AssistantResponse>
 	);
 }

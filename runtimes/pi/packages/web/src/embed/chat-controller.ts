@@ -15,7 +15,7 @@
 import { type EmbedApi, EmbedApiError } from "./api.ts";
 import { messagesFromEvents } from "./conversation-controller.ts";
 import { EmbedRealtimeTransport, type WebSocketLike } from "./realtime-transport.ts";
-import type { ChatAttachment, ChatMessage, Citation, ConversationSummary, EmbedServerEvent } from "./types.ts";
+import type { ChatAttachment, ChatMessage, ChatToolCall, Citation, ConversationSummary, EmbedServerEvent } from "./types.ts";
 
 export type EmbedConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed";
 
@@ -100,6 +100,8 @@ export class EmbedChatController {
 	private streamingId: string | null = null;
 	/** citation.updated 先于 message.delta 到达时的暂存（挂到下一个 assistant 消息）。 */
 	private pendingCitations: readonly Citation[] | null = null;
+	/** 工具事件可能先于第一段 assistant 文本到达，暂存到本次回复创建时再挂载。 */
+	private pendingTools: readonly ChatToolCall[] = [];
 
 	constructor(options: EmbedChatControllerOptions) {
 		this.options = options;
@@ -183,6 +185,7 @@ export class EmbedChatController {
 			}));
 			this.streamingId = null;
 			this.pendingCitations = null;
+			this.pendingTools = [];
 			this.closing = false;
 			this.setState({
 				activeId: conversationId,
@@ -298,6 +301,7 @@ export class EmbedChatController {
 		this.closing = true;
 		this.streamingId = null;
 		this.pendingCitations = null;
+		this.pendingTools = [];
 		this.transport.close();
 		this.setState({ connectionStatus: "closed", sending: false });
 	}
@@ -307,6 +311,7 @@ export class EmbedChatController {
 		this.closing = true;
 		this.streamingId = null;
 		this.pendingCitations = null;
+		this.pendingTools = [];
 		this.transport.close();
 		this.setState({
 			conversations: [],
@@ -333,8 +338,10 @@ export class EmbedChatController {
 						sequence: 0,
 						streaming: true,
 						...(this.pendingCitations !== null ? { citations: this.pendingCitations } : {}),
+						...(this.pendingTools.length > 0 ? { tools: this.pendingTools } : {}),
 					};
 					this.pendingCitations = null;
+					this.pendingTools = [];
 					messages.push(streamed);
 				} else {
 					for (let i = 0; i < messages.length; i += 1) {
@@ -364,12 +371,14 @@ export class EmbedChatController {
 						];
 				this.streamingId = null;
 				this.pendingCitations = null;
+				this.pendingTools = [];
 				this.setState({ messages, sending: false });
 				break;
 			}
 			case "turn.failed": {
 				this.streamingId = null;
 				this.pendingCitations = null;
+				this.pendingTools = [];
 				this.setState({
 					messages: [
 						...this.state.messages,
@@ -404,6 +413,14 @@ export class EmbedChatController {
 				}
 				break;
 			}
+			case "tool.started": {
+				this.updateTools(event.eventId, event.tool, "running");
+				break;
+			}
+			case "tool.completed": {
+				this.updateTools(event.eventId, event.tool, event.ok ? "completed" : "failed");
+				break;
+			}
 			case "turn.accepted":
 				this.setState({ sending: true });
 				break;
@@ -412,6 +429,23 @@ export class EmbedChatController {
 				// MVP 展示层忽略（传输层已按 sequence 处理）。
 				break;
 		}
+	}
+
+	private updateTools(id: string, name: string, status: ChatToolCall["status"]): void {
+		const apply = (tools: readonly ChatToolCall[]): readonly ChatToolCall[] => {
+			const existing = tools.findIndex((tool) => tool.id === id || (tool.name === name && tool.status === "running"));
+			if (existing < 0) return [...tools, { id, name, status }];
+			return tools.map((tool, index) => (index === existing ? { ...tool, id, name, status } : tool));
+		};
+		if (this.streamingId === null) {
+			this.pendingTools = apply(this.pendingTools);
+			return;
+		}
+		this.setState({
+			messages: this.state.messages.map((message) =>
+				message.id === this.streamingId ? { ...message, tools: apply(message.tools ?? []) } : message,
+			),
+		});
 	}
 
 	/** Token 失效时透明重试一次（匿名可刷新；signed_user 抛 AUTH_EXPIRED 由上层处理）。 */
