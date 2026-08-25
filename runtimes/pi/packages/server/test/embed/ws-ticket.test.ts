@@ -234,7 +234,7 @@ describe.skipIf(!bothReady)("ws ticket http endpoint", () => {
 			authenticator,
 			repositories: repos,
 			wsTickets: tickets,
-			realtimeBaseUrl: "wss://agent.example.com",
+			realtimeBaseUrl: "https://agent.example.com",
 			onError: (e) => console.error("WS-TICKET HANDLER ERROR:", e),
 		});
 		server = createServer((req, res) => {

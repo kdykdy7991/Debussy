@@ -487,7 +487,7 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 			origin: ctx.request.headers.origin,
 			publishedAppVersionId: ctx.principal.publishedAppVersionId,
 		});
-		const base = (options.realtimeBaseUrl ?? "").replace(/\/$/, "");
+		const base = realtimeWebSocketBaseUrl(options.realtimeBaseUrl ?? "");
 		jsonBody(ctx.response, 200, {
 			data: {
 				ticket: issued.ticket,
@@ -595,6 +595,19 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 			createdAt: event.createdAt.toISOString(),
 		};
 	}
+}
+
+/**
+ * `embedBaseUrl` is also used for browser links, so it is intentionally an
+ * HTTP(S) URL.  A WebSocket constructor, however, only accepts WS(S).  Keep
+ * that conversion at the realtime boundary rather than forcing deployment
+ * config to choose between clickable embed URLs and a usable socket URL.
+ */
+function realtimeWebSocketBaseUrl(baseUrl: string): string {
+	const url = new URL(baseUrl);
+	if (url.protocol === "http:") url.protocol = "ws:";
+	if (url.protocol === "https:") url.protocol = "wss:";
+	return url.toString().replace(/\/$/, "");
 }
 
 function parseTitle(body: unknown): string {
