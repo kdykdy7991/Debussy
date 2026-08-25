@@ -2,6 +2,13 @@
 
 @import "../styles.css";
 @import "../ai-kit/styles/index.css";
+/*
+ * Published Chat renders the same admin ConversationWorkspace variant as the
+ * control Chat. Load its canonical presentation rules as well; without this
+ * stylesheet the DOM is shared but the sidebar, message rail, tools and
+ * composer fall back to the older base appearance.
+ */
+@import "../admin/styles.css";
 @import "flowtoken/dist/styles.css";
 
 .embed-shell {

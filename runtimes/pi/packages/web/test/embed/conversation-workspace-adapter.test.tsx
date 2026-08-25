@@ -1,4 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import type { EmbedChatController, EmbedChatState } from "../../src/embed/chat-controller.ts";
 import {
@@ -22,6 +24,11 @@ function controllerWith(state: EmbedChatState): EmbedChatController {
 }
 
 describe("embed ConversationWorkspace adapter", () => {
+	test("loads the canonical control Chat presentation rules", () => {
+		const css = readFileSync(resolve(__dirname, "../../src/embed/embed.css"), "utf8");
+		expect(css).toContain('@import "../admin/styles.css"');
+	});
+
 	test("keeps external-store snapshots stable until the controller publishes a change", () => {
 		let state: EmbedChatState = {
 			conversations: [],
