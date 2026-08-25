@@ -1,5 +1,5 @@
 /**
- * Agent Design 表单 Sections（WB-003 / SPEC §5.2；阶段一/二收口）。
+ * Agent Design 表单 Sections（WB-003 / SPEC §5.2；阶段三：Aurora UI）。
  *
  * 此文件导出供 `agent-design-tab.tsx` 与 `agent-workspace.tsx` 复用的
  * section 组件。规范要求的设计 Tab 顺序：
@@ -12,6 +12,8 @@
  *
  * 阶段一约束继续保留：能力只暴露 `attachments` / `avatar` /
  * `liveSpeech`；工具 / 知识库只允许移除不允许新增。
+ *
+ * 阶段三视觉：所有页面专属样式收敛到 `agent-design.module.css`。
  */
 import type {
 	AgentCapabilities,
@@ -21,6 +23,7 @@ import type {
 	LlmAvailableModel,
 } from "@earendil-works/pi-protocol";
 import { useId } from "react";
+import styles from "./agent-design.module.css";
 import { productReasoningEfforts } from "./reasoning-efforts.ts";
 
 /** 阶段一：仅暴露真正会持久化的能力开关。 */
@@ -60,18 +63,18 @@ export function updateCapability(
 
 export function BasicInfoSection({ detail }: { readonly detail: AgentDefinitionDetail }): React.ReactElement {
 	return (
-		<section aria-label="基本信息" className="agent-section">
-			<header className="agent-section__header">
+		<section aria-label="基本信息" className={styles.section}>
+			<header className={styles.sectionHeader}>
 				<h3>基本信息</h3>
-				<p className="agent-section__hint">
+				<p className={styles.sectionHint}>
 					接口未暴露编辑入口；以下字段来自最新已保存 Revision，仅作展示。
 				</p>
 			</header>
-			<dl className="agent-section__kv">
+			<dl className={styles.sectionKv}>
 				<dt>名称</dt>
 				<dd>{detail.name}</dd>
 				<dt>描述</dt>
-				<dd>{detail.description?.trim() ? detail.description : <span className="agent-section__muted">（无）</span>}</dd>
+				<dd>{detail.description?.trim() ? detail.description : <span className={styles.sectionMuted}>（无）</span>}</dd>
 				<dt>当前 Revision</dt>
 				<dd>
 					<code>#{detail.currentRevision}</code>
@@ -79,7 +82,7 @@ export function BasicInfoSection({ detail }: { readonly detail: AgentDefinitionD
 				<dt>最近更新</dt>
 				<dd>
 					<time dateTime={detail.updatedAt}>{detail.updatedAt}</time>
-					<span className="agent-section__muted"> · {detail.updatedBy}</span>
+					<span className={styles.sectionMuted}> · {detail.updatedBy}</span>
 				</dd>
 			</dl>
 		</section>
@@ -103,35 +106,33 @@ export function InstructionsSection({
 	const isEmpty = length === 0;
 	const isOverLong = length > PROMPT_OVER_LONG_HINT;
 	const charClass = isOverLong
-		? "agent-section__charcount agent-section__charcount--over"
-		: isEmpty
-			? "agent-section__charcount"
-			: "agent-section__charcount";
+		? `${styles.sectionCharcount} ${styles.sectionCharcountOver}`
+		: styles.sectionCharcount;
 	return (
-		<section aria-label="指令" className="agent-section">
-			<header className="agent-section__header">
+		<section aria-label="指令" className={styles.section}>
+			<header className={styles.sectionHeader}>
 				<h3>指令</h3>
-				<p className="agent-section__hint">
+				<p className={styles.sectionHint}>
 					用于驱动 Agent 行为的 System Prompt；保存时会冻结到 Revision 里。
 				</p>
 			</header>
-			<label htmlFor={promptId} className="agent-section__label">
+			<label htmlFor={promptId} className={styles.sectionLabel}>
 				System Prompt
 			</label>
 			<textarea
 				id={promptId}
 				rows={10}
-				className="agent-section__textarea"
+				className={styles.sectionTextarea}
 				value={value}
 				spellCheck={false}
 				aria-describedby={`${promptId}-status`}
 				onChange={(e) => onEdit({ systemPrompt: e.currentTarget.value })}
 			/>
-			<div id={`${promptId}-status`} className="agent-section__status" aria-live="polite">
+			<div id={`${promptId}-status`} className={styles.sectionStatus} aria-live="polite">
 				<span className={charClass}>
 					{length} 字{isOverLong ? `（超过 ${PROMPT_OVER_LONG_HINT} 字符上限）` : ""}
 				</span>
-				{isEmpty ? <span className="agent-section__warn">空值不会被服务端拒绝，但可能导致 Agent 表现退化为通用模型行为。</span> : null}
+				{isEmpty ? <span className={styles.sectionWarn}>空值不会被服务端拒绝，但可能导致 Agent 表现退化为通用模型行为。</span> : null}
 			</div>
 		</section>
 	);
@@ -162,24 +163,24 @@ export function ModelSection({
 		catalog.kind === "loaded" && draft.modelId !== null && selectedModel === undefined;
 
 	return (
-		<section aria-label="模型与思考" className="agent-section">
-			<header className="agent-section__header">
+		<section aria-label="模型与思考" className={styles.section}>
+			<header className={styles.sectionHeader}>
 				<h3>模型与思考</h3>
-				<p className="agent-section__hint">
+				<p className={styles.sectionHint}>
 					模型只能从服务端模型目录中选取；如当前模型已下架，会保留旧值并标记为不可用，但不会自动替换。
 				</p>
 			</header>
 
-			<label htmlFor={selectId} className="agent-section__label">
+			<label htmlFor={selectId} className={styles.sectionLabel}>
 				模型
 			</label>
 
 			{catalog.kind === "loading" ? (
-				<p aria-busy="true" className="agent-section__state">
+				<p aria-busy="true" className={styles.sectionState}>
 					正在加载模型目录…
 				</p>
 			) : catalog.kind === "error" ? (
-				<p role="alert" className="agent-section__state agent-section__state--error">
+				<p role="alert" className={`${styles.sectionState} ${styles.sectionStateError}`}>
 					模型目录加载失败：{catalog.message}
 					<br />
 					无法在此状态下选择模型；请刷新或稍后重试。
@@ -195,7 +196,7 @@ export function ModelSection({
 			)}
 
 			{isCatalogMissingCurrent ? (
-				<p className="agent-section__warn" data-state="model-deprecated">
+				<p className={styles.sectionWarn} data-state="model-deprecated">
 					当前模型 <code>{draft.modelId}</code> 已不在模型目录中，已保留原值但暂时无法选择其他模型。
 				</p>
 			) : null}
@@ -207,7 +208,7 @@ export function ModelSection({
 					onChange={(parameters) => onEdit({ parameters })}
 				/>
 			) : draft.modelId === null ? (
-				<p className="agent-section__hint">请从模型目录选择可用模型后配置参数。参数能力由服务端模型目录决定。</p>
+				<p className={styles.sectionHint}>请从模型目录选择可用模型后配置参数。参数能力由服务端模型目录决定。</p>
 			) : null}
 		</section>
 	);
@@ -230,7 +231,7 @@ function ModelSelect({
 	return (
 		<select
 			id={id}
-			className="agent-section__select"
+			className={styles.sectionSelect}
 			value={value ?? ""}
 			disabled={isCurrentMissing}
 			onChange={(e) => {
@@ -269,12 +270,12 @@ function ModelParameterEditor({
 	const setReasoning = (patch: Partial<NonNullable<AgentModelParameters["reasoning"]>>) =>
 		onChange({ ...parameters, reasoning: { ...parameters.reasoning, ...patch } });
 	return (
-		<div className="agent-section__sub">
-			<dl className="agent-section__kv">
+		<div className={styles.sectionSub}>
+			<dl className={styles.sectionKv}>
 				<dt>Provider</dt>
 				<dd>
 					<code>{model.provider}</code>
-					<span className="agent-section__muted"> · API {model.api}</span>
+					<span className={styles.sectionMuted}> · API {model.api}</span>
 				</dd>
 				<dt>能力摘要</dt>
 				<dd>
@@ -285,24 +286,24 @@ function ModelParameterEditor({
 			</dl>
 
 			{capabilities.reasoning.supported && capabilities.reasoning.toggle ? (
-				<label className="agent-section__row">
+				<label className={styles.sectionRow}>
 					<input
 						type="checkbox"
 						checked={parameters.reasoning?.enabled ?? true}
 						onChange={(event) => setReasoning({ enabled: event.currentTarget.checked })}
 					/>
-					开启深度思考
+					<span>开启深度思考</span>
 				</label>
 			) : null}
 
 			{reasoningEfforts.length > 0 ? (
 				<>
-					<label htmlFor="agent-reasoning-effort" className="agent-section__label">
+					<label htmlFor="agent-reasoning-effort" className={styles.sectionLabel}>
 						默认思考强度
 					</label>
 					<select
 						id="agent-reasoning-effort"
-						className="agent-section__select"
+						className={styles.sectionSelect}
 						value={parameters.reasoning?.effort ?? ""}
 						onChange={(event) =>
 							setReasoning({
@@ -325,7 +326,7 @@ function ModelParameterEditor({
 				</>
 			) : null}
 
-			<p className="agent-section__hint">采样、输出长度等生成参数由服务端代码固定，不在控制台开放修改。</p>
+			<p className={styles.sectionHint}>采样、输出长度等生成参数由服务端代码固定，不在控制台开放修改。</p>
 		</div>
 	);
 }
@@ -342,15 +343,15 @@ export function IoCapabilitiesSection({
 	readonly onEdit: (patch: Partial<AgentConfigSnapshot>) => void;
 }): React.ReactElement {
 	return (
-		<section aria-label="输入输出能力" className="agent-section">
-			<header className="agent-section__header">
+		<section aria-label="输入输出能力" className={styles.section}>
+			<header className={styles.sectionHeader}>
 				<h3>输入输出能力</h3>
-				<p className="agent-section__hint">
+				<p className={styles.sectionHint}>
 					只有下列开关会写入 Revision；引用检索 / Realtime / Web 搜索的写入入口尚未对管理员开放，亦不会在保存时被改写。
 				</p>
 			</header>
 			{EDITABLE_CAPABILITIES.map(({ key, label, description, experimental }) => (
-				<label key={key} className="agent-section__row">
+				<label key={key} className={styles.sectionRow}>
 					<input
 						type="checkbox"
 						checked={draft.capabilities[key]}
@@ -361,7 +362,7 @@ export function IoCapabilitiesSection({
 						{experimental ? <em data-experimental="true">（实验性）</em> : null}
 					</span>
 					{description === undefined ? null : (
-						<span className="agent-section__hint agent-section__hint--inline">{description}</span>
+						<span className={`${styles.sectionHint} ${styles.sectionHintInline}`}>{description}</span>
 					)}
 				</label>
 			))}
@@ -381,10 +382,10 @@ export function ExtensionsSection({
 	readonly onEdit: (patch: Partial<AgentConfigSnapshot>) => void;
 }): React.ReactElement {
 	return (
-		<section aria-label="扩展能力" className="agent-section">
-			<header className="agent-section__header">
+		<section aria-label="扩展能力" className={styles.section}>
+			<header className={styles.sectionHeader}>
 				<h3>扩展能力</h3>
-				<p className="agent-section__hint">
+				<p className={styles.sectionHint}>
 					工具 / 知识库仅显示已确认引用，不允许新增任意 ID。Skill / MCP 的产品化入口尚未开放。
 				</p>
 			</header>
@@ -432,26 +433,26 @@ export function ReadOnlyReferenceList({
 }): React.ReactElement {
 	const fieldsetId = useId();
 	return (
-		<fieldset aria-describedby={`${fieldsetId}-hint`} className="agent-section__ref">
+		<fieldset aria-describedby={`${fieldsetId}-hint`} className={styles.sectionRef}>
 			<legend>{legend}</legend>
-			<p id={`${fieldsetId}-hint`} className="agent-section__hint">
+			<p id={`${fieldsetId}-hint`} className={styles.sectionHint}>
 				{hint}
 			</p>
 			{items.length === 0 ? (
-				<p className="agent-section__empty" data-empty-state="true">
+				<p className={styles.sectionEmpty} data-empty-state="true">
 					{emptyText}
 				</p>
 			) : (
 				<div>
-					<ul className="agent-section__ref-list">
+					<ul className={styles.sectionRefList}>
 						{items.map((id) => (
-							<li key={id} className="agent-section__ref-item">
-								<code className="agent-section__ref-id" title={id}>
+							<li key={id} className={styles.sectionRefItem}>
+								<code className={styles.sectionRefId} title={id}>
 									{id}
 								</code>
 								<button
 									type="button"
-									className="agent-section__ref-remove"
+									className={styles.sectionRefRemove}
 									aria-label={`移除 ${legend} ${id}`}
 									onClick={() => onRemove(id)}
 								>
@@ -461,7 +462,7 @@ export function ReadOnlyReferenceList({
 						))}
 					</ul>
 					{items.length > 1 ? (
-						<button type="button" className="agent-section__ref-clear" onClick={onClearAll}>
+						<button type="button" className={styles.sectionRefClear} onClick={onClearAll}>
 							全部移除（{items.length}）
 						</button>
 					) : null}
@@ -479,9 +480,9 @@ function PlaceholderReferenceList({
 	readonly description: string;
 }): React.ReactElement {
 	return (
-		<fieldset className="agent-section__ref agent-section__ref--placeholder">
+		<fieldset className={`${styles.section__ref} ${styles.sectionRefPlaceholder}`}>
 			<legend>{legend}</legend>
-			<p className="agent-section__empty">{description}</p>
+			<p className={styles.sectionEmpty}>{description}</p>
 		</fieldset>
 	);
 }

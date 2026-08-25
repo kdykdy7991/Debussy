@@ -1,18 +1,25 @@
 /**
- * Agent Workspace 页面壳（WB-003 / SPEC §5.2；阶段二：信息架构重构）。
+ * Agent Workspace 页面壳（WB-003 / SPEC §5.2；阶段三：Aurora UI 统一）。
  *
- * 阶段二职责：
+ * 视觉布局：
  *
- *   - 顶部 header：名称 / 当前 Revision / 更新时间 / 关联应用数 /
- *     「继续调试」与「发布」按钮（草稿态禁用并附说明）。
- *   - 一级 Tab：设计 / Revision / 发布应用 / 最近调试。
- *   - 底部吸底 Save Bar（AgentSaveBar）：覆盖 saved / dirty / saving /
- *     error 四态，含变更摘要、放弃修改与"保存为新 Revision"。
- *   - 离开未保存提示（beforeunload）；切换 Tab 保留内存草稿。
- *   - 模型目录状态机：loading / loaded / error；失败时不静默回退。
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │ AuroraPageHeader: 名称 · 关联应用 · 「继续调试」/「发布」│
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ PillTabs: 设计 / Revision / 发布应用 / 最近调试           │
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ Tab 内容（设计 / Revision / Apps / Debug）                │
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ SaveBar（吸底，仅 Design Tab 显示）                       │
+ *   └──────────────────────────────────────────────────────────┘
  *
- * 设计 Tab 自身的 5 个分区由 `AgentDesignTab` 提供；Revision / 应用 /
- * 调试各 Tab 由对应组件负责。
+ * 阶段三行为：
+ *   - 复用 Aurora PageHeader / Aurora Button / AuroraPillTabs；
+ *   - Tabs 实现 role=tablist + 键盘 ← → 导航 + 焦点环；
+ *   - 离开未保存提示（beforeunload）；切换 Tab 保留草稿；
+ *   - 模型目录状态机 loading/loaded/error；失败时不静默回退；
+ *   - 页面专属样式收敛到 `agent-workspace.module.css`，
+ *     不再追加到 admin/styles.css。
  */
 import type {
 	AgentDefinitionDetail,
@@ -25,6 +32,7 @@ import { AppApi } from "../api/app-api.ts";
 import { LlmApi } from "../api/llm-api.ts";
 import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { AuroraButton, AuroraPageHeader, AuroraPillTabs, type AuroraPillTabItem } from "../aurora/index.ts";
 import { navigate } from "../router.ts";
 import { AgentAppsTab } from "./agent-apps-tab.tsx";
 import { AgentDebugTab } from "./agent-debug-tab.tsx";
@@ -42,8 +50,16 @@ import {
 	saveSucceeded,
 } from "./agent-state.ts";
 import type { ModelCatalogState } from "./agent-form.tsx";
+import styles from "./agent-workspace.module.css";
 
 type Tab = "design" | "revisions" | "apps" | "debug";
+
+const TAB_ITEMS: readonly AuroraPillTabItem<Tab>[] = [
+	{ value: "design", label: "设计" },
+	{ value: "revisions", label: "Revision" },
+	{ value: "apps", label: "发布应用" },
+	{ value: "debug", label: "最近调试" },
+];
 
 export interface AgentWorkspaceProps {
 	readonly agentId: AgentPublicId;
@@ -75,7 +91,7 @@ export function AgentWorkspace({ agentId, api, llmApi, appApi }: AgentWorkspaceP
 	const idempotencyRef = useRef<string>("");
 	const [publishDrawerMode, setPublishDrawerMode] = useState<"closed" | "open">("closed");
 
-const reload = useCallback(async () => {
+	const reload = useCallback(async () => {
 		setLoad({ kind: "loading" });
 		try {
 			const detail = await resolvedApi.getAgentDetail(agentId);
@@ -147,7 +163,6 @@ const reload = useCallback(async () => {
 		[agentId, changeSummary, resolvedApi],
 	);
 
-	// 离开未保存提示：仅 dirty / error 状态触发。
 	useEffect(() => {
 		if (load.kind !== "loaded") return;
 		const isUnsaved = load.state.status === "dirty" || load.state.status === "error";
@@ -161,11 +176,11 @@ const reload = useCallback(async () => {
 	}, [load]);
 
 	if (load.kind === "loading") {
-		return <output>正在加载 Agent {agentId}…</output>;
+		return <output className={styles.stateBox}>正在加载 Agent {agentId}…</output>;
 	}
 	if (load.kind === "error") {
 		return (
-			<output role="alert">
+			<output role="alert" className={styles.stateBox}>
 				<p>加载 Agent 失败：{load.message}</p>
 				<button type="button" onClick={() => void reload()}>
 					重试
@@ -193,65 +208,58 @@ const reload = useCallback(async () => {
 
 	return (
 		<section
-			className="agent-workspace"
+			className={styles.shell}
 			aria-label={`Agent ${detail.name}`}
 			data-unsaved={isUnsaved}
 			data-saving={isSaving}
 		>
-			<header className="agent-workspace__header">
-				<div className="agent-workspace__title">
-					<h1>{detail.name}</h1>
-					<p className="agent-workspace__meta">
+			<AuroraPageHeader
+				title={detail.name}
+				meta={
+					<div className={styles.headerNote}>
 						<span>
 							当前 Revision <code>#{state.display.currentRevision}</code>
 						</span>
-						<span aria-hidden="true">·</span>
+						<span className={styles.headerNoteSep} aria-hidden="true">·</span>
 						<span>
 							最近更新 <time dateTime={detail.updatedAt}>{detail.updatedAt}</time>
 						</span>
-						<span aria-hidden="true">·</span>
+						<span className={styles.headerNoteSep} aria-hidden="true">·</span>
 						<span>
 							关联应用 <strong>{detail.associatedAppCount}</strong>
 						</span>
-					</p>
-				</div>
-				<div className="agent-workspace__actions">
-					<button type="button" onClick={() => navigate("/chat")}>
-						继续调试
-					</button>
-					<button
-						type="button"
-						className="agent-workspace__publish"
-						onClick={() => setPublishDrawerMode("open")}
-						disabled={state.status !== "saved"}
-					>
-						{state.status === "saved" ? "发布" : "发布（请先保存草稿）"}
-					</button>
-				</div>
-			</header>
+					</div>
+				}
+				actions={
+					<div className={styles.headerActions}>
+						<AuroraButton variant="default" size="md" onClick={() => navigate("/chat")}>
+							继续调试
+						</AuroraButton>
+						<AuroraButton
+							variant="primary"
+							size="md"
+							onClick={() => setPublishDrawerMode("open")}
+							disabled={state.status !== "saved"}
+						>
+							{state.status === "saved" ? "发布" : "发布（请先保存草稿）"}
+						</AuroraButton>
+						{state.status !== "saved" ? (
+							<div className={styles.publishBlockNote} role="note">
+								当前有未保存的草稿；请先保存为新 Revision，才能创建应用版本（抽屉也会再次校验）。
+							</div>
+						) : null}
+					</div>
+				}
+			/>
 
-			<nav aria-label="Agent tabs" className="agent-workspace__tabs">
-				{(
-					[
-						["design", "设计"],
-						["revisions", "Revision"],
-						["apps", "发布应用"],
-						["debug", "最近调试"],
-					] as const
-				).map(([id, label]) => (
-					<button
-						key={id}
-						type="button"
-						className="agent-workspace__tab"
-						aria-current={tab === id ? "true" : undefined}
-						onClick={() => setTab(id)}
-					>
-						{label}
-					</button>
-				))}
-			</nav>
+			<AuroraPillTabs<Tab>
+				items={TAB_ITEMS}
+				value={tab}
+				onChange={setTab}
+				ariaLabel="Agent Workspace"
+			/>
 
-			<div className="agent-workspace__body">
+			<div className={styles.body}>
 				{tab === "design" ? (
 					<AgentDesignTab detail={detail} draft={state.draft} onEdit={onEdit} catalog={models} />
 				) : null}

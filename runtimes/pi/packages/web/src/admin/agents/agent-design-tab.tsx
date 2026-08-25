@@ -13,6 +13,7 @@
  * error）由 `AgentWorkspace` 拉取并透传，本组件不再做异步获取。
  */
 import type { AgentConfigSnapshot, AgentDefinitionDetail } from "@earendil-works/pi-protocol";
+import styles from "./agent-design.module.css";
 import {
 	BasicInfoSection,
 	ExtensionsSection,
@@ -36,7 +37,7 @@ export function AgentDesignTab({
 	catalog,
 }: AgentDesignTabProps): React.ReactElement {
 	return (
-		<div className="agent-design-tab" aria-label="设计">
+		<div className={styles.design} aria-label="设计">
 			<BasicInfoSection detail={detail} />
 			<InstructionsSection draft={draft} onEdit={onEdit} />
 			<ModelSection draft={draft} onEdit={onEdit} catalog={catalog} />

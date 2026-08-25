@@ -1,7 +1,7 @@
 /**
- * Publish drawer (WB-004 / SPEC §6.1；阶段一收口)。
+ * Publish drawer（WB-004 / SPEC §6.1；阶段三：Aurora UI 统一）。
  *
- * 关键语义（阶段一）：
+ * 关键语义：
  *
  * - "创建 Published App Version" 与 "激活上线" 是**两个独立动作**。
  *   本抽屉只负责创建版本，**绝不**自动激活。
@@ -9,12 +9,11 @@
  *   「前往应用详情」/「关闭」两个明确出口。
  * - 配置摘要按字段展示（Model / 思考 / Prompt 摘要 / Avatar / 附件 /
  *   语音 / 工具 / 知识库）；能力字段禁止 `JSON.stringify`，逐项渲染。
- * - 工具 / 知识库在此处只展示「已引用 ID 数」与「阻断」标记，不在抽屉
- *   内做新增 / 移除。
- * - 草稿未保存时禁用发布并明示原因（与已有 banner 文案一致）。
+ * - 草稿未保存时禁用发布并明示原因。
  *
- * 不修改：管理台 Chat 与发布 Chat 的共享消息组件和样式；Runtime 的
- * text/thinking 流式语义。
+ * 阶段三：单一 `role="dialog"` + `aria-modal` 语义；焦点进入 / 返回、
+ * Escape 关闭、背景 inert；重复提交由 busy 状态保护；视觉走 Aurora
+ * Design System（surface + line + shadow-lg）。
  */
 import type {
 	AgentConfigSnapshot,
@@ -27,7 +26,9 @@ import { useEffect, useRef, useState } from "react";
 import { AgentApi } from "../api/agent-api.ts";
 import { AppApi, AppApiError } from "../api/app-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { AuroraButton } from "../aurora/index.ts";
 import { navigate } from "../router.ts";
+import styles from "./publish-drawer.module.css";
 
 export type PublishDrawerMode = "closed" | "open";
 
@@ -68,18 +69,62 @@ export function PublishDrawer({
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
-	// Escape closes the drawer.
+	const dialogRef = useRef<HTMLDivElement | null>(null);
+	const lastFocusedRef = useRef<HTMLElement | null>(null);
+
+	// 焦点进入 / 返回 + 背景 inert；Escape 关闭 + 焦点陷阱。
 	useEffect(() => {
-		if (mode === "open") {
-			const onKey = (e: KeyboardEvent) => {
-				if (e.key === "Escape") onClose();
-			};
-			document.addEventListener("keydown", onKey);
-			return () => document.removeEventListener("keydown", onKey);
-		}
+		if (mode !== "open") return;
+		lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		// 背景置为 inert（React 18+ 标准）
+		const previousInert: Array<{ node: HTMLElement }> = [];
+		const overlay = dialogRef.current?.parentElement;
+		document.querySelectorAll<HTMLElement>("body > *").forEach((el) => {
+			if (el === overlay || (overlay !== undefined && el.contains(overlay))) return;
+			if (el.hasAttribute("inert")) return;
+			previousInert.push({ node: el });
+			el.setAttribute("inert", "");
+		});
+		// 把焦点送到对话框
+		requestAnimationFrame(() => {
+			const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(
+				'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+			);
+			(firstFocusable ?? dialogRef.current)?.focus();
+		});
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				e.preventDefault();
+				onClose();
+			}
+			// 焦点陷阱：Tab/Shift+Tab 在对话框内循环
+			if (e.key === "Tab" && dialogRef.current !== null) {
+				const focusables = Array.from(
+					dialogRef.current.querySelectorAll<HTMLElement>(
+						'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+					),
+				);
+				if (focusables.length === 0) return;
+				const first = focusables[0];
+				const last = focusables[focusables.length - 1];
+				const active = document.activeElement;
+				if (e.shiftKey && active === first) {
+					e.preventDefault();
+					last.focus();
+				} else if (!e.shiftKey && active === last) {
+					e.preventDefault();
+					first.focus();
+				}
+			}
+		};
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("keydown", onKey);
+			previousInert.forEach(({ node }) => node.removeAttribute("inert"));
+			lastFocusedRef.current?.focus();
+		};
 	}, [mode, onClose]);
 
-	// Reset state when opening.
 	useEffect(() => {
 		if (mode === "open") {
 			setStep("select-app");
@@ -111,7 +156,6 @@ export function PublishDrawer({
 		}
 	}, [mode, agentId, agentApi]);
 
-	// Load revisions when app is selected.
 	useEffect(() => {
 		if (selectedApp === null) return;
 		setRevisionsLoading(true);
@@ -138,7 +182,6 @@ export function PublishDrawer({
 		};
 	}, [selectedApp, agentId, agentApi]);
 
-	// Load revision detail when selected.
 	useEffect(() => {
 		if (selectedRevision === null || selectedRevision < 1) {
 			setRevisionDetail(null);
@@ -174,6 +217,7 @@ export function PublishDrawer({
 
 	const doCreateVersion = async () => {
 		if (selectedApp === null || selectedRevision === null) return;
+		if (hasDraft) return;
 		setBusy(true);
 		setError(null);
 		try {
@@ -195,65 +239,65 @@ export function PublishDrawer({
 
 	return (
 		<div
-			className="drawer-overlay"
-			role="dialog"
-			aria-modal="true"
-			aria-label="创建应用版本"
-			onClick={onClose}
-			onKeyDown={(e) => {
-				if (e.key === "Escape") onClose();
+			className={styles.overlay}
+			role="presentation"
+			onClick={(e) => {
+				if (e.target === e.currentTarget) onClose();
 			}}
 		>
 			<div
-				className="drawer"
+				ref={dialogRef}
+				className={styles.drawer}
 				role="dialog"
-				aria-label="创建应用版本"
 				aria-modal="true"
-				onClick={(e) => e.stopPropagation()}
-				onKeyDown={(e) => e.stopPropagation()}
+				aria-label="创建 Published App Version"
+				tabIndex={-1}
 			>
-				<header className="drawer-header">
+				<header className={styles.drawerHeader}>
 					<h2>创建 Published App Version</h2>
-					<p className="drawer-subtitle">
-						Agent: {agentId}
-						<span className="drawer-subtitle__hint">
+					<p className={styles.drawerSubtitle}>
+						<span>Agent：</span>
+						<code>{agentId}</code>
+						<span className={styles.drawerSubtitle__hint}>
 							此操作仅创建不可变版本，**不会**自动激活。激活请到应用详情页。
 						</span>
 					</p>
 				</header>
 
 				{blockedByDraft ? (
-					<div className="banner warning" role="alert">
+					<div className={`${styles.banner} ${styles.warning}`} role="alert">
 						Agent 存在未保存的草稿。请先保存为新 Revision，再创建应用版本。
 					</div>
 				) : null}
 
-				{error !== null ? <div className="banner error" role="alert">{error}</div> : null}
+				{error !== null ? (
+					<div className={`${styles.banner} ${styles.error}`} role="alert">
+						{error}
+					</div>
+				) : null}
 
 				{step === "select-app" ? (
-					<div className="drawer-step">
+					<div className={styles.drawerStep}>
 						<h3>1. 选择目标应用</h3>
 						{appsLoading ? (
-							<p>加载应用列表…</p>
+							<p aria-busy="true">加载应用列表…</p>
 						) : apps.length === 0 ? (
-							<div>
-								<p>该 Agent 暂无关联应用。请先到应用列表创建应用，再回来继续发布。</p>
-								<div className="actions">
-									<button
-										type="button"
-										onClick={() => {
-											onClose();
-											navigate("/apps");
-										}}
-									>
+							<div className={styles.appsEmpty}>
+								<strong>该 Agent 暂无关联应用</strong>
+								<p>请先到应用列表创建应用，再回来继续发布。</p>
+								<div className={styles.actions}>
+									<AuroraButton variant="default" size="md" onClick={() => {
+										onClose();
+										navigate("/apps");
+									}}>
 										去创建应用
-									</button>
+									</AuroraButton>
 								</div>
 							</div>
 						) : (
-							<div className="app-select-list">
+							<div className={styles.appSelectList}>
 								{apps.map((app) => (
-									<label key={app.appId} className="app-select-row">
+									<label key={app.appId} className={styles.appSelectRow}>
 										<input
 											type="radio"
 											name="target-app"
@@ -271,26 +315,26 @@ export function PublishDrawer({
 							</div>
 						)}
 						{selectedApp !== null && !blockedByDraft ? (
-							<div className="drawer-actions">
-								<button type="button" onClick={() => setStep("select-revision")}>
+							<div className={styles.drawerActions}>
+								<AuroraButton variant="default" size="md" onClick={() => setStep("select-revision")}>
 									下一步：选择 Revision
-								</button>
+								</AuroraButton>
 							</div>
 						) : null}
 					</div>
 				) : null}
 
 				{step === "select-revision" ? (
-					<div className="drawer-step">
+					<div className={styles.drawerStep}>
 						<h3>2. 选择 Agent Revision</h3>
 						{revisionsLoading ? (
-							<p>加载 Revision 列表…</p>
+							<p aria-busy="true">加载 Revision 列表…</p>
 						) : revisions.length === 0 ? (
 							<p>暂无已保存的 Revision。</p>
 						) : (
-							<div className="revision-select-list">
+							<div className={styles.revisionSelectList}>
 								{revisions.map((rev) => (
-									<label key={rev.revision} className="revision-select-row">
+									<label key={rev.revision} className={styles.revisionSelectRow}>
 										<input
 											type="radio"
 											name="target-revision"
@@ -306,60 +350,62 @@ export function PublishDrawer({
 								))}
 							</div>
 						)}
-						<div className="drawer-actions">
-							<button type="button" onClick={() => setStep("select-app")}>
+						<div className={styles.drawerActions}>
+							<AuroraButton variant="default" size="md" onClick={() => setStep("select-app")}>
 								返回
-							</button>
+							</AuroraButton>
 							{selectedRevision !== null ? (
-								<button type="button" onClick={() => setStep("confirm")}>
+								<AuroraButton variant="default" size="md" onClick={() => setStep("confirm")}>
 									下一步：确认
-								</button>
+								</AuroraButton>
 							) : null}
 						</div>
 					</div>
 				) : null}
 
 				{step === "confirm" ? (
-					<div className="drawer-step">
+					<div className={styles.drawerStep}>
 						<h3>3. 确认创建版本（不激活）</h3>
 						{revisionDetailLoading ? (
 							<p aria-busy="true">正在加载 Revision #{selectedRevision} 配置快照…</p>
 						) : revisionDetailError !== null ? (
-							<div role="alert">
+							<div role="alert" className={`${styles.banner} ${styles.error}`}>
 								<p>加载 Revision 详情失败：{revisionDetailError}</p>
 								<p>可返回上一步重新选择。</p>
 							</div>
 						) : revisionDetail !== null ? (
 							<ConfigSummary snapshot={revisionDetail.configSnapshot} />
 						) : null}
-						<div className="drawer-actions">
-							<button type="button" onClick={() => setStep("select-revision")}>
+						<div className={styles.drawerActions}>
+							<AuroraButton variant="default" size="md" onClick={() => setStep("select-revision")}>
 								返回
-							</button>
-							<button
-								type="button"
-								className="primary"
-								disabled={busy || blockedByDraft || revisionDetail === null || revisionDetailLoading === true}
+							</AuroraButton>
+							<AuroraButton
+								variant="primary"
+								size="md"
+								disabled={
+									busy || blockedByDraft || revisionDetail === null || revisionDetailLoading === true
+								}
 								onClick={doCreateVersion}
 							>
 								{busy ? "创建中…" : "创建版本（不激活）"}
-							</button>
+							</AuroraButton>
 						</div>
 					</div>
 				) : null}
 
 				{step === "done" ? (
-					<div className="drawer-step" data-step="done">
+					<div className={styles.drawerStep} data-step="done">
 						<h3>应用版本已创建，尚未激活</h3>
 						<p>
 							新版本已基于 Revision #{selectedRevision} 写入应用
 							{createdAppId !== null ? `（${createdAppId}）` : ""}。
 							该版本<strong>不会</strong>自动激活，需要在应用详情中激活才会对用户生效。
 						</p>
-						<div className="drawer-actions">
-							<button
-								type="button"
-								className="primary"
+						<div className={styles.drawerActions}>
+							<AuroraButton
+								variant="primary"
+								size="md"
 								onClick={() => {
 									if (createdAppId !== null) {
 										onClose();
@@ -371,25 +417,25 @@ export function PublishDrawer({
 								}}
 							>
 								前往应用详情
-							</button>
-							<button type="button" onClick={onClose}>
+							</AuroraButton>
+							<AuroraButton variant="default" size="md" onClick={onClose}>
 								关闭
-							</button>
+							</AuroraButton>
 						</div>
 					</div>
 				) : null}
 
 				{step === "error" ? (
-					<div className="drawer-step">
+					<div className={styles.drawerStep}>
 						<h3>创建失败</h3>
-						<p className="banner error" role="alert">{error}</p>
-						<div className="drawer-actions">
-							<button type="button" onClick={() => setStep("confirm")}>
+						<p className={`${styles.banner} ${styles.error}`} role="alert">{error}</p>
+						<div className={styles.drawerActions}>
+							<AuroraButton variant="default" size="md" onClick={() => setStep("confirm")}>
 								重试
-							</button>
-							<button type="button" onClick={onClose}>
+							</AuroraButton>
+							<AuroraButton variant="default" size="md" onClick={onClose}>
 								关闭
-							</button>
+							</AuroraButton>
 						</div>
 					</div>
 				) : null}
@@ -412,9 +458,9 @@ function cappedDiff(diff: unknown): React.ReactNode {
 function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.ReactElement {
 	const reasoning = snapshot.parameters.reasoning;
 	return (
-		<section className="diff-summary" aria-label="配置摘要">
+		<section className={styles.diffSummary} aria-label="配置摘要">
 			<h4>配置摘要</h4>
-			<dl className="diff-summary__list">
+			<dl className={styles.diffSummary__list}>
 				<dt>Model</dt>
 				<dd>
 					<code>{snapshot.modelId ?? "—"}</code>
@@ -439,10 +485,10 @@ function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.R
 							<summary>
 								{snapshot.systemPrompt.slice(0, PROMPT_SUMMARY_LIMIT)}…（共 {snapshot.systemPrompt.length} 字）
 							</summary>
-							<pre>{snapshot.systemPrompt}</pre>
+							<pre className={styles.diffSummary__prompt}>{snapshot.systemPrompt}</pre>
 						</details>
 					) : (
-						<pre className="diff-summary__prompt">{snapshot.systemPrompt}</pre>
+						<pre className={styles.diffSummary__prompt}>{snapshot.systemPrompt}</pre>
 					)}
 				</dd>
 				<dt>Avatar</dt>
@@ -453,7 +499,7 @@ function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.R
 				<dd>
 					{snapshot.capabilities.liveSpeech ? (
 						<span>
-							启用<span className="diff-summary__experimental">（实验性）</span>
+							启用<span className={styles.diffSummary__experimental}>（实验性）</span>
 						</span>
 					) : (
 						"关闭"
@@ -466,7 +512,7 @@ function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.R
 					) : (
 						<span>
 							已引用 {snapshot.toolIds.length} 项
-							<span className="diff-summary__muted">（抽屉内不展示名称）</span>
+							<span className={styles.diffSummary__muted}>（抽屉内不展示名称）</span>
 						</span>
 					)}
 				</dd>
@@ -477,7 +523,7 @@ function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.R
 					) : (
 						<span>
 							已引用 {snapshot.knowledgeBaseIds.length} 项
-							<span className="diff-summary__muted">（抽屉内不展示名称）</span>
+							<span className={styles.diffSummary__muted}>（抽屉内不展示名称）</span>
 						</span>
 					)}
 				</dd>

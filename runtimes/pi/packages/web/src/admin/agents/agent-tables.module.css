@@ -1,0 +1,330 @@
+/**
+ * Agent Tables 视觉层（阶段三：Aurora UI 统一）。
+ *
+ * 与 aurora/agent-list-view.module.css 同源（共享 .tableWrap / .table /
+ * colName / colActions / .pill / .empty 等），保证 Agent 列表 / Revision
+ * 表 / Apps 表视觉一致。
+ *
+ * 关键规则：
+ *   - 主表行只展示核心字段；Source Hash 等次级信息进 .diffDetail
+ *   - 最新 Revision 高亮用 .latestRow + .latestPill
+ *   - 窄屏：横向滚动 .tableScroll，不撑破页面
+ *   - 长字符串（Prompt / 模型 ID）：不自动换行用 .truncate；强制换行用 .break
+ */
+
+.shell {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-4);
+	min-width: 0;
+}
+
+/* —— Revision list —— */
+
+.tableScroll {
+	overflow-x: auto;
+	margin: 0 calc(-1 * var(--aurora-space-4));
+	padding: 0 var(--aurora-space-4);
+}
+
+.revisionTableWrap {
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md);
+	overflow: hidden;
+}
+
+.revisionTable {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: var(--aurora-text-md);
+	color: var(--aurora-ink);
+	min-width: 720px;
+}
+
+.revisionTable thead th {
+	text-align: left;
+	font-size: var(--aurora-text-xs);
+	font-weight: var(--aurora-weight-medium);
+	color: var(--aurora-ink-3);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	background: var(--aurora-surface-soft);
+	padding: 12px 16px;
+	border-bottom: 1.5px solid var(--aurora-line);
+}
+
+.revisionTable tbody td {
+	padding: 14px 16px;
+	border-bottom: 1.5px solid var(--aurora-line-soft);
+	vertical-align: middle;
+}
+
+.revisionTable tbody tr:last-child td {
+	border-bottom: 0;
+}
+
+.latestRow {
+	background: var(--aurora-accent-soft);
+}
+
+.latestRow td {
+	border-bottom-color: var(--aurora-line);
+}
+
+.latestPill {
+	display: inline-block;
+	margin-left: var(--aurora-space-2);
+	padding: 1px 8px;
+	border-radius: var(--aurora-radius-pill);
+	background: var(--aurora-accent);
+	color: var(--aurora-inverse);
+	font-size: var(--aurora-text-xs);
+	font-weight: var(--aurora-weight-medium);
+	letter-spacing: 0.04em;
+	vertical-align: middle;
+}
+
+.revisionTable tbody tr {
+	transition: background var(--aurora-motion-fast) var(--aurora-ease-standard);
+}
+
+.revisionTable tbody tr:hover {
+	background: var(--aurora-surface-soft);
+}
+
+.revisionNumber {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink);
+}
+
+.revisionSummary {
+	max-width: 320px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	color: var(--aurora-ink-2);
+}
+
+.diffDetail {
+	background: var(--aurora-surface-soft);
+	padding: var(--aurora-space-4);
+	border-radius: var(--aurora-radius-sm);
+	margin-top: var(--aurora-space-2);
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+}
+
+.diffMeta {
+	display: grid;
+	grid-template-columns: 140px 1fr;
+	gap: var(--aurora-space-2);
+	margin: 0;
+	font-size: var(--aurora-text-md);
+}
+
+.diffMeta dt {
+	color: var(--aurora-ink-3);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.diffMeta dd {
+	margin: 0;
+	color: var(--aurora-ink);
+	word-break: break-all;
+	overflow-wrap: anywhere;
+}
+
+.diffMeta code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+}
+
+.diffDetail pre {
+	margin: 0;
+	padding: var(--aurora-space-3);
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	line-height: 1.5;
+	color: var(--aurora-ink);
+	max-height: 360px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.diffDetail details summary {
+	cursor: pointer;
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.snapshot {
+	display: grid;
+	grid-template-columns: 140px 1fr;
+	gap: var(--aurora-space-2) var(--aurora-space-4);
+	margin: 0;
+	font-size: var(--aurora-text-md);
+}
+
+.snapshot dt {
+	color: var(--aurora-ink-3);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.snapshot dd {
+	margin: 0;
+	color: var(--aurora-ink);
+	word-break: break-word;
+	overflow-wrap: anywhere;
+}
+
+.snapshot code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface-soft);
+	padding: 1px 6px;
+	border-radius: 4px;
+	word-break: break-all;
+}
+
+/* —— Apps table —— */
+
+.appsTable {
+	min-width: 720px;
+}
+
+.appsTable th,
+.appsTable td {
+	padding: 12px 16px;
+	border-bottom: 1.5px solid var(--aurora-line-soft);
+	vertical-align: middle;
+	text-align: left;
+	font-size: var(--aurora-text-md);
+}
+
+.appsTable thead th {
+	background: var(--aurora-surface-soft);
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-xs);
+	font-weight: var(--aurora-weight-medium);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	border-bottom: 1.5px solid var(--aurora-line);
+}
+
+.appsTable tbody tr:last-child td {
+	border-bottom: 0;
+}
+
+.appsTable tbody tr {
+	transition: background var(--aurora-motion-fast) var(--aurora-ease-standard);
+}
+
+.appsTable tbody tr:hover {
+	background: var(--aurora-surface-soft);
+}
+
+.nameCell strong {
+	color: var(--aurora-ink);
+	font-weight: var(--aurora-weight-semibold);
+}
+
+.publicId {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface-soft);
+	padding: 1px 6px;
+	border-radius: 4px;
+	color: var(--aurora-ink-2);
+	margin-left: var(--aurora-space-2);
+}
+
+.statusCell {
+	color: var(--aurora-ink);
+	font-variant-numeric: tabular-nums;
+}
+
+.appsEmpty {
+	padding: var(--aurora-space-12) var(--aurora-space-6);
+	text-align: center;
+	color: var(--aurora-ink-2);
+	background: var(--aurora-surface-soft);
+	border-radius: var(--aurora-radius-md);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--aurora-space-3);
+}
+
+/* —— 通用状态框 —— */
+
+.stateBox {
+	padding: var(--aurora-space-4);
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+}
+
+.errorBox {
+	padding: var(--aurora-space-4);
+	border: 1.5px solid var(--aurora-red);
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+	border-radius: var(--aurora-radius-md);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--aurora-space-4);
+	font-size: var(--aurora-text-md);
+	flex-wrap: wrap;
+}
+
+.errorBox code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface);
+	padding: 1px 6px;
+	border-radius: 4px;
+}
+
+/* Responsive */
+
+@media (max-width: 768px) {
+	.revisionTable thead th,
+	.revisionTable tbody td,
+	.appsTable th,
+	.appsTable td {
+		padding: 10px 12px;
+	}
+
+	.snapshot,
+	.diffMeta {
+		grid-template-columns: 1fr;
+	}
+
+	.snapshot dt,
+	.diffMeta dt {
+		margin-top: var(--aurora-space-2);
+	}
+
+	.snapshot dt:first-child,
+	.diffMeta dt:first-child {
+		margin-top: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.revisionTable tbody tr,
+	.appsTable tbody tr {
+		transition: none;
+	}
+}

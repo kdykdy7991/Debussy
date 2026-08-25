@@ -1,0 +1,341 @@
+/**
+ * Agent Design Tab 视觉层（阶段三：Aurora UI 统一）。
+ *
+ * 区段 (section) 层级：
+ *   .design           顶层 flex 列容器
+ *   .section          单个 section 卡片
+ *   .sectionHeader    标题 + 描述
+ *   .sectionHint      灰色提示
+ *   .sectionLabel     控件 label
+ *   .sectionKv        定义列表
+ *   .sectionRow       行内 label + 控件（IO 能力）
+ *   .sectionRef       只读引用列表
+ *   .sectionEmpty     空态
+ *   .sectionState     loading / error 状态
+ *
+ * 注意：CSS Modules 类名驼峰（避免与 React 属性访问冲突），不使用 kebab。
+ */
+
+.design {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-5);
+	min-width: 0;
+}
+
+.section {
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md);
+	padding: var(--aurora-space-5) var(--aurora-space-6);
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-3);
+	min-width: 0;
+}
+
+.sectionHeader {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sectionHeader h3 {
+	margin: 0;
+	font-size: var(--aurora-text-lg);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+}
+
+.sectionHint {
+	margin: 0;
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink-3);
+	line-height: 1.5;
+}
+
+.sectionHintInline {
+	margin-top: 2px;
+}
+
+.sectionLabel {
+	font-size: var(--aurora-text-md);
+	font-weight: var(--aurora-weight-medium);
+	color: var(--aurora-ink-2);
+}
+
+.sectionTextarea {
+	display: block;
+	width: 100%;
+	min-height: 200px;
+	padding: var(--aurora-space-3);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	line-height: 1.5;
+	resize: vertical;
+	word-break: break-word;
+	overflow-wrap: anywhere;
+}
+
+.sectionTextarea:focus {
+	outline: none;
+	border-color: var(--aurora-accent);
+	box-shadow: 0 0 0 3px var(--aurora-accent-glow);
+}
+
+.sectionStatus {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--aurora-space-2);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink-3);
+}
+
+.sectionCharcount {
+	font-variant-numeric: tabular-nums;
+}
+
+.sectionCharcountOver {
+	color: var(--aurora-red);
+}
+
+.sectionWarn {
+	color: var(--aurora-amber);
+}
+
+.sectionSelect {
+	display: block;
+	width: 100%;
+	max-width: 480px;
+	height: 36px;
+	padding: 0 var(--aurora-space-3);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	font: inherit;
+	font-size: var(--aurora-text-md);
+}
+
+.sectionSelect:focus {
+	outline: none;
+	border-color: var(--aurora-accent);
+	box-shadow: 0 0 0 3px var(--aurora-accent-glow);
+}
+
+.sectionSelect:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.sectionSub {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+	padding: var(--aurora-space-3) 0 0;
+	border-top: 1.5px solid var(--aurora-line-soft);
+	margin-top: var(--aurora-space-2);
+}
+
+.sectionKv {
+	display: grid;
+	grid-template-columns: 140px 1fr;
+	gap: var(--aurora-space-2) var(--aurora-space-4);
+	margin: 0;
+	font-size: var(--aurora-text-md);
+}
+
+.sectionKv dt {
+	color: var(--aurora-ink-3);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.sectionKv dd {
+	margin: 0;
+	color: var(--aurora-ink);
+	word-break: break-word;
+	overflow-wrap: anywhere;
+}
+
+.sectionKv code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface-soft);
+	padding: 1px 6px;
+	border-radius: 4px;
+}
+
+.sectionMuted {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+}
+
+.sectionRow {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: var(--aurora-space-2) var(--aurora-space-3);
+	align-items: start;
+	padding: var(--aurora-space-3) 0;
+	border-bottom: 1.5px solid var(--aurora-line-soft);
+	cursor: pointer;
+}
+
+.sectionRow:last-child {
+	border-bottom: 0;
+}
+
+.sectionRow span {
+	display: block;
+	color: var(--aurora-ink);
+}
+
+.sectionRow em[data-experimental] {
+	color: var(--aurora-amber);
+	font-style: normal;
+	font-size: var(--aurora-text-sm);
+	margin-left: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   只读引用（工具 / 知识库 / Skill / MCP 占位）
+   -------------------------------------------------------------------------- */
+
+.sectionRef {
+	margin: 0;
+	border: 1.5px solid var(--aurora-line-soft);
+	border-radius: var(--aurora-radius-sm);
+	padding: var(--aurora-space-3) var(--aurora-space-4);
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+}
+
+.sectionRefPlaceholder {
+	background: var(--aurora-surface-soft);
+	border-style: dashed;
+}
+
+.sectionRef legend {
+	font-size: var(--aurora-text-md);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+	padding: 0 var(--aurora-space-2);
+}
+
+.sectionRefList {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--aurora-space-2);
+}
+
+.sectionRefItem {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--aurora-space-2);
+	background: var(--aurora-surface-soft);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-pill);
+	padding: 4px 4px 4px 10px;
+	max-width: 100%;
+}
+
+.sectionRefId {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 240px;
+}
+
+.sectionRefRemove {
+	background: transparent;
+	border: 0;
+	padding: 4px 10px;
+	border-radius: var(--aurora-radius-pill);
+	color: var(--aurora-ink-2);
+	font: inherit;
+	font-size: var(--aurora-text-sm);
+	cursor: pointer;
+}
+
+.sectionRefRemove:hover {
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+}
+
+.sectionRefClear {
+	justify-self: flex-start;
+	background: transparent;
+	border: 0;
+	padding: 0;
+	color: var(--aurora-ink-3);
+	font: inherit;
+	font-size: var(--aurora-text-sm);
+	cursor: pointer;
+}
+
+.sectionRefClear:hover {
+	color: var(--aurora-red);
+}
+
+.sectionEmpty {
+	margin: 0;
+	padding: var(--aurora-space-3) var(--aurora-space-4);
+	background: var(--aurora-surface-soft);
+	border-radius: var(--aurora-radius-sm);
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-md);
+}
+
+.sectionState {
+	margin: 0;
+	padding: var(--aurora-space-3) var(--aurora-space-4);
+	background: var(--aurora-surface-soft);
+	border-radius: var(--aurora-radius-sm);
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+}
+
+.sectionStateError {
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+	.section {
+		padding: var(--aurora-space-4);
+	}
+
+	.sectionKv {
+		grid-template-columns: 1fr;
+		gap: 0;
+	}
+
+	.sectionKv dt {
+		margin-top: var(--aurora-space-2);
+	}
+
+	.sectionKv dt:first-child {
+		margin-top: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sectionTextarea,
+	.sectionSelect {
+		transition: none;
+	}
+}

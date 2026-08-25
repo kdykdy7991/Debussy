@@ -1,0 +1,254 @@
+/**
+ * Agent Workspace 视觉层（阶段三：Aurora UI 统一）。
+ *
+ * 独立 CSS Module — 全部页面专属样式在这里，不再追加到 admin/styles.css。
+ * 通过 `var(--aurora-*)` 引用 Aurora Design System 全局 token。
+ *
+ * 区域：
+ *   - .shell        顶层 section
+ *   - .header       名称 / 关联应用 / 操作按钮（基于 AuroraPageHeader）
+ *   - .tabs         role=tablist 语义 tab
+ *   - .body         tab 内容容器
+ *   - .saveBar      吸底保存栏
+ *   - .saveBar__*   内部子元素
+ *
+ * 响应式（窄屏换行）：
+ *   - 1440 / 1024 桌面：横向排列，header / tabs / save bar 单行
+ *   - 768 起       ：header / save bar 自动换行；tabs 横向滚动
+ *   - 390          ：tabs 横向滚动；table 横向滚动
+ */
+
+/* ==========================================================================
+   Shell
+   ========================================================================== */
+
+.shell {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-5);
+	min-width: 0;
+	padding-bottom: 96px; /* 为底部 saveBar 留出空间 */
+}
+
+.stateBox {
+	padding: var(--aurora-space-4);
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-3);
+}
+
+/* ==========================================================================
+   Header (基于 AuroraPageHeader)
+   ========================================================================== */
+
+.headerNote {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--aurora-space-3);
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+	font-variant-numeric: tabular-nums;
+}
+
+.headerNote code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface-soft);
+	padding: 2px 8px;
+	border-radius: 6px;
+	color: var(--aurora-ink);
+}
+
+.headerNote strong {
+	color: var(--aurora-ink);
+	font-weight: var(--aurora-weight-semibold);
+}
+
+.headerNoteSep {
+	color: var(--aurora-ink-3);
+}
+
+.headerActions {
+	display: flex;
+	align-items: center;
+	gap: var(--aurora-space-2);
+	flex-wrap: wrap;
+}
+
+.publishBlockNote {
+	flex-basis: 100%;
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-amber);
+	background: var(--aurora-amber-soft);
+	padding: 6px 10px;
+	border-radius: var(--aurora-radius-sm);
+	margin-top: var(--aurora-space-2);
+}
+
+/* ==========================================================================
+   Tabs (role=tablist)
+   ========================================================================== */
+
+.tabs {
+	display: flex;
+	gap: var(--aurora-space-1);
+	background: var(--aurora-surface-soft);
+	padding: 4px;
+	border-radius: var(--aurora-radius-pill);
+	overflow-x: auto;
+	scrollbar-width: thin;
+}
+
+.tab {
+	flex: 0 0 auto;
+	min-height: 32px;
+	padding: 6px 16px;
+	border: 0;
+	border-radius: var(--aurora-radius-pill);
+	background: transparent;
+	color: var(--aurora-ink-2);
+	font: inherit;
+	font-size: var(--aurora-text-md);
+	font-weight: var(--aurora-weight-medium);
+	cursor: pointer;
+	transition:
+		background var(--aurora-motion-fast) var(--aurora-ease-standard),
+		color var(--aurora-motion-fast) var(--aurora-ease-standard);
+	white-space: nowrap;
+}
+
+.tab:hover {
+	color: var(--aurora-ink);
+}
+
+.tab:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 3px var(--aurora-accent-glow);
+}
+
+.tabActive {
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	font-weight: var(--aurora-weight-semibold);
+	box-shadow: var(--aurora-shadow-sm);
+}
+
+/* ==========================================================================
+   Body (tab content)
+   ========================================================================== */
+
+.body {
+	min-width: 0;
+}
+
+/* ==========================================================================
+   Save Bar (吸底)
+   ========================================================================== */
+
+.saveBar {
+	position: sticky;
+	bottom: 0;
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	align-items: center;
+	gap: var(--aurora-space-3);
+	padding: var(--aurora-space-3) var(--aurora-space-5);
+	background: var(--aurora-overlay);
+	backdrop-filter: blur(12px);
+	border-top: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-md) var(--aurora-radius-md) 0 0;
+	margin-top: var(--aurora-space-5);
+	z-index: 10;
+}
+
+.saveBarStatus {
+	display: flex;
+	align-items: center;
+	gap: var(--aurora-space-2);
+	min-width: 0;
+}
+
+.saveBarError {
+	color: var(--aurora-red);
+	font-size: var(--aurora-text-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 28ch;
+}
+
+.saveBarLabel {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.saveBarInput {
+	height: 36px;
+	padding: 0 var(--aurora-space-3);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+	font: inherit;
+	font-size: var(--aurora-text-md);
+	min-width: 0;
+}
+
+.saveBarInput:focus {
+	outline: none;
+	border-color: var(--aurora-accent);
+	box-shadow: 0 0 0 3px var(--aurora-accent-glow);
+}
+
+.saveBarInput:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.saveBarActions {
+	display: flex;
+	gap: var(--aurora-space-2);
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 1024px) {
+	.saveBar {
+		grid-template-columns: 1fr;
+		gap: var(--aurora-space-2);
+		padding: var(--aurora-space-3) var(--aurora-space-4);
+	}
+
+	.saveBarInput {
+		width: 100%;
+	}
+
+	.saveBarActions {
+		justify-content: flex-end;
+	}
+}
+
+@media (max-width: 768px) {
+	.shell {
+		padding-bottom: 132px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tab,
+	.saveBarInput {
+		transition: none;
+	}
+}

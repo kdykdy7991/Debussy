@@ -1,13 +1,14 @@
 /**
- * Agent Save Bar（阶段二 §4.3）。
+ * Agent Save Bar（阶段三：Aurora UI 统一）。
  *
- * 吸底操作栏：覆盖 saved / dirty / saving / error 四态，含状态徽标、
- * 变更摘要、放弃修改与「保存为新 Revision」。保存中禁用重复操作；草稿
- * 失败时保留草稿等待重试。
+ * 吸底操作栏（sticky），桌面单行 / 窄屏换行（CSS Module 接管）。
+ * 覆盖 saved / dirty / saving / error 四态，状态用 AuroraPill 标记。
  *
- * 该组件不持有状态 —— 状态机与 idempotency 由 `AgentWorkspace` 负责。
+ * 该组件不持有状态机 —— 状态由 `AgentWorkspace` 提供。
  */
 import type { AgentState } from "./agent-state.ts";
+import { AuroraButton, AuroraPill, type AuroraPillTone } from "../aurora/index.ts";
+import styles from "./agent-workspace.module.css";
 
 export interface AgentSaveBarProps {
 	readonly state: AgentState;
@@ -28,59 +29,49 @@ export function AgentSaveBar({
 	const canSave = state.status === "dirty" || state.status === "error";
 	const canRevert = state.status === "dirty" || state.status === "error";
 	const inputId = "agent-save-bar-summary";
-	const statusLabel = statusLabelFor(state);
-	const statusVariant = variantFor(state.status);
+	const tone = toneFor(state.status);
+	const label = labelFor(state.status);
 	return (
 		<aside
-			className="agent-save-bar"
+			className={styles.saveBar}
 			data-state={state.status}
 			role="region"
 			aria-label="保存草稿"
 		>
-			<div className="agent-save-bar__status">
-				<span className={`agent-save-bar__badge agent-save-bar__badge--${statusVariant}`}>{statusLabel}</span>
+			<div className={styles.saveBar__status}>
+				<AuroraPill tone={tone}>{label}</AuroraPill>
 				{state.status === "error" && state.errorMessage !== null ? (
-					<span role="alert" className="agent-save-bar__error">
+					<span role="alert" className={styles.saveBar__error} title={state.errorMessage}>
 						{state.errorMessage}
 					</span>
 				) : null}
 			</div>
-			<label htmlFor={inputId} className="agent-save-bar__label">
+			<label htmlFor={inputId} className={styles.saveBar__label}>
 				变更摘要
 			</label>
 			<input
 				id={inputId}
 				type="text"
-				className="agent-save-bar__input"
+				className={styles.saveBar__input}
 				value={changeSummary}
 				placeholder="简要描述本次修改（可选）"
 				disabled={isSaving}
 				onChange={(e) => onChangeSummary(e.currentTarget.value)}
 			/>
-			<div className="agent-save-bar__actions">
-				<button
-					type="button"
-					className="agent-save-bar__btn agent-save-bar__btn--secondary"
-					onClick={onRevert}
-					disabled={!canRevert || isSaving}
-				>
+			<div className={styles.saveBar__actions}>
+				<AuroraButton variant="default" size="sm" onClick={onRevert} disabled={!canRevert || isSaving}>
 					放弃修改
-				</button>
-				<button
-					type="button"
-					className="agent-save-bar__btn agent-save-bar__btn--primary"
-					onClick={onSave}
-					disabled={!canSave || isSaving}
-				>
+				</AuroraButton>
+				<AuroraButton variant="primary" size="sm" onClick={onSave} disabled={!canSave || isSaving}>
 					{isSaving ? "保存中…" : "保存为新 Revision"}
-				</button>
+				</AuroraButton>
 			</div>
 		</aside>
 	);
 }
 
-function statusLabelFor(state: AgentState): string {
-	switch (state.status) {
+function labelFor(status: AgentState["status"]): string {
+	switch (status) {
 		case "saved":
 			return "已保存";
 		case "dirty":
@@ -92,6 +83,15 @@ function statusLabelFor(state: AgentState): string {
 	}
 }
 
-function variantFor(status: AgentState["status"]): "saved" | "dirty" | "saving" | "error" {
-	return status;
+function toneFor(status: AgentState["status"]): AuroraPillTone {
+	switch (status) {
+		case "saved":
+			return "green";
+		case "dirty":
+			return "amber";
+		case "saving":
+			return "neutral";
+		case "error":
+			return "red";
+	}
 }

@@ -1,0 +1,269 @@
+/**
+ * Publish Drawer 视觉层（阶段三：Aurora UI 统一）。
+ *
+ * 单一 dialog 语义：role=dialog + aria-modal，焦点进入时锁死背景
+ * （inert 背景），Escape 关闭，重复提交保护由 React disabled 状态保证。
+ *
+ * 视觉走 Aurora Design System：surface 卡片 + line 边 + shadow-lg。
+ */
+
+.overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(17, 19, 24, 0.45);
+	display: grid;
+	place-items: center;
+	padding: var(--aurora-space-5);
+	z-index: 100;
+}
+
+.drawer {
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-lg);
+	box-shadow: var(--aurora-shadow-lg);
+	max-width: 720px;
+	width: 100%;
+	max-height: calc(100vh - 96px);
+	overflow: auto;
+	padding: var(--aurora-space-6);
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-4);
+}
+
+.drawerHeader {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-1);
+	padding-bottom: var(--aurora-space-3);
+	border-bottom: 1.5px solid var(--aurora-line-soft);
+}
+
+.drawerHeader h2 {
+	margin: 0;
+	font-size: var(--aurora-text-xl);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+}
+
+.drawerSubtitle {
+	margin: 0;
+	color: var(--aurora-ink-2);
+	font-size: var(--aurora-text-md);
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--aurora-space-2);
+}
+
+.drawerSubtitle code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface-soft);
+	padding: 1px 6px;
+	border-radius: 4px;
+	color: var(--aurora-ink);
+}
+
+.drawerSubtitle__hint {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+}
+
+.banner {
+	padding: var(--aurora-space-3) var(--aurora-space-4);
+	border-radius: var(--aurora-radius-sm);
+	font-size: var(--aurora-text-md);
+}
+
+.banner.warning {
+	background: var(--aurora-amber-soft);
+	color: var(--aurora-amber);
+	border: 1.5px solid var(--aurora-amber);
+}
+
+.banner.error {
+	background: var(--aurora-red-soft);
+	color: var(--aurora-red);
+	border: 1.5px solid var(--aurora-red);
+}
+
+.drawerStep {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-3);
+}
+
+.drawerStep h3 {
+	margin: 0;
+	font-size: var(--aurora-text-lg);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+}
+
+.drawerActions {
+	display: flex;
+	gap: var(--aurora-space-2);
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	padding-top: var(--aurora-space-3);
+	border-top: 1.5px solid var(--aurora-line-soft);
+}
+
+.actions {
+	display: flex;
+	gap: var(--aurora-space-2);
+	flex-wrap: wrap;
+}
+
+.appSelectList,
+.revisionSelectList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+}
+
+.appSelectRow,
+.revisionSelectRow {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	gap: var(--aurora-space-3);
+	align-items: center;
+	padding: var(--aurora-space-3);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	cursor: pointer;
+}
+
+.appSelectRow:hover,
+.revisionSelectRow:hover {
+	border-color: var(--aurora-accent);
+	background: var(--aurora-surface-soft);
+}
+
+.appSelectRow span,
+.revisionSelectRow span {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.appSelectRow strong,
+.revisionSelectRow strong {
+	color: var(--aurora-ink);
+	font-weight: var(--aurora-weight-semibold);
+}
+
+.appSelectRow small,
+.revisionSelectRow small {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+}
+
+.diffSummary {
+	background: var(--aurora-surface-soft);
+	padding: var(--aurora-space-4);
+	border-radius: var(--aurora-radius-md);
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+}
+
+.diffSummary h4 {
+	margin: 0;
+	font-size: var(--aurora-text-md);
+	font-weight: var(--aurora-weight-semibold);
+	color: var(--aurora-ink);
+}
+
+.diffSummary__list {
+	display: grid;
+	grid-template-columns: 140px 1fr;
+	gap: var(--aurora-space-2) var(--aurora-space-4);
+	margin: 0;
+	font-size: var(--aurora-text-md);
+}
+
+.diffSummary__list dt {
+	color: var(--aurora-ink-3);
+	font-weight: var(--aurora-weight-medium);
+}
+
+.diffSummary__list dd {
+	margin: 0;
+	color: var(--aurora-ink);
+	word-break: break-word;
+	overflow-wrap: anywhere;
+}
+
+.diffSummary__list code {
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	background: var(--aurora-surface);
+	padding: 1px 6px;
+	border-radius: 4px;
+}
+
+.diffSummary__prompt {
+	margin: 0;
+	padding: var(--aurora-space-3);
+	background: var(--aurora-surface);
+	border: 1.5px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	font-family: var(--aurora-font-mono);
+	font-size: var(--aurora-text-sm);
+	color: var(--aurora-ink);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 240px;
+	overflow: auto;
+}
+
+.diffSummary__muted {
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-sm);
+	margin-left: 6px;
+}
+
+.diffSummary__experimental {
+	color: var(--aurora-amber);
+	font-style: normal;
+	font-size: var(--aurora-text-sm);
+	margin-left: 6px;
+}
+
+@media (max-width: 768px) {
+	.drawer {
+		padding: var(--aurora-space-4);
+		max-height: 100vh;
+		border-radius: var(--aurora-radius-md) var(--aurora-radius-md) 0 0;
+		align-self: end;
+	}
+
+	.overlay {
+		padding: 0;
+		align-items: end;
+	}
+
+	.diffSummary__list {
+		grid-template-columns: 1fr;
+	}
+
+.diffSummary__list dt {
+		margin-top: var(--aurora-space-2);
+	}
+
+.diffSummary__list dt:first-child {
+		margin-top: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.drawer,
+	.appSelectRow,
+	.revisionSelectRow {
+		transition: none;
+	}
+}

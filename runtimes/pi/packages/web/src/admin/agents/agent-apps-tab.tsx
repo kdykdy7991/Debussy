@@ -1,17 +1,19 @@
 /**
- * Agent 发布应用 Tab（阶段二 §4.4）。
+ * Agent 发布应用 Tab（阶段三：Aurora UI 统一）。
  *
  * 真实 PublishedApp 列表：名称 / 状态 / 当前激活版本 / Public App ID /
  * 入口。空态提供"前往应用管理"入口；不在此处重复实现应用管理。
  *
- * 列表/详情 API 由 `agentApi.listAgentApps` 与 `appApi.getPublishedApp`
- * 提供；激活版本名通过 `appApi.listVersions` 取最新一条。
+ * 视觉与 aurora/apps-list-view 同源 — 复用 `agent-tables.module.css`
+ * 的 .appsTable 样式，仅补充 Agent 上下文差异。
  */
 import type { AgentDefinitionAssociatedApp, AgentPublicId } from "@earendil-works/pi-protocol";
 import { useEffect, useState } from "react";
 import { AgentApi } from "../api/agent-api.ts";
 import { AppApi } from "../api/app-api.ts";
+import { AuroraButton } from "../aurora/index.ts";
 import { navigate } from "../router.ts";
+import styles from "./agent-tables.module.css";
 
 export interface AgentAppsTabProps {
 	readonly agentId: AgentPublicId;
@@ -44,41 +46,43 @@ export function AgentAppsTab({ agentId, agentApi, appApi }: AgentAppsTabProps): 
 		};
 	}, [agentId, agentApi]);
 
-	if (load.kind === "loading") return <p aria-busy="true">正在加载关联应用…</p>;
+	if (load.kind === "loading") return <p aria-busy="true" className={styles.stateBox}>正在加载关联应用…</p>;
 	if (load.kind === "error")
 		return (
-			<div role="alert">
+			<div role="alert" className={styles.errorBox}>
 				<p>加载关联应用失败：{load.message}</p>
 			</div>
 		);
 	if (load.items.length === 0)
 		return (
-			<section className="agent-apps-tab agent-apps-tab--empty" aria-label="发布应用">
-				<p>该 Agent 暂未关联任何已发布应用。</p>
-				<p className="agent-section__hint">先在「应用」模块创建一个应用并绑定此 Agent，再回来创建版本。</p>
-				<button type="button" onClick={() => navigate("/apps")}>
+			<section className={styles.appsEmpty} aria-label="发布应用">
+				<strong>该 Agent 暂未关联任何已发布应用</strong>
+				<p>先在「应用」模块创建一个应用并绑定此 Agent，再回来创建版本。</p>
+				<AuroraButton variant="default" size="md" onClick={() => navigate("/apps")}>
 					前往应用管理
-				</button>
+				</AuroraButton>
 			</section>
 		);
 	return (
-		<section className="agent-apps-tab" aria-label="发布应用">
-			<table className="agent-apps-tab__table">
-				<thead>
-					<tr>
-						<th>名称</th>
-						<th>状态</th>
-						<th>当前激活版本</th>
-						<th>Public App ID</th>
-						<th aria-label="操作" />
-					</tr>
-				</thead>
-				<tbody>
-					{load.items.map((app) => (
-						<AppRow key={app.appId} app={app} appApi={appApi} />
-					))}
-				</tbody>
-			</table>
+		<section className={styles.shell} aria-label="发布应用">
+			<div className={styles.tableScroll}>
+				<table className={styles.appsTable}>
+					<thead>
+						<tr>
+							<th>名称</th>
+							<th>状态</th>
+							<th>当前激活版本</th>
+							<th>Public App ID</th>
+							<th aria-label="操作" />
+						</tr>
+					</thead>
+					<tbody>
+						{load.items.map((app) => (
+							<AppRow key={app.appId} app={app} appApi={appApi} />
+						))}
+					</tbody>
+				</table>
+			</div>
 		</section>
 	);
 }
@@ -104,32 +108,32 @@ function AppRow({
 			.then((detail) => {
 				if (cancelled) return;
 				const v = detail.currentVersion?.versionNumber;
-				setActiveVersion(typeof v === "number" ? `v${v}` : currentVersionId.slice(0, 12) + "…");
+				setActiveVersion(typeof v === "number" ? `v${v}` : `${currentVersionId.slice(0, 12)}…`);
 			})
 			.catch(() => {
 				if (cancelled) return;
-				setActiveVersion(currentVersionId.slice(0, 12) + "…");
+				setActiveVersion(`${currentVersionId.slice(0, 12)}…`);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [app, appApi]);
+	}, [app, appApi, currentVersionId]);
 	return (
 		<tr>
-			<td>
+			<td className={styles.nameCell}>
 				<strong>{app.name}</strong>
 			</td>
-			<td>
+			<td className={styles.statusCell}>
 				<code>{app.status}</code>
 			</td>
 			<td>{activeVersion ?? "（未激活）"}</td>
 			<td>
-				<code>{app.publicAppId}</code>
+				<code className={styles.publicId}>{app.publicAppId}</code>
 			</td>
 			<td>
-				<button type="button" onClick={() => navigate(`/apps/${app.appId}`)}>
+				<AuroraButton variant="ghost" size="sm" onClick={() => navigate(`/apps/${app.appId}`)}>
 					进入应用详情 →
-				</button>
+				</AuroraButton>
 			</td>
 		</tr>
 	);

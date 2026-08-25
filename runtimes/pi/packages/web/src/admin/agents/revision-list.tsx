@@ -1,8 +1,11 @@
 /**
- * Revision 列表（WB-003 / SPEC §5.2；阶段一：真实 Diff）。
+ * Revision 列表（WB-003 / SPEC §5.2；阶段三：Aurora UI 统一）。
  *
  * 列表行只展示来自 `listRevisions` 的真实元数据（修订号 / 变更摘要 /
- * 时间 / 创建人 / Source Hash）。点「查看 Diff」时**按需**调用
+ * 时间 / 创建人 / 关联应用版本数）。Source Hash 仅在展开的 Diff 详情
+ * 中显示，避免铺满主表。
+ *
+ * 点「查看 Diff」时**按需**调用
  * `GET /api/control/v1/agent-definitions/:agentId/revisions/:revision`
  * 拉取完整 `configSnapshot` 与 `diffFromPrevious`，永不在前端拼接或
  * 猜测任何 Diff 字段。
@@ -12,6 +15,9 @@
  *
  * Revision 1 显示「初始版本，无 diff」；后续 Revision 永远不会被打上
  * 「首次」字样——「首次」是 Revision 1 的语义标签，不是缺省兜底。
+ *
+ * 视觉：与 aurora/agent-list-view.module.css 同源，通过
+ * `agent-tables.module.css` 复用同一组 token。
  */
 import type {
 	AgentConfigSnapshot,
@@ -21,6 +27,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
+import styles from "./agent-tables.module.css";
 
 const PROMPT_PREVIEW_LIMIT = 200;
 
@@ -58,7 +65,6 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 			setLoadedKey(null);
 			return;
 		}
-		// 已缓存：直接展示
 		if (loadedKey === openKey && detail.kind === "loaded") return;
 		let cancelled = false;
 		setDetail({ kind: "loading" });
@@ -98,59 +104,72 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 	const latestRevision = items.reduce((max, item) => Math.max(max, item.revision), 0);
 
 	return (
-		<table className="agent-revision-list">
-			<thead>
-				<tr>
-					<th>Revision</th>
-					<th>变更摘要</th>
-					<th>创建时间</th>
-					<th>创建人</th>
-					<th>关联应用版本</th>
-					<th aria-label="操作" />
-				</tr>
-			</thead>
-			<tbody>
-				{items.map((rev) => {
-					const key = `${agentId}::${rev.revision}`;
-					const isOpen = openKey === key;
-					const isLatest = rev.revision === latestRevision;
-					return (
-						<Fragment key={key}>
-							<tr className={isLatest ? "agent-revision-list__latest" : undefined} data-latest={isLatest}>
-								<td>
-									<code>#{rev.revision}</code>
-									{isLatest ? <span className="agent-revision-list__pill">最新</span> : null}
-								</td>
-								<td>{rev.changeSummary?.trim() ? rev.changeSummary : "—"}</td>
-								<td>{rev.createdAt}</td>
-								<td>{rev.createdBy}</td>
-								<td>{rev.associatedVersionIds.length}</td>
-								<td>
-									<button
-										type="button"
-										aria-expanded={isOpen}
-										onClick={() => (isOpen ? close() : setOpenKey(key))}
-									>
-										{isOpen ? "收起" : "查看 Diff"}
-									</button>
-								</td>
-							</tr>
-							{isOpen ? (
-								<tr>
-									<td colSpan={6}>
-										<RevisionDetail revision={rev.revision} state={detail} sourceHash={rev.sourceHash} onRetry={() => {
-											setLoadedKey(null);
-											setOpenKey(null);
-											setOpenKey(key);
-										}} />
-									</td>
-								</tr>
-							) : null}
-						</Fragment>
-					);
-				})}
-			</tbody>
-		</table>
+		<div className={styles.tableScroll}>
+			<div className={styles.revisionTableWrap}>
+				<table className={styles.revisionTable}>
+					<thead>
+						<tr>
+							<th>Revision</th>
+							<th>变更摘要</th>
+							<th>创建时间</th>
+							<th>创建人</th>
+							<th>关联应用版本</th>
+							<th aria-label="操作" />
+						</tr>
+					</thead>
+					<tbody>
+						{items.map((rev) => {
+								const key = `${agentId}::${rev.revision}`;
+								const isOpen = openKey === key;
+								const isLatest = rev.revision === latestRevision;
+								return (
+									<Fragment key={key}>
+										<tr className={isLatest ? styles.latestRow : undefined} data-latest={isLatest}>
+											<td>
+												<code className={styles.revisionNumber}>#{rev.revision}</code>
+												{isLatest ? <span className={styles.latestPill}>最新</span> : null}
+											</td>
+											<td>
+												<span className={styles.revisionSummary}>
+													{rev.changeSummary?.trim() ? rev.changeSummary : "—"}
+												</span>
+											</td>
+											<td>{rev.createdAt}</td>
+											<td>{rev.createdBy}</td>
+											<td>{rev.associatedVersionIds.length}</td>
+											<td>
+												<button
+													type="button"
+													aria-expanded={isOpen}
+													onClick={() => (isOpen ? close() : setOpenKey(key))}
+												>
+													{isOpen ? "收起" : "查看 Diff"}
+												</button>
+											</td>
+										</tr>
+										{isOpen ? (
+											<tr>
+												<td colSpan={6}>
+													<RevisionDetail
+														revision={rev.revision}
+														state={detail}
+														sourceHash={rev.sourceHash}
+														onRetry={() => {
+															setLoadedKey(null);
+															setOpenKey(null);
+															setOpenKey(key);
+														}}
+													/>
+												</td>
+											</tr>
+										) : null}
+									</Fragment>
+								);
+							})}
+					</tbody>
+				</table>
+			</div>
+		</div>
 	);
 }
 
@@ -167,14 +186,14 @@ function RevisionDetail({
 }): React.ReactElement {
 	if (state.kind === "idle" || state.kind === "loading") {
 		return (
-			<p aria-busy="true" data-revision-detail-status="loading">
+			<p aria-busy="true" className={styles.stateBox} data-revision-detail-status="loading">
 				正在加载 Revision #{revision} 详情…
 			</p>
 		);
 	}
 	if (state.kind === "error") {
 		return (
-			<div role="alert" data-revision-detail-status="error">
+			<div role="alert" className={styles.errorBox} data-revision-detail-status="error">
 				<p>加载 Diff 失败：{state.message}</p>
 				<button type="button" onClick={onRetry}>
 					重试
@@ -185,8 +204,8 @@ function RevisionDetail({
 	const detail = state.detail;
 	const isInitial = detail.revision === 1 || detail.diffFromPrevious === null;
 	return (
-		<div data-revision-detail-status="loaded">
-			<dl className="agent-revision-list__meta">
+		<div className={styles.diffDetail} data-revision-detail-status="loaded">
+			<dl className={styles.diffMeta}>
 				<dt>Source Hash</dt>
 				<dd>
 					<code>{sourceHash}</code>
@@ -226,9 +245,9 @@ function DiffView({ diff }: { diff: NonNullable<AgentDefinitionRevision["diffFro
 							<Fragment key={key}>
 								<dt>{key}</dt>
 								<dd>
-						<ParameterDelta value={delta} />
-					</dd>
-								</Fragment>
+									<ParameterDelta value={delta} />
+								</dd>
+							</Fragment>
 						))}
 					</dl>
 				</details>
@@ -237,7 +256,11 @@ function DiffView({ diff }: { diff: NonNullable<AgentDefinitionRevision["diffFro
 	);
 }
 
-function ParameterDelta({ value }: { value: NonNullable<AgentDefinitionRevision["diffFromPrevious"]>["parametersDelta"][string] }): React.ReactElement {
+function ParameterDelta({
+	value,
+}: {
+	readonly value: NonNullable<AgentDefinitionRevision["diffFromPrevious"]>["parametersDelta"][string];
+}): React.ReactElement {
 	if (value.kind === "added") return <span>+ 新增 {stringifyValue(value.value)}</span>;
 	if (value.kind === "removed") return <span>- 删除 {stringifyValue(value.value)}</span>;
 	return (
@@ -260,7 +283,7 @@ function stringifyValue(value: unknown): string {
 function SnapshotView({ snapshot }: { snapshot: AgentConfigSnapshot }): React.ReactElement {
 	const reasoning = snapshot.parameters.reasoning;
 	return (
-		<dl>
+		<dl className={styles.snapshot}>
 			<dt>Model</dt>
 			<dd>
 				<code>{snapshot.modelId ?? "—"}</code>
@@ -292,12 +315,14 @@ function SnapshotView({ snapshot }: { snapshot: AgentConfigSnapshot }): React.Re
 
 function LongText({ text }: { text: string }): React.ReactElement {
 	if (text.length <= PROMPT_PREVIEW_LIMIT) {
-		return <pre className="agent-snapshot__prompt">{text}</pre>;
+		return <pre>{text}</pre>;
 	}
 	return (
 		<details>
-			<summary>{text.slice(0, PROMPT_PREVIEW_LIMIT)}…（点击展开 {text.length} 字）</summary>
-			<pre className="agent-snapshot__prompt">{text}</pre>
+			<summary>
+				{text.slice(0, PROMPT_PREVIEW_LIMIT)}…（点击展开 {text.length} 字）
+			</summary>
+			<pre>{text}</pre>
 		</details>
 	);
 }
