@@ -53,6 +53,7 @@ export function PublishedConversationWorkspace(props: {
 				items={conversations}
 				activeId={props.state.activeId}
 				query={query}
+				connectionStatus={props.state.connectionStatus}
 				onQueryChange={setQuery}
 				onNew={props.onNew}
 				onSelect={props.onSelect}
@@ -65,7 +66,9 @@ export function PublishedConversationWorkspace(props: {
 					onClick={() => setSidebarOpen(true)}
 					aria-label="展开会话导航"
 				>
-					›
+					<svg viewBox="0 0 16 16" fill="none" focusable="false" aria-hidden="true">
+						<path d="m6.25 3.5 4.5 4.5-4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
 				</button>
 			) : null}
 			<main className="chat-workspace">
@@ -118,8 +121,8 @@ export function PublishedConversationWorkspace(props: {
 						<textarea
 							rows={1}
 							value={message}
-							disabled={props.state.sending}
-							placeholder={props.state.sending ? "正在回复…" : "Ask anything…"}
+							disabled={props.state.sending || props.state.activeId === null || props.state.connectionStatus !== "connected"}
+							placeholder={props.state.activeId === null ? "选择或新建一个会话后开始…" : props.state.sending ? "Agent 运行中，可停止后继续输入…" : "Ask anything, or point me at a document…"}
 							onChange={(event) => setMessage(event.target.value)}
 							onKeyDown={(event) => {
 								if (event.key === "Enter" && !event.shiftKey) {
@@ -158,7 +161,7 @@ export function PublishedConversationWorkspace(props: {
 							<button
 								className="send-button"
 								type="submit"
-								disabled={props.state.sending || message.trim() === ""}
+								disabled={props.state.sending || props.state.activeId === null || props.state.connectionStatus !== "connected" || message.trim() === ""}
 							>
 								Send <span aria-hidden="true">↵</span>
 							</button>
@@ -204,6 +207,7 @@ function PublishedSidebar(props: {
 	readonly items: readonly ConversationSummary[];
 	readonly activeId: string | null;
 	readonly query: string;
+	readonly connectionStatus: EmbedChatState["connectionStatus"];
 	readonly onQueryChange: (value: string) => void;
 	readonly onNew: () => void;
 	readonly onSelect: (id: string) => void;
@@ -212,9 +216,9 @@ function PublishedSidebar(props: {
 	return (
 		<aside className={`chat-sidebar ${props.open ? "open" : ""}`} aria-label="会话导航">
 			<div className="sidebar-actions">
-				<button className="new-chat-button" type="button" onClick={props.onNew}>
+				<button className="new-chat-button" type="button" disabled={props.connectionStatus !== "connected"} onClick={props.onNew}>
 					<span className="new-chat-plus" aria-hidden="true">
-						＋
+						<svg viewBox="0 0 16 16" fill="none" focusable="false"><path d="M8 3.25v9.5M3.25 8h9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
 					</span>
 					<span>新建对话</span>
 				</button>
@@ -224,7 +228,7 @@ function PublishedSidebar(props: {
 					onClick={props.onToggle}
 					aria-label="收起会话导航"
 				>
-					‹
+					<svg viewBox="0 0 16 16" fill="none" focusable="false" aria-hidden="true"><path d="m9.75 3.5-4.5 4.5 4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
 				</button>
 			</div>
 			<label className="conversation-search">
@@ -251,6 +255,7 @@ function PublishedSidebar(props: {
 							className={item.id === props.activeId ? "active" : undefined}
 							type="button"
 							onClick={() => props.onSelect(item.id)}
+							disabled={props.connectionStatus !== "connected"}
 							key={item.id}
 						>
 							<i className="conversation-icon" aria-hidden="true">
@@ -264,9 +269,11 @@ function PublishedSidebar(props: {
 				</nav>
 			)}
 			<footer className="sidebar-footer">
-				<strong>Published App</strong>
+				<strong>Workspace</strong> — {props.connectionStatus === "connected" ? "已连接" : "正在连接"}
 				<br />
 				<strong>Conversations</strong> — {props.items.length}
+				<br />
+				<strong>Runtime</strong> — Published Agent
 			</footer>
 		</aside>
 	);
