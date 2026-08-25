@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { AgentStatusAvatar, preloadAgentStatusAvatar } from "../ai-kit/index.ts";
 import type { EmbedChatState } from "./chat-controller.ts";
 import type { ChatMessage, ConversationSummary } from "./types.ts";
 
@@ -86,6 +87,7 @@ export function PublishedConversationWorkspace(props: {
 						</section>
 					</article>
 				</div>
+				<PublishedAgentPresence sending={props.state.sending} />
 			</main>
 			<div className="composer-dock">
 				<form className={`editorial-composer ${props.state.sending ? "running" : ""}`} onSubmit={submit}>
@@ -118,6 +120,26 @@ export function PublishedConversationWorkspace(props: {
 					</div>
 				</form>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * The published surface uses the same designed status avatar as Chat.  It is
+ * a product-level interaction asset, not a fabricated per-agent portrait:
+ * published data currently carries only the avatar capability toggle, not an
+ * image URL or character manifest.
+ */
+function PublishedAgentPresence({ sending }: { readonly sending: boolean }): React.JSX.Element {
+	const [waking, setWaking] = useState(true);
+	useEffect(() => {
+		void preloadAgentStatusAvatar();
+		const timer = window.setTimeout(() => setWaking(false), 800);
+		return () => window.clearTimeout(timer);
+	}, []);
+	return (
+		<div className="active-agent-presence" aria-label="智能体状态">
+			<AgentStatusAvatar state={waking ? "waking" : sending ? "loading" : "idle"} />
 		</div>
 	);
 }

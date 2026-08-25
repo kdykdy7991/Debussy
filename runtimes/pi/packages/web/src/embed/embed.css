@@ -1,6 +1,7 @@
 /* Embed 壳样式（TASK-019/033）：独立打开与 iframe 内自适应，响应式、基础无障碍。 */
 
 @import "../styles.css";
+@import "../ai-kit/styles/index.css";
 
 .embed-shell {
 	display: flex;
