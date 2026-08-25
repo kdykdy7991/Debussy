@@ -94,15 +94,17 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 
 	if (items.length === 0) return <p>暂无 Revision 记录</p>;
 
+	// 最新 Revision 是列表中 revision 号最大的一行；高亮用。
+	const latestRevision = items.reduce((max, item) => Math.max(max, item.revision), 0);
+
 	return (
-		<table>
+		<table className="agent-revision-list">
 			<thead>
 				<tr>
 					<th>Revision</th>
 					<th>变更摘要</th>
 					<th>创建时间</th>
 					<th>创建人</th>
-					<th>Source Hash</th>
 					<th>关联应用版本</th>
 					<th aria-label="操作" />
 				</tr>
@@ -111,16 +113,17 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 				{items.map((rev) => {
 					const key = `${agentId}::${rev.revision}`;
 					const isOpen = openKey === key;
+					const isLatest = rev.revision === latestRevision;
 					return (
 						<Fragment key={key}>
-							<tr>
-								<td>#{rev.revision}</td>
+							<tr className={isLatest ? "agent-revision-list__latest" : undefined} data-latest={isLatest}>
+								<td>
+									<code>#{rev.revision}</code>
+									{isLatest ? <span className="agent-revision-list__pill">最新</span> : null}
+								</td>
 								<td>{rev.changeSummary?.trim() ? rev.changeSummary : "—"}</td>
 								<td>{rev.createdAt}</td>
 								<td>{rev.createdBy}</td>
-								<td>
-									<code>{rev.sourceHash.slice(0, 12)}…</code>
-								</td>
 								<td>{rev.associatedVersionIds.length}</td>
 								<td>
 									<button
@@ -134,8 +137,8 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 							</tr>
 							{isOpen ? (
 								<tr>
-									<td colSpan={7}>
-										<RevisionDetail revision={rev.revision} state={detail} onRetry={() => {
+									<td colSpan={6}>
+										<RevisionDetail revision={rev.revision} state={detail} sourceHash={rev.sourceHash} onRetry={() => {
 											setLoadedKey(null);
 											setOpenKey(null);
 											setOpenKey(key);
@@ -154,10 +157,12 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 function RevisionDetail({
 	revision,
 	state,
+	sourceHash,
 	onRetry,
 }: {
 	readonly revision: number;
 	readonly state: DetailState;
+	readonly sourceHash: string;
 	readonly onRetry: () => void;
 }): React.ReactElement {
 	if (state.kind === "idle" || state.kind === "loading") {
@@ -181,6 +186,12 @@ function RevisionDetail({
 	const isInitial = detail.revision === 1 || detail.diffFromPrevious === null;
 	return (
 		<div data-revision-detail-status="loaded">
+			<dl className="agent-revision-list__meta">
+				<dt>Source Hash</dt>
+				<dd>
+					<code>{sourceHash}</code>
+				</dd>
+			</dl>
 			{isInitial ? <p>初始版本，无 diff（这是该 Agent 的第一个 Revision）。</p> : null}
 			{!isInitial && detail.diffFromPrevious !== null ? <DiffView diff={detail.diffFromPrevious} /> : null}
 			<h4>配置快照</h4>
