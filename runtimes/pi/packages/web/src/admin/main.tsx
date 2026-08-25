@@ -21,6 +21,8 @@ import "../styles.css";
 import "../ai-kit/styles/index.css";
 import { AdminAppShell } from "./app-shell.tsx";
 import "./styles.css";
+import { UiPreviewAgentDesign } from "../ui-preview/agent-design.tsx";
+import "../ui-preview/agent-design.css";
 
 const root = document.getElementById("root");
 
@@ -33,6 +35,14 @@ const redirect = legacyPublishingRedirect(pathname);
 if (redirect !== null) {
 	const target = `${pathname.startsWith("/publishing/") ? "/" : ""}${redirect}`;
 	window.location.replace(target);
+} else if (pathname.startsWith("/ui-preview/")) {
+	// UI preview routes bypass the AppShell entirely and render standalone
+	// (no auth, no app sidebar, no project UI chrome).
+	createRoot(root).render(
+		<StrictMode>
+			<UiPreviewAgentDesign />
+		</StrictMode>,
+	);
 } else {
 	createRoot(root).render(
 		<StrictMode>
