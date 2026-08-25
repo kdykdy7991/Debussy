@@ -201,12 +201,7 @@ export function PublishDrawer({
 			})
 			.catch((err: unknown) => {
 				if (cancelled) return;
-				const message =
-					err instanceof AppApiError
-						? err.message
-						: err instanceof Error
-							? err.message
-							: String(err);
+				const message = err instanceof AppApiError ? err.message : err instanceof Error ? err.message : String(err);
 				setRevisionDetailError(message);
 				setRevisionDetailLoading(false);
 			});
@@ -224,7 +219,6 @@ export function PublishDrawer({
 			await appApi.createVersion({ appId: selectedApp, sourceAgentRevision: selectedRevision });
 			setCreatedAppId(selectedApp);
 			setStep("done");
-			onPublished();
 		} catch (err) {
 			setError(err instanceof AppApiError ? err.message : String(err));
 			setStep("error");
@@ -256,10 +250,9 @@ export function PublishDrawer({
 				<header className={styles.drawerHeader}>
 					<h2>创建 Published App Version</h2>
 					<p className={styles.drawerSubtitle}>
-						<span>Agent：</span>
-						<code>{agentId}</code>
+						<span>当前 Agent</span>
 						<span className={styles.drawerSubtitle__hint}>
-							此操作仅创建不可变版本，**不会**自动激活。激活请到应用详情页。
+							此操作仅创建不可变版本，<strong>不会</strong>自动激活。激活请到应用详情页。
 						</span>
 					</p>
 				</header>
@@ -286,10 +279,14 @@ export function PublishDrawer({
 								<strong>该 Agent 暂无关联应用</strong>
 								<p>请先到应用列表创建应用，再回来继续发布。</p>
 								<div className={styles.actions}>
-									<AuroraButton variant="default" size="md" onClick={() => {
-										onClose();
-										navigate("/apps");
-									}}>
+									<AuroraButton
+										variant="default"
+										size="md"
+										onClick={() => {
+											onClose();
+											navigate("/apps");
+										}}
+									>
 										去创建应用
 									</AuroraButton>
 								</div>
@@ -383,9 +380,7 @@ export function PublishDrawer({
 							<AuroraButton
 								variant="primary"
 								size="md"
-								disabled={
-									busy || blockedByDraft || revisionDetail === null || revisionDetailLoading === true
-								}
+								disabled={busy || blockedByDraft || revisionDetail === null || revisionDetailLoading === true}
 								onClick={doCreateVersion}
 							>
 								{busy ? "创建中…" : "创建版本（不激活）"}
@@ -398,9 +393,8 @@ export function PublishDrawer({
 					<div className={styles.drawerStep} data-step="done">
 						<h3>应用版本已创建，尚未激活</h3>
 						<p>
-							新版本已基于 Revision #{selectedRevision} 写入应用
-							{createdAppId !== null ? `（${createdAppId}）` : ""}。
-							该版本<strong>不会</strong>自动激活，需要在应用详情中激活才会对用户生效。
+							新版本已基于 Revision #{selectedRevision} 写入目标应用。该版本<strong>不会</strong>
+							自动激活，需要在应用详情中激活后才会对用户生效。
 						</p>
 						<div className={styles.drawerActions}>
 							<AuroraButton
@@ -408,17 +402,17 @@ export function PublishDrawer({
 								size="md"
 								onClick={() => {
 									if (createdAppId !== null) {
-										onClose();
+										onPublished();
 										navigate(`/apps/${createdAppId}`);
 									} else {
-										onClose();
+										onPublished();
 										navigate("/apps");
 									}
 								}}
 							>
 								前往应用详情
 							</AuroraButton>
-							<AuroraButton variant="default" size="md" onClick={onClose}>
+							<AuroraButton variant="default" size="md" onClick={onPublished}>
 								关闭
 							</AuroraButton>
 						</div>
@@ -428,7 +422,9 @@ export function PublishDrawer({
 				{step === "error" ? (
 					<div className={styles.drawerStep}>
 						<h3>创建失败</h3>
-						<p className={`${styles.banner} ${styles.error}`} role="alert">{error}</p>
+						<p className={`${styles.banner} ${styles.error}`} role="alert">
+							{error}
+						</p>
 						<div className={styles.drawerActions}>
 							<AuroraButton variant="default" size="md" onClick={() => setStep("confirm")}>
 								重试

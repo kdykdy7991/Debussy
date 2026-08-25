@@ -45,7 +45,8 @@ export const EDITABLE_CAPABILITIES: readonly {
 	},
 ];
 
-export const PROMPT_OVER_LONG_HINT = 8000;
+/** 与发布 RuntimeSpec schema 的 `maxSystemPromptChars` 保持一致。 */
+export const MAX_SYSTEM_PROMPT_CHARS = 65_536;
 
 export function updateCapability(
 	draft: AgentConfigSnapshot,
@@ -66,15 +67,15 @@ export function BasicInfoSection({ detail }: { readonly detail: AgentDefinitionD
 		<section aria-label="基本信息" className={styles.section}>
 			<header className={styles.sectionHeader}>
 				<h3>基本信息</h3>
-				<p className={styles.sectionHint}>
-					接口未暴露编辑入口；以下字段来自最新已保存 Revision，仅作展示。
-				</p>
+				<p className={styles.sectionHint}>接口未暴露编辑入口；以下字段来自最新已保存 Revision，仅作展示。</p>
 			</header>
 			<dl className={styles.sectionKv}>
 				<dt>名称</dt>
 				<dd>{detail.name}</dd>
 				<dt>描述</dt>
-				<dd>{detail.description?.trim() ? detail.description : <span className={styles.sectionMuted}>（无）</span>}</dd>
+				<dd>
+					{detail.description?.trim() ? detail.description : <span className={styles.sectionMuted}>（无）</span>}
+				</dd>
 				<dt>当前 Revision</dt>
 				<dd>
 					<code>#{detail.currentRevision}</code>
@@ -104,17 +105,13 @@ export function InstructionsSection({
 	const value = draft.systemPrompt;
 	const length = value.length;
 	const isEmpty = length === 0;
-	const isOverLong = length > PROMPT_OVER_LONG_HINT;
-	const charClass = isOverLong
-		? `${styles.sectionCharcount} ${styles.sectionCharcountOver}`
-		: styles.sectionCharcount;
+	const isOverLong = length > MAX_SYSTEM_PROMPT_CHARS;
+	const charClass = isOverLong ? `${styles.sectionCharcount} ${styles.sectionCharcountOver}` : styles.sectionCharcount;
 	return (
 		<section aria-label="指令" className={styles.section}>
 			<header className={styles.sectionHeader}>
 				<h3>指令</h3>
-				<p className={styles.sectionHint}>
-					用于驱动 Agent 行为的 System Prompt；保存时会冻结到 Revision 里。
-				</p>
+				<p className={styles.sectionHint}>用于驱动 Agent 行为的 System Prompt；保存时会冻结到 Revision 里。</p>
 			</header>
 			<label htmlFor={promptId} className={styles.sectionLabel}>
 				System Prompt
@@ -130,9 +127,13 @@ export function InstructionsSection({
 			/>
 			<div id={`${promptId}-status`} className={styles.sectionStatus} aria-live="polite">
 				<span className={charClass}>
-					{length} 字{isOverLong ? `（超过 ${PROMPT_OVER_LONG_HINT} 字符上限）` : ""}
+					{length} 字{isOverLong ? `（超过 ${MAX_SYSTEM_PROMPT_CHARS} 字符上限）` : ""}
 				</span>
-				{isEmpty ? <span className={styles.sectionWarn}>空值不会被服务端拒绝，但可能导致 Agent 表现退化为通用模型行为。</span> : null}
+				{isEmpty ? (
+					<span className={styles.sectionWarn}>
+						空值不会被服务端拒绝，但可能导致 Agent 表现退化为通用模型行为。
+					</span>
+				) : null}
 			</div>
 		</section>
 	);
@@ -159,8 +160,7 @@ export function ModelSection({
 	const selectId = useId();
 	const selectedModel =
 		catalog.kind === "loaded" ? catalog.items.find((model) => model.id === draft.modelId) : undefined;
-	const isCatalogMissingCurrent =
-		catalog.kind === "loaded" && draft.modelId !== null && selectedModel === undefined;
+	const isCatalogMissingCurrent = catalog.kind === "loaded" && draft.modelId !== null && selectedModel === undefined;
 
 	return (
 		<section aria-label="模型与思考" className={styles.section}>
@@ -197,7 +197,7 @@ export function ModelSection({
 
 			{isCatalogMissingCurrent ? (
 				<p className={styles.sectionWarn} data-state="model-deprecated">
-					当前模型 <code>{draft.modelId}</code> 已不在模型目录中，已保留原值但暂时无法选择其他模型。
+					当前模型 <code>{draft.modelId}</code> 已不在模型目录中，已保留原值；可以从上方目录选择替代模型。
 				</p>
 			) : null}
 
@@ -233,7 +233,6 @@ function ModelSelect({
 			id={id}
 			className={styles.sectionSelect}
 			value={value ?? ""}
-			disabled={isCurrentMissing}
 			onChange={(e) => {
 				const next = e.currentTarget.value;
 				onChange(next === "" ? null : next);
@@ -307,10 +306,7 @@ function ModelParameterEditor({
 						value={parameters.reasoning?.effort ?? ""}
 						onChange={(event) =>
 							setReasoning({
-								effort:
-									event.currentTarget.value === ""
-										? undefined
-										: (event.currentTarget.value as never),
+								effort: event.currentTarget.value === "" ? undefined : (event.currentTarget.value as never),
 							})
 						}
 					>
@@ -347,7 +343,8 @@ export function IoCapabilitiesSection({
 			<header className={styles.sectionHeader}>
 				<h3>输入输出能力</h3>
 				<p className={styles.sectionHint}>
-					只有下列开关会写入 Revision；引用检索 / Realtime / Web 搜索的写入入口尚未对管理员开放，亦不会在保存时被改写。
+					只有下列开关会写入 Revision；引用检索 / Realtime / Web
+					搜索的写入入口尚未对管理员开放，亦不会在保存时被改写。
 				</p>
 			</header>
 			{EDITABLE_CAPABILITIES.map(({ key, label, description, experimental }) => (
@@ -508,11 +505,7 @@ export function AgentForm({ draft, onEdit, models = [] }: AgentFormProps): React
 			<ModelSection
 				draft={draft}
 				onEdit={onEdit}
-				catalog={
-					models.length === 0
-						? { kind: "loaded", items: [] }
-						: { kind: "loaded", items: models }
-				}
+				catalog={models.length === 0 ? { kind: "loaded", items: [] } : { kind: "loaded", items: models }}
 			/>
 			<IoCapabilitiesSection draft={draft} onEdit={onEdit} />
 			<ExtensionsSection draft={draft} onEdit={onEdit} />

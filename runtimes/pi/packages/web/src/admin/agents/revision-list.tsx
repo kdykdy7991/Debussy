@@ -25,7 +25,7 @@ import type {
 	AgentPublicId,
 	ReasoningEffort,
 } from "@earendil-works/pi-protocol";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
 import styles from "./agent-tables.module.css";
 
@@ -51,23 +51,20 @@ type DetailState =
 export function RevisionList({ items, agentId, api }: RevisionListProps): React.ReactElement {
 	const [openKey, setOpenKey] = useState<string | null>(null);
 	const [detail, setDetail] = useState<DetailState>({ kind: "idle" });
-	const [loadedKey, setLoadedKey] = useState<string | null>(null);
+	const detailCache = useRef(new Map<number, AgentDefinitionRevision>());
+	const [retryVersion, setRetryVersion] = useState(0);
 
 	const close = useCallback(() => {
 		setOpenKey(null);
 		setDetail({ kind: "idle" });
-		setLoadedKey(null);
 	}, []);
 
 	useEffect(() => {
 		if (openKey === null) {
 			setDetail({ kind: "idle" });
-			setLoadedKey(null);
 			return;
 		}
-		if (loadedKey === openKey && detail.kind === "loaded") return;
 		let cancelled = false;
-		setDetail({ kind: "loading" });
 		const [agentIdPart, revisionPart] = openKey.split("::");
 		const revision = Number(revisionPart);
 		if (agentIdPart !== agentId || !Number.isFinite(revision) || revision < 1) {
@@ -76,27 +73,27 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 				cancelled = true;
 			};
 		}
-		void api
-			.getRevision(agentId, revision)
+		const cached = detailCache.current.get(revision);
+		if (cached !== undefined) {
+			setDetail({ kind: "loaded", detail: cached });
+			return;
+		}
+		setDetail({ kind: "loading" });
+		void loadRevisionDetail(detailCache.current, api, agentId, revision)
 			.then((res) => {
 				if (cancelled) return;
-				setLoadedKey(openKey);
 				setDetail({ kind: "loaded", detail: res });
 			})
 			.catch((err: unknown) => {
 				if (cancelled) return;
 				const message =
-					err instanceof AgentApiError
-						? err.message
-						: err instanceof Error
-							? err.message
-							: String(err);
+					err instanceof AgentApiError ? err.message : err instanceof Error ? err.message : String(err);
 				setDetail({ kind: "error", message });
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [openKey, loadedKey, detail.kind, agentId, api]);
+	}, [openKey, retryVersion, agentId, api]);
 
 	if (items.length === 0) return <p>暂无 Revision 记录</p>;
 
@@ -119,58 +116,73 @@ export function RevisionList({ items, agentId, api }: RevisionListProps): React.
 					</thead>
 					<tbody>
 						{items.map((rev) => {
-								const key = `${agentId}::${rev.revision}`;
-								const isOpen = openKey === key;
-								const isLatest = rev.revision === latestRevision;
-								return (
-									<Fragment key={key}>
-										<tr className={isLatest ? styles.latestRow : undefined} data-latest={isLatest}>
-											<td>
-												<code className={styles.revisionNumber}>#{rev.revision}</code>
-												{isLatest ? <span className={styles.latestPill}>最新</span> : null}
-											</td>
-											<td>
-												<span className={styles.revisionSummary}>
-													{rev.changeSummary?.trim() ? rev.changeSummary : "—"}
-												</span>
-											</td>
-											<td>{rev.createdAt}</td>
-											<td>{rev.createdBy}</td>
-											<td>{rev.associatedVersionIds.length}</td>
-											<td>
-												<button
-													type="button"
-													aria-expanded={isOpen}
-													onClick={() => (isOpen ? close() : setOpenKey(key))}
-												>
-													{isOpen ? "收起" : "查看 Diff"}
-												</button>
+							const key = `${agentId}::${rev.revision}`;
+							const isOpen = openKey === key;
+							const isLatest = rev.revision === latestRevision;
+							return (
+								<Fragment key={key}>
+									<tr className={isLatest ? styles.latestRow : undefined} data-latest={isLatest}>
+										<td>
+											<code className={styles.revisionNumber}>#{rev.revision}</code>
+											{isLatest ? <span className={styles.latestPill}>最新</span> : null}
+										</td>
+										<td>
+											<span className={styles.revisionSummary}>
+												{rev.changeSummary?.trim() ? rev.changeSummary : "—"}
+											</span>
+										</td>
+										<td>{rev.createdAt}</td>
+										<td>{rev.createdBy}</td>
+										<td>{rev.associatedVersionIds.length}</td>
+										<td>
+											<button
+												type="button"
+												aria-expanded={isOpen}
+												onClick={() => (isOpen ? close() : setOpenKey(key))}
+											>
+												{isOpen ? "收起" : "查看 Diff"}
+											</button>
+										</td>
+									</tr>
+									{isOpen ? (
+										<tr>
+											<td colSpan={6}>
+												<RevisionDetail
+													revision={rev.revision}
+													state={detail}
+													sourceHash={rev.sourceHash}
+													onRetry={() => {
+														detailCache.current.delete(rev.revision);
+														setRetryVersion((version) => version + 1);
+													}}
+												/>
 											</td>
 										</tr>
-										{isOpen ? (
-											<tr>
-												<td colSpan={6}>
-													<RevisionDetail
-														revision={rev.revision}
-														state={detail}
-														sourceHash={rev.sourceHash}
-														onRetry={() => {
-															setLoadedKey(null);
-															setOpenKey(null);
-															setOpenKey(key);
-														}}
-													/>
-												</td>
-											</tr>
-										) : null}
-									</Fragment>
-								);
-							})}
+									) : null}
+								</Fragment>
+							);
+						})}
 					</tbody>
 				</table>
 			</div>
 		</div>
 	);
+}
+
+/**
+ * 获取并缓存单个 Revision 详情。导出用于验证重复展开不会重复请求。
+ */
+export async function loadRevisionDetail(
+	cache: Map<number, AgentDefinitionRevision>,
+	api: Pick<AgentApi, "getRevision">,
+	agentId: AgentPublicId,
+	revision: number,
+): Promise<AgentDefinitionRevision> {
+	const cached = cache.get(revision);
+	if (cached !== undefined) return cached;
+	const loaded = await api.getRevision(agentId, revision);
+	cache.set(revision, loaded);
+	return loaded;
 }
 
 function RevisionDetail({
@@ -228,9 +240,7 @@ function DiffView({ diff }: { diff: NonNullable<AgentDefinitionRevision["diffFro
 			{diff.toolsRemoved.length > 0 ? <p>- 工具: {diff.toolsRemoved.join(", ")}</p> : null}
 			{diff.knowledgeAdded.length > 0 ? <p>+ 知识库: {diff.knowledgeAdded.join(", ")}</p> : null}
 			{diff.knowledgeRemoved.length > 0 ? <p>- 知识库: {diff.knowledgeRemoved.join(", ")}</p> : null}
-			{diff.capabilitiesChanged.length > 0 ? (
-				<p>能力变更: {diff.capabilitiesChanged.join(", ")}</p>
-			) : null}
+			{diff.capabilitiesChanged.length > 0 ? <p>能力变更: {diff.capabilitiesChanged.join(", ")}</p> : null}
 			{diff.promptDelta !== null ? (
 				<details>
 					<summary>Prompt 变更（点击展开）</summary>
