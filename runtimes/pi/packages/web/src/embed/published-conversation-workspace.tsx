@@ -32,6 +32,9 @@ export function PublishedConversationWorkspace(props: {
 	const [query, setQuery] = useState("");
 	const [message, setMessage] = useState("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const composerRef = useRef<HTMLTextAreaElement>(null);
+	const conversationScrollRef = useRef<HTMLDivElement>(null);
+	const followConversationRef = useRef(true);
 	const conversations = useMemo(() => {
 		const needle = query.trim().toLocaleLowerCase();
 		return needle === ""
@@ -43,7 +46,12 @@ export function PublishedConversationWorkspace(props: {
 		if (message.trim() === "" || props.state.sending) return;
 		props.onSend(message);
 		setMessage("");
+		if (composerRef.current) composerRef.current.style.height = "auto";
 	};
+	useEffect(() => {
+		const element = conversationScrollRef.current;
+		if (element && followConversationRef.current) element.scrollTop = element.scrollHeight;
+	}, [props.state.activeId, props.state.messages]);
 	return (
 		<div
 			className={`editorial-shell conversation-workspace conversation-workspace--admin ${sidebarOpen ? "" : "sidebar-collapsed"}`}
@@ -87,7 +95,14 @@ export function PublishedConversationWorkspace(props: {
 						<span>{props.error}</span>
 					</div>
 				) : null}
-				<div className="conversation-scroll">
+				<div
+					className="conversation-scroll"
+					ref={conversationScrollRef}
+					onScroll={() => {
+						const element = conversationScrollRef.current;
+						if (element) followConversationRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+					}}
+				>
 					<article className="conversation-article">
 						<section className="message-flow" aria-live="polite">
 							{props.state.messages.length === 0 ? (
@@ -119,11 +134,16 @@ export function PublishedConversationWorkspace(props: {
 					) : null}
 					<div className="composer-line">
 						<textarea
+							ref={composerRef}
 							rows={1}
 							value={message}
 							disabled={props.state.sending || props.state.activeId === null || props.state.connectionStatus !== "connected"}
 							placeholder={props.state.activeId === null ? "选择或新建一个会话后开始…" : props.state.sending ? "Agent 运行中，可停止后继续输入…" : "Ask anything, or point me at a document…"}
-							onChange={(event) => setMessage(event.target.value)}
+							onChange={(event) => {
+								setMessage(event.target.value);
+								event.target.style.height = "0";
+								event.target.style.height = `${Math.min(event.target.scrollHeight, 240)}px`;
+							}}
 							onKeyDown={(event) => {
 								if (event.key === "Enter" && !event.shiftKey) {
 									event.preventDefault();
