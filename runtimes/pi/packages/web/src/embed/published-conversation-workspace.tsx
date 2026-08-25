@@ -33,6 +33,7 @@ export function PublishedConversationWorkspace(props: {
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [query, setQuery] = useState("");
 	const [message, setMessage] = useState("");
+	const [composerFocused, setComposerFocused] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const composerRef = useRef<HTMLTextAreaElement>(null);
 	const conversationScrollRef = useRef<HTMLDivElement>(null);
@@ -119,7 +120,7 @@ export function PublishedConversationWorkspace(props: {
 						</section>
 					</article>
 				</div>
-				<PublishedAgentPresence sending={props.state.sending} />
+				<PublishedAgentPresence messages={props.state.messages} sending={props.state.sending} composerFocused={composerFocused} />
 			</main>
 			<div className="composer-dock">
 				<form className={`editorial-composer ${props.state.sending ? "running" : ""}`} onSubmit={submit}>
@@ -152,6 +153,8 @@ export function PublishedConversationWorkspace(props: {
 									event.currentTarget.form?.requestSubmit();
 								}
 							}}
+							onFocus={() => setComposerFocused(true)}
+							onBlur={() => setComposerFocused(false)}
 						/>
 					</div>
 					<div className="composer-toolbar">
@@ -229,16 +232,47 @@ function PublishedAttachment({ attachment, onRemove }: { readonly attachment: Ch
  * published data currently carries only the avatar capability toggle, not an
  * image URL or character manifest.
  */
-function PublishedAgentPresence({ sending }: { readonly sending: boolean }): React.JSX.Element {
+function PublishedAgentPresence({
+	messages,
+	sending,
+	composerFocused,
+}: {
+	readonly messages: readonly ChatMessage[];
+	readonly sending: boolean;
+	readonly composerFocused: boolean;
+}): React.JSX.Element {
 	const [waking, setWaking] = useState(true);
+	const [showCompleted, setShowCompleted] = useState(false);
+	const previousSendingRef = useRef(sending);
 	useEffect(() => {
 		void preloadAgentStatusAvatar();
 		const timer = window.setTimeout(() => setWaking(false), 800);
 		return () => window.clearTimeout(timer);
 	}, []);
+	useEffect(() => {
+		if (previousSendingRef.current && !sending) setShowCompleted(true);
+		previousSendingRef.current = sending;
+	}, [sending]);
+	useEffect(() => {
+		if (!showCompleted) return undefined;
+		const timer = window.setTimeout(() => setShowCompleted(false), 1000);
+		return () => window.clearTimeout(timer);
+	}, [showCompleted]);
+	const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+	const state = waking
+		? "waking"
+		: sending
+			? latestAssistant?.streaming
+				? "writing"
+				: "loading"
+			: showCompleted
+				? "completed"
+				: composerFocused
+					? "waiting"
+					: "idle";
 	return (
 		<div className="active-agent-presence" aria-label="智能体状态">
-			<AgentStatusAvatar state={waking ? "waking" : sending ? "loading" : "idle"} />
+			<AgentStatusAvatar state={state} />
 		</div>
 	);
 }
