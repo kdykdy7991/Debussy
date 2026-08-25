@@ -522,4 +522,38 @@ describe.skipIf(!pgUp)("control service", () => {
 		if (!result.ok) return;
 		expect(result.data.revision).toBeGreaterThan(imported.data.revision);
 	});
+
+	test("saveAgentRevision preserves the unique catalog provider for publishing", async () => {
+		const imported = await service.importAgent({ tenantId: tenantA }, source(baseConfig()));
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const result = await service.saveAgentRevision({
+			tenantId: tenantA,
+			agentDefinitionId: imported.data.agentDefinitionId,
+			request: {
+				modelId: "pi-chat",
+				systemPrompt: "Use the catalog model.",
+				parameters: {},
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: {
+					liveSpeech: false,
+					avatar: false,
+					attachments: false,
+					citations: false,
+					realtime: false,
+					webSearch: false,
+				},
+				changeSummary: "preserve provider",
+			},
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		const saved = await repos.agentDefinitions.getRevision(
+			{ tenantId: tenantA },
+			imported.data.agentDefinitionId,
+			result.data.revision,
+		);
+		expect((saved?.draftConfig as AgentDraftConfig).model?.provider).toBe("skdy");
+	});
 });

@@ -1006,10 +1006,16 @@ export class ControlService {
 
 	/** Internal: convert a save request to the persisted `AgentDraftConfig` shape. */
 	private requestToDraft(request: SaveAgentRevisionRequest): AgentDraftConfig {
+		const matchingModels = this.catalog.models.filter((model) => model.modelId === (request.modelId ?? ""));
+		// The current editor request carries a model id, not a provider id. Preserve
+		// the catalog provider when that id is unambiguous; otherwise retain the
+		// sentinel so publishing rejects an ambiguous or unknown model instead of
+		// silently selecting one.
+		const provider = matchingModels.length === 1 ? matchingModels[0]!.provider : "platform";
 		return {
 			prompt: request.systemPrompt,
 			model: {
-				provider: "platform",
+				provider,
 				modelId: request.modelId ?? "",
 				params: request.parameters as unknown as Readonly<Record<string, unknown>>,
 			},
