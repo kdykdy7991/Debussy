@@ -2,10 +2,12 @@
  * Conversation HTTP API（spec 27.5 / 8.2，TASK-016）。
  *
  * 端点：
- * - `POST   /api/embed/v1/conversations`             创建（服务端固定版本；Idempotency-Key）
- * - `GET    /api/embed/v1/conversations`             列表（opaque cursor 分页）
- * - `GET    /api/embed/v1/conversations/:id`         会话 + 增量事件恢复
- * - `POST   /api/embed/v1/conversations/:id/archive` 归档
+ * - `POST   /api/embed/v1/conversations`                              创建（服务端固定版本；Idempotency-Key）
+ * - `GET    /api/embed/v1/conversations`                              列表（opaque cursor 分页）
+ * - `GET    /api/embed/v1/conversations/:id`                          会话 + 增量事件恢复
+ * - `POST   /api/embed/v1/conversations/:id/archive`                  归档
+ * - `GET    /api/embed/v1/conversations/:id/reasoning`               会话 reasoning 状态读取
+ * - `PUT    /api/embed/v1/conversations/:id/reasoning`               会话 reasoning effort 覆盖
  *
  * 每个请求先经 `EmbedAuthenticator` 认证（Bearer Access Token，失败统一
  * 401），再以 Principal 为 scope 走 `ConversationService`；HTTP 层只负责
@@ -337,6 +339,21 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		jsonBody(ctx.response, 200, { data: result.data, requestId: ctx.requestId });
 	}
 
+	async function getReasoningRoute(ctx: RouteContext): Promise<void> {
+		const conversationId = parseConversationId(ctx);
+		if (conversationId === null) return;
+		const result = await service.getConversationReasoning({ principal: ctx.principal, conversationId });
+		if (!result.ok) {
+			jsonBody(
+				ctx.response,
+				result.error.httpStatus,
+				errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
+			);
+			return;
+		}
+		jsonBody(ctx.response, 200, { data: result.data, requestId: ctx.requestId });
+	}
+
 	async function archiveRoute(ctx: RouteContext): Promise<void> {
 		const conversationId = parseConversationId(ctx);
 		if (conversationId === null) return;
@@ -534,6 +551,8 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		if (archiveMatch !== null) return { conversationId: archiveMatch[1], handler: archiveRoute };
 		const reasoningMatch = method === "PUT" ? pathname.match(REASONING_PATTERN) : null;
 		if (reasoningMatch !== null) return { conversationId: reasoningMatch[1], handler: updateReasoningRoute };
+		const reasoningGetMatch = method === "GET" ? pathname.match(REASONING_PATTERN) : null;
+		if (reasoningGetMatch !== null) return { conversationId: reasoningGetMatch[1], handler: getReasoningRoute };
 		const devTurnMatch = method === "POST" ? pathname.match(DEV_TURN_PATTERN) : null;
 		if (devTurnMatch !== null) return { conversationId: devTurnMatch[1], handler: devTurnRoute };
 		const wsTicketMatch = method === "POST" ? pathname.match(WS_TICKET_PATTERN) : null;

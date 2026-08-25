@@ -102,11 +102,14 @@ function ctxFor(principalId: PrincipalId, over: Partial<EmbedAuthContext> = {}):
 let client: PostgresClient;
 let repos: PublishingRepositories;
 let tenantId: TenantId;
+let otherTenantId: TenantId;
 let appId: PublishedAppId;
 let versionId: PublishedAppVersionId;
+let noCapVersionId: PublishedAppVersionId;
 let ownerPrincipalId: PrincipalId;
 let otherPrincipalId: PrincipalId;
 let conversationId: ConversationId;
+let legacyConversationId: ConversationId;
 let otherConversationId: ConversationId;
 let accessTokens: AccessTokenService;
 let service: ConversationService;
@@ -178,6 +181,7 @@ describe.skipIf(!pgUp)("embed conversation reasoning (owner surface)", () => {
 		await runMigrations(client);
 		repos = createPublishingRepositories(client);
 		tenantId = newTenantId();
+		otherTenantId = newTenantId();
 		const now = new Date();
 		await repos.tenants.upsert({
 			tenantId,
@@ -275,6 +279,29 @@ describe.skipIf(!pgUp)("embed conversation reasoning (owner surface)", () => {
 		otherConversationId = newConversationId();
 		await repos.conversations.insert(makeConv(conversationId, ownerPrincipalId));
 		await repos.conversations.insert(makeConv(otherConversationId, otherPrincipalId));
+
+		// Capability-less pinned version + conversation: GET reasoning must
+		// surface pinnedCapability:null / configurable:false (unsupported).
+		noCapVersionId = newPublishedAppVersionId();
+		const noCapSpec = buildSpec(noCapVersionId, "Qwen3.8-Agent") as {
+			agent: { model: { parameterCapabilities?: unknown } };
+		};
+		delete noCapSpec.agent.model.parameterCapabilities;
+		await repos.publishedAppVersions.insert({
+			publishedAppVersionId: noCapVersionId,
+			tenantId,
+			publishedAppId: appId,
+			versionNumber: 2,
+			sourceAgentRevision: 1,
+			snapshot: { prompt: "hi" },
+			runtimeSpec: noCapSpec,
+			runtimeSpecHash: "b".repeat(64),
+			createdAt: now,
+			status: "ready",
+			validationErrors: [],
+		});
+		legacyConversationId = newConversationId();
+		await repos.conversations.insert({ ...makeConv(legacyConversationId, ownerPrincipalId), publishedAppVersionId: noCapVersionId });
 
 		const tokenKeys = await generateKeyPair("Ed25519");
 		accessTokens = new AccessTokenService({
@@ -443,6 +470,101 @@ describe.skipIf(!pgUp)("embed conversation reasoning (owner surface)", () => {
 			"PUT",
 			`/api/embed/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
 			{ effort: "low" },
+			{ authorization: `Bearer ${token}` },
+		);
+		expect(res.status).toBe(404);
+		expect(res.error?.code).toBe("CONVERSATION_NOT_FOUND");
+	});
+
+	test("service getConversationReasoning: cross-tenant reference is 404 CONVERSATION_NOT_FOUND", async () => {
+		const result = await service.getConversationReasoning({
+			principal: ctxFor(ownerPrincipalId, { tenantId: otherTenantId, publishedAppId: appId }),
+			conversationId,
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.code).toBe("CONVERSATION_NOT_FOUND");
+	});
+
+	test("service getConversationReasoning: cross-owner reference is 404 CONVERSATION_NOT_FOUND", async () => {
+		const result = await service.getConversationReasoning({
+			principal: ctxFor(otherPrincipalId),
+			conversationId,
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.code).toBe("CONVERSATION_NOT_FOUND");
+	});
+
+	test("HTTP GET /reasoning: 401 without a token", async () => {
+		const res = await httpCall(
+			"GET",
+			`/api/embed/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
+		);
+		expect(res.status).toBe(401);
+	});
+
+	test("HTTP GET /reasoning: ready state reads null override with capability snapshot", async () => {
+		await service.setConversationReasoning({
+			principal: ctxFor(ownerPrincipalId),
+			conversationId,
+			request: { effort: null },
+		});
+		const token = await signToken(ownerPrincipalId);
+		const res = await httpCall(
+			"GET",
+			`/api/embed/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
+			undefined,
+			{ authorization: `Bearer ${token}` },
+		);
+		expect(res.status).toBe(200);
+		expect(res.requestId).toBeTruthy();
+		const data = res.data as { effort: string | null; configurable: boolean; pinnedCapability: unknown };
+		expect(data.effort).toBeNull();
+		expect(data.configurable).toBe(true);
+		expect(data.pinnedCapability).toMatchObject({
+			modelId: "Qwen3.8-Agent",
+			reasoning: { supported: true, efforts: ["low", "medium", "high"] },
+		});
+	});
+
+	test("HTTP GET /reasoning: returns the persisted override value", async () => {
+		await service.setConversationReasoning({
+			principal: ctxFor(ownerPrincipalId),
+			conversationId,
+			request: { effort: "high" },
+		});
+		const token = await signToken(ownerPrincipalId);
+		const res = await httpCall(
+			"GET",
+			`/api/embed/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
+			undefined,
+			{ authorization: `Bearer ${token}` },
+		);
+		expect(res.status).toBe(200);
+		expect((res.data as { effort: string }).effort).toBe("high");
+	});
+
+	test("HTTP GET /reasoning: null capability (unsupported pinned version) reads configurable:false", async () => {
+		const token = await signToken(ownerPrincipalId);
+		const res = await httpCall(
+			"GET",
+			`/api/embed/v1/conversations/${toPublicId("ConversationId", legacyConversationId)}/reasoning`,
+			undefined,
+			{ authorization: `Bearer ${token}` },
+		);
+		expect(res.status).toBe(200);
+		const data = res.data as { effort: string | null; configurable: boolean; pinnedCapability: unknown };
+		expect(data.pinnedCapability).toBeNull();
+		expect(data.configurable).toBe(false);
+	});
+
+	test("HTTP GET /reasoning: cross-owner is a uniform 404 CONVERSATION_NOT_FOUND", async () => {
+		const token = await signToken(otherPrincipalId);
+		const res = await httpCall(
+			"GET",
+			`/api/embed/v1/conversations/${toPublicId("ConversationId", conversationId)}/reasoning`,
+			undefined,
 			{ authorization: `Bearer ${token}` },
 		);
 		expect(res.status).toBe(404);

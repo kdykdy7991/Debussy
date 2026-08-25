@@ -16,6 +16,7 @@
  */
 import type {
 	Citation,
+	ConversationPublicId,
 	ConversationReasoningState,
 	ConversationRollover,
 	ReasoningUpdateRequest,
@@ -30,7 +31,7 @@ import {
 } from "@earendil-works/pi-protocol";
 import { estimateContextSnapshot } from "../../agent-v2/context.ts";
 import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
-import { applyConversationReasoning } from "../../agent-v2/reasoning.ts";
+import { applyConversationReasoning, reasoningCapabilitiesForVersion } from "../../agent-v2/reasoning.ts";
 import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
 import {
 	appNotFound,
@@ -47,6 +48,7 @@ import {
 	newConversationSummaryId,
 	newTurnId,
 	type RequestId,
+	toPublicId,
 	type TurnId,
 } from "../../publishing/domain/ids.ts";
 import type {
@@ -314,6 +316,41 @@ export class ConversationService {
 		});
 		if (!result.ok) return { ok: false, error: new EmbedError(result.code, result.message) };
 		return { ok: true, data: result.data };
+	}
+
+	/**
+	 * GET conversation reasoning effort (Agent V2 §4.3, embed owner surface).
+	 * Reads the dedicated fact source `conversation_reasoning_state` and the
+	 * conversation's PINNED published version capability (frozen at publish
+	 * time, not the live LLM catalog). This is the recover path for the
+	 * "刷新/重连可恢复" requirement: a fresh reload restores the current
+	 * override from here. Resolution is via the embed owner scope, so a
+	 * non-owner or cross-app reference yields a uniform CONVERSATION_NOT_FOUND
+	 * (404) like every other embed conversation operation.
+	 */
+	async getConversationReasoning(input: {
+		readonly principal: EmbedAuthContext;
+		readonly conversationId: ConversationId;
+	}): Promise<ConversationResult<ConversationReasoningState>> {
+		const scope = ownerScope(input.principal);
+		const record = await this.repos.conversations.get(scope, input.conversationId);
+		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		const state = await this.repos.conversationReasoning.get(scope, input.conversationId);
+		const pinnedCapability = await reasoningCapabilitiesForVersion(
+			this.repos,
+			{ tenantId: record.tenantId, publishedAppId: record.publishedAppId },
+			record.publishedAppVersionId,
+		);
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				effort: state?.effort ?? null,
+				updatedAt: (state?.updatedAt ?? record.lastActiveAt).toISOString(),
+				configurable: pinnedCapability !== null,
+				pinnedCapability,
+			},
+		};
 	}
 
 	/**
