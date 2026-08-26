@@ -15,31 +15,23 @@
  *    保留 Phase 1 的 mock 状态和 UI
  */
 
-import {
-	type ChangeEvent,
-	type CSSProperties,
-	type ReactNode,
-	useCallback,
-	useEffect,
-	useMemo,
-	useState,
-} from "react";
-import { type AgentConfigSnapshot, type AgentPublicId } from "@earendil-works/pi-protocol";
-import { AdminAuthController } from "../publishing/auth-controller.ts";
-import { AgentApi, AgentApiError } from "../admin/api/agent-api.ts";
-import { AppApi } from "../admin/api/app-api.ts";
-import { newIdempotencyKey } from "../admin/api/idempotency.ts";
+import type { AgentConfigSnapshot, AgentPublicId } from "@earendil-works/pi-protocol";
+import { type ChangeEvent, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
 	type AgentState,
-	buildSaveRequest,
 	beginSave,
+	buildSaveRequest,
 	editDraft,
 	initialAgentState,
 	saveFailed,
 	saveSucceeded,
 } from "../admin/agents/agent-state.ts";
-import { AdminAuthProvider, useAdminAuth } from "../admin/auth/admin-auth-context.tsx";
+import { AgentApi, AgentApiError } from "../admin/api/agent-api.ts";
+import { AppApi } from "../admin/api/app-api.ts";
+import { newIdempotencyKey } from "../admin/api/idempotency.ts";
 import { PublishDrawer } from "../admin/apps/publish-drawer.tsx";
+import { AdminAuthProvider, useAdminAuth } from "../admin/auth/admin-auth-context.tsx";
+import { AdminAuthController } from "../publishing/auth-controller.ts";
 import "./agent-design.css";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -87,8 +79,7 @@ function useAgentIdFromUrl(): AgentPublicId {
 
 const MOCK_AGENT = {
 	name: "合同审查助手",
-	description:
-		"专业的合同审查 AI 助手，帮助法务团队快速识别风险条款、合规问题，并提供修改建议。",
+	description: "专业的合同审查 AI 助手，帮助法务团队快速识别风险条款、合规问题，并提供修改建议。",
 	welcome:
 		"您好！我是合同审查助手。\n\n您可以上传合同文件，我会帮您识别潜在风险、合规问题，并给出修改建议。\n\n请告诉我您需要关注的重点，或直接上传文件开始审查。",
 	suggestedQuestions: [
@@ -337,21 +328,8 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
 
 function BrandMark({ size = 22 }: { size?: number }) {
 	return (
-		<svg
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="none"
-			xmlns="http://www.w3.org/2000/svg"
-			aria-hidden
-		>
-			<path
-				d="M5 5h14L5 19h14"
-				stroke="#f3efe6"
-				strokeWidth="2.4"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-			/>
+		<svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+			<path d="M5 5h14L5 19h14" stroke="#f3efe6" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
 		</svg>
 	);
 }
@@ -514,10 +492,7 @@ function SecondaryNav() {
 			<ul className="adp-subnav__list">
 				{SECONDARY_NAV.map((it, i) => (
 					<li key={it.id}>
-						<button
-							type="button"
-							className={`adp-subnav__item${i === 0 ? " is-active" : ""}`}
-						>
+						<button type="button" className={`adp-subnav__item${i === 0 ? " is-active" : ""}`}>
 							<span className="adp-subnav__icon">
 								<Icon name={it.icon} size={16} />
 							</span>
@@ -534,15 +509,7 @@ function SecondaryNav() {
 // Center config editor
 // ────────────────────────────────────────────────────────────────────────────
 
-function FieldLabel({
-	required,
-	hint,
-	children,
-}: {
-	required?: boolean;
-	hint?: string;
-	children: ReactNode;
-}) {
+function FieldLabel({ required, hint, children }: { required?: boolean; hint?: string; children: ReactNode }) {
 	return (
 		<div className="adp-field__label">
 			{required ? <span className="adp-field__req">*</span> : null}
@@ -633,10 +600,7 @@ function ConfigEditor({
 					<span className="adp-field__hint">（capabilities.avatar · 上传前端 mock）</span>
 				</div>
 				<div className="adp-avatar-row">
-					<div
-						className={`adp-avatar-existing${avatarEnabled ? "" : " is-off"}`}
-						aria-label="当前形象"
-					>
+					<div className={`adp-avatar-existing${avatarEnabled ? "" : " is-off"}`} aria-label="当前形象">
 						<Icon name="scale" size={28} />
 					</div>
 					<button
@@ -762,7 +726,9 @@ function ChatPreview({ title }: ChatPreviewProps) {
 						<ol className="adp-thinking__list">
 							{MOCK_CHAT.thinkingItems.map((it, i) => (
 								<li key={i} className="adp-thinking__item">
-									<div className="adp-thinking__num">{i + 1}. {it.title}</div>
+									<div className="adp-thinking__num">
+										{i + 1}. {it.title}
+									</div>
 									<ul className="adp-thinking__sub">
 										<li>{it.body}</li>
 									</ul>
@@ -795,7 +761,9 @@ function ChatPreview({ title }: ChatPreviewProps) {
 						<span className="adp-tool__label">分析维度</span>
 						<div className="adp-tool__cats">
 							{MOCK_CHAT.toolCall.categories.map((c) => (
-								<span key={c} className="adp-tool__cat">{c}</span>
+								<span key={c} className="adp-tool__cat">
+									{c}
+								</span>
 							))}
 						</div>
 					</div>
@@ -821,11 +789,7 @@ function ChatPreview({ title }: ChatPreviewProps) {
 
 			<div className="adp-composer">
 				<div className="adp-composer__box">
-					<input
-						type="text"
-						className="adp-composer__input"
-						placeholder="输入消息…"
-					/>
+					<input type="text" className="adp-composer__input" placeholder="输入消息…" />
 					<div className="adp-composer__icons">
 						<button type="button" className="adp-composer__icon" aria-label="附件">
 							<Icon name="paperclip" size={16} />
@@ -1001,12 +965,7 @@ export function AgentDesignContent({ agentId }: { agentId: AgentPublicId }): Rea
 			setAgentState(saveSucceeded(advanced, advanced.draft, nextRevision));
 			setWelcomeBaseline(welcome);
 		} catch (err: unknown) {
-			const msg =
-				err instanceof AgentApiError
-					? err.message
-					: err instanceof Error
-						? err.message
-						: "保存失败";
+			const msg = err instanceof AgentApiError ? err.message : err instanceof Error ? err.message : "保存失败";
 			setAgentState(saveFailed(advanced, msg));
 		}
 	}, [agent, agentState, controller, welcome]);
@@ -1061,11 +1020,7 @@ export function AgentDesignContent({ agentId }: { agentId: AgentPublicId }): Rea
 					saveDisabled={!canSave}
 					publishDisabled={!canPublish}
 					saveTitle={
-						loadError
-							? `保存可能失败：${loadError}`
-							: welcomeDirty
-								? "保存欢迎语到后端"
-								: "没有需要保存的更改"
+						loadError ? `保存可能失败：${loadError}` : welcomeDirty ? "保存欢迎语到后端" : "没有需要保存的更改"
 					}
 					onSave={handleSave}
 					onPublish={handlePublish}
@@ -1073,8 +1028,8 @@ export function AgentDesignContent({ agentId }: { agentId: AgentPublicId }): Rea
 				{loadError ? (
 					<div className="adp-banner" role="status">
 						<span className="adp-banner__dot" />
-						后端未连接（{loadError}）— 显示 Phase 1 视觉示例数据。修改仍可保存，
-						保存动作会真实调用 <code>POST /api/control/v1/agent-definitions/.../revisions</code>。
+						后端未连接（{loadError}）— 显示 Phase 1 视觉示例数据。修改仍可保存， 保存动作会真实调用{" "}
+						<code>POST /api/control/v1/agent-definitions/.../revisions</code>。
 					</div>
 				) : null}
 				<div className="adp-body">

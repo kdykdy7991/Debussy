@@ -76,7 +76,7 @@ export interface ControlHttpHandlerOptions {
 }
 
 interface Route {
-	readonly method: "GET" | "POST" | "PUT";
+	readonly method: "GET" | "POST" | "PUT" | "DELETE";
 	readonly pattern: RegExp;
 	readonly operation: string;
 	readonly handler: (ctx: {
@@ -397,6 +397,21 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				const detail = await service.getPublishedAppDetail({ tenantId, publishedAppId });
 				if (!detail.ok) return serviceError(detail.error, requestId);
 				return { status: 200, body: { data: detail.data, requestId } };
+			},
+		},
+		{
+			method: "DELETE",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)$/,
+			operation: "published-apps.delete",
+			handler: async ({ requestId, body, params }) => {
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				const confirmName =
+					body !== null && typeof body === "object" ? (body as Record<string, unknown>).confirmName : undefined;
+				if (typeof confirmName !== "string") return badRequest("confirmName must be a string", requestId);
+				const result = await service.deletePublishedApp({ tenantId, publishedAppId, confirmName });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
 			},
 		},
 		{
@@ -785,6 +800,21 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			},
 		},
 		{
+			method: "DELETE",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)$/,
+			operation: "agent-definitions.delete",
+			handler: async ({ requestId, body, params }) => {
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				const confirmName =
+					body !== null && typeof body === "object" ? (body as Record<string, unknown>).confirmName : undefined;
+				if (typeof confirmName !== "string") return badRequest("confirmName must be a string", requestId);
+				const result = await service.deleteAgentDefinition({ tenantId, agentDefinitionId, confirmName });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)\/revisions$/,
 			operation: "agent-definitions.list-revisions",
@@ -836,6 +866,8 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 					tenantId,
 					agentDefinitionId,
 					request: {
+						name: typeof draft.name === "string" ? draft.name : undefined,
+						description: typeof draft.description === "string" ? draft.description : undefined,
 						modelId: typeof draft.modelId === "string" ? draft.modelId : null,
 						systemPrompt: typeof draft.systemPrompt === "string" ? draft.systemPrompt : "",
 						parameters:

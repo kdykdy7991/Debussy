@@ -4,7 +4,7 @@
  * Purely file + runtime: writes to a temp models.json and reloads through a
  * fake model runtime, so it needs no Postgres / live agent.
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
@@ -59,6 +59,35 @@ describe("createLlmConfigStore", () => {
 	it("lists nothing when models.json is absent", async () => {
 		world = makeWorld();
 		expect(await world.store.list()).toEqual([]);
+	});
+
+	it("lists an existing runtime provider that has no display name", async () => {
+		world = makeWorld();
+		writeFileSync(
+			join(world.agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					oneapi: {
+						baseUrl: "http://127.0.0.1:3000/v1",
+						api: "openai-completions",
+						apiKey: "$ONEAPI_KEY",
+						models: [{ id: "Qwen" }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+
+		await expect(world.store.list()).resolves.toEqual([
+			{
+				id: "oneapi",
+				name: "oneapi",
+				baseUrl: "http://127.0.0.1:3000/v1",
+				api: "openai-completions",
+				models: ["Qwen"],
+				apiKeyConfigured: true,
+			},
+		]);
 	});
 
 	it("upserts a provider, writes to models.json, masks the key, and reloads", async () => {
@@ -148,5 +177,39 @@ describe("createLlmConfigStore", () => {
 		expect(Object.keys(onDisk.providers ?? {})).toEqual(["p1", "p2"]);
 		// p1's key survives the unrelated p2 write.
 		expect((onDisk.providers!.p1 as { apiKey?: string }).apiKey).toBe("$P1_KEY");
+	});
+
+	it("preserves provider and model capability metadata when editing basic fields", async () => {
+		world = makeWorld();
+		writeFileSync(
+			join(world.agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					oneapi: {
+						name: "Old",
+						baseUrl: "https://old.example.com/v1",
+						api: "openai-completions",
+						compat: { supportsStore: false },
+						models: [{ id: "Qwen", reasoning: true, thinkingLevelMap: { high: "xhigh" } }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+
+		await world.store.upsert({
+			id: "oneapi",
+			name: "OneAPI",
+			baseUrl: "https://new.example.com/v1",
+			api: "openai-completions",
+			models: ["Qwen"],
+		});
+
+		const provider = readModelsJson(world.agentDir).providers?.oneapi as {
+			compat?: unknown;
+			models?: readonly { thinkingLevelMap?: unknown }[];
+		};
+		expect(provider.compat).toEqual({ supportsStore: false });
+		expect(provider.models?.[0]?.thinkingLevelMap).toEqual({ high: "xhigh" });
 	});
 });

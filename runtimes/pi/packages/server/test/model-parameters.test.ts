@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import {
 	modelParameterCapabilities,
 	resolveModelStreamOptions,
-	resolveReasoningEffort,
 	validateModelParameters,
 	withConversationEffort,
 } from "../src/model-parameters.ts";
@@ -53,13 +52,13 @@ describe("model parameters", () => {
 		expect(resolved.streamOptions).toEqual({});
 	});
 
-	test("uses Qwen3.8 xhigh when thinking is enabled without an explicit effort", () => {
-		expect(resolveModelStreamOptions({ reasoning: { enabled: true } }, "Qwen3.8-Agent").thinkingLevel).toBe("xhigh");
+	test("keeps the stable high product tier when thinking is enabled without an explicit effort", () => {
+		expect(resolveModelStreamOptions({ reasoning: { enabled: true } }, "Qwen3.8-Agent").thinkingLevel).toBe("high");
 	});
 
 	test("uses the complete Qwen3.8 thinking preset by default", () => {
 		const resolved = resolveModelStreamOptions({}, "Qwen3.8-Agent");
-		expect(resolved.thinkingLevel).toBe("xhigh");
+		expect(resolved.thinkingLevel).toBe("high");
 		expect(resolved.streamOptions).toMatchObject({
 			temperature: 1,
 			samplingParams: {
@@ -80,10 +79,10 @@ describe("model parameters", () => {
 		});
 	});
 
-	test("maps the stable high product tier to Qwen3.8 xhigh", () => {
+	test("keeps product tiers model-independent until the provider request is built", () => {
 		expect(
 			resolveModelStreamOptions({ reasoning: { enabled: true, effort: "high" } }, "Qwen3.8-Agent").thinkingLevel,
-		).toBe("xhigh");
+		).toBe("high");
 		expect(
 			resolveModelStreamOptions({ reasoning: { enabled: true, effort: "high" } }, "generic-reasoner").thinkingLevel,
 		).toBe("high");
@@ -110,14 +109,6 @@ describe("model parameters", () => {
 		);
 	});
 
-	test("resolveReasoningEffort maps stable tiers to concrete model levels", () => {
-		expect(resolveReasoningEffort("high", "Qwen3.8-Agent")).toBe("xhigh");
-		expect(resolveReasoningEffort("minimal", "Qwen3.8-Agent")).toBe("low");
-		expect(resolveReasoningEffort("max", "Qwen3.8-Agent")).toBe("xhigh");
-		expect(resolveReasoningEffort("high", "generic-reasoner")).toBe("high");
-		expect(resolveReasoningEffort("medium", "generic-reasoner")).toBe("medium");
-	});
-
 	test("conversation effort override takes precedence over Revision config and default", () => {
 		// 会话覆盖为 null → 回落 Revision 参数（未改动原对象）。
 		expect(withConversationEffort({ reasoning: { effort: "low" } }, null)).toEqual({ reasoning: { effort: "low" } });
@@ -135,10 +126,8 @@ describe("model parameters", () => {
 			resolveModelStreamOptions(withConversationEffort({ reasoning: { effort: "low" } }, "high"), "generic-reasoner")
 				.thinkingLevel,
 		).toBe("high");
-		// 会话覆盖在 Qwen3.8 上仍走模型映射（high→xhigh）。
-		expect(resolveModelStreamOptions(withConversationEffort({}, "high"), "Qwen3.8-Agent").thinkingLevel).toBe(
-			"xhigh",
-		);
+		// 会话只保存产品档位；provider 在构建请求时按当前模型映射。
+		expect(resolveModelStreamOptions(withConversationEffort({}, "high"), "Qwen3.8-Agent").thinkingLevel).toBe("high");
 	});
 
 	test("withConversationEffort refuses nothing and only shapes reasoning fields", () => {

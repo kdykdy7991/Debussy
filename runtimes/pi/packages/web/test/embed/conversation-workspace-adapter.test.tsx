@@ -1,6 +1,6 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { EmbedChatController, EmbedChatState } from "../../src/embed/chat-controller.ts";
 import {

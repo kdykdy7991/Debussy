@@ -59,6 +59,7 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 		case "agent-detail":
 			return "agents";
 		case "apps":
+		case "app-create":
 		case "app-detail":
 			return "apps";
 		case "usage":
@@ -85,6 +86,7 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 		case "agent-detail":
 			return <AdminAgentsPage route={route} />;
 		case "apps":
+		case "app-create":
 		case "app-detail":
 			return <AdminAppsPage route={route} />;
 		case "usage":

@@ -488,12 +488,10 @@ describe("ConversationsApi", () => {
 			// 协议 `ReasoningEffort` union 内的字符串，模拟 wire 上的非法档位。
 			// `as never` 让前端类型系统放行（协议不允许构造非法值，但服务端是
 			// 终极权威，所以测试断言服务端能正确拒绝并把错误码透传）。
-			const thrown = await api
-				.putReasoning("conv_r3", { effort: "wrong" as never })
-				.then(
-					() => null,
-					(err: unknown) => err,
-				);
+			const thrown = await api.putReasoning("conv_r3", { effort: "wrong" as never }).then(
+				() => null,
+				(err: unknown) => err,
+			);
 			expect(thrown).not.toBeNull();
 			expect((thrown as { code: string }).code).toBe("REASONING_INVALID_EFFORT");
 			// 422 在 HTTP 兜底里是不可重试的，与协议表一致；
@@ -669,12 +667,10 @@ describe("ConversationsApi", () => {
 
 				const callerController = new AbortController();
 				// 同样：立即 attach rejection handler
-				const p = api
-					.putReasoning("conv_to_put2", { effort: "high" }, callerController.signal)
-					.then(
-						() => null as unknown,
-						(e: unknown) => e as unknown,
-					);
+				const p = api.putReasoning("conv_to_put2", { effort: "high" }, callerController.signal).then(
+					() => null as unknown,
+					(e: unknown) => e as unknown,
+				);
 				// 在超时前由 caller 触发 abort
 				callerController.abort();
 				const err = await p;
@@ -685,17 +681,18 @@ describe("ConversationsApi", () => {
 			it("30s 内的成功响应不会被 timer 误中止（cleanup 正常）", async () => {
 				vi.useFakeTimers();
 				try {
-					const fetchMock = vi.fn(async () =>
-						new Response(
-							JSON.stringify({
-								data: {
-									conversationId: "conv_ok",
-									effort: "low",
-									updatedAt: "2026-08-24T00:00:00.000Z",
-								},
-								requestId: "req_ok",
-							}),
-						),
+					const fetchMock = vi.fn(
+						async () =>
+							new Response(
+								JSON.stringify({
+									data: {
+										conversationId: "conv_ok",
+										effort: "low",
+										updatedAt: "2026-08-24T00:00:00.000Z",
+									},
+									requestId: "req_ok",
+								}),
+							),
 					);
 					const api = new ConversationsApi({
 						auth: controller,

@@ -22,6 +22,7 @@ export type AdminRouteId =
 	| "agents"
 	| "agent-detail"
 	| "apps"
+	| "app-create"
 	| "app-detail"
 	| "usage"
 	| "user-conversations"
@@ -67,6 +68,9 @@ export function parseRoute(path: string): AdminRoute {
 	}
 	if (path === r.apps) {
 		return { id: "apps", path: r.apps, params: {} };
+	}
+	if (path === `${r.apps}/new`) {
+		return { id: "app-create", path, params: {} };
 	}
 	if (path.startsWith(`${r.apps}/`)) {
 		const id = path.slice(r.apps.length + 1);

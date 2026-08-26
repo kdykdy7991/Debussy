@@ -23,6 +23,7 @@ import { AdminAppShell } from "./app-shell.tsx";
 import "./styles.css";
 import { UiPreviewAgentDesign } from "../ui-preview/agent-design.tsx";
 import "../ui-preview/agent-design.css";
+import { AgentRedesignPreview } from "../ui-preview/agent-redesign.tsx";
 
 const root = document.getElementById("root");
 
@@ -31,10 +32,17 @@ if (!root) {
 }
 
 const pathname = window.location.pathname;
+const preview = new URLSearchParams(window.location.search).get("preview");
 const redirect = legacyPublishingRedirect(pathname);
 if (redirect !== null) {
 	const target = `${pathname.startsWith("/publishing/") ? "/" : ""}${redirect}`;
 	window.location.replace(target);
+} else if (pathname.startsWith("/ui-preview/agent-redesign") || preview === "agent-redesign") {
+	createRoot(root).render(
+		<StrictMode>
+			<AgentRedesignPreview />
+		</StrictMode>,
+	);
 } else if (pathname.startsWith("/ui-preview/")) {
 	// UI preview routes bypass the AppShell entirely and render standalone
 	// (no auth, no app sidebar, no project UI chrome).

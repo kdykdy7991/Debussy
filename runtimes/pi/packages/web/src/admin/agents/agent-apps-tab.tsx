@@ -9,8 +9,8 @@
  */
 import type { AgentDefinitionAssociatedApp, AgentPublicId } from "@earendil-works/pi-protocol";
 import { useEffect, useState } from "react";
-import { AgentApi } from "../api/agent-api.ts";
-import { AppApi } from "../api/app-api.ts";
+import type { AgentApi } from "../api/agent-api.ts";
+import type { AppApi } from "../api/app-api.ts";
 import { AuroraButton } from "../aurora/index.ts";
 import { navigate } from "../router.ts";
 import styles from "./agent-tables.module.css";
@@ -46,7 +46,12 @@ export function AgentAppsTab({ agentId, agentApi, appApi }: AgentAppsTabProps): 
 		};
 	}, [agentId, agentApi]);
 
-	if (load.kind === "loading") return <p aria-busy="true" className={styles.stateBox}>正在加载关联应用…</p>;
+	if (load.kind === "loading")
+		return (
+			<p aria-busy="true" className={styles.stateBox}>
+				正在加载关联应用…
+			</p>
+		);
 	if (load.kind === "error")
 		return (
 			<div role="alert" className={styles.errorBox}>

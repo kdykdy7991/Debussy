@@ -301,7 +301,10 @@ describe.skipIf(!pgUp)("embed conversation reasoning (owner surface)", () => {
 			validationErrors: [],
 		});
 		legacyConversationId = newConversationId();
-		await repos.conversations.insert({ ...makeConv(legacyConversationId, ownerPrincipalId), publishedAppVersionId: noCapVersionId });
+		await repos.conversations.insert({
+			...makeConv(legacyConversationId, ownerPrincipalId),
+			publishedAppVersionId: noCapVersionId,
+		});
 
 		const tokenKeys = await generateKeyPair("Ed25519");
 		accessTokens = new AccessTokenService({

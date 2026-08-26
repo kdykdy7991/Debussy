@@ -161,7 +161,8 @@ describe("pi runtime adapter", () => {
 		});
 		const result = await adapter.open(spec, scope("conv-params"));
 		expect(result.ok).toBe(true);
-		expect(calls[0]?.thinkingLevel).toBe("xhigh");
+		// Runtime keeps the product tier; the selected model maps high to its provider value later.
+		expect(calls[0]?.thinkingLevel).toBe("high");
 		expect(calls[0]?.streamOptions?.temperature).toBe(1);
 		expect(calls[0]?.streamOptions?.samplingParams).toMatchObject({
 			top_p: 0.95,

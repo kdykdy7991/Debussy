@@ -44,7 +44,7 @@ export interface AppApiOptions {
 }
 
 interface RequestOptions {
-	readonly method: "GET" | "POST";
+	readonly method: "GET" | "POST" | "DELETE";
 	readonly path: string;
 	readonly body?: unknown;
 	readonly idempotencyKey?: string;
@@ -154,6 +154,15 @@ export class AppApi {
 		return this.request({
 			method: "GET",
 			path: `/api/control/v1/published-apps/${encodeURIComponent(appId)}`,
+		});
+	}
+
+	deletePublishedApp(appId: string, confirmName: string): Promise<{ readonly deleted: true }> {
+		return this.request({
+			method: "DELETE",
+			path: `/api/control/v1/published-apps/${encodeURIComponent(appId)}`,
+			body: { confirmName },
+			idempotencyKey: this.randomKey(),
 		});
 	}
 

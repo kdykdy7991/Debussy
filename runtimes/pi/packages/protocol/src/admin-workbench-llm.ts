@@ -64,6 +64,8 @@ export interface LlmAvailableModel {
 	readonly name: string;
 	readonly api: string;
 	readonly reasoning: boolean;
+	/** Provider-specific values used for the console's low / medium / high tiers. */
+	readonly thinkingLevelMap?: Readonly<Record<string, string | null>>;
 	readonly parameterCapabilities: ModelParameterCapabilities;
 }
 

@@ -68,6 +68,18 @@ function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean 
 	return false;
 }
 
+function logOneApiRequestBody(
+	model: Model<"openai-completions">,
+	params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+	env?: ProviderEnv,
+): void {
+	if (model.provider !== "oneapi" || getProviderEnvValue("PI_LOG_ONEAPI_REQUEST_BODY", env) !== "true") return;
+
+	// Intentionally log the body only: credentials live in headers and must never be printed.
+	// This is opt-in because messages and tool arguments can contain sensitive user data.
+	console.info(`[pi:oneapi-request-body] ${JSON.stringify(params)}`);
+}
+
 function getClientApiKey(provider: string, apiKey: string | undefined, headers: ProviderHeaders | undefined): string {
 	if (apiKey) return apiKey;
 	if (hasHeader(headers, "authorization") || hasHeader(headers, "cf-aig-authorization")) return "unused";
@@ -240,7 +252,10 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				maxRetries: 0,
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.chat.completions.create(params, requestOptions).withResponse(),
+				() => {
+					logOneApiRequestBody(model, params, options?.env);
+					return client.chat.completions.create(params, requestOptions).withResponse();
+				},
 				{
 					maxRetries: options?.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs,

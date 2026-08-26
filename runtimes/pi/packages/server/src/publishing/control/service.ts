@@ -251,6 +251,11 @@ export type ControlErrorCode =
 	| "LLM_CONFIG_UNAVAILABLE" // Custom LLM console disabled (503)
 	| "INVALID_LLM_CONFIG" // Custom LLM provider failed validation (400)
 	| "INVALID_MODEL_PARAMETERS" // Agent model parameters failed capability validation (400)
+	| "INVALID_AGENT_NAME" // Agent name failed length validation (400)
+	| "INVALID_AGENT_DESCRIPTION" // Agent description failed length validation (400)
+	| "AGENT_HAS_ASSOCIATED_APPS" // Agent cannot be deleted while applications reference it (409)
+	| "DELETE_NOT_SUPPORTED" // Repository does not implement subject deletion (501)
+	| "DELETE_CONFIRMATION_MISMATCH" // Confirmation name does not match the resource (400)
 	| "METRICS_UNAVAILABLE" // Agent V2 metrics subsystem disabled/unavailable (503)
 	| "CONTEXT_SNAPSHOT_UNAVAILABLE" // Agent V2 context snapshot subsystem unavailable (503)
 	| "INVALID_METRICS_FILTER" // metrics/context query params invalid (422)
@@ -787,6 +792,45 @@ export class ControlService {
 		};
 	}
 
+	async deleteAgentDefinition(input: {
+		readonly tenantId: TenantId;
+		readonly agentDefinitionId: AgentDefinitionId;
+		readonly confirmName: string;
+	}): Promise<ControlResult<{ readonly deleted: true }>> {
+		const latest = await this.repos.agentDefinitions.getLatest({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (latest === undefined) return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		if (input.confirmName !== latest.name)
+			return fail("DELETE_CONFIRMATION_MISMATCH", 400, "confirmation name does not match the Agent name");
+		const hasAssociatedApps =
+			this.repos.publishedApps.hasActiveForAgent === undefined
+				? (await this.repos.publishedApps.list({ scope: { tenantId: input.tenantId }, limit: 200 })).some(
+						(app) => app.agentDefinitionId === input.agentDefinitionId,
+					)
+				: await this.repos.publishedApps.hasActiveForAgent({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (hasAssociatedApps)
+			return fail("AGENT_HAS_ASSOCIATED_APPS", 409, "Agent is still associated with one or more applications");
+		if (this.repos.agentDefinitions.softDelete === undefined)
+			return fail("DELETE_NOT_SUPPORTED", 501, "Agent deletion is not supported by this repository");
+		await this.repos.agentDefinitions.softDelete({ tenantId: input.tenantId }, input.agentDefinitionId);
+		return { ok: true, data: { deleted: true } };
+	}
+
+	async deletePublishedApp(input: {
+		readonly tenantId: TenantId;
+		readonly publishedAppId: PublishedAppId;
+		readonly confirmName: string;
+	}): Promise<ControlResult<{ readonly deleted: true }>> {
+		const scope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(scope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+		if (input.confirmName !== app.name)
+			return fail("DELETE_CONFIRMATION_MISMATCH", 400, "confirmation name does not match the application name");
+		if (this.repos.publishedApps.softDelete === undefined)
+			return fail("DELETE_NOT_SUPPORTED", 501, "application deletion is not supported by this repository");
+		await this.repos.publishedApps.softDelete(scope, input.publishedAppId);
+		return { ok: true, data: { deleted: true } };
+	}
+
 	/** WB-003: list all immutable revisions of an agent, newest first. */
 	async listAgentDefinitionRevisions(input: {
 		readonly tenantId: TenantId;
@@ -851,6 +895,13 @@ export class ControlService {
 		if (latest === undefined) {
 			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		}
+		const name = input.request.name?.trim() ?? latest.name;
+		if (name.length === 0 || name.length > 100) {
+			return fail("INVALID_AGENT_NAME", 400, "name must contain 1 to 100 characters");
+		}
+		if ((input.request.description?.length ?? 0) > 300) {
+			return fail("INVALID_AGENT_DESCRIPTION", 400, "description must contain at most 300 characters");
+		}
 		const availableModels = this.llm === undefined ? [] : await this.llm.listAvailableModels();
 		const selectedModel = availableModels.find((model) => model.id === input.request.modelId);
 		const parameterCapabilities =
@@ -871,7 +922,7 @@ export class ControlService {
 		await this.repos.agentDefinitions.insert({
 			agentDefinitionId: input.agentDefinitionId,
 			tenantId: input.tenantId,
-			name: latest.name,
+			name,
 			revision: nextRevision,
 			draftConfig: draft,
 			sourceHash,
@@ -935,10 +986,11 @@ export class ControlService {
 		associatedAppCount: number,
 	): AgentDefinitionDetail {
 		const snapshot = this.draftToSnapshot(record.draftConfig);
+		const draft = (record.draftConfig ?? {}) as Partial<AgentDraftConfig>;
 		return {
 			id: toPublicId("AgentDefinitionId", record.agentDefinitionId) as AgentDefinitionDetail["id"],
 			name: record.name,
-			description: null,
+			description: typeof draft.description === "string" ? draft.description : null,
 			currentRevision: record.revision,
 			modelId: snapshot.modelId,
 			systemPrompt: snapshot.systemPrompt,
@@ -1013,6 +1065,7 @@ export class ControlService {
 		// silently selecting one.
 		const provider = matchingModels.length === 1 ? matchingModels[0]!.provider : "platform";
 		return {
+			description: request.description ?? "",
 			prompt: request.systemPrompt,
 			model: {
 				provider,

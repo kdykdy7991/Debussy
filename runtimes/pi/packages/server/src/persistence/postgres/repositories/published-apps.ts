@@ -67,14 +67,17 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 			// is out of scope and indistinguishable from a missing resource.
 			if (scope.publishedAppId !== publishedAppId) return undefined;
 			const rows = await client.run(
-				"select * from published_apps where id = $1 and tenant_id = $2",
+				"select * from published_apps where id = $1 and tenant_id = $2 and deleted_at is null",
 				publishedAppId,
 				scope.tenantId,
 			);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
 		},
 		async getByPublicAppId(publicAppId) {
-			const rows = await client.run("select * from published_apps where public_app_id = $1", publicAppId);
+			const rows = await client.run(
+				"select * from published_apps where public_app_id = $1 and deleted_at is null",
+				publicAppId,
+			);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
 		},
 		async list(params: PublishedAppListParams) {
@@ -99,7 +102,7 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 			const limitIndex = values.length + 1;
 			const rows = await client.run(
 				`select * from published_apps
-				 where tenant_id = $1 ${statusWhere} ${cursorWhere}
+				 where tenant_id = $1 and deleted_at is null ${statusWhere} ${cursorWhere}
 				 order by created_at desc, id desc
 				 limit $${limitIndex}`,
 				...values,
@@ -185,10 +188,25 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 		},
 		async count(scope: TenantScope) {
 			const rows = await client.run(
-				"select count(*)::int as cnt from published_apps where tenant_id = $1",
+				"select count(*)::int as cnt from published_apps where tenant_id = $1 and deleted_at is null",
 				scope.tenantId,
 			);
 			return Number(rows[0]?.cnt ?? 0);
+		},
+		async softDelete(scope, publishedAppId) {
+			await client.run(
+				"update published_apps set deleted_at = now(), status = 'archived', updated_at = now() where id = $1 and tenant_id = $2 and deleted_at is null",
+				publishedAppId,
+				scope.tenantId,
+			);
+		},
+		async hasActiveForAgent(scope, agentDefinitionId) {
+			const rows = await client.run(
+				"select 1 from published_apps where tenant_id = $1 and agent_definition_id = $2 and deleted_at is null limit 1",
+				scope.tenantId,
+				agentDefinitionId,
+			);
+			return rows.length > 0;
 		},
 	};
 }

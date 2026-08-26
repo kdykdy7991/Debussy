@@ -1,5 +1,6 @@
 import { PiClient } from "@earendil-works/pi-client";
 import type {
+	AgentDefinitionDetail,
 	AgentDefinitionSummary,
 	AgentPublicId,
 	LlmAvailableModel,
@@ -40,36 +41,63 @@ interface ChatRuntime {
 	readonly sessions: SessionController;
 }
 
+function requestedAgentIdFromHash(): AgentPublicId | null {
+	if (typeof window === "undefined") return null;
+	const queryIndex = window.location.hash.indexOf("?");
+	if (queryIndex === -1) return null;
+	const value = new URLSearchParams(window.location.hash.slice(queryIndex + 1)).get("agentId");
+	return value !== null && /^agent_[0-9a-fA-F-]{36}$/.test(value) ? (value as AgentPublicId) : null;
+}
+
 function ThinkingControl({
 	model,
 	sessions,
+	defaultEffort,
 }: {
 	readonly model: LlmAvailableModel;
 	readonly sessions: SessionController;
+	readonly defaultEffort?: ThinkingLevel;
 }) {
 	const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot);
 	const active = snapshot.activeSession;
 	const efforts = productReasoningEfforts(model.parameterCapabilities.reasoning.efforts);
 	if (efforts.length === 0) return null;
+	const enabled = active?.thinkingLevel !== "off";
 	const selectedEffort = efforts.some((effort) => effort.value === active?.thinkingLevel)
 		? active?.thinkingLevel
-		: (efforts.find((effort) => effort.label === "中")?.value ?? efforts[0]?.value ?? "");
+		: defaultEffort && efforts.some((effort) => effort.value === defaultEffort)
+			? defaultEffort
+			: (model.parameterCapabilities.reasoning.defaultEffort ?? efforts[0]?.value ?? "");
 	return (
-		<label>
-			<span>思考强度</span>
-			<select
-				aria-label="思考强度"
-				value={selectedEffort}
-				disabled={!active || active.phase !== "idle"}
-				onChange={(event) => void sessions.setThinking(event.currentTarget.value as ThinkingLevel)}
-			>
-				{efforts.map((effort) => (
-					<option key={effort.value} value={effort.value}>
-						{effort.label}
-					</option>
-				))}
-			</select>
-		</label>
+		<>
+			<label className="admin-thinking-switch">
+				<span>深度思考</span>
+				<input
+					type="checkbox"
+					checked={enabled}
+					disabled={!active || active.phase !== "idle"}
+					onChange={(event) =>
+						void sessions.setThinking(event.currentTarget.checked ? (selectedEffort as ThinkingLevel) : "off")
+					}
+				/>
+				<i aria-hidden="true" />
+			</label>
+			<label>
+				<span>思考强度</span>
+				<select
+					aria-label="思考强度"
+					value={selectedEffort}
+					disabled={!active || active.phase !== "idle" || !enabled}
+					onChange={(event) => void sessions.setThinking(event.currentTarget.value as ThinkingLevel)}
+				>
+					{efforts.map((effort) => (
+						<option key={effort.value} value={effort.value}>
+							{effort.label}
+						</option>
+					))}
+				</select>
+			</label>
+		</>
 	);
 }
 
@@ -114,10 +142,12 @@ export function AdminChatPage(): React.ReactElement {
 	const agentApiRef = useRef(new AgentApi({ auth: controller })).current;
 	const llmApiRef = useRef(new LlmApi({ auth: controller })).current;
 	const debugSessionsRef = useRef(createDebugSessionStore()).current;
+	const requestedAgentIdRef = useRef(requestedAgentIdFromHash()).current;
 	const [agents, setAgents] = useState<AgentListState>({ kind: "loading" });
 	const [models, setModels] = useState<ModelsState>({ kind: "loading" });
 	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null);
 	const [selectedAgentId, setSelectedAgentId] = useState<AgentPublicId | null>(null);
+	const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDefinitionDetail | null>(null);
 	const [runtime, setRuntime] = useState<ChatRuntime | null>(null);
 
 	useEffect(() => {
@@ -134,7 +164,12 @@ export function AdminChatPage(): React.ReactElement {
 					hasDraft: false,
 				}));
 				setAgents({ kind: "loaded", items });
-				setSelectedAgentId((current) => current ?? items[0]?.id ?? null);
+				setSelectedAgentId((current) => {
+					if (requestedAgentIdRef !== null && items.some((item) => item.id === requestedAgentIdRef)) {
+						return requestedAgentIdRef;
+					}
+					return current ?? items[0]?.id ?? null;
+				});
 			},
 			(error: unknown) => {
 				if (cancelled) return;
@@ -147,7 +182,7 @@ export function AdminChatPage(): React.ReactElement {
 		return () => {
 			cancelled = true;
 		};
-	}, [agentApiRef, auth.state]);
+	}, [agentApiRef, auth.state, requestedAgentIdRef]);
 
 	useEffect(() => {
 		if (auth.state !== "connected") return;
@@ -169,6 +204,30 @@ export function AdminChatPage(): React.ReactElement {
 			cancelled = true;
 		};
 	}, [llmApiRef, auth.state]);
+
+	useEffect(() => {
+		if (auth.state !== "connected" || selectedAgentId === null) {
+			setSelectedAgentDetail(null);
+			return;
+		}
+		let cancelled = false;
+		void agentApiRef.getAgentDetail(selectedAgentId).then(
+			(detail) => {
+				if (cancelled) return;
+				setSelectedAgentDetail(detail);
+				if (models.kind === "loaded" && detail.modelId !== null) {
+					const model = models.items.find((item) => item.id === detail.modelId);
+					if (model !== undefined) setSelectedModel({ provider: model.provider, id: model.id });
+				}
+			},
+			() => {
+				if (!cancelled) setSelectedAgentDetail(null);
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [agentApiRef, auth.state, models, selectedAgentId]);
 
 	useEffect(() => {
 		if (auth.state !== "connected") {
@@ -221,22 +280,33 @@ export function AdminChatPage(): React.ReactElement {
 		});
 		void (async () => {
 			await runtime.connection.connect();
+			const applyAgentThinking = async () => {
+				const reasoning = selectedAgentDetail?.parameters.reasoning;
+				const thinkingLevel = reasoning?.enabled === false ? "off" : reasoning?.effort;
+				if (selectedAgentDetail?.id === selectedAgentId && thinkingLevel !== undefined) {
+					await runtime.sessions.setThinking(thinkingLevel as ThinkingLevel);
+				}
+			};
 			const remembered = debugSessionsRef.get(selectedAgentId);
 			if (remembered) {
 				try {
 					await runtime.sessions.selectSession(remembered);
+					await applyAgentThinking();
 					return;
 				} catch {
 					debugSessionsRef.clear(selectedAgentId);
 				}
 			}
-			if (!cancelled) await runtime.sessions.createSession(selectedModel ?? undefined);
+			if (!cancelled) {
+				await runtime.sessions.createSession(selectedModel ?? undefined);
+				await applyAgentThinking();
+			}
 		})().catch(() => {});
 		return () => {
 			cancelled = true;
 			unsubscribe();
 		};
-	}, [debugSessionsRef, runtime, selectedAgentId, selectedModel]);
+	}, [debugSessionsRef, runtime, selectedAgentDetail, selectedAgentId, selectedModel]);
 
 	if (auth.state !== "connected") {
 		return <ChatConnectionState auth={auth} />;
@@ -311,7 +381,11 @@ export function AdminChatPage(): React.ReactElement {
 						</select>
 					</label>
 					{selectedModelMetadata ? (
-						<ThinkingControl model={selectedModelMetadata} sessions={runtime.sessions} />
+						<ThinkingControl
+							model={selectedModelMetadata}
+							sessions={runtime.sessions}
+							defaultEffort={selectedAgentDetail?.parameters.reasoning?.effort as ThinkingLevel | undefined}
+						/>
 					) : null}
 					<span className="workspace-revision">Revision #{selected?.currentRevision ?? "—"}</span>
 				</>

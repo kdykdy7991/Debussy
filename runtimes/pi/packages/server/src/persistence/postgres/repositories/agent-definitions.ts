@@ -54,7 +54,7 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 		},
 		async getRevision(scope, agentDefinitionId, revision) {
 			const rows = await client.run(
-				"select * from agent_definitions where id = $1 and tenant_id = $2 and revision = $3",
+				"select * from agent_definitions where id = $1 and tenant_id = $2 and revision = $3 and deleted_at is null",
 				agentDefinitionId,
 				scope.tenantId,
 				revision,
@@ -63,7 +63,7 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 		},
 		async getLatest(scope, agentDefinitionId) {
 			const rows = await client.run(
-				"select * from agent_definitions where id = $1 and tenant_id = $2 order by revision desc limit 1",
+				"select * from agent_definitions where id = $1 and tenant_id = $2 and deleted_at is null order by revision desc limit 1",
 				agentDefinitionId,
 				scope.tenantId,
 			);
@@ -71,7 +71,7 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 		},
 		async getLatestByName(scope, name) {
 			const rows = await client.run(
-				"select * from agent_definitions where tenant_id = $1 and name = $2 order by revision desc limit 1",
+				"select * from agent_definitions where tenant_id = $1 and name = $2 and deleted_at is null order by revision desc limit 1",
 				scope.tenantId,
 				name,
 			);
@@ -96,8 +96,8 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 			values.push(limit + 1);
 			const limitIndex = values.length;
 			const base = params.includeRevisions
-				? "select * from agent_definitions where tenant_id = $1"
-				: "select * from (select distinct on (id) * from agent_definitions where tenant_id = $1 order by id, revision desc) latest";
+				? "select * from agent_definitions where tenant_id = $1 and deleted_at is null"
+				: "select * from (select distinct on (id) * from agent_definitions where tenant_id = $1 and deleted_at is null order by id, revision desc) latest";
 			const rows = await client.run(
 				`${base}
 				 ${cursorWhere}
@@ -106,6 +106,13 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 				...values,
 			);
 			return rows.map((row) => toListRow(row));
+		},
+		async softDelete(scope, agentDefinitionId) {
+			await client.run(
+				"update agent_definitions set deleted_at = now(), updated_at = now() where id = $1 and tenant_id = $2 and deleted_at is null",
+				agentDefinitionId,
+				scope.tenantId,
+			);
 		},
 	};
 }

@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EmbedApi, EmbedApiError } from "./api.ts";
 import { EmbedAuthController } from "./auth-controller.ts";
 import { EmbedChatController } from "./chat-controller.ts";
+import { EmbedConversationWorkspace } from "./conversation-workspace-adapter.tsx";
 import { EmbedShell } from "./embed-shell.tsx";
 import { EmbedErrorState } from "./error-state.tsx";
 import { EmbedPostMessageChannel } from "./post-message.ts";
-import { EmbedConversationWorkspace } from "./conversation-workspace-adapter.tsx";
 import type { WebSocketLike } from "./realtime-transport.ts";
 import type { BootstrapResponse } from "./types.ts";
 
@@ -212,7 +212,8 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		);
 	}
 	const chatController = controllersRef.current?.chat;
-	if (chatController === undefined) return <EmbedErrorState message="会话控制器未就绪" onRetry={() => window.location.reload()} />;
+	if (chatController === undefined)
+		return <EmbedErrorState message="会话控制器未就绪" onRetry={() => window.location.reload()} />;
 	return <EmbedConversationWorkspace title={summary.name} controller={chatController} />;
 	/* Legacy EmbedShell fallback retained below temporarily for migration reference.
 	return (

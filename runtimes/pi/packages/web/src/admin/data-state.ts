@@ -44,11 +44,7 @@ export type DataState<T> =
  * 不能被 `UNKNOWN_ERROR` 兜底吃掉。`isKnownErrorCode` 守卫仅识别协议
  * 子集，transport code 由 `readCode` 内联识别。
  */
-export type KnownErrorCode =
-	| AgentV2MetricsErrorCode
-	| AgentV2ReasoningErrorCode
-	| "REQUEST_TIMEOUT"
-	| "UNKNOWN_ERROR";
+export type KnownErrorCode = AgentV2MetricsErrorCode | AgentV2ReasoningErrorCode | "REQUEST_TIMEOUT" | "UNKNOWN_ERROR";
 
 /**
  * 已知错误码 → HTTP/retryable 映射（metrics + reasoning 联合）。

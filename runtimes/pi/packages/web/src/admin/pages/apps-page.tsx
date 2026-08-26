@@ -13,6 +13,7 @@ import { AppsListView } from "../aurora/apps-list-view.tsx";
 import type { AdminRoute } from "../router.ts";
 
 export function AdminAppsPage({ route }: { route: AdminRoute }): React.ReactElement {
+	if (route.id === "app-create") return <AdminAppDetail />;
 	if (route.id === "app-detail") {
 		const appId = route.params.appId;
 		if (appId === undefined) return <p role="alert">缺少 appId</p>;

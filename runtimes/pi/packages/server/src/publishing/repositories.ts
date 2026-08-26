@@ -263,6 +263,8 @@ export interface AgentDefinitionRepository {
 	getLatestByName(scope: TenantScope, name: string): Promise<AgentDefinitionRecord | undefined>;
 	/** Agent-definition list, newest first, opaque-cursor paginated (ADMIN-001). */
 	list(params: AgentDefinitionListParams): Promise<AgentDefinitionListRow[]>;
+	/** Hide every revision of an Agent while retaining immutable history. */
+	softDelete?(scope: TenantScope, agentDefinitionId: AgentDefinitionId): Promise<void>;
 }
 
 export interface PublishedAppRepository {
@@ -321,6 +323,10 @@ export interface PublishedAppRepository {
 	): Promise<{ readonly ok: boolean; readonly previousVersionId: PublishedAppVersionId | null }>;
 	/** Count published apps in the tenant (dashboard). */
 	count(scope: TenantScope): Promise<number>;
+	/** Remove the app subject from active/public lookup while retaining history. */
+	softDelete?(scope: AppScope, publishedAppId: PublishedAppId): Promise<void>;
+	/** Exact guard used before deleting an Agent; excludes deleted app subjects. */
+	hasActiveForAgent?(scope: TenantScope, agentDefinitionId: AgentDefinitionId): Promise<boolean>;
 }
 
 /** Pending (ready, non-current) version row for dashboard. */

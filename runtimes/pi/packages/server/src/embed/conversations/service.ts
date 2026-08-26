@@ -49,8 +49,8 @@ import {
 	newConversationSummaryId,
 	newTurnId,
 	type RequestId,
-	toPublicId,
 	type TurnId,
+	toPublicId,
 } from "../../publishing/domain/ids.ts";
 import type {
 	ConversationEventInput,

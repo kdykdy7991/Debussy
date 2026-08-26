@@ -111,12 +111,10 @@ describe("EmbedApi.putConversationReasoning（PUT 联调 / 契约 §11）", () =
 			errorResponse("REASONING_INVALID_EFFORT", "effort must be one of the supported tiers", 422),
 		);
 
-		const err: EmbedApiError | null = await api
-			.putConversationReasoning("t", "conv_x", { effort: "xhigh" })
-			.then(
-				() => null as EmbedApiError | null,
-				(e: unknown) => asCaught(e) as EmbedApiError,
-			);
+		const err: EmbedApiError | null = await api.putConversationReasoning("t", "conv_x", { effort: "xhigh" }).then(
+			() => null as EmbedApiError | null,
+			(e: unknown) => asCaught(e) as EmbedApiError,
+		);
 		expect(err).toBeInstanceOf(EmbedApiError);
 		expect(err?.code).toBe("REASONING_INVALID_EFFORT");
 		expect(err?.retryable).toBe(false);
@@ -127,28 +125,22 @@ describe("EmbedApi.putConversationReasoning（PUT 联调 / 契约 §11）", () =
 			errorResponse("REASONING_NOT_CONFIGURABLE", "policy forbids adjusting effort", 403),
 		);
 
-		const err: EmbedApiError | null = await api
-			.putConversationReasoning("t", "conv_p", { effort: "low" })
-			.then(
-				() => null as EmbedApiError | null,
-				(e: unknown) => asCaught(e) as EmbedApiError,
-			);
+		const err: EmbedApiError | null = await api.putConversationReasoning("t", "conv_p", { effort: "low" }).then(
+			() => null as EmbedApiError | null,
+			(e: unknown) => asCaught(e) as EmbedApiError,
+		);
 		expect(err).toBeInstanceOf(EmbedApiError);
 		expect(err?.code).toBe("REASONING_NOT_CONFIGURABLE");
 		expect(err?.retryable).toBe(false);
 	});
 
 	it("404 CONVERSATION_NOT_FOUND 透传（跨属主，Q4 共享码）", async () => {
-		fetchMock.mockResolvedValueOnce(
-			errorResponse("CONVERSATION_NOT_FOUND", "conversation not found", 404),
-		);
+		fetchMock.mockResolvedValueOnce(errorResponse("CONVERSATION_NOT_FOUND", "conversation not found", 404));
 
-		const err: EmbedApiError | null = await api
-			.putConversationReasoning("t", "conv_missing", { effort: "low" })
-			.then(
-				() => null as EmbedApiError | null,
-				(e: unknown) => asCaught(e) as EmbedApiError,
-			);
+		const err: EmbedApiError | null = await api.putConversationReasoning("t", "conv_missing", { effort: "low" }).then(
+			() => null as EmbedApiError | null,
+			(e: unknown) => asCaught(e) as EmbedApiError,
+		);
 		expect(err).toBeInstanceOf(EmbedApiError);
 		expect(err?.code).toBe("CONVERSATION_NOT_FOUND");
 	});
@@ -165,12 +157,10 @@ describe("EmbedApi.putConversationReasoning（PUT 联调 / 契约 §11）", () =
 			});
 
 			// 立即 attach rejection handler，避免 unhandled rejection 警告。
-			const p: Promise<EmbedApiError | null> = api
-				.putConversationReasoning("t", "conv_to", { effort: "high" })
-				.then(
-					() => null as EmbedApiError | null,
-					(e: unknown) => asCaught(e) as EmbedApiError,
-				);
+			const p: Promise<EmbedApiError | null> = api.putConversationReasoning("t", "conv_to", { effort: "high" }).then(
+				() => null as EmbedApiError | null,
+				(e: unknown) => asCaught(e) as EmbedApiError,
+			);
 			await vi.advanceTimersByTimeAsync(30_000);
 			const err: EmbedApiError | null = await p;
 
@@ -193,9 +183,10 @@ describe("EmbedApi.putConversationReasoning（PUT 联调 / 契约 §11）", () =
 		});
 
 		const callerController = new AbortController();
-		const p = api
-			.putConversationReasoning("t", "conv_to2", { effort: "high" }, callerController.signal)
-			.then(() => null as unknown, (e: unknown) => asCaught(e) as unknown);
+		const p = api.putConversationReasoning("t", "conv_to2", { effort: "high" }, callerController.signal).then(
+			() => null as unknown,
+			(e: unknown) => asCaught(e) as unknown,
+		);
 
 		callerController.abort();
 		const err = await p;
@@ -249,12 +240,10 @@ describe("EmbedApi.getConversationReasoning（GET SDK consumer / Q5 待合入）
 		] as const;
 		for (const { code, status } of errCases) {
 			fetchMock.mockResolvedValueOnce(errorResponse(code, code.toLowerCase(), status));
-			const err: EmbedApiError | null = await api
-				.getConversationReasoning("t", "conv_x")
-				.then(
-					() => null as EmbedApiError | null,
-					(e: unknown) => asCaught(e) as EmbedApiError,
-				);
+			const err: EmbedApiError | null = await api.getConversationReasoning("t", "conv_x").then(
+				() => null as EmbedApiError | null,
+				(e: unknown) => asCaught(e) as EmbedApiError,
+			);
 			expect(err).toBeInstanceOf(EmbedApiError);
 			expect(err?.code).toBe(code);
 		}
@@ -271,12 +260,10 @@ describe("EmbedApi.getConversationReasoning（GET SDK consumer / Q5 待合入）
 				});
 			});
 
-			const p = api
-				.getConversationReasoning("t", "conv_to_get")
-				.then(
-					() => null as EmbedApiError | null,
-					(e: unknown) => asCaught(e) as EmbedApiError,
-				);
+			const p = api.getConversationReasoning("t", "conv_to_get").then(
+				() => null as EmbedApiError | null,
+				(e: unknown) => asCaught(e) as EmbedApiError,
+			);
 			await vi.advanceTimersByTimeAsync(30_000);
 			const err: EmbedApiError | null = await p;
 

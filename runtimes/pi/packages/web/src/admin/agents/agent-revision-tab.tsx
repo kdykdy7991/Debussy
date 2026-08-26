@@ -7,9 +7,9 @@
  */
 import type { AgentDefinitionRevision, AgentPublicId } from "@earendil-works/pi-protocol";
 import { useEffect, useState } from "react";
-import { AgentApi } from "../api/agent-api.ts";
-import { RevisionList } from "./revision-list.tsx";
+import type { AgentApi } from "../api/agent-api.ts";
 import styles from "./agent-tables.module.css";
+import { RevisionList } from "./revision-list.tsx";
 
 export interface AgentRevisionTabProps {
 	readonly agentId: AgentPublicId;
@@ -40,7 +40,12 @@ export function AgentRevisionTab({ agentId, api }: AgentRevisionTabProps): React
 		};
 	}, [agentId, api]);
 
-	if (load.kind === "loading") return <p aria-busy="true" className={styles.stateBox}>正在加载 Revision…</p>;
+	if (load.kind === "loading")
+		return (
+			<p aria-busy="true" className={styles.stateBox}>
+				正在加载 Revision…
+			</p>
+		);
 	if (load.kind === "error")
 		return (
 			<div role="alert" className={styles.errorBox}>

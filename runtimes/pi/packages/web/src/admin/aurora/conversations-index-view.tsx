@@ -16,17 +16,7 @@ import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { navigate } from "../router.ts";
 import { readInitialQueryParam } from "../user-conversations/query-params.ts";
 import styles from "./conversations-index-view.module.css";
-import {
-	AuroraButton,
-	AuroraChip,
-	AuroraPageHeader,
-	AuroraPagination,
-	AuroraPill,
-	type AuroraPillTabItem,
-	AuroraPillTabs,
-	AuroraSearchBox,
-	AuroraSessionRow,
-} from "./index.ts";
+import { AuroraPagination } from "./index.ts";
 
 type ListState =
 	| { kind: "loading" }
@@ -232,13 +222,6 @@ const MOCK_CONVERSATIONS: readonly MockConversation[] = [
 	},
 ];
 
-const CHANNEL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-	{ value: "", label: "全部渠道" },
-	{ value: "Web Embed", label: "Web Embed" },
-	{ value: "API", label: "API" },
-	{ value: "Direct", label: "Direct" },
-];
-
 const APP_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 	{ value: "", label: "全部应用" },
 	{ value: "app_demo_001", label: "官网客服" },
@@ -279,16 +262,6 @@ function principalLabel(principalType: string): string {
 		default:
 			return principalType;
 	}
-}
-
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
-
-function formatMs(ms: number): string {
-	return `${(ms / 1000).toFixed(2)}s`;
 }
 
 function formatRelativeTime(s: string): string {
@@ -373,9 +346,9 @@ function mockToDisplay(items: readonly MockConversation[]): readonly DisplayConv
 }
 
 function statusBadge(status: string): React.ReactNode {
-	if (status === "active") return <AuroraPill tone="live">进行中</AuroraPill>;
-	if (status === "archived") return <AuroraPill tone="neutral">已归档</AuroraPill>;
-	return <AuroraPill tone="red">已删除</AuroraPill>;
+	if (status === "active") return <span className={`${styles.status} ${styles.statusActive}`}>进行中</span>;
+	if (status === "archived") return <span className={styles.status}>已结束</span>;
+	return <span className={`${styles.status} ${styles.statusFailed}`}>失败</span>;
 }
 
 export function AdminConversationsIndexView(): React.ReactElement {
@@ -384,15 +357,13 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	const requestSequence = useRef(0);
 	const [state, setState] = useState<ListState>({ kind: "loading" });
 	const [statusTab, setStatusTab] = useState<StatusTab>("all");
-	const [statusFilter, setStatusFilter] = useState("");
 	const [appFilter, setAppFilter] = useState(() => readInitialQueryParam("appId"));
 	const [agentFilter, setAgentFilter] = useState("");
-	const [channelFilter, setChannelFilter] = useState("");
 	const [query, setQuery] = useState("");
 	const [dateFrom, setDateFrom] = useState("");
 	const [dateTo, setDateTo] = useState("");
 	const [page, setPage] = useState(1);
-	const [pageSize, setPageSize] = useState(8);
+	const [pageSize, setPageSize] = useState(20);
 	const [useMock, setUseMock] = useState(false);
 
 	const load = useCallback(
@@ -403,13 +374,10 @@ export function AdminConversationsIndexView(): React.ReactElement {
 				(data) => {
 					if (request === requestSequence.current) setState({ kind: "loaded", data });
 				},
-				(_err: Error) => {
+				(error: Error) => {
 					if (request === requestSequence.current) {
 						setUseMock(true);
-						setState({
-							kind: "loaded",
-							data: { items: [], nextCursor: null, redacted: true },
-						});
+						setState({ kind: "error", message: error.message });
 					}
 				},
 			);
@@ -420,11 +388,11 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	const apiFilters = useMemo<ConversationListArgs>(
 		() => ({
 			limit: 100,
-			status: statusFilter as ConversationListArgs["status"],
+			status: statusTab === "all" ? undefined : statusTab,
 			appId: appFilter,
 			agentId: agentFilter,
 		}),
-		[appFilter, agentFilter, statusFilter],
+		[appFilter, agentFilter, statusTab],
 	);
 
 	useEffect(() => {
@@ -432,194 +400,168 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	}, [apiFilters, load]);
 
 	const rows = useMemo<readonly DisplayConversation[]>(() => {
+		const source = useMock
+			? mockToDisplay(MOCK_CONVERSATIONS)
+			: state.kind === "loaded"
+				? mapApiToDisplay(state.data.items)
+				: [];
 		const needle = query.trim().toLowerCase();
-		if (useMock) {
-			const filtered = MOCK_CONVERSATIONS.filter((m) => {
-				if (statusTab !== "all" && m.status !== statusTab) return false;
-				if (statusFilter && m.status !== statusFilter) return false;
-				if (appFilter && !m.appName.toLowerCase().includes(appFilter.toLowerCase())) return false;
-				if (agentFilter && !m.agentName.toLowerCase().includes(agentFilter.toLowerCase())) return false;
-				if (channelFilter && m.channel !== channelFilter) return false;
-				if (dateFrom && m.lastActiveAt < dateFrom) return false;
-				if (dateTo && m.lastActiveAt > `${dateTo} 23:59`) return false;
-				if (needle === "") return true;
-				return (
-					m.title.toLowerCase().includes(needle) ||
-					m.principalDisplayId.toLowerCase().includes(needle) ||
-					m.appName.toLowerCase().includes(needle)
-				);
-			});
-			return mockToDisplay(filtered);
-		}
-		if (state.kind !== "loaded") return [];
-		const apiRows = mapApiToDisplay(state.data.items).filter((item) => {
+		return source.filter((item) => {
 			if (statusTab !== "all" && item.status !== statusTab) return false;
-			if (needle === "") return true;
+			if (dateFrom && item.lastActiveAt < dateFrom) return false;
+			if (dateTo && item.lastActiveAt > `${dateTo} 23:59`) return false;
 			return (
+				needle === "" ||
+				item.id.toLowerCase().includes(needle) ||
 				item.title.toLowerCase().includes(needle) ||
 				item.principalDisplayId.toLowerCase().includes(needle) ||
 				item.appName.toLowerCase().includes(needle)
 			);
 		});
-		return apiRows;
-	}, [useMock, state, query, statusTab, statusFilter, appFilter, agentFilter, channelFilter, dateFrom, dateTo]);
+	}, [useMock, state, query, statusTab, dateFrom, dateTo]);
 
-	// 分页
 	const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
 	const safePage = Math.min(page, totalPages);
 	const pagedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-	// PillTabs 按状态过滤
-	const statusTabs: AuroraPillTabItem<StatusTab>[] = [
-		{ value: "all", label: STATUS_LABEL.all },
-		{ value: "active", label: STATUS_LABEL.active },
-		{ value: "archived", label: STATUS_LABEL.archived },
-		{ value: "deleted", label: STATUS_LABEL.deleted },
-	];
-
 	return (
 		<section className={styles.shell} aria-label="用户会话列表">
-			<AuroraPageHeader
-				title="Session 日志"
-				description="检索发布后企业用户产生的会话，并追溯固定版本、事件与错误。"
-				meta={useMock ? "示例数据" : undefined}
-				actions={
-					<AuroraButton
-						variant="default"
-						size="md"
-						onClick={() => {
-							setQuery("");
-							setStatusFilter("");
-							setStatusTab("all");
-							setAppFilter("");
-							setAgentFilter("");
-							setChannelFilter("");
-							setDateFrom("");
-							setDateTo("");
-						}}
-					>
-						重置筛选
-					</AuroraButton>
-				}
-			/>
+			<header className={styles.header}>
+				<div>
+					<h1>Session 日志</h1>
+					<p>查看发布应用的真实用户会话，支持搜索与筛选，快速定位会话并排查问题。</p>
+				</div>
+				<button type="button" className={styles.refresh} onClick={() => load(apiFilters)}>
+					<Icon name="refresh" />
+					刷新
+				</button>
+			</header>
 
 			<div className={styles.toolbar}>
-				<AuroraSearchBox value={query} onChange={setQuery} placeholder="搜索用户、会话 ID、关键词…" />
-				<div className={styles.toolbarRight}>
-					<select
-						className={styles.select}
-						value={appFilter}
-						onChange={(e) => setAppFilter(e.currentTarget.value)}
-						aria-label="应用筛选"
-					>
-						{APP_OPTIONS.map((opt) => (
-							<option key={opt.value} value={opt.value}>
-								{opt.label}
-							</option>
-						))}
-					</select>
-					<select
-						className={styles.select}
-						value={agentFilter}
-						onChange={(e) => setAgentFilter(e.currentTarget.value)}
-						aria-label="Agent 筛选"
-					>
-						{AGENT_OPTIONS.map((opt) => (
-							<option key={opt.value} value={opt.value}>
-								{opt.label}
-							</option>
-						))}
-					</select>
-					<select
-						className={styles.select}
-						value={channelFilter}
-						onChange={(e) => setChannelFilter(e.currentTarget.value)}
-						aria-label="渠道筛选"
-					>
-						{CHANNEL_OPTIONS.map((opt) => (
-							<option key={opt.value} value={opt.value}>
-								{opt.label}
-							</option>
-						))}
-					</select>
+				<label className={styles.search}>
+					<Icon name="search" />
 					<input
-						type="date"
-						className={styles.date}
-						value={dateFrom}
-						onChange={(e) => setDateFrom(e.currentTarget.value)}
-						aria-label="起始日期"
+						value={query}
+						onChange={(e) => setQuery(e.currentTarget.value)}
+						placeholder="搜索会话 ID、用户标识或会话内容"
 					/>
-					<input
-						type="date"
-						className={styles.date}
-						value={dateTo}
-						onChange={(e) => setDateTo(e.currentTarget.value)}
-						aria-label="结束日期"
-					/>
-				</div>
+					<kbd>/</kbd>
+				</label>
+				<Filter label="应用">
+					<select value={appFilter} onChange={(e) => setAppFilter(e.currentTarget.value)}>
+						{APP_OPTIONS.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
+					</select>
+				</Filter>
+				<Filter label="Agent">
+					<select value={agentFilter} onChange={(e) => setAgentFilter(e.currentTarget.value)}>
+						{AGENT_OPTIONS.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
+					</select>
+				</Filter>
+				<Filter label="状态">
+					<select value={statusTab} onChange={(e) => setStatusTab(e.currentTarget.value as StatusTab)}>
+						{Object.entries(STATUS_LABEL).map(([value, label]) => (
+							<option key={value} value={value}>
+								{label === "全部" ? "全部状态" : label}
+							</option>
+						))}
+					</select>
+				</Filter>
+				<Filter label="时间范围" wide>
+					<div className={styles.dateRange}>
+						<Icon name="calendar" />
+						<input
+							type="date"
+							value={dateFrom}
+							onChange={(e) => setDateFrom(e.currentTarget.value)}
+							aria-label="开始日期"
+						/>
+						<i>→</i>
+						<input
+							type="date"
+							value={dateTo}
+							onChange={(e) => setDateTo(e.currentTarget.value)}
+							aria-label="结束日期"
+						/>
+					</div>
+				</Filter>
 			</div>
 
-			<div className={styles.tabRow}>
-				<AuroraPillTabs<StatusTab>
-					value={statusTab}
-					onChange={setStatusTab}
-					items={statusTabs}
-					ariaLabel="按状态切换"
-				/>
-				<div className={styles.tabRight}>
-					<AuroraChip active>视图：对话</AuroraChip>
-					<AuroraChip>视图：表格</AuroraChip>
-				</div>
+			<div className={styles.count}>
+				共 <strong>{rows.length.toLocaleString()}</strong> 条会话{useMock ? <span>示例数据</span> : null}
 			</div>
-
-			{state.kind === "loading" && !useMock ? <p className={styles.loading}>加载中…</p> : null}
-
-			{pagedRows.length === 0 ? (
+			{state.kind === "loading" ? <p className={styles.loading}>加载中…</p> : null}
+			{state.kind !== "loading" && pagedRows.length === 0 ? (
 				<div className={styles.empty}>
 					<div className={styles.emptyTitle}>没有匹配的会话</div>
 					<div className={styles.emptyDesc}>尝试调整搜索关键词或筛选条件。</div>
 				</div>
-			) : (
-				<div className={styles.list}>
-					{pagedRows.map((row) => (
-						<AuroraSessionRow
-							key={row.id}
-							when={row.lastRelative}
-							user={row.principalDisplayId}
-							agentBadge={<AuroraPill tone="accent">{row.agentName}</AuroraPill>}
-							channel={`via ${row.appName} · ${row.channel}`}
-							statusBadge={statusBadge(row.status)}
-							userPreview={`${row.title}（${row.principalType}）`}
-							agentPreview={summarizeAgentReply(row)}
-							meta={
-								<>
-									<span>{row.messageCount} 轮</span>
-									<span>{row.tokenTotal > 0 ? formatTokens(row.tokenTotal) : "—"} token</span>
-									<span>{row.avgResponseMs > 0 ? formatMs(row.avgResponseMs) : "—"} 响应</span>
-									{row.errorCount > 0 ? (
-										<span style={{ color: "var(--aurora-red)" }}>{row.errorCount} 次错误</span>
-									) : null}
-								</>
-							}
-							onClick={() => navigate(`/conversations/${row.id}`)}
-							ariaLabel={`打开会话 ${row.id}`}
-						/>
-					))}
+			) : null}
+			{state.kind !== "loading" && pagedRows.length > 0 ? (
+				<div className={styles.tableWrap}>
+					<table>
+						<thead>
+							<tr>
+								<th>会话 ID</th>
+								<th>用户标识</th>
+								<th>应用</th>
+								<th>Agent</th>
+								<th>状态</th>
+								<th>消息数</th>
+								<th>最后活跃时间</th>
+								<th>错误</th>
+								<th aria-label="操作" />
+							</tr>
+						</thead>
+						<tbody>
+							{pagedRows.map((row) => (
+								<tr key={row.id} onClick={() => navigate(`/conversations/${row.id}`)}>
+									<td className={styles.sessionId}>
+										{row.id}
+										<span>»</span>
+									</td>
+									<td>{row.principalDisplayId}</td>
+									<td>{row.appName}</td>
+									<td>{row.agentName}</td>
+									<td>{statusBadge(row.status)}</td>
+									<td>{row.messageCount}</td>
+									<td>{row.lastActiveAt}</td>
+									<td>
+										{row.errorCount > 0 ? (
+											<span className={styles.errorIcon} title={`${row.errorCount} 次错误`}>
+												<Icon name="warning" />
+											</span>
+										) : (
+											"-"
+										)}
+									</td>
+									<td className={styles.chevron}>
+										<Icon name="chevron" />
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
 				</div>
-			)}
+			) : null}
 
 			<footer className={styles.footer}>
-				<div className={styles.totalCount}>
-					共 <strong>{rows.length}</strong> 条会话
-				</div>
+				<div />
 				<AuroraPagination
 					page={safePage}
 					totalPages={totalPages}
 					pageSize={pageSize}
-					pageSizeOptions={[8, 12, 24, 48]}
+					pageSizeOptions={[10, 20, 50, 100]}
 					onPageChange={setPage}
-					onPageSizeChange={(s) => {
-						setPageSize(s);
+					onPageSizeChange={(size) => {
+						setPageSize(size);
 						setPage(1);
 					}}
 				/>
@@ -628,11 +570,54 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	);
 }
 
-function summarizeAgentReply(row: DisplayConversation): string {
-	// 把核心数字拼成一句模拟回复，避免单纯"agent: …"过空。
-	if (row.status === "deleted") return "[会话已删除]";
-	if (row.status === "archived") {
-		return `已结算 · ${row.messageCount} 轮 · ${row.tokenTotal > 0 ? formatTokens(row.tokenTotal) : "—"} token`;
-	}
-	return `响应中 · 当前 ${row.messageCount} 轮 · 平均 ${row.avgResponseMs > 0 ? formatMs(row.avgResponseMs) : "—"}`;
+function Filter({
+	label,
+	wide = false,
+	children,
+}: {
+	label: string;
+	wide?: boolean;
+	children: React.ReactNode;
+}): React.ReactElement {
+	return (
+		<div className={`${styles.filterField} ${wide ? styles.filterWide : ""}`}>
+			<span>{label}</span>
+			{children}
+		</div>
+	);
+}
+
+function Icon({ name }: { name: "search" | "calendar" | "refresh" | "warning" | "chevron" }): React.ReactElement {
+	const paths = {
+		search: (
+			<>
+				<circle cx="11" cy="11" r="7" />
+				<path d="m20 20-4-4" />
+			</>
+		),
+		calendar: (
+			<>
+				<rect x="3" y="5" width="18" height="16" rx="2" />
+				<path d="M16 3v4M8 3v4M3 10h18" />
+			</>
+		),
+		refresh: (
+			<>
+				<path d="M20 11a8 8 0 1 0-2.34 5.66" />
+				<path d="M20 5v6h-6" />
+			</>
+		),
+		warning: (
+			<>
+				<path d="M10.3 3.8 2.2 18a2 2 0 0 0 1.7 3h16.2a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z" />
+				<path d="M12 9v4M12 17h.01" />
+			</>
+		),
+		chevron: <path d="m9 18 6-6-6-6" />,
+	};
+	return (
+		<svg viewBox="0 0 24 24" aria-hidden="true">
+			{paths[name]}
+		</svg>
+	);
 }

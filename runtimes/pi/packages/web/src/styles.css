@@ -215,6 +215,13 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .workspace-context-kicker { color: var(--color-editorial); font: 500 9px var(--font-mono); letter-spacing: .12em; }
 .workspace-context-header label { display: flex; align-items: center; gap: 9px; color: var(--color-text-tertiary); font: 10px var(--font-mono); }
 .workspace-context-header select { min-width: 180px; padding: 7px 28px 7px 10px; border: 1px solid var(--color-border-strong); border-radius: 7px; background: var(--color-bg-content); color: var(--color-text-primary); font: 600 12px var(--font-sans); }
+.workspace-context-header .admin-thinking-switch { position:relative; gap:7px; }
+.admin-thinking-switch input { position:absolute; width:1px; height:1px; opacity:0; }
+.admin-thinking-switch i { position:relative; width:34px; height:19px; border-radius:12px; background:#c8cdd5; cursor:pointer; transition:.15s; }
+.admin-thinking-switch i::after { position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #0003; content:""; transition:.15s; }
+.admin-thinking-switch input:checked + i { background:#171a1f; }
+.admin-thinking-switch input:checked + i::after { transform:translateX(15px); }
+.admin-thinking-switch input:disabled + i { opacity:.5; cursor:not-allowed; }
 .workspace-revision { padding: 5px 9px; border-radius: 20px; background: #e3f0ec; color: var(--color-source); font: 500 10px var(--font-mono); }
 .conversation-workspace--admin .conversation-scroll { height: calc(100vh - 116px); }
 .masthead-group, .masthead-actions { display: flex; align-items: center; gap: 13px; }

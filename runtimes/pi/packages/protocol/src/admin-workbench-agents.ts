@@ -152,6 +152,8 @@ export interface AgentDefinitionAssociatedApp {
  * Idempotency-Key is required for POST writes (spec 8.3).
  */
 export interface SaveAgentRevisionRequest {
+	readonly name?: string;
+	readonly description?: string;
 	readonly modelId: string | null;
 	readonly systemPrompt: string;
 	readonly parameters: AgentModelParameters;

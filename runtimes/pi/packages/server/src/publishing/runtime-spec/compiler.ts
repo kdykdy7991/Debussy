@@ -42,6 +42,8 @@ export interface CapabilityCatalog {
 
 /** The configurable fields of one frozen Agent revision. */
 export interface AgentDraftConfig {
+	/** Console-only metadata retained with the immutable revision. */
+	readonly description?: string;
 	readonly prompt: string;
 	readonly model: {
 		readonly provider: string;

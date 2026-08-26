@@ -81,27 +81,14 @@ export function resolveModelStreamOptions(
 	const configuredEffort =
 		reasoning?.effort ??
 		(reasoning?.enabled === true || (qwen38 && reasoning?.enabled !== false) ? "high" : undefined);
-	const effectiveEffort =
-		configuredEffort === undefined ? undefined : resolveReasoningEffort(configuredEffort, modelId);
 	return {
 		...(reasoning?.enabled === false
 			? { thinkingLevel: "off" as const }
-			: effectiveEffort !== undefined
-				? { thinkingLevel: effectiveEffort as ThinkingLevel }
+			: configuredEffort !== undefined
+				? { thinkingLevel: configuredEffort as ThinkingLevel }
 				: {}),
 		streamOptions: fixedStreamOptions,
 	};
-}
-
-/** Converts stable product tiers to the concrete level understood by a model. */
-export function resolveReasoningEffort(effort: ReasoningEffort, modelId: string): ThinkingLevel {
-	if (isQwen38(modelId)) {
-		if (effort === "high") return "xhigh";
-		// Keep old persisted provider values readable during migration.
-		if (effort === "minimal") return "low";
-		if (effort === "max") return "xhigh";
-	}
-	return effort as ThinkingLevel;
 }
 
 /**

@@ -43,7 +43,7 @@ export class AgentApiError extends Error {
 }
 
 interface RequestOptions {
-	readonly method: "GET" | "POST";
+	readonly method: "GET" | "POST" | "DELETE";
 	readonly path: string;
 	readonly body?: unknown;
 	readonly idempotencyKey?: string;
@@ -128,6 +128,15 @@ export class AgentApi {
 		return this.request({ method: "GET", path: `/api/control/v1/agent-definitions/${agentId}` });
 	}
 
+	deleteAgent(agentId: AgentPublicId, confirmName: string): Promise<{ readonly deleted: true }> {
+		return this.request({
+			method: "DELETE",
+			path: `/api/control/v1/agent-definitions/${agentId}`,
+			body: { confirmName },
+			idempotencyKey: newIdempotencyKey({ operation: "agent.delete" }),
+		});
+	}
+
 	listRevisions(
 		agentId: AgentPublicId,
 		input: { limit: number; cursor?: string },
@@ -150,6 +159,8 @@ export class AgentApi {
 	saveRevision(
 		agentId: AgentPublicId,
 		draft: {
+			name?: string;
+			description?: string;
 			modelId: string | null;
 			systemPrompt: string;
 			parameters: AgentModelParameters;

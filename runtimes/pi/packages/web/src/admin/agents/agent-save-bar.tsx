@@ -6,8 +6,9 @@
  *
  * 该组件不持有状态机 —— 状态由 `AgentWorkspace` 提供。
  */
-import type { AgentState } from "./agent-state.ts";
+
 import { AuroraButton, AuroraPill, type AuroraPillTone } from "../aurora/index.ts";
+import type { AgentState } from "./agent-state.ts";
 import styles from "./agent-workspace.module.css";
 
 export interface AgentSaveBarProps {
@@ -32,12 +33,7 @@ export function AgentSaveBar({
 	const tone = toneFor(state.status);
 	const label = labelFor(state.status);
 	return (
-		<aside
-			className={styles.saveBar}
-			data-state={state.status}
-			role="region"
-			aria-label="保存草稿"
-		>
+		<aside className={styles.saveBar} data-state={state.status} role="region" aria-label="保存草稿">
 			<div className={styles.saveBar__status}>
 				<AuroraPill tone={tone}>{label}</AuroraPill>
 				{state.status === "error" && state.errorMessage !== null ? (

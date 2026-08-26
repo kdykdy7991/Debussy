@@ -23,7 +23,7 @@ interface ModelsJsonProviderEntry {
 	api?: string;
 	apiKey?: string;
 	headers?: Record<string, string>;
-	models?: readonly { id: string; name?: string }[];
+	models?: readonly { id: string; name?: string; [key: string]: unknown }[];
 	[key: string]: unknown;
 }
 
@@ -55,6 +55,7 @@ export interface LlmConfigStore {
 			readonly name: string;
 			readonly api: string;
 			readonly reasoning: boolean;
+			readonly thinkingLevelMap?: Readonly<Record<string, string | null>>;
 			readonly parameterCapabilities: ModelParameterCapabilities;
 		}[]
 	>;
@@ -103,14 +104,15 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 		const models = normalizeModelIds(input.models);
 
 		const file = readConfig();
+		const existing = file.providers?.[input.id] as ModelsJsonProviderEntry | undefined;
 		const entry: ModelsJsonProviderEntry = {
+			...existing,
 			name,
 			baseUrl,
 			api: input.api,
-			models: models.map((id) => ({ id })),
+			models: models.map((id) => ({ ...existing?.models?.find((model) => model.id === id), id })),
 		};
-		// Preserve the existing apiKey + headers unless the caller replaces them.
-		const existing = file.providers?.[input.id] as ModelsJsonProviderEntry | undefined;
+		// Preserve the existing provider and per-model capabilities unless the caller replaces them.
 		if (input.apiKey !== undefined) {
 			if (input.apiKey.trim() === "") throw new Error("apiKey must not be empty when provided");
 			entry.apiKey = input.apiKey;
@@ -150,6 +152,7 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 			readonly name: string;
 			readonly api: string;
 			readonly reasoning: boolean;
+			readonly thinkingLevelMap?: Readonly<Record<string, string | null>>;
 			readonly parameterCapabilities: ModelParameterCapabilities;
 		}[]
 	> {
@@ -161,6 +164,7 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 				name: typeof model.name === "string" ? model.name : model.id,
 				api: model.api,
 				reasoning: model.reasoning === true,
+				thinkingLevelMap: normalizeThinkingLevelMap(model.thinkingLevelMap),
 				parameterCapabilities: modelParameterCapabilities({
 					id: model.id,
 					api: model.api,
@@ -248,12 +252,12 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 }
 
 function toView(id: string, entry: ModelsJsonProviderEntry): CustomLlmProviderView | undefined {
-	const name = entry.name;
 	const baseUrl = entry.baseUrl;
 	const api = entry.api;
-	if (typeof name !== "string" || typeof baseUrl !== "string" || !KNOWN_APIS.includes(api as CustomLlmApi)) {
+	if (typeof baseUrl !== "string" || !KNOWN_APIS.includes(api as CustomLlmApi)) {
 		return undefined;
 	}
+	const name = typeof entry.name === "string" && entry.name.trim() !== "" ? entry.name : id;
 	const models = (entry.models ?? [])
 		.map((model) => (typeof model.id === "string" ? model.id : undefined))
 		.filter((id): id is string => id !== undefined);
@@ -317,4 +321,12 @@ function resolveApiKey(apiKey: string): string {
 		if (value !== undefined && value !== "") return value;
 	}
 	return apiKey;
+}
+
+function normalizeThinkingLevelMap(value: unknown): Readonly<Record<string, string | null>> | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const entries = Object.entries(value).filter(
+		(entry): entry is [string, string | null] => typeof entry[1] === "string" || entry[1] === null,
+	);
+	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }

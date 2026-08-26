@@ -21,7 +21,6 @@ import type {
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
-import { resolveReasoningEffort } from "../model-parameters.ts";
 import type {
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
@@ -144,11 +143,7 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 			throw new PiServerError("invalid_request", `Unknown thinking level: ${thinkingLevel}`);
 		}
 		await this.runOperation(async () => {
-			const resolved =
-				thinkingLevel === "off"
-					? thinkingLevel
-					: resolveReasoningEffort(thinkingLevel, this.agentSession.model?.id ?? "");
-			await this.agentSession.setThinkingLevel(resolved);
+			await this.agentSession.setThinkingLevel(thinkingLevel);
 		});
 	}
 

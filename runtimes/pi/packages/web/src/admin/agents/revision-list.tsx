@@ -26,7 +26,7 @@ import type {
 	ReasoningEffort,
 } from "@earendil-works/pi-protocol";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { AgentApi, AgentApiError } from "../api/agent-api.ts";
+import { type AgentApi, AgentApiError } from "../api/agent-api.ts";
 import styles from "./agent-tables.module.css";
 
 const PROMPT_PREVIEW_LIMIT = 200;

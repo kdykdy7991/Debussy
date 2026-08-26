@@ -15,7 +15,7 @@ import type {
 	SessionPromptPayload,
 	SessionSendResult,
 } from "../lib/session-controller.ts";
-import { type EmbedChatController, type EmbedChatState } from "./chat-controller.ts";
+import type { EmbedChatController, EmbedChatState } from "./chat-controller.ts";
 import type { ChatAttachment, ChatMessage, ConversationSummary } from "./types.ts";
 
 /**
