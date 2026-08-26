@@ -71,8 +71,8 @@
 ## 当前规格
 
 - [Chat 与 Agent 形象状态映射](./chat-agent-state-mapping-2026-08-21.md)（草案）
-- [Agent 平台 V2 实施总计划](./agent-platform-v2/README.md)（可开发）
-  - [前端任务单](./agent-platform-v2/frontend.md)
-  - [后端任务单](./agent-platform-v2/backend.md)
-  - [总架构师验收任务单](./agent-platform-v2/architect-acceptance.md)
+- [Agent 平台 MVP 实施规格](./agent-platform-mvp-2026-08-26.md)（实施中）
+  - [后端任务](./agent-platform-mvp-backend-2026-08-26.md)
+  - [前端任务](./agent-platform-mvp-frontend-2026-08-26.md)
+  - [验收与检查清单](./agent-platform-mvp-acceptance-2026-08-26.md)
 - [Agent 模型参数配置](./model-parameters-2026-08-21.md)（已完成，跨前后端示范）

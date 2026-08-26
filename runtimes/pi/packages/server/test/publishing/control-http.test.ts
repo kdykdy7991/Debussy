@@ -69,6 +69,26 @@ function baseConfig(overrides: Partial<AgentDraftConfig> = {}): AgentDraftConfig
 	};
 }
 
+function createAgentBody(name: string): Record<string, unknown> {
+	return {
+		name,
+		description: "Created over HTTP",
+		modelId: "pi-chat",
+		systemPrompt: "You are an HTTP-created Agent.",
+		parameters: {},
+		toolIds: [],
+		knowledgeBaseIds: [],
+		capabilities: {
+			liveSpeech: false,
+			avatar: false,
+			attachments: false,
+			citations: false,
+			realtime: false,
+			webSearch: false,
+		},
+	};
+}
+
 function httpCall(options: {
 	method: string;
 	path: string;
@@ -205,6 +225,137 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		expect(res.requestId).toBe(res.body.requestId);
 		expect(res.tenantId).toBe(String(adminId));
 		expect(res.tenantName).toBe("bootstrap");
+	});
+
+	test("POST agent-definitions creates revision 1, replays idempotently, and rejects name conflicts", async () => {
+		const headers = { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "create-agent-1" };
+		const first = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions",
+			base: httpBase,
+			headers,
+			body: createAgentBody("http-created-agent"),
+		});
+		expect(first.status).toBe(201);
+		expect(first.body.data.id).toMatch(/^agent_/);
+		expect(first.body.data.revision).toBe(1);
+		expect(first.body.data.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+
+		const replay = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions",
+			base: httpBase,
+			headers,
+			body: createAgentBody("http-created-agent"),
+		});
+		expect(replay.status).toBe(201);
+		expect(replay.body).toEqual(first.body);
+
+		const conflict = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions",
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "create-agent-2" },
+			body: createAgentBody("http-created-agent"),
+		});
+		expect(conflict.status).toBe(409);
+		expect(conflict.body.error.code).toBe("AGENT_NAME_CONFLICT");
+	});
+
+	test("MCP HTTP routes create, list, revise, disable, and soft-delete without exposing a Secret", async () => {
+		const auth = { authorization: `Bearer ${ADMIN_TOKEN}` };
+		const unsafe = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/mcp-servers",
+			base: httpBase,
+			headers: auth,
+			body: {
+				name: "unsafe-mcp",
+				config: { transport: "streamable_http", endpoint: "http://127.0.0.1/mcp", authentication: "none" },
+			},
+		});
+		expect(unsafe.status).toBe(422);
+		expect(unsafe.body.error.code).toBe("MCP_CONFIG_NOT_APPROVED");
+
+		const created = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/mcp-servers",
+			base: httpBase,
+			headers: auth,
+			body: {
+				name: "http-mcp",
+				config: {
+					transport: "streamable_http",
+					endpoint: "https://mcp.example.com/v1",
+					authentication: "none",
+				},
+			},
+		});
+		expect(created.status).toBe(201);
+		expect(created.body.data.id).toMatch(/^mcp_/);
+		expect(created.body.data.secretConfigured).toBe(false);
+		expect(JSON.stringify(created.body)).not.toContain("bearerToken");
+
+		const list = await httpCall({
+			method: "GET",
+			path: "/api/control/v1/mcp-servers",
+			base: httpBase,
+			headers: auth,
+		});
+		expect(list.status).toBe(200);
+		expect(list.body.data.items).toEqual(
+			expect.arrayContaining([expect.objectContaining({ id: created.body.data.id, name: "http-mcp" })]),
+		);
+
+		const revised = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}/revisions`,
+			base: httpBase,
+			headers: auth,
+			body: {
+				config: {
+					transport: "streamable_http",
+					endpoint: "https://mcp.example.com/v2",
+					authentication: "none",
+				},
+			},
+		});
+		expect(revised.status).toBe(201);
+		expect(revised.body.data.revision).toBe(2);
+		const detail = await httpCall({
+			method: "GET",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}`,
+			base: httpBase,
+			headers: auth,
+		});
+		expect(detail.status).toBe(200);
+		expect(detail.body.data.revisions.map((revision: { revision: number }) => revision.revision)).toEqual([2, 1]);
+
+		const disabled = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}/status`,
+			base: httpBase,
+			headers: auth,
+			body: { enabled: false },
+		});
+		expect(disabled.status).toBe(200);
+		expect(disabled.body.data.enabled).toBe(false);
+
+		const deleted = await httpCall({
+			method: "DELETE",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}`,
+			base: httpBase,
+			headers: auth,
+		});
+		expect(deleted.status).toBe(200);
+		const missing = await httpCall({
+			method: "GET",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}`,
+			base: httpBase,
+			headers: auth,
+		});
+		expect(missing.status).toBe(404);
+		expect(missing.body.error.code).toBe("MCP_SERVER_NOT_FOUND");
 	});
 
 	test("import-current is idempotent per Idempotency-Key (same response, no new revision)", async () => {

@@ -11,7 +11,7 @@
 
 ## 当前阶段：开发基线
 
-当前仍处于内部可用版本之前的开发阶段。目标版本要求文本 Agent 主链路基本稳定、问题可定位、版本可回滚，并能在当前机器仍可用时从本地备份恢复；不规划公网服务或机器级灾难恢复。实时语音与数字人不属于首个目标版本的发布门槛，在文本主链路稳定后进入后续增强。
+当前仍处于内部可用版本之前的开发阶段。目标版本要求文本 Agent、Skill 和 MCP Tool 调用主链路基本稳定、问题可定位、版本可回滚，并能在当前机器仍可用时从本地备份恢复；不规划公网服务或机器级灾难恢复。实时语音与数字人不属于首个目标版本的发布门槛，在文本主链路稳定后进入后续增强。
 
 开发和内部试用当前均在同一台开发机进行。R1 以单机可恢复为目标；迁移到局域网服务器属于稳定后的下一阶段，不在首版中假设已具备。
 
@@ -22,19 +22,25 @@
 - 管理员 Chat、Agent 设计、发布应用、Usage、Session 日志和设置的产品边界已确认。
 - Control Plane、Data Plane、Runtime Plane、PostgreSQL 和 Redis 的稳定边界已定义。
 - Agent Revision、Published App Version、企业 Conversation 和 Usage 的核心契约已定义。
+- 仓库已有 Skill 解析/诊断基础以及 Skill/MCP DTO 草案，但租户级管理、发布绑定和 Runtime 接线尚未完成。
+- 当前发布 Runtime 仍拒绝非空 Tool/Knowledge Base，不能把协议或占位 UI 视为 Skill/MCP 已完成。
 - 管理员工作台与 Embed Chat 有独立构建和访问语义。
 - 代码检查、隔离测试、发布专项回归、容量和故障注入验证已有可执行入口。
 - 生产部署环境、正式 CI/CD、业务目标值、发布审批和值班机制尚未确认。
 - 每日备份、自动调度和恢复脚本尚未启用，当前不具备正式 RPO/RTO 保证。
 
-## R1：内部可用的文本 Agent 闭环（P0，当前目标）
+## R1：内部可用的 Agent + Skill + MCP 闭环（P0，当前目标）
 
-目标：团队成员能在一个工作台内稳定完成 Agent 配置、保存 Revision、Chat 调试、发布和结果核对；发生问题时可以定位、回滚和恢复。
+目标：团队成员能在一个工作台内稳定完成 Skill 导入、MCP 配置、Agent 绑定、Chat 调试、发布和结果核对；发生问题时可以定位、回滚和恢复。
 
 包含：
 
 - Agent 草稿、不可变 Revision 和管理员调试链路。
-- 发布应用显式绑定 Revision，支持激活、暂停和回滚。
+- Revision 作为内部快照保留，不建设 Revision 列表、Diff 和恢复 UI。
+- Skill 安全导入、校验、不可变 Revision、Agent 绑定和 Runtime 注入。
+- 单一批准的远程 MCP Transport、Secret 隔离、连接测试、Tool discovery 和 Tool allowlist。
+- 发布应用冻结 Agent、Skill Revision、MCP Revision 和 Tool allowlist，支持激活、暂停和回滚。
+- 管理员 Chat 与发布 Chat/Embed 展示一致的正文、思考和 Tool 调用状态。
 - Usage 区分管理员调试与线上用户来源。
 - Session 日志只展示企业终端用户会话，并可追溯到应用和版本。
 - 连接、加载、空内容、无权限和失败状态真实可辨认。
@@ -51,11 +57,14 @@
 - 完整 BI、CRM、模型训练和通用聊天产品能力。
 - 未经验证的高并发生产承诺。
 - 实时语音、数字人、公网访问和对外 SLA。
+- Revision 管理 UI、Skill 在线编辑/市场、MCP stdio/OAuth/多 Transport 和工作流编排。
 
 完成条件：
 
 - [`QUALITY.md`](./QUALITY.md) 中 P0 门禁通过。
 - 发布、暂停、回滚及版本追溯均有验收证据。
+- Skill/MCP 更新后旧发布版本不漂移，未授权 Tool、跨租户访问和 SSRF 尝试均被拒绝。
+- Secret 不出现在客户端、RuntimeSpec、事件、日志或导出中。
 - 备份恢复和版本回滚至少完成一次演练，恢复结果包含数据库、Tenant、Agent、Revision 和应用版本关系。
 - 核心失败场景不会展示伪造成功或示例数据。
 - 团队成员可以按文档独立完成启动、使用、发布和常见故障恢复。

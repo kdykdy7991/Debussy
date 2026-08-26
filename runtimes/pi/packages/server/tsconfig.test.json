@@ -6,6 +6,8 @@
 		"moduleResolution": "NodeNext",
 		"types": ["node", "vitest"],
 		"paths": {
+			"@earendil-works/pi-coding-agent": ["../coding-agent/src/index.ts"],
+			"@earendil-works/pi-coding-agent/skills": ["../coding-agent/src/skills.ts"],
 			"@earendil-works/pi-protocol": ["../protocol/src/index.ts"]
 		}
 	},

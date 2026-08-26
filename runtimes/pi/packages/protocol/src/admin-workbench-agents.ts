@@ -25,6 +25,7 @@ import type {
 	PublishedAppPublicId,
 	PublishedAppVersionPublicId,
 } from "./admin-workbench.ts";
+import type { AgentMcpRevisionReference } from "./admin-workbench-mcp.ts";
 
 /**
  * Single agent detail: latest saved revision + metadata.
@@ -160,7 +161,14 @@ export interface SaveAgentRevisionRequest {
 	readonly toolIds: readonly string[];
 	readonly knowledgeBaseIds: readonly string[];
 	readonly capabilities: AgentCapabilities;
+	readonly skills?: readonly AgentSkillRevisionReference[];
+	readonly mcpServers?: readonly AgentMcpRevisionReference[];
 	readonly changeSummary: string;
+}
+
+export interface AgentSkillRevisionReference {
+	readonly skillId: string;
+	readonly revision: number;
 }
 
 export interface SaveAgentRevisionResponse {
@@ -169,6 +177,22 @@ export interface SaveAgentRevisionResponse {
 	readonly sourceHash: string;
 	readonly createdAt: string;
 }
+
+/** Create an Agent and its immutable revision 1 in one operation. */
+export interface CreateAgentDefinitionRequest {
+	readonly name: string;
+	readonly description?: string;
+	readonly modelId: string | null;
+	readonly systemPrompt: string;
+	readonly parameters: AgentModelParameters;
+	readonly toolIds: readonly string[];
+	readonly knowledgeBaseIds: readonly string[];
+	readonly capabilities: AgentCapabilities;
+	readonly skills?: readonly AgentSkillRevisionReference[];
+	readonly mcpServers?: readonly AgentMcpRevisionReference[];
+}
+
+export type CreateAgentDefinitionResponse = SaveAgentRevisionResponse;
 
 /**
  * Response shape for `POST /api/control/v1/agent-definitions/import-current`

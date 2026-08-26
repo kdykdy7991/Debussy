@@ -13,7 +13,14 @@ import { PostgresClient } from "../../src/persistence/postgres/client.ts";
 import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../src/persistence/postgres/repositories/index.ts";
 import { ControlService, type CurrentAgentDefinitionSource } from "../../src/publishing/control/service.ts";
-import { newAgentDefinitionId, newTenantId } from "../../src/publishing/domain/ids.ts";
+import {
+	fromPublicId,
+	newAgentDefinitionId,
+	newMcpToolId,
+	newTenantId,
+	toPublicId,
+} from "../../src/publishing/domain/ids.ts";
+import { McpSecretBox } from "../../src/publishing/mcp/secret-box.ts";
 import type { PublishingRepositories } from "../../src/publishing/repositories.ts";
 import type { AgentDraftConfig, CapabilityCatalog } from "../../src/publishing/runtime-spec/compiler.ts";
 
@@ -59,6 +66,15 @@ function baseConfig(overrides: Partial<AgentDraftConfig> = {}): AgentDraftConfig
 		...overrides,
 	};
 }
+
+const NO_AGENT_CAPABILITIES = {
+	liveSpeech: false,
+	avatar: false,
+	attachments: false,
+	citations: false,
+	realtime: false,
+	webSearch: false,
+} as const;
 
 describe.skipIf(!pgUp)("control service", () => {
 	let client: PostgresClient;
@@ -116,6 +132,232 @@ describe.skipIf(!pgUp)("control service", () => {
 		if (!again.ok) return;
 		expect(again.data.revision).toBe(1); // same hash, no new revision
 		expect(again.data.agentDefinitionId).toBe(first.data.agentDefinitionId);
+	});
+
+	test("createAgentDefinition creates immutable revision 1 and rejects duplicate active names", async () => {
+		const request = {
+			name: "created-agent",
+			description: "created through the control API",
+			modelId: "pi-chat",
+			systemPrompt: "Created prompt",
+			parameters: {},
+			toolIds: [],
+			knowledgeBaseIds: [],
+			capabilities: NO_AGENT_CAPABILITIES,
+		};
+		const created = await service.createAgentDefinition({ tenantId: tenantA, request });
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		expect(created.data.revision).toBe(1);
+		const stored = await repos.agentDefinitions.getLatestByName({ tenantId: tenantA }, request.name);
+		expect(stored?.revision).toBe(1);
+		expect((stored?.draftConfig as AgentDraftConfig).prompt).toBe(request.systemPrompt);
+
+		const duplicate = await service.createAgentDefinition({ tenantId: tenantA, request });
+		expect(duplicate.ok).toBe(false);
+		if (duplicate.ok) return;
+		expect(duplicate.error.code).toBe("AGENT_NAME_CONFLICT");
+		expect(duplicate.error.httpStatus).toBe(409);
+	});
+
+	test("MCP revisions, encrypted secret, Agent binding, and publish snapshot stay tenant-scoped and immutable", async () => {
+		const secretBox = new McpSecretBox(Uint8Array.from({ length: 32 }, (_, index) => index));
+		const mcpService = new ControlService({
+			repositories: repos,
+			catalog: CATALOG,
+			embedBaseUrl: "https://embed.test",
+			mcpSecretBox: secretBox,
+		});
+		const createdServer = await mcpService.createMcpServer({
+			tenantId: tenantA,
+			name: "crm-mcp",
+			config: {
+				transport: "streamable_http",
+				endpoint: "https://mcp.example.com/v1",
+				authentication: "bearer",
+			},
+		});
+		expect(createdServer.ok).toBe(true);
+		if (!createdServer.ok) return;
+		const mcpServerId = fromPublicId("McpServerId", createdServer.data.id);
+		if (mcpServerId === null) throw new Error("create returned an invalid MCP Server id");
+
+		const token = "top-secret-mcp-token";
+		const storedSecret = await mcpService.replaceMcpSecret({ tenantId: tenantA, mcpServerId, bearerToken: token });
+		expect(storedSecret.ok).toBe(true);
+		const encrypted = await repos.mcpSecrets.get({ tenantId: tenantA }, mcpServerId);
+		expect(encrypted).toBeDefined();
+		if (encrypted === undefined) return;
+		expect(Buffer.from(encrypted.ciphertext).includes(Buffer.from(token))).toBe(false);
+		expect(secretBox.open(tenantA, mcpServerId, encrypted)).toBe(token);
+
+		const revision = await repos.mcpServers.addRevision({
+			scope: { tenantId: tenantA },
+			mcpServerId,
+			revision: {
+				mcpServerId,
+				tenantId: tenantA,
+				transport: "streamable_http",
+				endpoint: "https://mcp.example.com/v1",
+				authentication: "bearer",
+				createdAt: new Date(),
+			},
+			tools: [
+				{
+					mcpToolId: newMcpToolId(),
+					tenantId: tenantA,
+					mcpServerId,
+					name: "crm_lookup",
+					description: "Lookup one CRM customer",
+					inputSchema: {
+						type: "object",
+						properties: { customerId: { type: "string" } },
+						required: ["customerId"],
+					},
+					inputSchemaHash: "a".repeat(64),
+					createdAt: new Date(),
+				},
+			],
+		});
+		expect(revision?.revision).toBe(2);
+
+		const crossTenant = await mcpService.getMcpServerDetail({ tenantId: tenantB, mcpServerId });
+		expect(crossTenant.ok).toBe(false);
+		if (!crossTenant.ok) expect(crossTenant.error.code).toBe("MCP_SERVER_NOT_FOUND");
+
+		const agent = await mcpService.createAgentDefinition({
+			tenantId: tenantA,
+			request: {
+				name: "crm-agent",
+				modelId: "pi-chat",
+				systemPrompt: "Use CRM when needed.",
+				parameters: {},
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: NO_AGENT_CAPABILITIES,
+				mcpServers: [
+					{ mcpServerId: toPublicId("McpServerId", mcpServerId), revision: 2, toolNames: ["crm_lookup"] },
+				],
+			},
+		});
+		expect(agent.ok).toBe(true);
+		if (!agent.ok) return;
+		const agentDefinitionId = fromPublicId("AgentDefinitionId", agent.data.id);
+		if (agentDefinitionId === null) throw new Error("create returned an invalid Agent id");
+		const app = await mcpService.createPublishedApp({
+			tenantId: tenantA,
+			agentDefinitionId,
+			name: "crm-app",
+			accessMode: "anonymous",
+		});
+		expect(app.ok).toBe(true);
+		if (!app.ok) return;
+		const version = await mcpService.createPublishedAppVersion({
+			tenantId: tenantA,
+			publishedAppId: app.data.app.publishedAppId,
+			sourceAgentRevision: 1,
+		});
+		expect(version.ok).toBe(true);
+		if (!version.ok) return;
+		const runtimeSpec = version.data.version.runtimeSpec as {
+			capabilities?: { mcpServers?: readonly { revision?: number; tools?: readonly { name?: string }[] }[] };
+		};
+		expect(runtimeSpec.capabilities?.mcpServers).toEqual([
+			expect.objectContaining({ revision: 2, tools: [expect.objectContaining({ name: "crm_lookup" })] }),
+		]);
+		expect(JSON.stringify(runtimeSpec)).not.toContain(token);
+	});
+
+	test("Agent create and save reject prompts above the RuntimeSpec limit", async () => {
+		const oversizedPrompt = "x".repeat(65_537);
+		const created = await service.createAgentDefinition({
+			tenantId: tenantA,
+			request: {
+				name: "oversized-agent",
+				modelId: "pi-chat",
+				systemPrompt: oversizedPrompt,
+				parameters: {},
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: NO_AGENT_CAPABILITIES,
+			},
+		});
+		expect(created.ok).toBe(false);
+		if (created.ok) return;
+		expect(created.error.code).toBe("INVALID_SYSTEM_PROMPT");
+
+		const existing = await service.createAgentDefinition({
+			tenantId: tenantA,
+			request: {
+				name: "prompt-limit-agent",
+				modelId: "pi-chat",
+				systemPrompt: "within limit",
+				parameters: {},
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: NO_AGENT_CAPABILITIES,
+			},
+		});
+		expect(existing.ok).toBe(true);
+		if (!existing.ok) return;
+		const agentId = fromPublicId("AgentDefinitionId", existing.data.id);
+		if (agentId === null) throw new Error("create returned an invalid Agent id");
+		const saved = await service.saveAgentRevision({
+			tenantId: tenantA,
+			agentDefinitionId: agentId,
+			request: {
+				modelId: "pi-chat",
+				systemPrompt: oversizedPrompt,
+				parameters: {},
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: NO_AGENT_CAPABILITIES,
+				changeSummary: "too large",
+			},
+		});
+		expect(saved.ok).toBe(false);
+		if (saved.ok) return;
+		expect(saved.error.code).toBe("INVALID_SYSTEM_PROMPT");
+	});
+
+	test("concurrent app creation and Agent deletion preserve one consistent outcome", async () => {
+		const created = await service.createAgentDefinition({
+			tenantId: tenantA,
+			request: {
+				name: "delete-race-agent",
+				modelId: "pi-chat",
+				systemPrompt: "race",
+				parameters: {},
+				toolIds: [],
+				knowledgeBaseIds: [],
+				capabilities: NO_AGENT_CAPABILITIES,
+			},
+		});
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		const agentDefinitionId = fromPublicId("AgentDefinitionId", created.data.id);
+		if (agentDefinitionId === null) throw new Error("create returned an invalid Agent id");
+		const [app, deletion] = await Promise.all([
+			service.createPublishedApp({
+				tenantId: tenantA,
+				agentDefinitionId,
+				name: "race-app",
+				accessMode: "anonymous",
+			}),
+			service.deleteAgentDefinition({
+				tenantId: tenantA,
+				agentDefinitionId,
+				confirmName: "delete-race-agent",
+			}),
+		]);
+		expect(Number(app.ok) + Number(deletion.ok)).toBe(1);
+		if (app.ok) {
+			expect(deletion.ok).toBe(false);
+			if (!deletion.ok) expect(deletion.error.code).toBe("AGENT_HAS_ASSOCIATED_APPS");
+		} else {
+			expect(app.error.code).toBe("AGENT_NOT_FOUND");
+			expect(deletion.ok).toBe(true);
+		}
 	});
 
 	test("importAgent creates revision+1 on source drift and keeps old revisions", async () => {

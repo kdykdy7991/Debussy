@@ -15,6 +15,7 @@ import type { PublishingRepositories } from "../../publishing/repositories.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import type { PublishingConfig } from "../config.ts";
 import { parseIdOrThrow } from "../domain/ids.ts";
+import { McpSecretBox } from "../mcp/secret-box.ts";
 import { PreviewTicketService } from "../preview-ticket.ts";
 import { buildCapabilityCatalog } from "./catalog.ts";
 import { createControlHttpHandler } from "./http.ts";
@@ -32,6 +33,7 @@ export interface ControlPlaneHandle {
 	readonly repositories: PublishingRepositories;
 	/** Preview ticket service (WB-005), shared so embed exchange can consume tickets. */
 	readonly previewTicketService: PreviewTicketService;
+	readonly mcpSecretBox: McpSecretBox | undefined;
 	close(): Promise<void>;
 }
 
@@ -80,6 +82,8 @@ export async function composeControlPlane(options: {
 		throw error;
 	}
 	const repositories = createPublishingRepositories(client);
+	const mcpSecretBox =
+		publishing.mcpSecretMasterKey === undefined ? undefined : new McpSecretBox(publishing.mcpSecretMasterKey);
 
 	// MVP: the publishable whitelist is the running agent's own capabilities.
 	const catalog = buildCapabilityCatalog(options.services);
@@ -95,6 +99,7 @@ export async function composeControlPlane(options: {
 		previewTicketService,
 		llm: createLlmConfigStore(options.services),
 		metricsEnabled: agentV2MetricsEnabled(),
+		mcpSecretBox,
 	});
 
 	const bootstrapped = await controlService.bootstrapTenant({
@@ -124,6 +129,7 @@ export async function composeControlPlane(options: {
 		client,
 		repositories,
 		previewTicketService,
+		mcpSecretBox,
 		close: () => client.close(),
 	};
 }

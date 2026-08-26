@@ -163,4 +163,58 @@ describe("runtime spec compiler", () => {
 		if (!result.ok) return;
 		expect(result.spec.capabilities.tools).toEqual([{ id: "web.search", config: { topK: 5 } }]);
 	});
+
+	test("freezes MCP Revision and Tool schema without secret values", () => {
+		const result = compileRuntimeSpec({
+			agent: draft(),
+			publishedAppVersionId: "pav_x",
+			catalog,
+			mcpServers: [
+				{
+					mcpServerId: "mcp_00000000-0000-7000-8000-000000000001",
+					revision: 3,
+					transport: "streamable_http",
+					endpoint: "https://mcp.example.com/rpc",
+					authentication: "bearer",
+					tools: [
+						{
+							name: "search_docs",
+							description: "Search docs",
+							inputSchema: { type: "object", properties: { q: { type: "string" } } },
+							inputSchemaHash: "a".repeat(64),
+						},
+					],
+				},
+			],
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.spec.capabilities.mcpServers[0]?.revision).toBe(3);
+		expect(result.canonicalJson).not.toContain("bearerToken");
+		expect(result.canonicalJson).not.toContain("secret");
+	});
+
+	test("rejects duplicate MCP Tool names across Servers", () => {
+		const frozenTool = {
+			name: "search_docs",
+			description: null,
+			inputSchema: { type: "object" },
+			inputSchemaHash: "b".repeat(64),
+		};
+		const result = compileRuntimeSpec({
+			agent: draft(),
+			publishedAppVersionId: "pav_x",
+			catalog,
+			mcpServers: [1, 2].map((revision) => ({
+				mcpServerId: `mcp_${revision}`,
+				revision,
+				transport: "streamable_http" as const,
+				endpoint: `https://mcp${revision}.example.com/rpc`,
+				authentication: "none" as const,
+				tools: [frozenTool],
+			})),
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.errors).toContain("MCP Tool names must be unique across all bound Servers");
+	});
 });

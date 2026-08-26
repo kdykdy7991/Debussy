@@ -78,6 +78,28 @@ export interface CompilerInput {
 	/** Public id of the published-app version this spec is frozen for. */
 	readonly publishedAppVersionId: string;
 	readonly catalog: CapabilityCatalog;
+	readonly skills?: readonly {
+		readonly skillId: string;
+		readonly revision: number;
+		readonly sourceHash: string;
+		readonly name: string;
+		readonly description: string;
+		readonly instructionText: string;
+		readonly disableModelInvocation: boolean;
+	}[];
+	readonly mcpServers?: readonly {
+		readonly mcpServerId: string;
+		readonly revision: number;
+		readonly transport: "streamable_http";
+		readonly endpoint: string;
+		readonly authentication: "none" | "bearer";
+		readonly tools: readonly {
+			readonly name: string;
+			readonly description: string | null;
+			readonly inputSchema: Readonly<Record<string, unknown>>;
+			readonly inputSchemaHash: string;
+		}[];
+	}[];
 	readonly securityPolicyVersion?: string;
 }
 
@@ -93,6 +115,19 @@ export type CompileResult =
 export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 	const errors: string[] = [];
 	const { agent, catalog } = input;
+	const skills = input.skills ?? [];
+	const mcpServers = input.mcpServers ?? [];
+	const mcpToolNames = mcpServers.flatMap((server) => server.tools.map((tool) => tool.name));
+	if (mcpToolNames.length > 32) errors.push("MCP Tool allowlist exceeds the platform limit of 32");
+	if (new Set(mcpToolNames).size !== mcpToolNames.length)
+		errors.push("MCP Tool names must be unique across all bound Servers");
+	const visibleSkillInstructions = skills
+		.filter((skill) => !skill.disableModelInvocation)
+		.map((skill) => `<skill name="${skill.name}">\n${skill.instructionText}\n</skill>`);
+	const systemPrompt =
+		visibleSkillInstructions.length === 0
+			? agent.prompt
+			: `${agent.prompt}\n\n<bound_skills>\n${visibleSkillInstructions.join("\n\n")}\n</bound_skills>`;
 
 	const model = catalog.models.find(
 		(entry) => entry.provider === agent.model.provider && entry.modelId === agent.model.modelId,
@@ -123,7 +158,7 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 		schemaVersion: 1,
 		publishedAppVersionId: input.publishedAppVersionId,
 		agent: {
-			systemPrompt: agent.prompt,
+			systemPrompt,
 			model: {
 				provider: agent.model.provider,
 				modelId: agent.model.modelId,
@@ -136,6 +171,8 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 		capabilities: {
 			tools: tools.filter((tool): tool is NonNullable<typeof tool> => tool !== undefined),
 			knowledgeBases: knowledgeBases.filter((kb): kb is NonNullable<typeof kb> => kb !== undefined),
+			skills,
+			mcpServers,
 			...("uploads" in agent && agent.uploads !== undefined ? { uploads: agent.uploads } : {}),
 			...("speech" in agent && agent.speech !== undefined ? { speech: agent.speech } : {}),
 			...("avatar" in agent && agent.avatar !== undefined ? { avatar: agent.avatar } : {}),

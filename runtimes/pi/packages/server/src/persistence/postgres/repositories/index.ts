@@ -17,9 +17,12 @@ import { createConversationSummaryRepository } from "./conversation-summaries.ts
 import { createConversationRepository } from "./conversations.ts";
 import { createIdempotencyRepository } from "./idempotency.ts";
 import { createLaunchKeyRepository } from "./launch-keys.ts";
+import { createMcpSecretRepository } from "./mcp-secrets.ts";
+import { createMcpServerRepository } from "./mcp-servers.ts";
 import { createPrincipalRepository } from "./principals.ts";
 import { createPublishedAppVersionRepository } from "./published-app-versions.ts";
 import { createPublishedAppRepository } from "./published-apps.ts";
+import { createSkillRepository } from "./skills.ts";
 import { createTenantRepository } from "./tenants.ts";
 
 /** Build all scoped repositories over one Postgres client. */
@@ -27,6 +30,9 @@ export function createPublishingRepositories(client: PostgresClient): Publishing
 	return {
 		tenants: createTenantRepository(client),
 		agentDefinitions: createAgentDefinitionRepository(client),
+		skills: createSkillRepository(client),
+		mcpServers: createMcpServerRepository(client),
+		mcpSecrets: createMcpSecretRepository(client),
 		publishedApps: createPublishedAppRepository(client),
 		publishedAppVersions: createPublishedAppVersionRepository(client),
 		principals: createPrincipalRepository(client),

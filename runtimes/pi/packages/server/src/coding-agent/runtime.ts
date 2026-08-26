@@ -89,6 +89,7 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 			const attachments = this.attachmentOptions(input.attachments);
 			const contextBlocks = this.contextBlocks(input.retrieval);
 			return this.agentSession.prompt(input.text, {
+				...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
 				...(attachments ? { attachments } : {}),
 				...(contextBlocks ? { contextBlocks } : {}),
 			});

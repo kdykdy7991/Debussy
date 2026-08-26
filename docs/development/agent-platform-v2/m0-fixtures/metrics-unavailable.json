@@ -1,8 +1,0 @@
-{
-  "error": {
-    "code": "METRICS_UNAVAILABLE",
-    "message": "Metrics subsystem is temporarily unavailable",
-    "requestId": "req_b10e",
-    "retryable": true
-  }
-}

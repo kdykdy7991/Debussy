@@ -23,6 +23,7 @@ import { RedisClient } from "../persistence/redis/client.ts";
 import { createRedisNonceStore } from "../persistence/redis/nonce-store.ts";
 import { createRedisTicketStore } from "../persistence/redis/ticket-store.ts";
 import type { PublishingConfig } from "../publishing/config.ts";
+import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import type { PreviewTicketService } from "../publishing/preview-ticket.ts";
 import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/repositories.ts";
 import { parseRuntimeSpec } from "../publishing/runtime-spec/schema.ts";
@@ -57,6 +58,7 @@ export interface EmbedPlaneOptions {
 	readonly repositories: PublishingRepositories;
 	/** 底层会话工厂（真实组合接 CodingAgentPiSessionBackend.createSession）。 */
 	readonly createSession: RuntimeSessionFactory;
+	readonly mcpTools?: McpRuntimeToolFactory;
 	/** 附件对象存储（测试注入）；缺省按 `PI_OBJECT_STORE_*` 创建 S3。 */
 	readonly objectStore?: ObjectStore;
 	/** 附件 bucket（与 objectStore 成对；缺省用 config.objectStore.bucket）。 */
@@ -141,6 +143,7 @@ export interface EmbedServicesOptions {
 	readonly subjectPepper: string;
 	readonly repositories: PublishingRepositories;
 	readonly createSession: RuntimeSessionFactory;
+	readonly mcpTools?: McpRuntimeToolFactory;
 	/** WebSocket Ticket 服务（TASK-024/025）；未提供时 ws-ticket 端点 503。 */
 	readonly wsTickets?: WsTicketService;
 	/** Realtime 端点基地址（ws-ticket 响应 realtimeUrl）。 */
@@ -195,7 +198,10 @@ export interface EmbedServicesHandle {
 
 /** 纯组装：Exchange + Conversations + authenticator + managed turn executor。 */
 export function createEmbedServices(options: EmbedServicesOptions): EmbedServicesHandle {
-	const adapter = createPiRuntimeAdapter({ createSession: options.createSession });
+	const adapter = createPiRuntimeAdapter({
+		createSession: options.createSession,
+		...(options.mcpTools !== undefined ? { createMcpTools: options.mcpTools } : {}),
+	});
 	// TASK-034：分层限流 + 并发槽（缺省内存实现 + spec 默认规则；生产可从
 	// compose 注入 Redis store）。暴露在 handle 上供 realtime upgrade 复用。
 	const limits = options.limits ?? createEmbedLimits();
@@ -365,6 +371,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		subjectPepper: config.subjectPepper,
 		repositories: options.repositories,
 		createSession: options.createSession,
+		...(options.mcpTools !== undefined ? { mcpTools: options.mcpTools } : {}),
 		wsTickets,
 		realtimeBaseUrl: options.publishing.embedBaseUrl,
 		launchTokens,

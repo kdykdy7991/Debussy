@@ -83,6 +83,7 @@ describe("publishing feature configuration", () => {
 			bootstrapTenantId: undefined,
 			bootstrapTenantName: undefined,
 			controlAdminTokenFile: undefined,
+			mcpSecretMasterKey: undefined,
 			embedBaseUrl: "http://127.0.0.1:8765",
 			subjectPepper: undefined,
 			accessTokenPrivateKeyFile: undefined,
@@ -117,6 +118,7 @@ describe("publishing feature configuration", () => {
 			PI_BOOTSTRAP_TENANT_ID: "00000000-0000-7000-8000-000000000001",
 			PI_BOOTSTRAP_TENANT_NAME: "SKDY",
 			PI_CONTROL_ADMIN_TOKEN_FILE: "/run/secrets/control-admin-token",
+			PI_MCP_SECRET_MASTER_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 			PI_EMBED_ISSUER: "https://agent.example.com",
 			PI_EMBED_SUBJECT_PEPPER: "pepper-0123456789abcdef0123456789abcdef",
 			PI_EMBED_ACCESS_TOKEN_PRIVATE_KEY_FILE: "/run/secrets/embed-access-private.pem",
@@ -133,6 +135,7 @@ describe("publishing feature configuration", () => {
 			bootstrapTenantId: "00000000-0000-7000-8000-000000000001",
 			bootstrapTenantName: "SKDY",
 			controlAdminTokenFile: "/run/secrets/control-admin-token",
+			mcpSecretMasterKey: Uint8Array.from({ length: 32 }, (_, index) => index),
 			embedBaseUrl: "https://agent.example.com",
 			subjectPepper: "pepper-0123456789abcdef0123456789abcdef",
 			accessTokenPrivateKeyFile: "/run/secrets/embed-access-private.pem",
@@ -148,6 +151,14 @@ describe("publishing feature configuration", () => {
 				appBytes: 2 * 1024 * 1024 * 1024,
 			},
 		});
+	});
+
+	test("rejects malformed MCP master keys so encrypted credentials remain recoverable", () => {
+		for (const raw of ["not-base64", Buffer.alloc(31).toString("base64"), " AAECAw== "]) {
+			expect(() => parsePublishingConfig({ PI_PUBLISHING_ENABLED: "true", PI_MCP_SECRET_MASTER_KEY: raw })).toThrow(
+				/PI_MCP_SECRET_MASTER_KEY/,
+			);
+		}
 	});
 
 	test("rejects an invalid access-token ttl so a misconfiguration fails startup", () => {

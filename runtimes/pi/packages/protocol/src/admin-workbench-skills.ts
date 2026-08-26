@@ -63,12 +63,17 @@ export interface SkillListResponse {
 	readonly nextCursor: string | null;
 }
 
-/** `POST /api/control/v1/skills/import`：引用已上传的 Skill 源。 */
+/** `POST /api/control/v1/skills/import`：上传一个 SKILL.md 或 ZIP artifact。 */
 export interface SkillImportRequest {
-	/** 导入来源类型；`archive` = 上传的压缩包，`file` = 单个定义文件。 */
-	readonly kind: "archive" | "file";
-	/** 已上传源的引用 token（对象存储 artifactId），不承载源码正文。 */
-	readonly sourceToken: string;
+	readonly filename: string;
+	/** 原始 artifact 的标准 Base64；服务端解码后执行大小与 ZIP 安全校验。 */
+	readonly contentBase64: string;
+}
+
+export type SkillRevisionCreateRequest = SkillImportRequest;
+
+export interface SkillStatusUpdateRequest {
+	readonly enabled: boolean;
 }
 
 /** 导入成功响应；`warnings` 为不阻断的校验告警。 */

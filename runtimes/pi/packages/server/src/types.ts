@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
 	Citation,
 	ModelMetadata,
@@ -63,6 +64,8 @@ export interface RetrievalInput {
 
 export interface PromptInput {
 	text: string;
+	/** Frozen PublishedAppVersion prompt, including bound Skill instructions. */
+	systemPrompt?: string;
 	attachmentIds?: string[];
 	attachments?: ResolvedAttachmentInput[];
 	retrieval?: RetrievalInput;
@@ -83,6 +86,8 @@ export interface CreateSessionOptions {
 	model?: ModelRef;
 	thinkingLevel?: ThinkingLevel;
 	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets">;
+	/** Frozen external Tool definitions (MCP); built-in coding tools are disabled when present. */
+	customTools?: readonly ToolDefinition[];
 }
 
 export type PiSessionRuntimeEvent =

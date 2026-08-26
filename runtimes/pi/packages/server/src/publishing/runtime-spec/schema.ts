@@ -23,6 +23,9 @@ export const PLATFORM_LIMITS = {
 	maxFileBytes: 26_214_400, // 25 MiB, PD-09
 	maxTools: 32,
 	maxKnowledgeBases: 8,
+	maxSkills: 16,
+	maxMcpServers: 8,
+	maxMcpTools: 32,
 	maxTurns: 100,
 	maxContextTokens: 100_000,
 	maxToolResultBytes: 65_536,
@@ -102,10 +105,44 @@ const agentSpec = z
  */
 const referenceArray = (max: number) => z.array(z.record(z.string(), z.unknown())).max(max);
 
+const skillRevisionSpec = z
+	.object({
+		skillId: z.string().min(1),
+		revision: z.number().int().min(1),
+		sourceHash: z.string().regex(/^[0-9a-f]{64}$/),
+		name: z.string().min(1),
+		description: z.string(),
+		instructionText: z.string(),
+		disableModelInvocation: z.boolean(),
+	})
+	.strict();
+
+const mcpToolSpec = z
+	.object({
+		name: z.string().min(1).max(128),
+		description: z.string().nullable(),
+		inputSchema: z.record(z.string(), z.unknown()),
+		inputSchemaHash: z.string().regex(/^[0-9a-f]{64}$/),
+	})
+	.strict();
+
+const mcpServerRevisionSpec = z
+	.object({
+		mcpServerId: z.string().min(1),
+		revision: z.number().int().min(1),
+		transport: z.literal("streamable_http"),
+		endpoint: z.string().url(),
+		authentication: z.enum(["none", "bearer"]),
+		tools: z.array(mcpToolSpec).min(1).max(PLATFORM_LIMITS.maxMcpTools),
+	})
+	.strict();
+
 const capabilitiesSpec = z
 	.object({
 		tools: referenceArray(PLATFORM_LIMITS.maxTools).default([]),
 		knowledgeBases: referenceArray(PLATFORM_LIMITS.maxKnowledgeBases).default([]),
+		skills: z.array(skillRevisionSpec).max(PLATFORM_LIMITS.maxSkills).default([]),
+		mcpServers: z.array(mcpServerRevisionSpec).max(PLATFORM_LIMITS.maxMcpServers).default([]),
 		uploads: uploadsCapability.default(PLATFORM_DEFAULTS.uploads),
 		speech: booleanCapability.default(PLATFORM_DEFAULTS.speech),
 		avatar: booleanCapability.default(PLATFORM_DEFAULTS.avatar),

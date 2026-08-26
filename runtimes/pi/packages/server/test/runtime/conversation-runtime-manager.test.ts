@@ -66,6 +66,8 @@ function chatOnlySpec(): RuntimeSpec {
 		capabilities: {
 			tools: [],
 			knowledgeBases: [],
+			skills: [],
+			mcpServers: [],
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 			speech: { enabled: false },
 			avatar: { enabled: false },

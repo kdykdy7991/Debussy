@@ -26,6 +26,7 @@ import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
 import { PiServerError } from "../errors.ts";
 import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
 import { type ControlPlaneHandle, composeControlPlane } from "../publishing/control/compose.ts";
+import { createMcpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import type { PiServer } from "../server.ts";
 import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
@@ -167,12 +168,17 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		embedPlane = await composeEmbedPlane({
 			publishing,
 			repositories: controlPlane.repositories,
+			mcpTools: createMcpRuntimeToolFactory({
+				repositories: controlPlane.repositories,
+				secretBox: controlPlane.mcpSecretBox,
+			}),
 			createSession: (options) =>
 				(embedBackend ?? backend).createSession({
 					id: options.id,
 					model: options.model,
 					thinkingLevel: options.thinkingLevel,
 					streamOptions: options.streamOptions,
+					customTools: options.customTools,
 				}),
 			citations,
 			previewTickets: controlPlane.previewTicketService,

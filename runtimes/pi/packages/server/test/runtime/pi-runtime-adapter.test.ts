@@ -6,6 +6,7 @@
  * close 幂等；prompt 转发。不依赖数据库与 pi-coding-agent。
  */
 
+import { Type } from "@earendil-works/pi-ai";
 import type { ModelRef, SessionSnapshot, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import type {
@@ -82,6 +83,8 @@ function chatOnlySpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
 		capabilities: {
 			tools: [],
 			knowledgeBases: [],
+			skills: [],
+			mcpServers: [],
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 			speech: { enabled: false },
 			avatar: { enabled: false },
@@ -379,6 +382,35 @@ describe("pi runtime adapter", () => {
 		await b.runtime.close();
 	});
 
+	test("builds frozen MCP tools for the conversation and passes them to the session", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const scopes: ScopeContext[] = [];
+		const adapter = createPiRuntimeAdapter({
+			createMcpTools: async (_spec, runtimeScope) => {
+				scopes.push(runtimeScope);
+				return [
+					{
+						name: "crm_lookup",
+						label: "CRM lookup",
+						description: "Lookup a customer",
+						parameters: Type.Object({ customerId: Type.String() }),
+						execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					},
+				];
+			},
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+		});
+		const runtimeScope = scope("conv-mcp");
+		const result = await adapter.open(chatOnlySpec(), runtimeScope);
+		expect(result.ok).toBe(true);
+		expect(scopes).toEqual([runtimeScope]);
+		expect(calls[0]?.customTools?.map((tool) => tool.name)).toEqual(["crm_lookup"]);
+		if (result.ok) await result.runtime.close();
+	});
+
 	test("rejects non-chat-only profiles", async () => {
 		const adapter = createPiRuntimeAdapter({
 			createSession: async () => new FakeSession("x", { provider: "p", id: "m" }),
@@ -407,6 +439,8 @@ describe("pi runtime adapter", () => {
 				capabilities: {
 					tools: [{ id: "web.search" }],
 					knowledgeBases: [],
+					skills: [],
+					mcpServers: [],
 					uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 					speech: { enabled: false },
 					avatar: { enabled: false },
@@ -420,6 +454,8 @@ describe("pi runtime adapter", () => {
 				capabilities: {
 					tools: [],
 					knowledgeBases: [{ id: "kb-legal" }],
+					skills: [],
+					mcpServers: [],
 					uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 					speech: { enabled: false },
 					avatar: { enabled: false },

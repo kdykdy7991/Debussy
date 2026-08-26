@@ -19,10 +19,16 @@ import type {
 	ConversationEventId,
 	ConversationId,
 	LaunchKeyId,
+	McpCallAuditId,
+	McpSecretId,
+	McpServerId,
+	McpToolId,
 	PrincipalId,
 	PublishedAppId,
 	PublishedAppVersionId,
 	RequestId,
+	SkillArtifactId,
+	SkillId,
 	TenantId,
 	TurnId,
 } from "./domain/ids.ts";
@@ -102,6 +108,208 @@ export interface AgentDefinitionRecord {
 	readonly sourceHash: string;
 	readonly createdAt: Date;
 	readonly updatedAt: Date;
+}
+
+export interface SkillDiagnosticRecord {
+	readonly code: string;
+	readonly path: string;
+	readonly message: string;
+	readonly severity: "error" | "warning";
+}
+
+export interface SkillRecord {
+	readonly skillId: SkillId;
+	readonly tenantId: TenantId;
+	readonly name: string;
+	readonly status: "enabled" | "disabled";
+	readonly currentRevision: number;
+	readonly createdAt: Date;
+	readonly updatedAt: Date;
+}
+
+export interface SkillArtifactRecord {
+	readonly artifactId: SkillArtifactId;
+	readonly tenantId: TenantId;
+	readonly filename: string;
+	readonly mediaType: string;
+	readonly sourceHash: string;
+	readonly sizeBytes: number;
+	readonly content: Uint8Array;
+	readonly createdAt: Date;
+}
+
+export interface SkillRevisionRecord {
+	readonly skillId: SkillId;
+	readonly tenantId: TenantId;
+	readonly revision: number;
+	readonly artifactId: SkillArtifactId;
+	readonly sourceHash: string;
+	readonly parsedName: string;
+	readonly description: string;
+	readonly instructionText: string;
+	readonly disableModelInvocation: boolean;
+	readonly diagnostics: readonly SkillDiagnosticRecord[];
+	readonly createdAt: Date;
+}
+
+export interface AgentRevisionSkillBindingRecord {
+	readonly tenantId: TenantId;
+	readonly agentDefinitionId: AgentDefinitionId;
+	readonly agentRevision: number;
+	readonly position: number;
+	readonly skillId: SkillId;
+	readonly skillRevision: number;
+}
+
+export interface SkillRepository {
+	create(input: {
+		readonly skill: SkillRecord;
+		readonly artifact: SkillArtifactRecord;
+		readonly revision: SkillRevisionRecord;
+	}): Promise<"created" | "name_conflict">;
+	addRevision(input: {
+		readonly scope: TenantScope;
+		readonly skillId: SkillId;
+		readonly artifact: SkillArtifactRecord;
+		readonly revision: Omit<SkillRevisionRecord, "revision">;
+	}): Promise<SkillRevisionRecord | undefined>;
+	list(scope: TenantScope, limit: number, cursor?: string): Promise<readonly SkillRecord[]>;
+	get(scope: TenantScope, skillId: SkillId): Promise<SkillRecord | undefined>;
+	getRevision(scope: TenantScope, skillId: SkillId, revision: number): Promise<SkillRevisionRecord | undefined>;
+	listRevisions(scope: TenantScope, skillId: SkillId): Promise<readonly SkillRevisionRecord[]>;
+	setStatus(scope: TenantScope, skillId: SkillId, status: "enabled" | "disabled"): Promise<boolean>;
+	softDelete(scope: TenantScope, skillId: SkillId): Promise<boolean>;
+	bindAgentRevision(input: {
+		readonly scope: TenantScope;
+		readonly agentDefinitionId: AgentDefinitionId;
+		readonly agentRevision: number;
+		readonly bindings: readonly { readonly skillId: SkillId; readonly skillRevision: number }[];
+	}): Promise<"bound" | "agent_not_found" | "skill_unavailable">;
+	listBindings(
+		scope: TenantScope,
+		agentDefinitionId: AgentDefinitionId,
+		agentRevision: number,
+	): Promise<readonly AgentRevisionSkillBindingRecord[]>;
+	listBindingsForSkill(scope: TenantScope, skillId: SkillId): Promise<readonly AgentRevisionSkillBindingRecord[]>;
+}
+
+export interface McpServerRecord {
+	readonly mcpServerId: McpServerId;
+	readonly tenantId: TenantId;
+	readonly name: string;
+	readonly status: "enabled" | "disabled";
+	readonly currentRevision: number;
+	readonly lastTestOk: boolean | null;
+	readonly lastTestLatencyMs: number | null;
+	readonly lastTestAt: Date | null;
+	readonly createdAt: Date;
+	readonly updatedAt: Date;
+}
+
+export interface McpServerRevisionRecord {
+	readonly mcpServerId: McpServerId;
+	readonly tenantId: TenantId;
+	readonly revision: number;
+	readonly transport: "streamable_http";
+	readonly endpoint: string;
+	readonly authentication: "none" | "bearer";
+	readonly createdAt: Date;
+}
+
+export interface McpToolRecord {
+	readonly mcpToolId: McpToolId;
+	readonly tenantId: TenantId;
+	readonly mcpServerId: McpServerId;
+	readonly mcpRevision: number;
+	readonly name: string;
+	readonly description: string | null;
+	readonly inputSchema: Readonly<Record<string, unknown>>;
+	readonly inputSchemaHash: string;
+	readonly createdAt: Date;
+}
+
+export interface AgentRevisionMcpBindingRecord {
+	readonly tenantId: TenantId;
+	readonly agentDefinitionId: AgentDefinitionId;
+	readonly agentRevision: number;
+	readonly position: number;
+	readonly mcpServerId: McpServerId;
+	readonly mcpRevision: number;
+	readonly toolAllowlist: readonly string[];
+}
+
+export interface McpCallAuditRecord {
+	readonly mcpCallAuditId: McpCallAuditId;
+	readonly tenantId: TenantId;
+	readonly conversationId: ConversationId | null;
+	readonly publishedAppVersionId: PublishedAppVersionId | null;
+	readonly mcpServerId: McpServerId;
+	readonly mcpRevision: number;
+	readonly toolName: string;
+	readonly outcome: "success" | "error" | "cancelled";
+	readonly latencyMs: number;
+	readonly resultBytes: number;
+	readonly resultTruncated: boolean;
+	readonly errorCode: string | null;
+	readonly requestId: RequestId | null;
+	readonly createdAt: Date;
+}
+
+export interface McpServerRepository {
+	create(input: {
+		readonly server: McpServerRecord;
+		readonly revision: McpServerRevisionRecord;
+		readonly tools?: readonly McpToolRecord[];
+	}): Promise<"created" | "name_conflict">;
+	addRevision(input: {
+		readonly scope: TenantScope;
+		readonly mcpServerId: McpServerId;
+		readonly revision: Omit<McpServerRevisionRecord, "revision">;
+		readonly tools: readonly Omit<McpToolRecord, "mcpRevision">[];
+	}): Promise<McpServerRevisionRecord | undefined>;
+	list(scope: TenantScope, limit: number, cursor?: string): Promise<readonly McpServerRecord[]>;
+	get(scope: TenantScope, mcpServerId: McpServerId): Promise<McpServerRecord | undefined>;
+	getRevision(
+		scope: TenantScope,
+		mcpServerId: McpServerId,
+		revision: number,
+	): Promise<McpServerRevisionRecord | undefined>;
+	listRevisions(scope: TenantScope, mcpServerId: McpServerId): Promise<readonly McpServerRevisionRecord[]>;
+	listTools(scope: TenantScope, mcpServerId: McpServerId, revision: number): Promise<readonly McpToolRecord[]>;
+	setLastTest(
+		scope: TenantScope,
+		mcpServerId: McpServerId,
+		result: { readonly ok: boolean; readonly latencyMs: number },
+	): Promise<boolean>;
+	setStatus(scope: TenantScope, mcpServerId: McpServerId, status: "enabled" | "disabled"): Promise<boolean>;
+	softDelete(scope: TenantScope, mcpServerId: McpServerId): Promise<boolean>;
+	listBindings(
+		scope: TenantScope,
+		agentDefinitionId: AgentDefinitionId,
+		agentRevision: number,
+	): Promise<readonly AgentRevisionMcpBindingRecord[]>;
+	listBindingsForServer(
+		scope: TenantScope,
+		mcpServerId: McpServerId,
+	): Promise<readonly AgentRevisionMcpBindingRecord[]>;
+	recordCallAudit(record: McpCallAuditRecord): Promise<void>;
+}
+
+export interface McpEncryptedSecretRecord {
+	readonly secretId: McpSecretId;
+	readonly tenantId: TenantId;
+	readonly mcpServerId: McpServerId;
+	readonly ciphertext: Uint8Array;
+	readonly nonce: Uint8Array;
+	readonly authTag: Uint8Array;
+	readonly keyVersion: number;
+}
+
+export interface McpSecretRepository {
+	put(record: McpEncryptedSecretRecord): Promise<void>;
+	get(scope: TenantScope, mcpServerId: McpServerId): Promise<McpEncryptedSecretRecord | undefined>;
+	has(scope: TenantScope, mcpServerId: McpServerId): Promise<boolean>;
+	delete(scope: TenantScope, mcpServerId: McpServerId): Promise<boolean>;
 }
 
 /** Row shape returned by the published-app list query (ADMIN-001). */
@@ -251,6 +459,29 @@ export interface TenantRepository {
 export interface AgentDefinitionRepository {
 	/** Insert a new revision; the `(id, revision)` pair must be unique. */
 	insert(record: AgentDefinitionRecord): Promise<void>;
+	/**
+	 * Create revision 1 while serialising on `(tenant, name)`. Returns false
+	 * when an active Agent with the same name already exists.
+	 */
+	createInitial(record: AgentDefinitionRecord): Promise<boolean>;
+	createInitialWithSkillBindings(
+		record: AgentDefinitionRecord,
+		bindings: readonly { readonly skillId: SkillId; readonly skillRevision: number }[],
+		mcpBindings?: readonly {
+			readonly mcpServerId: McpServerId;
+			readonly mcpRevision: number;
+			readonly toolAllowlist: readonly string[];
+		}[],
+	): Promise<"created" | "name_conflict" | "skill_unavailable" | "mcp_unavailable">;
+	insertWithSkillBindings(
+		record: AgentDefinitionRecord,
+		bindings: readonly { readonly skillId: SkillId; readonly skillRevision: number }[],
+		mcpBindings?: readonly {
+			readonly mcpServerId: McpServerId;
+			readonly mcpRevision: number;
+			readonly toolAllowlist: readonly string[];
+		}[],
+	): Promise<"inserted" | "skill_unavailable" | "mcp_unavailable">;
 	/** Fetch a specific revision scoped to the tenant. */
 	getRevision(
 		scope: TenantScope,
@@ -265,10 +496,21 @@ export interface AgentDefinitionRepository {
 	list(params: AgentDefinitionListParams): Promise<AgentDefinitionListRow[]>;
 	/** Hide every revision of an Agent while retaining immutable history. */
 	softDelete?(scope: TenantScope, agentDefinitionId: AgentDefinitionId): Promise<void>;
+	/**
+	 * Lock the Agent, reject active app references, and soft-delete all
+	 * revisions in one transaction. `insertForActiveAgent` takes the same row
+	 * locks, closing the create-app/delete race.
+	 */
+	softDeleteIfUnreferenced(
+		scope: TenantScope,
+		agentDefinitionId: AgentDefinitionId,
+	): Promise<"deleted" | "has_associated_apps" | "not_found">;
 }
 
 export interface PublishedAppRepository {
 	insert(record: PublishedAppRecord): Promise<void>;
+	/** Insert only while the referenced Agent is active, under Agent row locks. */
+	insertForActiveAgent(record: PublishedAppRecord): Promise<boolean>;
 	/** Scoped get: tenant + app must both match. */
 	get(scope: AppScope, publishedAppId: PublishedAppId): Promise<PublishedAppRecord | undefined>;
 	/**
@@ -673,6 +915,9 @@ export interface ConversationReasoningRepository {
 export interface PublishingRepositories {
 	readonly tenants: TenantRepository;
 	readonly agentDefinitions: AgentDefinitionRepository;
+	readonly skills: SkillRepository;
+	readonly mcpServers: McpServerRepository;
+	readonly mcpSecrets: McpSecretRepository;
 	readonly publishedApps: PublishedAppRepository;
 	readonly publishedAppVersions: PublishedAppVersionRepository;
 	readonly principals: PrincipalRepository;

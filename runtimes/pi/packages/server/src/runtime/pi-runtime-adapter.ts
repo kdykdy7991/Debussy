@@ -10,14 +10,14 @@
  * `CodingAgentPiSessionBackend.createSession` 的适配；测试接 fake），因此
  * 本模块可独立测试，不直接 import `@earendil-works/pi-coding-agent`。
  *
- * MVP 已知限制：`RuntimeSpec.agent.systemPrompt` 已随版本冻结存档，但现有
- * `PiSessionRuntime.prompt` 不透传 per-conversation system prompt（底层
- * AgentSession 支持 `prompt(text, { systemPrompt })` 覆盖），故本阶段
- * 沿用 Agent 自身配置；发布版本编译自同一 Agent，二者一致，待 TASK-022
- * 恢复链路时统一注入（记录于交接文档）。
+ * `RuntimeSpec.agent.systemPrompt` 在每轮 prompt 时显式透传到底层
+ * AgentSession，保证 Agent 与 Skill 的发布快照不随当前配置漂移。
  */
+
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ModelRef, ReasoningEffort, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { resolveModelStreamOptions, withConversationEffort } from "../model-parameters.ts";
+import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { PiSessionRuntime } from "../types.ts";
 import { ConversationRuntime } from "./conversation-runtime.ts";
@@ -32,6 +32,7 @@ export interface RuntimeSessionOptions {
 	readonly model: ModelRef;
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly streamOptions?: import("@earendil-works/pi-ai").SimpleStreamOptions;
+	readonly customTools?: readonly ToolDefinition[];
 }
 
 export type RuntimeSessionFactory = (options: RuntimeSessionOptions) => Promise<PiSessionRuntime>;
@@ -45,7 +46,10 @@ export interface PiRuntimeAdapter {
 	open(spec: RuntimeSpec, scope: ScopeContext): Promise<RuntimeOpenResult>;
 }
 
-export function createPiRuntimeAdapter(deps: { readonly createSession: RuntimeSessionFactory }): PiRuntimeAdapter {
+export function createPiRuntimeAdapter(deps: {
+	readonly createSession: RuntimeSessionFactory;
+	readonly createMcpTools?: McpRuntimeToolFactory;
+}): PiRuntimeAdapter {
 	return {
 		async open(spec, scope) {
 			const rejection = chatOnlyRejection(spec);
@@ -68,11 +72,13 @@ export function createPiRuntimeAdapter(deps: { readonly createSession: RuntimeSe
 				}
 			}
 			const thinkingLevel = resolved.thinkingLevel ?? legacyThinkingLevel;
+			const customTools = deps.createMcpTools === undefined ? [] : await deps.createMcpTools(spec, scope);
 			const session = await deps.createSession({
 				id: scope.conversationId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
 				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
 				streamOptions: resolved.streamOptions,
+				...(customTools.length > 0 ? { customTools } : {}),
 			});
 			return { ok: true, runtime: new ConversationRuntime({ scope, spec, session }) };
 		},

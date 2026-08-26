@@ -22,8 +22,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline, Readable } from "node:stream";
 import { createGzip } from "node:zlib";
 import type {
+	AgentCapabilities,
+	AgentMcpRevisionReference,
+	AgentModelParameters,
+	AgentSkillRevisionReference,
 	ConversationExportMode,
 	CustomLlmApi,
+	McpStreamableHttpConfig,
 	ReasoningEffort,
 	ReasoningUpdateRequest,
 } from "@earendil-works/pi-protocol";
@@ -33,10 +38,12 @@ import { jsonBody } from "../../web/http-shared.ts";
 import type {
 	AgentDefinitionId,
 	ConversationId,
+	McpServerId,
 	PrincipalId,
 	PublishedAppId,
 	PublishedAppVersionId,
 	RequestId,
+	SkillId,
 	TenantId,
 } from "../domain/ids.ts";
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
@@ -52,7 +59,7 @@ export const CONTROL_API_PREFIX = "/api/control/v1";
 const emptyQuery = new URLSearchParams();
 
 /** Default cap for a control request body (1 MiB); oversized -> 413. */
-export const CONTROL_MAX_BODY_BYTES = 1024 * 1024;
+export const CONTROL_MAX_BODY_BYTES = 8 * 1024 * 1024;
 /** Idempotency slot TTL for control writes. */
 export const CONTROL_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 
@@ -76,7 +83,7 @@ export interface ControlHttpHandlerOptions {
 }
 
 interface Route {
-	readonly method: "GET" | "POST" | "PUT" | "DELETE";
+	readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 	readonly pattern: RegExp;
 	readonly operation: string;
 	readonly handler: (ctx: {
@@ -88,6 +95,8 @@ interface Route {
 		params: readonly string[];
 		/** The raw HTTP response, exposed only for streaming routes (WB-009). */
 		response: ServerResponse;
+		/** Aborted when the HTTP client disconnects. */
+		signal: AbortSignal;
 	}) => Promise<Envelope | { readonly kind: "stream" }>;
 }
 
@@ -114,6 +123,189 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 	const idempotencyScope: IdempotencyScope = { tenantId, principalId: tenantId as unknown as PrincipalId };
 
 	const routes: readonly Route[] = [
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/skills\/import$/,
+			operation: "skills.import",
+			handler: async ({ requestId, body }) => {
+				const parsed = parseBody(body, { filename: "string", contentBase64: "string" });
+				const bytes = decodeBase64(parsed.contentBase64 as string);
+				if (bytes === null) return badRequest("contentBase64 must be canonical Base64", requestId);
+				const result = await service.importSkill({
+					tenantId,
+					filename: parsed.filename as string,
+					bytes,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers$/,
+			operation: "mcp-servers.create",
+			handler: async ({ requestId, body }) => {
+				const parsed = parseBody(body, { name: "string", config: "object" });
+				const result = await service.createMcpServer({
+					tenantId,
+					name: parsed.name as string,
+					config: parseMcpConfig(parsed.config),
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/mcp-servers$/,
+			operation: "mcp-servers.list",
+			handler: async ({ requestId, query }) => {
+				const parsed = parseListQuery(query, {});
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const result = await service.listMcpServers({
+					tenantId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/revisions$/,
+			operation: "mcp-servers.create-revision",
+			handler: async ({ requestId, body, params }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const parsed = parseBody(body, { config: "object" });
+				const result = await service.addMcpServerRevision({
+					tenantId,
+					mcpServerId,
+					config: parseMcpConfig(parsed.config),
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/secret$/,
+			operation: "mcp-servers.replace-secret",
+			handler: async ({ requestId, body, params }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const parsed = parseBody(body, { bearerToken: "string" });
+				const result = await service.replaceMcpSecret({
+					tenantId,
+					mcpServerId,
+					bearerToken: parsed.bearerToken as string,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/test$/,
+			operation: "mcp-servers.test",
+			handler: async ({ requestId, params, signal }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const result = await service.testMcpServer({ tenantId, mcpServerId, signal });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/sync-tools$/,
+			operation: "mcp-servers.sync-tools",
+			handler: async ({ requestId, params, signal }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const result = await service.syncMcpTools({ tenantId, mcpServerId, signal });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "PATCH",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/status$/,
+			operation: "mcp-servers.update-status",
+			handler: async ({ requestId, body, params }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const parsed = parseBody(body, { enabled: "boolean" });
+				const result = await service.setMcpServerStatus({
+					tenantId,
+					mcpServerId,
+					enabled: parsed.enabled === true,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)$/,
+			operation: "mcp-servers.get",
+			handler: async ({ requestId, params }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const result = await service.getMcpServerDetail({ tenantId, mcpServerId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "DELETE",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)$/,
+			operation: "mcp-servers.delete",
+			handler: async ({ requestId, params }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const result = await service.deleteMcpServer({ tenantId, mcpServerId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/agent-definitions$/,
+			operation: "agent-definitions.create",
+			handler: async ({ requestId, body }) => {
+				const parsed = parseBody(body, {
+					name: "string",
+					description: ["string", "undefined"],
+					modelId: ["string", "null"],
+					systemPrompt: "string",
+					parameters: "object",
+					toolIds: "array",
+					knowledgeBaseIds: "array",
+					capabilities: "object",
+					skills: ["array", "undefined"],
+					mcpServers: ["array", "undefined"],
+				});
+				const created = await service.createAgentDefinition({
+					tenantId,
+					request: {
+						name: parsed.name as string,
+						description: parsed.description as string | undefined,
+						modelId: parsed.modelId as string | null,
+						systemPrompt: parsed.systemPrompt as string,
+						parameters: parsed.parameters as AgentModelParameters,
+						toolIds: parseStringArray(parsed.toolIds, "toolIds"),
+						knowledgeBaseIds: parseStringArray(parsed.knowledgeBaseIds, "knowledgeBaseIds"),
+						capabilities: parseCapabilities(parsed.capabilities),
+						skills: parseSkillReferences(parsed.skills),
+						mcpServers: parseMcpReferences(parsed.mcpServers),
+					},
+				});
+				if (!created.ok) return serviceError(created.error, requestId);
+				return { status: 201, body: { data: created.data, requestId } };
+			},
+		},
 		{
 			method: "POST",
 			pattern: /^\/api\/control\/v1\/agent-definitions\/import-current$/,
@@ -789,6 +981,95 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		// ---- AgentDefinition detail (WB-003 / SPEC §5.2 / §15.1). ----
 		{
 			method: "GET",
+			pattern: /^\/api\/control\/v1\/skills$/,
+			operation: "skills.list",
+			handler: async ({ requestId, query }) => {
+				const parsed = parseListQuery(query, {});
+				if (!parsed.ok) return badRequest(parsed.message, requestId);
+				const result = await service.listSkills({
+					tenantId,
+					limit: parsed.data.limit,
+					cursor: parsed.data.cursor,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/skills\/([^/]+)$/,
+			operation: "skills.get",
+			handler: async ({ requestId, params }) => {
+				const skillId = parseSkillId(params[0]);
+				if (skillId === null) return badRequest("skillId must be a bare skill_<uuid> id", requestId);
+				const result = await service.getSkillDetail({ tenantId, skillId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/skills\/([^/]+)\/revisions$/,
+			operation: "skills.create-revision",
+			handler: async ({ requestId, body, params }) => {
+				const skillId = parseSkillId(params[0]);
+				if (skillId === null) return badRequest("skillId must be a bare skill_<uuid> id", requestId);
+				const parsed = parseBody(body, { filename: "string", contentBase64: "string" });
+				const bytes = decodeBase64(parsed.contentBase64 as string);
+				if (bytes === null) return badRequest("contentBase64 must be canonical Base64", requestId);
+				const result = await service.addSkillRevision({
+					tenantId,
+					skillId,
+					filename: parsed.filename as string,
+					bytes,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/skills\/([^/]+)\/validate$/,
+			operation: "skills.validate",
+			handler: async ({ requestId, params }) => {
+				const skillId = parseSkillId(params[0]);
+				if (skillId === null) return badRequest("skillId must be a bare skill_<uuid> id", requestId);
+				const result = await service.validateSkill({ tenantId, skillId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "PATCH",
+			pattern: /^\/api\/control\/v1\/skills\/([^/]+)\/status$/,
+			operation: "skills.update-status",
+			handler: async ({ requestId, body, params }) => {
+				const skillId = parseSkillId(params[0]);
+				if (skillId === null) return badRequest("skillId must be a bare skill_<uuid> id", requestId);
+				const parsed = parseBody(body, { enabled: "boolean" });
+				const result = await service.setSkillStatus({
+					tenantId,
+					skillId,
+					enabled: parsed.enabled as boolean,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "DELETE",
+			pattern: /^\/api\/control\/v1\/skills\/([^/]+)$/,
+			operation: "skills.delete",
+			handler: async ({ requestId, params }) => {
+				const skillId = parseSkillId(params[0]);
+				if (skillId === null) return badRequest("skillId must be a bare skill_<uuid> id", requestId);
+				const result = await service.deleteSkill({ tenantId, skillId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
 			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)$/,
 			operation: "agent-definitions.get",
 			handler: async ({ requestId, params }) => {
@@ -872,11 +1153,13 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 						systemPrompt: typeof draft.systemPrompt === "string" ? draft.systemPrompt : "",
 						parameters:
 							draft.parameters !== null && typeof draft.parameters === "object"
-								? (draft.parameters as import("@earendil-works/pi-protocol").AgentModelParameters)
+								? (draft.parameters as AgentModelParameters)
 								: {},
 						toolIds: Array.isArray(draft.toolIds) ? (draft.toolIds as string[]) : [],
 						knowledgeBaseIds: Array.isArray(draft.knowledgeBaseIds) ? (draft.knowledgeBaseIds as string[]) : [],
 						capabilities: parseCapabilities(draft.capabilities),
+						skills: parseSkillReferences(draft.skills),
+						mcpServers: parseMcpReferences(draft.mcpServers),
 						changeSummary: typeof draft.changeSummary === "string" ? draft.changeSummary : "",
 					},
 				});
@@ -1011,6 +1294,10 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		if (pathname === undefined || !pathname.startsWith(`${CONTROL_API_PREFIX}/`)) {
 			return false;
 		}
+		const abortController = new AbortController();
+		const abort = (): void => abortController.abort();
+		request.once("aborted", abort);
+		response.once("close", abort);
 		try {
 			// Auth first: uniform 401 for missing/invalid token (33.2).
 			if (!authorized(request, options.adminToken)) {
@@ -1033,7 +1320,14 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			// write idempotency records (spec review: read paths skip slots).
 			if (request.method === "GET") {
 				const query = new URL(request.url ?? "", "http://control.local").searchParams;
-				const result = await route.handler({ requestId, body: undefined, query, params, response });
+				const result = await route.handler({
+					requestId,
+					body: undefined,
+					query,
+					params,
+					response,
+					signal: abortController.signal,
+				});
 				// Streaming routes (WB-009) write bytes + end the response
 				// themselves and return `{ kind: "stream" }`.
 				if ("kind" in result && result.kind === "stream") return true;
@@ -1058,7 +1352,14 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			const idempotencyKey = readIdempotencyKey(request);
 			const handlerResult =
 				idempotencyKey === undefined
-					? await route.handler({ requestId, body, query: emptyQuery, params, response })
+					? await route.handler({
+							requestId,
+							body,
+							query: emptyQuery,
+							params,
+							response,
+							signal: abortController.signal,
+						})
 					: await withIdempotency(route, {
 							requestId,
 							body,
@@ -1066,6 +1367,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 							params,
 							idempotencyKey,
 							response,
+							signal: abortController.signal,
 						});
 			// POST handlers never return { kind: "stream" }; the union is a static
 			// artifact of sharing the Route.handler signature with the single
@@ -1083,6 +1385,9 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				jsonBody(response, 500, errorEnvelope("INTERNAL", "Internal server error", "", true));
 			}
 			return true;
+		} finally {
+			request.off("aborted", abort);
+			response.off("close", abort);
 		}
 	};
 
@@ -1095,6 +1400,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			params: readonly string[];
 			idempotencyKey: string;
 			response: ServerResponse;
+			signal: AbortSignal;
 		},
 	): Promise<Envelope> {
 		const requestHash = hashRequest(route, ctx.body, ctx.params);
@@ -1177,8 +1483,44 @@ function parseAgentId(agentId: string | undefined): AgentDefinitionId | null {
 	return fromPublicId("AgentDefinitionId", agentId);
 }
 
+function parseSkillId(skillId: string | undefined): SkillId | null {
+	if (skillId === undefined) return null;
+	return fromPublicId("SkillId", skillId);
+}
+
+function parseMcpServerId(mcpServerId: string | undefined): McpServerId | null {
+	if (mcpServerId === undefined) return null;
+	return fromPublicId("McpServerId", mcpServerId);
+}
+
+function parseMcpConfig(value: unknown): McpStreamableHttpConfig {
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		throw new HttpValidationError("body.config must be an object");
+	const config = value as Record<string, unknown>;
+	if (
+		config.transport !== "streamable_http" ||
+		typeof config.endpoint !== "string" ||
+		(config.authentication !== "none" && config.authentication !== "bearer")
+	) {
+		throw new HttpValidationError("body.config requires streamable_http, endpoint, and none | bearer authentication");
+	}
+	return { transport: config.transport, endpoint: config.endpoint, authentication: config.authentication };
+}
+
+function decodeBase64(value: string): Uint8Array | null {
+	if (
+		value === "" ||
+		value.length % 4 !== 0 ||
+		!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+	) {
+		return null;
+	}
+	const bytes = Buffer.from(value, "base64");
+	return bytes.toString("base64") === value ? bytes : null;
+}
+
 /** Narrow an arbitrary JSON value to `AgentCapabilities`; missing keys default to false. */
-function parseCapabilities(value: unknown): import("@earendil-works/pi-protocol").AgentCapabilities {
+function parseCapabilities(value: unknown): AgentCapabilities {
 	const obj = (value !== null && typeof value === "object" ? value : {}) as Record<string, unknown>;
 	const asBool = (v: unknown): boolean => v === true;
 	return {
@@ -1189,6 +1531,51 @@ function parseCapabilities(value: unknown): import("@earendil-works/pi-protocol"
 		realtime: asBool(obj.realtime),
 		webSearch: asBool(obj.webSearch),
 	};
+}
+
+function parseStringArray(value: unknown, field: string): readonly string[] {
+	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+		throw new HttpValidationError(`body.${field} must be an array of strings`);
+	}
+	return value;
+}
+
+function parseSkillReferences(value: unknown): readonly AgentSkillRevisionReference[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new HttpValidationError("body.skills must be an array");
+	return value.map((entry) => {
+		if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+			throw new HttpValidationError("body.skills entries must be objects");
+		}
+		const record = entry as Record<string, unknown>;
+		if (typeof record.skillId !== "string" || typeof record.revision !== "number") {
+			throw new HttpValidationError("body.skills entries require skillId and revision");
+		}
+		return { skillId: record.skillId, revision: record.revision };
+	});
+}
+
+function parseMcpReferences(value: unknown): readonly AgentMcpRevisionReference[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new HttpValidationError("body.mcpServers must be an array");
+	return value.map((entry) => {
+		if (entry === null || typeof entry !== "object" || Array.isArray(entry))
+			throw new HttpValidationError("body.mcpServers entries must be objects");
+		const record = entry as Record<string, unknown>;
+		if (
+			typeof record.mcpServerId !== "string" ||
+			typeof record.revision !== "number" ||
+			!Array.isArray(record.toolNames) ||
+			record.toolNames.some((name) => typeof name !== "string")
+		) {
+			throw new HttpValidationError("body.mcpServers entries require mcpServerId, revision, and toolNames");
+		}
+		return {
+			mcpServerId: record.mcpServerId,
+			revision: record.revision,
+			toolNames: record.toolNames as readonly string[],
+		};
+	});
 }
 
 /** Parse shared list query params, validating limit/status for the console. */

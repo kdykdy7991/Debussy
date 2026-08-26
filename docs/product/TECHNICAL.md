@@ -11,9 +11,9 @@
 
 ## 服务端边界
 
-- Control Plane 管理租户、Agent、发布应用、版本、Usage 和管理员会话能力。
+- Control Plane 管理租户、Agent、Skill、MCP Server、发布应用、版本、Usage 和管理员会话能力。
 - Data Plane 提供 Embed bootstrap、凭据交换、企业用户 Conversation 和附件能力。
-- Runtime Plane 执行 Agent 会话、工具调用和流式事件。
+- Runtime Plane 执行 Agent 会话、固定 Skill 注入、受 allowlist 限制的 MCP Tool 调用和流式事件。
 - Embed Realtime 必须转发 Runtime 的真实增量，不得在执行完成后用全文单帧 `message.delta` 替代真实流式事件；最终持久事件仍是断线恢复的权威事实。
 - 发布 Runtime 的思考档位解析顺序固定为：会话覆盖 > Revision 显式参数 > 冻结 capability 的 `defaultEffort`。当冻结能力为 `supported:true`、`toggle:false` 且前述值均缺失时，必须使用冻结 `efforts` 的首个档位，不能静默按“关闭思考”运行；可关闭模型没有默认值时才交由 Provider 默认行为。
 - PostgreSQL 保存发布、租户、企业会话和用量等持久数据。
@@ -23,10 +23,14 @@
 
 - Tenant 是管理和数据隔离边界。
 - Agent Revision 与 Published App Version 均为不可变版本对象。
+- Skill Revision 与 MCP Revision 均为不可变版本对象；Published App Version 固定引用它们及 Tool allowlist。
 - 企业用户 Conversation 固定绑定发布版本。
 - Usage 由服务端记录和聚合，必须包含 Tenant、Agent、来源和 Token 字段。
 - 文件上传记录必须与会话绑定使用同一服务端存储与身份范围。
 - 管理员凭据和终端用户访问凭据使用不同信任链路。
+- MCP Secret 与普通配置分开保存，只能在服务端执行边界解析；Secret 不进入 RuntimeSpec、浏览器、事件、日志或导出。
+- MCP 出站连接必须执行 Tenant 隔离、端点策略、SSRF 防护、超时、取消、响应大小和并发限制。
+- Skill 导入不执行上传内容，并防护路径穿越、符号链接逃逸、文件/解包大小和不允许的内容。
 
 ## 详细实现资料
 

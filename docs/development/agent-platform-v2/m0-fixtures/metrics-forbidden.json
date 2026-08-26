@@ -1,8 +1,0 @@
-{
-  "error": {
-    "code": "CONVERSATION_NOT_FOUND",
-    "message": "Conversation is unavailable",
-    "requestId": "req_9f2b",
-    "retryable": false
-  }
-}

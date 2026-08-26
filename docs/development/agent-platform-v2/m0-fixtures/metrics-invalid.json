@@ -1,8 +1,0 @@
-{
-  "error": {
-    "code": "INVALID_METRICS_FILTER",
-    "message": "sequence must be a positive integer",
-    "requestId": "req_77c1",
-    "retryable": false
-  }
-}

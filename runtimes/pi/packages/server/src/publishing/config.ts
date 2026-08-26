@@ -17,6 +17,7 @@ export const PUBLISHING_REDIS_URL_ENV = "PI_REDIS_URL";
 export const BOOTSTRAP_TENANT_ID_ENV = "PI_BOOTSTRAP_TENANT_ID";
 export const BOOTSTRAP_TENANT_NAME_ENV = "PI_BOOTSTRAP_TENANT_NAME";
 export const CONTROL_ADMIN_TOKEN_FILE_ENV = "PI_CONTROL_ADMIN_TOKEN_FILE";
+export const MCP_SECRET_MASTER_KEY_ENV = "PI_MCP_SECRET_MASTER_KEY";
 export const EMBED_ISSUER_ENV = "PI_EMBED_ISSUER";
 /** 匿名 subject hash 的服务端 HMAC pepper（spec 7.1，TASK-015）。 */
 export const EMBED_SUBJECT_PEPPER_ENV = "PI_EMBED_SUBJECT_PEPPER";
@@ -73,6 +74,8 @@ export interface PublishingConfig {
 	readonly bootstrapTenantName: string | undefined;
 	/** `PI_CONTROL_ADMIN_TOKEN_FILE`; required when enabled (33.2). */
 	readonly controlAdminTokenFile: string | undefined;
+	/** Canonical Base64 decoded 32-byte AES key; optional until bearer MCP is configured. */
+	readonly mcpSecretMasterKey?: Uint8Array;
 	/** `PI_EMBED_ISSUER`; base URL for generated embed URLs. */
 	readonly embedBaseUrl: string;
 	/**
@@ -137,6 +140,7 @@ function disabledConfig(): PublishingConfig {
 		bootstrapTenantId: undefined,
 		bootstrapTenantName: undefined,
 		controlAdminTokenFile: undefined,
+		mcpSecretMasterKey: undefined,
 		embedBaseUrl: "http://127.0.0.1:8765",
 		subjectPepper: undefined,
 		accessTokenPrivateKeyFile: undefined,
@@ -169,6 +173,15 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 		}
 		accessTokenTtlSeconds = ttl;
 	}
+	const mcpSecretMasterKeyRaw = env[MCP_SECRET_MASTER_KEY_ENV];
+	let mcpSecretMasterKey: Uint8Array | undefined;
+	if (mcpSecretMasterKeyRaw !== undefined) {
+		const bytes = Buffer.from(mcpSecretMasterKeyRaw, "base64");
+		if (bytes.byteLength !== 32 || bytes.toString("base64") !== mcpSecretMasterKeyRaw) {
+			throw new Error(`${MCP_SECRET_MASTER_KEY_ENV} must be canonical Base64 for exactly 32 bytes`);
+		}
+		mcpSecretMasterKey = bytes;
+	}
 	return {
 		enabled: true,
 		databaseUrl: env[PUBLISHING_DATABASE_URL_ENV],
@@ -176,6 +189,7 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 		bootstrapTenantId: env[BOOTSTRAP_TENANT_ID_ENV],
 		bootstrapTenantName: env[BOOTSTRAP_TENANT_NAME_ENV],
 		controlAdminTokenFile: env[CONTROL_ADMIN_TOKEN_FILE_ENV],
+		mcpSecretMasterKey,
 		embedBaseUrl: env[EMBED_ISSUER_ENV] ?? "http://127.0.0.1:8765",
 		subjectPepper: env[EMBED_SUBJECT_PEPPER_ENV],
 		accessTokenPrivateKeyFile: env[ACCESS_TOKEN_PRIVATE_KEY_FILE_ENV],

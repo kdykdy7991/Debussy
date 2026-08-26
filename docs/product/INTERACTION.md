@@ -27,6 +27,16 @@
 - 如果模型或发布策略不提供思考内容，界面不得伪造思考过程；如果提供，则发布入口不得丢弃。
 - 流式动画必须由真实增量驱动，并继续遵守 `prefers-reduced-motion`。
 
+## Skill 与 MCP
+
+- Skill/MCP 的加载、校验、连接、同步、停用、失败和无权限状态必须来自服务端真实结果。
+- Skill 通过选择器绑定，不允许用户手填任意 ID；校验错误按资源路径和可操作原因展示。
+- MCP Secret 永不回显，已有值只显示“已配置”，并提供明确的替换动作。
+- Tool 同步必须区分新增、删除和 schema 变化；新增 Tool 默认不授权。
+- Agent 页面必须明确展示已选择的 Skill、MCP 和 Tool allowlist，但不展示内部 UUID 或 Secret。
+- Chat Tool item 至少区分 running、succeeded、failed 和 cancelled；默认折叠敏感或超长参数/结果。
+- Tool 调用被服务端截断或脱敏时必须明确标示，不能让用户误以为看到完整原文。
+
 ## Web 入口与响应式规则
 
 - 管理员工作台与发布给内部成员使用的独立对话页/Embed Chat 是不同入口，分别定义兼容范围和验收证据。

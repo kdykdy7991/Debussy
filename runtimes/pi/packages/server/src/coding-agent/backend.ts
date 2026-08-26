@@ -162,6 +162,9 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			model: model as never,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 			streamOptions: options.streamOptions,
+			...(options.customTools !== undefined
+				? { customTools: [...options.customTools], noTools: "builtin" as const }
+				: {}),
 			sessionStartEvent: {
 				type: "session_start",
 				reason: "new",

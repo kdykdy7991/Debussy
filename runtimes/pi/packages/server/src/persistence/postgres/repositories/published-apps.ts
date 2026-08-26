@@ -62,6 +62,41 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 				record.updatedAt,
 			);
 		},
+		async insertForActiveAgent(record) {
+			return client.transaction(async (tx) => {
+				// Lock every active revision in a stable order. Agent deletion takes
+				// the same locks before checking app references.
+				const agent = await txRows(
+					tx,
+					`select revision from agent_definitions
+					 where id = $1 and tenant_id = $2 and deleted_at is null
+					 order by revision for update`,
+					record.agentDefinitionId,
+					record.tenantId,
+				);
+				if (agent.length === 0) return false;
+				await txRows(
+					tx,
+					`insert into published_apps
+					 (id, tenant_id, agent_definition_id, public_app_id, name, status, access_mode,
+					  current_version_id, allowed_origins, mutable_policy, created_by, created_at, updated_at)
+					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2, $11, $12)`,
+					record.publishedAppId,
+					record.tenantId,
+					record.agentDefinitionId,
+					record.publicAppId,
+					record.name,
+					record.status,
+					record.accessMode,
+					record.currentVersionId,
+					record.allowedOrigins ?? [],
+					(record.mutablePolicy ?? {}) as object,
+					record.createdAt,
+					record.updatedAt,
+				);
+				return true;
+			});
+		},
 		async get(scope: AppScope, publishedAppId) {
 			// The scoped app id must equal the queried id; otherwise the lookup
 			// is out of scope and indistinguishable from a missing resource.

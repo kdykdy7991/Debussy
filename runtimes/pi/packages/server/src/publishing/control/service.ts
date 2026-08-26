@@ -41,7 +41,16 @@ import type {
 	ConversationEventPublicId,
 	ConversationPublicId,
 	ConversationReasoningState,
+	CreateAgentDefinitionRequest,
+	CreateAgentDefinitionResponse,
 	CustomLlmApi,
+	McpServerDetail,
+	McpServerListResponse,
+	McpServerRevisionSummary,
+	McpStreamableHttpConfig,
+	McpSyncToolsResponse,
+	McpTestResponse,
+	McpToolRef,
 	PreviewTicket,
 	PublishedAppLocator,
 	PublishedAppPublicId,
@@ -51,6 +60,12 @@ import type {
 	SaveAgentRevisionRequest,
 	SaveAgentRevisionResponse,
 	SessionEventType,
+	SkillDetail,
+	SkillImportResponse,
+	SkillListResponse,
+	SkillRevisionSummary,
+	SkillToggleResponse,
+	SkillValidateResponse,
 	TurnPublicId,
 } from "@earendil-works/pi-protocol";
 import {
@@ -63,6 +78,7 @@ import {
 	SESSION_EVENT_TYPES,
 	turnOutcomeFromTerminalEvent,
 } from "@earendil-works/pi-protocol";
+import type { Tool as McpSdkTool } from "@modelcontextprotocol/client";
 import { importSPKI } from "jose";
 import {
 	isTerminalTurnEvent,
@@ -78,26 +94,42 @@ import type {
 	AgentDefinitionId,
 	AuditEventId,
 	ConversationId,
+	McpServerId,
 	PublishedAppId,
 	PublishedAppVersionId,
 	RequestId,
+	SkillId,
 	TenantId,
 	TurnId,
 } from "../domain/ids.ts";
 import {
+	fromPublicId,
 	idPrefix,
 	newAgentDefinitionId,
 	newAuditEventId,
 	newLaunchKeyId,
+	newMcpSecretId,
+	newMcpServerId,
+	newMcpToolId,
 	newPublicAppId,
 	newPublishedAppId,
 	newPublishedAppVersionId,
 	newRequestId,
+	newSkillArtifactId,
+	newSkillId,
 	newTenantId,
 	toPublicId,
 } from "../domain/ids.ts";
 import type { AccessMode, PrincipalType } from "../domain/states.ts";
 import { exportSessionLines } from "../export/session-export.ts";
+import type { McpSecretBox } from "../mcp/secret-box.ts";
+import {
+	connectSecureMcpClient,
+	type McpNetworkPolicy,
+	McpNetworkPolicyError,
+	type SecureMcpClientSession,
+	validateMcpEndpoint,
+} from "../mcp/secure-client.ts";
 import type { PreviewTicketService } from "../preview-ticket.ts";
 import type {
 	AdminConversationListRow,
@@ -105,15 +137,23 @@ import type {
 	ConversationEventRecord,
 	ConversationSummaryRecord,
 	LaunchKeyRecord,
+	McpServerRevisionRecord,
+	McpToolRecord,
 	PublishedAppRecord,
 	PublishedAppVersionRecord,
 	PublishingRepositories,
 	TenantRecord,
 } from "../repositories.ts";
-import { type AgentDraftConfig, type CapabilityCatalog, compileRuntimeSpec } from "../runtime-spec/compiler.ts";
+import {
+	type AgentDraftConfig,
+	type CapabilityCatalog,
+	type CompilerInput,
+	compileRuntimeSpec,
+} from "../runtime-spec/compiler.ts";
 import { canonicalJson, sha256Hex } from "../runtime-spec/hash.ts";
-import { parseRuntimeSpec, type RuntimeSpec } from "../runtime-spec/schema.ts";
+import { PLATFORM_LIMITS, parseRuntimeSpec, type RuntimeSpec } from "../runtime-spec/schema.ts";
 import type { CustomLlmProviderView, LlmConfigStore } from "./llm-config.ts";
+import { parseSkillArtifact, SkillImportRejected } from "./skill-import.ts";
 
 /** Cursor-paginated query result shared by the console query API (ADMIN-002). */
 export interface CursorPage<T> {
@@ -229,6 +269,9 @@ export interface ControlServiceOptions {
 	 * `agentV2MetricsEnabled()` 读取 `PI_AGENT_V2_METRICS`。
 	 */
 	readonly metricsEnabled?: boolean;
+	/** Required for MCP bearer-secret write/read operations. */
+	readonly mcpSecretBox?: McpSecretBox;
+	readonly mcpNetworkPolicy?: McpNetworkPolicy;
 }
 
 export type ControlErrorCode =
@@ -236,6 +279,7 @@ export type ControlErrorCode =
 	| "AGENT_NOT_FOUND" // agent/revision not visible in the tenant scope (404)
 	| "AGENT_REVISION_NOT_FOUND" // specific agent revision not visible (404)
 	| "AGENT_SAVE_FAILED" // saving a new revision failed (500)
+	| "AGENT_NAME_CONFLICT" // active Agent with the same name already exists (409)
 	| "SOURCE_HASH_MISMATCH" // expectedSourceHash differs from current (409)
 	| "APP_NOT_FOUND" // app not visible in the tenant scope (404)
 	| "VERSION_NOT_FOUND" // source agent revision not found (404)
@@ -253,6 +297,18 @@ export type ControlErrorCode =
 	| "INVALID_MODEL_PARAMETERS" // Agent model parameters failed capability validation (400)
 	| "INVALID_AGENT_NAME" // Agent name failed length validation (400)
 	| "INVALID_AGENT_DESCRIPTION" // Agent description failed length validation (400)
+	| "INVALID_SYSTEM_PROMPT" // Agent system prompt exceeds the platform limit (400)
+	| "SKILL_NOT_FOUND"
+	| "SKILL_INVALID"
+	| "SKILL_IMPORT_REJECTED"
+	| "SKILL_NAME_CONFLICT"
+	| "MCP_SERVER_NOT_FOUND"
+	| "MCP_TEST_FAILED"
+	| "MCP_SYNC_FAILED"
+	| "MCP_BINDING_VIOLATION"
+	| "MCP_SECRET_NOT_CONFIGURED"
+	| "MCP_CONFIG_NOT_APPROVED"
+	| "MCP_NAME_CONFLICT"
 	| "AGENT_HAS_ASSOCIATED_APPS" // Agent cannot be deleted while applications reference it (409)
 	| "DELETE_NOT_SUPPORTED" // Repository does not implement subject deletion (501)
 	| "DELETE_CONFIRMATION_MISMATCH" // Confirmation name does not match the resource (400)
@@ -380,6 +436,8 @@ export class ControlService {
 	private readonly previewTicketService: PreviewTicketService | undefined;
 	private readonly llm: LlmConfigStore | undefined;
 	private readonly metricsEnabled: boolean;
+	private readonly mcpSecretBox: McpSecretBox | undefined;
+	private readonly mcpNetworkPolicy: McpNetworkPolicy;
 
 	constructor(options: ControlServiceOptions) {
 		this.repos = options.repositories;
@@ -388,6 +446,8 @@ export class ControlService {
 		this.previewTicketService = options.previewTicketService;
 		this.llm = options.llm;
 		this.metricsEnabled = options.metricsEnabled ?? false;
+		this.mcpSecretBox = options.mcpSecretBox;
+		this.mcpNetworkPolicy = options.mcpNetworkPolicy ?? {};
 	}
 
 	/** Bootstrap the MVP tenant idempotently (spec 33.1). */
@@ -522,6 +582,59 @@ export class ControlService {
 		return { ok: true, data: { agentDefinitionId, revision, sourceHash, warnings: collected.warnings } };
 	}
 
+	/** Create a new Agent and its first immutable revision. */
+	async createAgentDefinition(input: {
+		readonly tenantId: TenantId;
+		readonly request: CreateAgentDefinitionRequest;
+	}): Promise<ControlResult<CreateAgentDefinitionResponse>> {
+		const name = input.request.name.trim();
+		const validation = await this.validateAgentDraftRequest({
+			...input.request,
+			name,
+			changeSummary: "",
+		});
+		if (!validation.ok) return validation;
+		const draft = this.requestToDraft({ ...input.request, name, changeSummary: "" });
+		const sourceHash = sha256Hex(
+			canonicalJson({ draft, skills: input.request.skills ?? [], mcpServers: input.request.mcpServers ?? [] }),
+		);
+		const now = new Date();
+		const agentDefinitionId = newAgentDefinitionId();
+		const skillBindings = this.skillBindingsFromRequest(input.request.skills ?? []);
+		if (!skillBindings.ok) return skillBindings;
+		const mcpBindings = this.mcpBindingsFromRequest(input.request.mcpServers ?? []);
+		if (!mcpBindings.ok) return mcpBindings;
+		const created = await this.repos.agentDefinitions.createInitialWithSkillBindings(
+			{
+				agentDefinitionId,
+				tenantId: input.tenantId,
+				name,
+				revision: 1,
+				draftConfig: draft,
+				sourceHash,
+				createdAt: now,
+				updatedAt: now,
+			},
+			skillBindings.data,
+			mcpBindings.data,
+		);
+		if (created === "name_conflict")
+			return fail("AGENT_NAME_CONFLICT", 409, "an active Agent with this name already exists");
+		if (created === "skill_unavailable")
+			return fail("SKILL_NOT_FOUND", 404, "one or more Skill revisions are unavailable");
+		if (created === "mcp_unavailable")
+			return fail("MCP_BINDING_VIOLATION", 409, "one or more MCP bindings are unavailable");
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("AgentDefinitionId", agentDefinitionId) as CreateAgentDefinitionResponse["id"],
+				revision: 1,
+				sourceHash,
+				createdAt: now.toISOString(),
+			},
+		};
+	}
+
 	/** Create a `draft` published app (spec 27.1). */
 	async createPublishedApp(input: CreatePublishedAppInput): Promise<ControlResult<CreatePublishedAppResult>> {
 		if (input.allowedOrigins !== undefined) {
@@ -529,11 +642,6 @@ export class ControlService {
 			if (!validation.ok) {
 				return fail("INVALID_ORIGINS", 400, `invalid allowedOrigins: ${validation.errors.join("; ")}`);
 			}
-		}
-		const tenantScope = { tenantId: input.tenantId };
-		const agent = await this.repos.agentDefinitions.getLatest(tenantScope, input.agentDefinitionId);
-		if (agent === undefined) {
-			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		}
 		const publishedAppId = newPublishedAppId();
 		const publicAppId = newPublicAppId();
@@ -553,7 +661,8 @@ export class ControlService {
 			createdAt: now,
 			updatedAt: now,
 		};
-		await this.repos.publishedApps.insert(app);
+		const inserted = await this.repos.publishedApps.insertForActiveAgent(app);
+		if (!inserted) return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		return {
 			ok: true,
 			data: {
@@ -590,10 +699,78 @@ export class ControlService {
 		// The version id is part of the frozen spec, so it is decided once and
 		// used for both the compile and the inserted row.
 		const versionId = newPublishedAppVersionId();
+		const skillBindings = await this.repos.skills.listBindings(
+			agentScope,
+			app.agentDefinitionId,
+			input.sourceAgentRevision,
+		);
+		const skills: NonNullable<CompilerInput["skills"]>[number][] = [];
+		for (const binding of skillBindings) {
+			const skill = await this.repos.skills.get(agentScope, binding.skillId);
+			const revision = await this.repos.skills.getRevision(agentScope, binding.skillId, binding.skillRevision);
+			if (skill === undefined || skill.status !== "enabled" || revision === undefined) {
+				return fail("SKILL_NOT_FOUND", 404, "a bound Skill revision is unavailable");
+			}
+			skills.push({
+				skillId: toPublicId("SkillId", revision.skillId),
+				revision: revision.revision,
+				sourceHash: revision.sourceHash,
+				name: revision.parsedName,
+				description: revision.description,
+				instructionText: revision.instructionText,
+				disableModelInvocation: revision.disableModelInvocation,
+			});
+		}
+		const mcpBindings = await this.repos.mcpServers.listBindings(
+			agentScope,
+			app.agentDefinitionId,
+			input.sourceAgentRevision,
+		);
+		const mcpServers: NonNullable<CompilerInput["mcpServers"]>[number][] = [];
+		for (const binding of mcpBindings) {
+			const server = await this.repos.mcpServers.get(agentScope, binding.mcpServerId);
+			const revision = await this.repos.mcpServers.getRevision(agentScope, binding.mcpServerId, binding.mcpRevision);
+			if (server === undefined || server.status !== "enabled" || revision === undefined)
+				return fail("MCP_BINDING_VIOLATION", 409, "a bound MCP Server revision is unavailable");
+			if (
+				revision.authentication === "bearer" &&
+				!(await this.repos.mcpSecrets.has(agentScope, binding.mcpServerId))
+			) {
+				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "a bound MCP Server credential is not configured");
+			}
+			const discoveredTools = await this.repos.mcpServers.listTools(
+				agentScope,
+				binding.mcpServerId,
+				binding.mcpRevision,
+			);
+			const allowed = new Set(binding.toolAllowlist);
+			const tools = discoveredTools.filter((tool) => allowed.has(tool.name));
+			if (tools.length !== allowed.size)
+				return fail(
+					"MCP_BINDING_VIOLATION",
+					409,
+					"an MCP Tool allowlist does not match its frozen discovery snapshot",
+				);
+			mcpServers.push({
+				mcpServerId: toPublicId("McpServerId", binding.mcpServerId),
+				revision: binding.mcpRevision,
+				transport: revision.transport,
+				endpoint: revision.endpoint,
+				authentication: revision.authentication,
+				tools: tools.map((tool) => ({
+					name: tool.name,
+					description: tool.description,
+					inputSchema: tool.inputSchema,
+					inputSchemaHash: tool.inputSchemaHash,
+				})),
+			});
+		}
 		const compiled = compileRuntimeSpec({
 			agent: agent.draftConfig as AgentDraftConfig,
 			publishedAppVersionId: versionId,
 			catalog: this.catalog,
+			skills,
+			mcpServers,
 		});
 		const now = new Date();
 		const version: Omit<PublishedAppVersionRecord, "versionNumber"> = {
@@ -601,7 +778,7 @@ export class ControlService {
 			tenantId: input.tenantId,
 			publishedAppId: input.publishedAppId,
 			sourceAgentRevision: input.sourceAgentRevision,
-			snapshot: agent.draftConfig,
+			snapshot: { agent: agent.draftConfig, skills, mcpServers },
 			runtimeSpec: compiled.ok ? compiled.spec : null,
 			runtimeSpecHash: compiled.ok ? compiled.sha256 : null,
 			status: compiled.ok ? "ready" : "rejected",
@@ -801,17 +978,13 @@ export class ControlService {
 		if (latest === undefined) return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		if (input.confirmName !== latest.name)
 			return fail("DELETE_CONFIRMATION_MISMATCH", 400, "confirmation name does not match the Agent name");
-		const hasAssociatedApps =
-			this.repos.publishedApps.hasActiveForAgent === undefined
-				? (await this.repos.publishedApps.list({ scope: { tenantId: input.tenantId }, limit: 200 })).some(
-						(app) => app.agentDefinitionId === input.agentDefinitionId,
-					)
-				: await this.repos.publishedApps.hasActiveForAgent({ tenantId: input.tenantId }, input.agentDefinitionId);
-		if (hasAssociatedApps)
+		const outcome = await this.repos.agentDefinitions.softDeleteIfUnreferenced(
+			{ tenantId: input.tenantId },
+			input.agentDefinitionId,
+		);
+		if (outcome === "has_associated_apps")
 			return fail("AGENT_HAS_ASSOCIATED_APPS", 409, "Agent is still associated with one or more applications");
-		if (this.repos.agentDefinitions.softDelete === undefined)
-			return fail("DELETE_NOT_SUPPORTED", 501, "Agent deletion is not supported by this repository");
-		await this.repos.agentDefinitions.softDelete({ tenantId: input.tenantId }, input.agentDefinitionId);
+		if (outcome === "not_found") return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		return { ok: true, data: { deleted: true } };
 	}
 
@@ -896,39 +1069,36 @@ export class ControlService {
 			return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
 		}
 		const name = input.request.name?.trim() ?? latest.name;
-		if (name.length === 0 || name.length > 100) {
-			return fail("INVALID_AGENT_NAME", 400, "name must contain 1 to 100 characters");
-		}
-		if ((input.request.description?.length ?? 0) > 300) {
-			return fail("INVALID_AGENT_DESCRIPTION", 400, "description must contain at most 300 characters");
-		}
-		const availableModels = this.llm === undefined ? [] : await this.llm.listAvailableModels();
-		const selectedModel = availableModels.find((model) => model.id === input.request.modelId);
-		const parameterCapabilities =
-			selectedModel?.parameterCapabilities ??
-			modelParameterCapabilities({
-				id: input.request.modelId ?? "",
-				api: "openai-completions",
-				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(input.request.modelId ?? ""),
-			});
-		const parameterErrors = validateModelParameters(input.request.parameters, parameterCapabilities);
-		if (parameterErrors.length > 0) {
-			return fail("INVALID_MODEL_PARAMETERS", 400, parameterErrors.join("; "));
-		}
+		const validation = await this.validateAgentDraftRequest({ ...input.request, name });
+		if (!validation.ok) return validation;
 		const nextRevision = latest.revision + 1;
 		const draft = this.requestToDraft(input.request);
-		const sourceHash = sha256Hex(canonicalJson(draft));
+		const sourceHash = sha256Hex(
+			canonicalJson({ draft, skills: input.request.skills ?? [], mcpServers: input.request.mcpServers ?? [] }),
+		);
 		const now = new Date();
-		await this.repos.agentDefinitions.insert({
-			agentDefinitionId: input.agentDefinitionId,
-			tenantId: input.tenantId,
-			name,
-			revision: nextRevision,
-			draftConfig: draft,
-			sourceHash,
-			createdAt: now,
-			updatedAt: now,
-		});
+		const skillBindings = this.skillBindingsFromRequest(input.request.skills ?? []);
+		if (!skillBindings.ok) return skillBindings;
+		const mcpBindings = this.mcpBindingsFromRequest(input.request.mcpServers ?? []);
+		if (!mcpBindings.ok) return mcpBindings;
+		const inserted = await this.repos.agentDefinitions.insertWithSkillBindings(
+			{
+				agentDefinitionId: input.agentDefinitionId,
+				tenantId: input.tenantId,
+				name,
+				revision: nextRevision,
+				draftConfig: draft,
+				sourceHash,
+				createdAt: now,
+				updatedAt: now,
+			},
+			skillBindings.data,
+			mcpBindings.data,
+		);
+		if (inserted === "skill_unavailable")
+			return fail("SKILL_NOT_FOUND", 404, "one or more Skill revisions are unavailable");
+		if (inserted === "mcp_unavailable")
+			return fail("MCP_BINDING_VIOLATION", 409, "one or more MCP bindings are unavailable");
 		return {
 			ok: true,
 			data: {
@@ -971,6 +1141,615 @@ export class ControlService {
 								) as AgentDefinitionAssociatedApp["currentVersionId"]),
 				})),
 			},
+		};
+	}
+
+	async importSkill(input: {
+		readonly tenantId: TenantId;
+		readonly filename: string;
+		readonly bytes: Uint8Array;
+	}): Promise<ControlResult<SkillImportResponse>> {
+		let parsed: Awaited<ReturnType<typeof parseSkillArtifact>>;
+		try {
+			parsed = await parseSkillArtifact(input.filename, input.bytes);
+		} catch (error) {
+			if (error instanceof SkillImportRejected) return fail(error.code, 422, error.message);
+			throw error;
+		}
+		const now = new Date();
+		const skillId = newSkillId();
+		const artifactId = newSkillArtifactId();
+		const outcome = await this.repos.skills.create({
+			skill: {
+				skillId,
+				tenantId: input.tenantId,
+				name: parsed.name,
+				status: "enabled",
+				currentRevision: 1,
+				createdAt: now,
+				updatedAt: now,
+			},
+			artifact: {
+				artifactId,
+				tenantId: input.tenantId,
+				filename: parsed.filename,
+				mediaType: parsed.mediaType,
+				sourceHash: parsed.sourceHash,
+				sizeBytes: parsed.bytes.byteLength,
+				content: parsed.bytes,
+				createdAt: now,
+			},
+			revision: {
+				skillId,
+				tenantId: input.tenantId,
+				revision: 1,
+				artifactId,
+				sourceHash: parsed.sourceHash,
+				parsedName: parsed.name,
+				description: parsed.description,
+				instructionText: parsed.instructionText,
+				disableModelInvocation: parsed.disableModelInvocation,
+				diagnostics: parsed.diagnostics,
+				createdAt: now,
+			},
+		});
+		if (outcome === "name_conflict") return fail("SKILL_NAME_CONFLICT", 409, "an active Skill with this name exists");
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("SkillId", skillId),
+				revision: 1,
+				sourceHash: parsed.sourceHash,
+				warnings: parsed.diagnostics,
+			},
+		};
+	}
+
+	async addSkillRevision(input: {
+		readonly tenantId: TenantId;
+		readonly skillId: SkillId;
+		readonly filename: string;
+		readonly bytes: Uint8Array;
+	}): Promise<ControlResult<SkillImportResponse>> {
+		let parsed: Awaited<ReturnType<typeof parseSkillArtifact>>;
+		try {
+			parsed = await parseSkillArtifact(input.filename, input.bytes);
+		} catch (error) {
+			if (error instanceof SkillImportRejected) return fail(error.code, 422, error.message);
+			throw error;
+		}
+		const existing = await this.repos.skills.get({ tenantId: input.tenantId }, input.skillId);
+		if (existing === undefined) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		if (existing.name !== parsed.name)
+			return fail("SKILL_INVALID", 422, "a Skill revision cannot change the Skill name");
+		const now = new Date();
+		const artifactId = newSkillArtifactId();
+		const revision = await this.repos.skills.addRevision({
+			scope: { tenantId: input.tenantId },
+			skillId: input.skillId,
+			artifact: {
+				artifactId,
+				tenantId: input.tenantId,
+				filename: parsed.filename,
+				mediaType: parsed.mediaType,
+				sourceHash: parsed.sourceHash,
+				sizeBytes: parsed.bytes.byteLength,
+				content: parsed.bytes,
+				createdAt: now,
+			},
+			revision: {
+				skillId: input.skillId,
+				tenantId: input.tenantId,
+				artifactId,
+				sourceHash: parsed.sourceHash,
+				parsedName: parsed.name,
+				description: parsed.description,
+				instructionText: parsed.instructionText,
+				disableModelInvocation: parsed.disableModelInvocation,
+				diagnostics: parsed.diagnostics,
+				createdAt: now,
+			},
+		});
+		if (revision === undefined) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("SkillId", input.skillId),
+				revision: revision.revision,
+				sourceHash: revision.sourceHash,
+				warnings: revision.diagnostics,
+			},
+		};
+	}
+
+	async listSkills(input: {
+		readonly tenantId: TenantId;
+		readonly limit: number;
+		readonly cursor?: string;
+	}): Promise<ControlResult<SkillListResponse>> {
+		const rows = await this.repos.skills.list({ tenantId: input.tenantId }, input.limit, input.cursor);
+		const page = rows.slice(0, input.limit);
+		const next = rows.length > input.limit ? rows[input.limit - 1] : undefined;
+		return {
+			ok: true,
+			data: {
+				items: page.map((skill) => ({
+					id: toPublicId("SkillId", skill.skillId),
+					name: skill.name,
+					kind: "file",
+					currentRevision: skill.currentRevision,
+					enabled: skill.status === "enabled",
+					updatedAt: skill.updatedAt.toISOString(),
+				})),
+				nextCursor: next === undefined ? null : `${next.updatedAt.toISOString()}|${next.skillId}`,
+			},
+		};
+	}
+
+	async getSkillDetail(input: {
+		readonly tenantId: TenantId;
+		readonly skillId: SkillId;
+	}): Promise<ControlResult<SkillDetail>> {
+		const scope = { tenantId: input.tenantId };
+		const skill = await this.repos.skills.get(scope, input.skillId);
+		if (skill === undefined) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		const revisions = await this.repos.skills.listRevisions(scope, input.skillId);
+		const bindings = await this.repos.skills.listBindingsForSkill(scope, input.skillId);
+		const revisionView = (revision: (typeof revisions)[number]): SkillRevisionSummary => ({
+			id: toPublicId("SkillId", revision.skillId),
+			revision: revision.revision,
+			sourceHash: revision.sourceHash,
+			diagnostics: revision.diagnostics,
+			createdBy: String(input.tenantId),
+			createdAt: revision.createdAt.toISOString(),
+		});
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("SkillId", skill.skillId),
+				name: skill.name,
+				kind: "file",
+				currentRevision: skill.currentRevision,
+				enabled: skill.status === "enabled",
+				updatedAt: skill.updatedAt.toISOString(),
+				revisions: revisions.map(revisionView),
+				boundAgents: bindings.map((binding) => ({
+					agentId: toPublicId("AgentDefinitionId", binding.agentDefinitionId) as AgentPublicId,
+					agentRevision: binding.agentRevision,
+				})),
+			},
+		};
+	}
+
+	async validateSkill(input: {
+		readonly tenantId: TenantId;
+		readonly skillId: SkillId;
+	}): Promise<ControlResult<SkillValidateResponse>> {
+		const skill = await this.repos.skills.get({ tenantId: input.tenantId }, input.skillId);
+		if (skill === undefined) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		const revision = await this.repos.skills.getRevision(
+			{ tenantId: input.tenantId },
+			input.skillId,
+			skill.currentRevision,
+		);
+		if (revision === undefined) return fail("SKILL_NOT_FOUND", 404, "Skill revision not found in tenant scope");
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("SkillId", input.skillId),
+				revision: revision.revision,
+				diagnostics: revision.diagnostics,
+			},
+		};
+	}
+
+	async setSkillStatus(input: {
+		readonly tenantId: TenantId;
+		readonly skillId: SkillId;
+		readonly enabled: boolean;
+	}): Promise<ControlResult<SkillToggleResponse>> {
+		const updated = await this.repos.skills.setStatus(
+			{ tenantId: input.tenantId },
+			input.skillId,
+			input.enabled ? "enabled" : "disabled",
+		);
+		if (!updated) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		return { ok: true, data: { id: toPublicId("SkillId", input.skillId), enabled: input.enabled } };
+	}
+
+	async deleteSkill(input: {
+		readonly tenantId: TenantId;
+		readonly skillId: SkillId;
+	}): Promise<ControlResult<{ readonly deleted: true }>> {
+		const deleted = await this.repos.skills.softDelete({ tenantId: input.tenantId }, input.skillId);
+		if (!deleted) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		return { ok: true, data: { deleted: true } };
+	}
+
+	async createMcpServer(input: {
+		readonly tenantId: TenantId;
+		readonly name: string;
+		readonly config: McpStreamableHttpConfig;
+	}): Promise<ControlResult<McpServerDetail>> {
+		const name = input.name.trim();
+		if (name.length < 1 || name.length > 100)
+			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MCP name must be 1-100 characters");
+		const config = this.validateMcpConfig(input.config);
+		if (!config.ok) return config;
+		const now = new Date();
+		const mcpServerId = newMcpServerId();
+		const outcome = await this.repos.mcpServers.create({
+			server: {
+				mcpServerId,
+				tenantId: input.tenantId,
+				name,
+				status: "enabled",
+				currentRevision: 1,
+				lastTestOk: null,
+				lastTestLatencyMs: null,
+				lastTestAt: null,
+				createdAt: now,
+				updatedAt: now,
+			},
+			revision: {
+				mcpServerId,
+				tenantId: input.tenantId,
+				revision: 1,
+				...config.data,
+				createdAt: now,
+			},
+		});
+		if (outcome === "name_conflict")
+			return fail("MCP_NAME_CONFLICT", 409, "an active MCP Server with this name exists");
+		return this.getMcpServerDetail({ tenantId: input.tenantId, mcpServerId });
+	}
+
+	async addMcpServerRevision(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly config: McpStreamableHttpConfig;
+	}): Promise<ControlResult<McpServerRevisionSummary>> {
+		const config = this.validateMcpConfig(input.config);
+		if (!config.ok) return config;
+		const revision = await this.repos.mcpServers.addRevision({
+			scope: { tenantId: input.tenantId },
+			mcpServerId: input.mcpServerId,
+			revision: {
+				mcpServerId: input.mcpServerId,
+				tenantId: input.tenantId,
+				...config.data,
+				createdAt: new Date(),
+			},
+			tools: [],
+		});
+		if (revision === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		return {
+			ok: true,
+			data: {
+				revision: revision.revision,
+				config: config.data,
+				tools: [],
+				createdAt: revision.createdAt.toISOString(),
+			},
+		};
+	}
+
+	async listMcpServers(input: {
+		readonly tenantId: TenantId;
+		readonly limit: number;
+		readonly cursor?: string;
+	}): Promise<ControlResult<McpServerListResponse>> {
+		const scope = { tenantId: input.tenantId };
+		const rows = await this.repos.mcpServers.list(scope, input.limit, input.cursor);
+		const page = rows.slice(0, input.limit);
+		const next = rows.length > input.limit ? rows[input.limit - 1] : undefined;
+		const items = await Promise.all(
+			page.map(async (server) => {
+				const tools = await this.repos.mcpServers.listTools(scope, server.mcpServerId, server.currentRevision);
+				return {
+					id: toPublicId("McpServerId", server.mcpServerId),
+					name: server.name,
+					status: server.status,
+					currentRevision: server.currentRevision,
+					transport: "streamable_http" as const,
+					toolCount: tools.length,
+					secretConfigured: await this.repos.mcpSecrets.has(scope, server.mcpServerId),
+					updatedAt: server.updatedAt.toISOString(),
+				};
+			}),
+		);
+		return {
+			ok: true,
+			data: {
+				items,
+				nextCursor: next === undefined ? null : `${next.updatedAt.toISOString()}|${next.mcpServerId}`,
+			},
+		};
+	}
+
+	async getMcpServerDetail(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+	}): Promise<ControlResult<McpServerDetail>> {
+		const scope = { tenantId: input.tenantId };
+		const server = await this.repos.mcpServers.get(scope, input.mcpServerId);
+		if (server === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		const revisions = await this.repos.mcpServers.listRevisions(scope, input.mcpServerId);
+		const revisionViews = await Promise.all(
+			revisions.map(
+				async (revision): Promise<McpServerRevisionSummary> => ({
+					revision: revision.revision,
+					config: {
+						transport: revision.transport,
+						endpoint: revision.endpoint,
+						authentication: revision.authentication,
+					},
+					tools: (await this.repos.mcpServers.listTools(scope, input.mcpServerId, revision.revision)).map((tool) =>
+						this.mcpToolView(tool),
+					),
+					createdAt: revision.createdAt.toISOString(),
+				}),
+			),
+		);
+		const bindings = await this.repos.mcpServers.listBindingsForServer(scope, input.mcpServerId);
+		const currentTools = revisionViews.find((revision) => revision.revision === server.currentRevision)?.tools ?? [];
+		return {
+			ok: true,
+			data: {
+				id: toPublicId("McpServerId", server.mcpServerId),
+				name: server.name,
+				status: server.status,
+				currentRevision: server.currentRevision,
+				transport: "streamable_http",
+				toolCount: currentTools.length,
+				secretConfigured: await this.repos.mcpSecrets.has(scope, input.mcpServerId),
+				updatedAt: server.updatedAt.toISOString(),
+				revisions: revisionViews,
+				boundAgents: bindings.map((binding) => ({
+					agentId: toPublicId("AgentDefinitionId", binding.agentDefinitionId) as AgentPublicId,
+					agentRevision: binding.agentRevision,
+				})),
+				lastTest:
+					server.lastTestAt === null || server.lastTestOk === null
+						? null
+						: { ok: server.lastTestOk, latencyMs: server.lastTestLatencyMs, at: server.lastTestAt.toISOString() },
+			},
+		};
+	}
+
+	async replaceMcpSecret(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly bearerToken: string;
+	}): Promise<ControlResult<{ readonly id: string; readonly secretConfigured: true }>> {
+		const server = await this.repos.mcpServers.get({ tenantId: input.tenantId }, input.mcpServerId);
+		if (server === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		if (this.mcpSecretBox === undefined)
+			return fail("MCP_SECRET_NOT_CONFIGURED", 503, "MCP secret store is unavailable");
+		if (input.bearerToken.length < 1 || input.bearerToken.length > 16_384)
+			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MCP bearer token length is invalid");
+		const sealed = this.mcpSecretBox.seal(input.tenantId, input.mcpServerId, input.bearerToken);
+		await this.repos.mcpSecrets.put({
+			secretId: newMcpSecretId(),
+			tenantId: input.tenantId,
+			mcpServerId: input.mcpServerId,
+			...sealed,
+		});
+		return { ok: true, data: { id: toPublicId("McpServerId", input.mcpServerId), secretConfigured: true } };
+	}
+
+	async testMcpServer(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly signal?: AbortSignal;
+	}): Promise<ControlResult<McpTestResponse>> {
+		const startedAt = Date.now();
+		const connected = await this.openMcpServer(input);
+		if (!connected.ok) {
+			if (connected.error.code === "MCP_TEST_FAILED") {
+				await this.repos.mcpServers.setLastTest({ tenantId: input.tenantId }, input.mcpServerId, {
+					ok: false,
+					latencyMs: Date.now() - startedAt,
+				});
+			}
+			return connected;
+		}
+		try {
+			const tools = await connected.data.session.listTools(input.signal);
+			const toolViews = this.discoveredMcpTools(
+				input.tenantId,
+				input.mcpServerId,
+				connected.data.revision.revision,
+				tools,
+			).map((tool) => this.mcpToolView(tool));
+			const latencyMs = Date.now() - startedAt;
+			await this.repos.mcpServers.setLastTest({ tenantId: input.tenantId }, input.mcpServerId, {
+				ok: true,
+				latencyMs,
+			});
+			return { ok: true, data: { ok: true, latencyMs, tools: toolViews } };
+		} catch {
+			const latencyMs = Date.now() - startedAt;
+			await this.repos.mcpServers.setLastTest({ tenantId: input.tenantId }, input.mcpServerId, {
+				ok: false,
+				latencyMs,
+			});
+			return fail("MCP_TEST_FAILED", 422, "MCP connection or Tool discovery failed");
+		} finally {
+			await connected.data.session.close();
+		}
+	}
+
+	async syncMcpTools(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly signal?: AbortSignal;
+	}): Promise<ControlResult<McpSyncToolsResponse>> {
+		const connected = await this.openMcpServer(input);
+		if (!connected.ok) return connected;
+		try {
+			const discovered = await connected.data.session.listTools(input.signal);
+			const oldTools = await this.repos.mcpServers.listTools(
+				{ tenantId: input.tenantId },
+				input.mcpServerId,
+				connected.data.revision.revision,
+			);
+			const nextTools = this.discoveredMcpTools(
+				input.tenantId,
+				input.mcpServerId,
+				connected.data.revision.revision + 1,
+				discovered,
+			);
+			const oldByName = new Map(oldTools.map((tool) => [tool.name, tool]));
+			const nextByName = new Map(nextTools.map((tool) => [tool.name, tool]));
+			const added = [...nextByName.keys()].filter((name) => !oldByName.has(name)).sort();
+			const removed = [...oldByName.keys()].filter((name) => !nextByName.has(name)).sort();
+			const changed = [...nextByName.entries()]
+				.filter(([name, tool]) => {
+					const oldTool = oldByName.get(name);
+					return (
+						oldTool !== undefined &&
+						(oldTool.inputSchemaHash !== tool.inputSchemaHash || oldTool.description !== tool.description)
+					);
+				})
+				.map(([name]) => name)
+				.sort();
+			const created = await this.repos.mcpServers.addRevision({
+				scope: { tenantId: input.tenantId },
+				mcpServerId: input.mcpServerId,
+				revision: {
+					mcpServerId: connected.data.revision.mcpServerId,
+					tenantId: connected.data.revision.tenantId,
+					transport: connected.data.revision.transport,
+					endpoint: connected.data.revision.endpoint,
+					authentication: connected.data.revision.authentication,
+					createdAt: new Date(),
+				},
+				tools: nextTools.map(({ mcpRevision: _mcpRevision, ...tool }) => tool),
+			});
+			if (created === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+			return { ok: true, data: { ok: true, revision: created.revision, added, removed, changed } };
+		} catch {
+			return fail("MCP_SYNC_FAILED", 422, "MCP Tool discovery failed");
+		} finally {
+			await connected.data.session.close();
+		}
+	}
+
+	async setMcpServerStatus(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly enabled: boolean;
+	}): Promise<ControlResult<{ readonly id: string; readonly enabled: boolean }>> {
+		const updated = await this.repos.mcpServers.setStatus(
+			{ tenantId: input.tenantId },
+			input.mcpServerId,
+			input.enabled ? "enabled" : "disabled",
+		);
+		if (!updated) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		return { ok: true, data: { id: toPublicId("McpServerId", input.mcpServerId), enabled: input.enabled } };
+	}
+
+	async deleteMcpServer(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+	}): Promise<ControlResult<{ readonly deleted: true }>> {
+		const deleted = await this.repos.mcpServers.softDelete({ tenantId: input.tenantId }, input.mcpServerId);
+		if (!deleted) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		await this.repos.mcpSecrets.delete({ tenantId: input.tenantId }, input.mcpServerId);
+		return { ok: true, data: { deleted: true } };
+	}
+
+	private validateMcpConfig(config: McpStreamableHttpConfig): ControlResult<McpStreamableHttpConfig> {
+		if (config.transport !== "streamable_http")
+			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MVP supports streamable_http transport only");
+		if (config.authentication !== "none" && config.authentication !== "bearer")
+			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MCP authentication must be none or bearer");
+		try {
+			const endpoint = validateMcpEndpoint(config.endpoint, this.mcpNetworkPolicy).toString();
+			return { ok: true, data: { ...config, endpoint } };
+		} catch (error) {
+			if (error instanceof McpNetworkPolicyError) return fail("MCP_CONFIG_NOT_APPROVED", 422, error.message);
+			throw error;
+		}
+	}
+
+	private async openMcpServer(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly signal?: AbortSignal;
+	}): Promise<
+		ControlResult<{ readonly session: SecureMcpClientSession; readonly revision: McpServerRevisionRecord }>
+	> {
+		const scope = { tenantId: input.tenantId };
+		const server = await this.repos.mcpServers.get(scope, input.mcpServerId);
+		if (server === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		if (server.status !== "enabled") return fail("MCP_BINDING_VIOLATION", 409, "MCP Server is disabled");
+		const revision = await this.repos.mcpServers.getRevision(scope, input.mcpServerId, server.currentRevision);
+		if (revision === undefined)
+			return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server revision not found in tenant scope");
+		let bearerToken: string | undefined;
+		if (revision.authentication === "bearer") {
+			if (this.mcpSecretBox === undefined)
+				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP bearer credential is not configured");
+			const secret = await this.repos.mcpSecrets.get(scope, input.mcpServerId);
+			if (secret === undefined)
+				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP bearer credential is not configured");
+			try {
+				bearerToken = this.mcpSecretBox.open(input.tenantId, input.mcpServerId, secret);
+			} catch {
+				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP bearer credential cannot be opened");
+			}
+		}
+		try {
+			const session = await connectSecureMcpClient({
+				endpoint: revision.endpoint,
+				bearerToken,
+				networkPolicy: this.mcpNetworkPolicy,
+				signal: input.signal,
+			});
+			return { ok: true, data: { session, revision } };
+		} catch {
+			return fail("MCP_TEST_FAILED", 422, "MCP connection failed");
+		}
+	}
+
+	private discoveredMcpTools(
+		tenantId: TenantId,
+		mcpServerId: McpServerId,
+		mcpRevision: number,
+		tools: readonly McpSdkTool[],
+	): readonly McpToolRecord[] {
+		if (tools.length > 128) throw new Error("MCP Server exposes too many Tools");
+		const names = new Set<string>();
+		return tools.map((tool) => {
+			if (tool.name.length < 1 || tool.name.length > 128 || names.has(tool.name))
+				throw new Error("MCP Tool names are invalid or duplicated");
+			names.add(tool.name);
+			const inputSchema = tool.inputSchema as Readonly<Record<string, unknown>>;
+			const canonicalSchema = canonicalJson(inputSchema);
+			if (Buffer.byteLength(canonicalSchema, "utf8") > 256 * 1024) throw new Error("MCP Tool schema is too large");
+			return {
+				mcpToolId: newMcpToolId(),
+				tenantId,
+				mcpServerId,
+				mcpRevision,
+				name: tool.name,
+				description: tool.description ?? null,
+				inputSchema,
+				inputSchemaHash: sha256Hex(canonicalSchema),
+				createdAt: new Date(),
+			};
+		});
+	}
+
+	private mcpToolView(tool: McpToolRecord): McpToolRef {
+		return {
+			id: toPublicId("McpToolId", tool.mcpToolId),
+			name: tool.name,
+			description: tool.description,
+			inputSchema: tool.inputSchema,
+			inputSchemaHash: tool.inputSchemaHash,
 		};
 	}
 
@@ -1078,6 +1857,93 @@ export class ControlService {
 			speech: { enabled: request.capabilities.liveSpeech },
 			avatar: { enabled: request.capabilities.avatar },
 		};
+	}
+
+	/** Shared validation for Agent creation and immutable revision saves. */
+	private async validateAgentDraftRequest(request: SaveAgentRevisionRequest): Promise<ControlResult<undefined>> {
+		const name = request.name?.trim() ?? "";
+		if (name.length === 0 || name.length > 100) {
+			return fail("INVALID_AGENT_NAME", 400, "name must contain 1 to 100 characters");
+		}
+		if ((request.description?.length ?? 0) > 300) {
+			return fail("INVALID_AGENT_DESCRIPTION", 400, "description must contain at most 300 characters");
+		}
+		if (request.systemPrompt.length > PLATFORM_LIMITS.maxSystemPromptChars) {
+			return fail(
+				"INVALID_SYSTEM_PROMPT",
+				400,
+				`systemPrompt must contain at most ${PLATFORM_LIMITS.maxSystemPromptChars} characters`,
+			);
+		}
+		const availableModels = this.llm === undefined ? [] : await this.llm.listAvailableModels();
+		const selectedModel = availableModels.find((model) => model.id === request.modelId);
+		const parameterCapabilities =
+			selectedModel?.parameterCapabilities ??
+			modelParameterCapabilities({
+				id: request.modelId ?? "",
+				api: "openai-completions",
+				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(request.modelId ?? ""),
+			});
+		const parameterErrors = validateModelParameters(request.parameters, parameterCapabilities);
+		if (parameterErrors.length > 0) {
+			return fail("INVALID_MODEL_PARAMETERS", 400, parameterErrors.join("; "));
+		}
+		return { ok: true, data: undefined };
+	}
+
+	private skillBindingsFromRequest(
+		refs: readonly { readonly skillId: string; readonly revision: number }[],
+	): ControlResult<readonly { readonly skillId: SkillId; readonly skillRevision: number }[]> {
+		const seen = new Set<string>();
+		const bindings: { skillId: SkillId; skillRevision: number }[] = [];
+		for (const ref of refs) {
+			const skillId = fromPublicId("SkillId", ref.skillId);
+			if (skillId === null || !Number.isInteger(ref.revision) || ref.revision < 1 || seen.has(ref.skillId)) {
+				return fail("SKILL_INVALID", 422, "Skill bindings require unique skill_<uuid> ids and positive revisions");
+			}
+			seen.add(ref.skillId);
+			bindings.push({ skillId, skillRevision: ref.revision });
+		}
+		return { ok: true, data: bindings };
+	}
+
+	private mcpBindingsFromRequest(
+		refs: readonly {
+			readonly mcpServerId: string;
+			readonly revision: number;
+			readonly toolNames: readonly string[];
+		}[],
+	): ControlResult<
+		readonly {
+			readonly mcpServerId: McpServerId;
+			readonly mcpRevision: number;
+			readonly toolAllowlist: readonly string[];
+		}[]
+	> {
+		const seenServers = new Set<string>();
+		const bindings: { mcpServerId: McpServerId; mcpRevision: number; toolAllowlist: readonly string[] }[] = [];
+		for (const ref of refs) {
+			const mcpServerId = fromPublicId("McpServerId", ref.mcpServerId);
+			const uniqueTools = new Set(ref.toolNames);
+			if (
+				mcpServerId === null ||
+				!Number.isInteger(ref.revision) ||
+				ref.revision < 1 ||
+				seenServers.has(ref.mcpServerId) ||
+				ref.toolNames.length === 0 ||
+				uniqueTools.size !== ref.toolNames.length ||
+				ref.toolNames.some((name) => name.length < 1 || name.length > 128)
+			) {
+				return fail(
+					"MCP_BINDING_VIOLATION",
+					409,
+					"MCP bindings require a unique Server, positive revision, and unique Tool names",
+				);
+			}
+			seenServers.add(ref.mcpServerId);
+			bindings.push({ mcpServerId, mcpRevision: ref.revision, toolAllowlist: [...uniqueTools].sort() });
+		}
+		return { ok: true, data: bindings };
 	}
 
 	/** Internal: compute a structural diff between two consecutive revisions' draft configs. */

@@ -36,6 +36,12 @@ export type RequestId = string & Brand<"RequestId">;
 export type IdempotencyKey = string & Brand<"IdempotencyKey">;
 export type AuditEventId = string & Brand<"AuditEventId">;
 export type LaunchKeyId = string & Brand<"LaunchKeyId">;
+export type SkillId = string & Brand<"SkillId">;
+export type SkillArtifactId = string & Brand<"SkillArtifactId">;
+export type McpServerId = string & Brand<"McpServerId">;
+export type McpToolId = string & Brand<"McpToolId">;
+export type McpSecretId = string & Brand<"McpSecretId">;
+export type McpCallAuditId = string & Brand<"McpCallAuditId">;
 
 /** Identifier kinds and their display prefixes (representation layer only). */
 export type IdKind =
@@ -52,7 +58,13 @@ export type IdKind =
 	| "RequestId"
 	| "IdempotencyKey"
 	| "AuditEventId"
-	| "LaunchKeyId";
+	| "LaunchKeyId"
+	| "SkillId"
+	| "SkillArtifactId"
+	| "McpServerId"
+	| "McpToolId"
+	| "McpSecretId"
+	| "McpCallAuditId";
 
 const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	TenantId: "ten_",
@@ -69,6 +81,12 @@ const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	IdempotencyKey: "idem_",
 	AuditEventId: "aud_",
 	LaunchKeyId: "lkey_",
+	SkillId: "skill_",
+	SkillArtifactId: "skart_",
+	McpServerId: "mcp_",
+	McpToolId: "mcptool_",
+	McpSecretId: "mcpsec_",
+	McpCallAuditId: "mcpaud_",
 };
 
 /** Generate a UUIDv7 string: 48-bit millisecond timestamp + random bits. */
@@ -170,6 +188,24 @@ export function newAuditEventId(): AuditEventId {
 }
 export function newLaunchKeyId(): LaunchKeyId {
 	return buildId("LaunchKeyId") as LaunchKeyId;
+}
+export function newSkillId(): SkillId {
+	return buildId("SkillId") as SkillId;
+}
+export function newSkillArtifactId(): SkillArtifactId {
+	return buildId("SkillArtifactId") as SkillArtifactId;
+}
+export function newMcpServerId(): McpServerId {
+	return buildId("McpServerId") as McpServerId;
+}
+export function newMcpToolId(): McpToolId {
+	return buildId("McpToolId") as McpToolId;
+}
+export function newMcpSecretId(): McpSecretId {
+	return buildId("McpSecretId") as McpSecretId;
+}
+export function newMcpCallAuditId(): McpCallAuditId {
+	return buildId("McpCallAuditId") as McpCallAuditId;
 }
 
 /** Public locator: stored in the `public_app_id` text column, keeps `pub_`. */
