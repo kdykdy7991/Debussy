@@ -168,4 +168,76 @@ describe("AppApi", () => {
 		// Token must remain set: only 401 transitions to lock state.
 		expect(controller.getToken()).toBe("tok");
 	});
+
+	it("updatePublishedApp PATCHes /published-apps/:id with an Idempotency-Key", async () => {
+		controller.connect("tok");
+		let captured: { url: string; init: RequestInit } | undefined;
+		const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+			captured = { url, init };
+			return new Response(
+				JSON.stringify({
+					data: {
+						app: {
+							id: "app_x",
+							publicAppId: "pub_x",
+							status: "draft",
+							currentVersionId: null,
+						},
+						auditEventId: "audit_x",
+					},
+					requestId: "r1",
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		const client = new AppApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+		const result = await client.updatePublishedApp("app_x", {
+			name: "Renamed",
+			allowedOrigins: ["http://127.0.0.1:5176"],
+		});
+		expect(result.app.id).toBe("app_x");
+		expect(result.auditEventId).toBe("audit_x");
+		expect(captured).toBeDefined();
+		if (captured === undefined) throw new Error("captured missing");
+		expect(captured.url).toBe("http://localhost/api/control/v1/published-apps/app_x");
+		expect(captured.init.method).toBe("PATCH");
+		const headers = captured.init.headers as Record<string, string>;
+		expect(headers["Idempotency-Key"]).toBeTruthy();
+		const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+		expect(body["name"]).toBe("Renamed");
+		expect(body["allowedOrigins"]).toEqual(["http://127.0.0.1:5176"]);
+	});
+
+	it("updatePublishedApp encodes appId in the path", async () => {
+		controller.connect("tok");
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ data: { app: { id: "a" }, auditEventId: null }, requestId: "r" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+		const client = new AppApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+		await client.updatePublishedApp("app with space", { name: "x" });
+		const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe("http://localhost/api/control/v1/published-apps/app%20with%20space");
+	});
+
+	it("updatePublishedApp propagates server error", async () => {
+		controller.connect("tok");
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						error: { code: "APP_NOT_FOUND", message: "no app", requestId: "r_nf" },
+					}),
+					{ status: 404, headers: { "content-type": "application/json" } },
+				),
+		);
+		const client = new AppApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+		await expect(client.updatePublishedApp("app_x", { name: "x" })).rejects.toMatchObject({
+			code: "APP_NOT_FOUND",
+			httpStatus: 404,
+		});
+	});
 });

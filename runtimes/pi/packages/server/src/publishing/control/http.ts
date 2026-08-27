@@ -390,6 +390,49 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			},
 		},
 		{
+			// Partial update for mutable PublishedApp fields (`name` /
+			// `allowedOrigins`). Coexists with the GET on the same path
+			// (method routing at the dispatcher is `(method, path)`).
+			method: "PATCH",
+			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)$/,
+			operation: "published-apps.update",
+			handler: async ({ requestId, body, params }) => {
+				const publishedAppId = parseAppId(params[0]);
+				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
+				// parseBody requires an object body; treat missing/null as empty.
+				const raw: Record<string, unknown> =
+					body !== undefined && body !== null && typeof body === "object" && !Array.isArray(body)
+						? (body as Record<string, unknown>)
+						: {};
+				const parsed = parseBody(raw, {
+					name: ["string", "undefined"],
+					allowedOrigins: ["array", "undefined"],
+				});
+				const result = await service.updatePublishedApp({
+					tenantId,
+					publishedAppId,
+					requestId: requestId as RequestId,
+					...(parsed.name !== undefined ? { name: parsed.name as string } : {}),
+					...(parsed.allowedOrigins !== undefined
+						? { allowedOrigins: parsed.allowedOrigins as readonly string[] }
+						: {}),
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				const { app, auditEventId } = result.data;
+				return {
+					status: 200,
+					body: {
+						data: {
+							app: appView(app),
+							// Empty-string sentinel (no-op patch) → null on the wire.
+							auditEventId: auditEventId === "" ? null : toPublicId("AuditEventId", auditEventId),
+						},
+						requestId,
+					},
+				};
+			},
+		},
+		{
 			method: "POST",
 			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/versions$/,
 			operation: "published-apps.create-version",
@@ -1558,6 +1601,7 @@ function parseCapabilities(value: unknown): AgentCapabilities {
 	const obj = (value !== null && typeof value === "object" ? value : {}) as Record<string, unknown>;
 	const asBool = (v: unknown): boolean => v === true;
 	return {
+		newConversations: obj.newConversations !== false,
 		liveSpeech: asBool(obj.liveSpeech),
 		avatar: asBool(obj.avatar),
 		attachments: asBool(obj.attachments),

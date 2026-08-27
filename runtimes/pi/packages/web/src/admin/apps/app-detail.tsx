@@ -164,7 +164,32 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 	);
 	const save = async () => {
 		if (!isNew) {
-			setError("当前 Control API 暂不支持修改已有应用配置");
+			// PATCH path — only `name` and `allowedOrigins` are mutable today.
+			if (!appId) {
+				setError("缺少应用 ID，无法保存");
+				return;
+			}
+			if (!name.trim()) {
+				setError("请填写应用名称");
+				return;
+			}
+			setBusy(true);
+			setError(null);
+			try {
+				await appApi.updatePublishedApp(appId, {
+					name: name.trim(),
+					allowedOrigins,
+				});
+				// Sync the controlled form state with what the server now has
+				// (the PATCH accepted our local `allowedOrigins` as-is), then
+				// refresh derived data (versions list, updatedAt, etc.).
+				setOrigins(allowedOrigins.join(", "));
+				await refreshApp();
+			} catch (caught) {
+				setError(caught instanceof Error ? caught.message : String(caught));
+			} finally {
+				setBusy(false);
+			}
 			return;
 		}
 		if (!name.trim() || !agentId) {

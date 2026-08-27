@@ -199,6 +199,24 @@ export interface SuspendAppResponse {
 	readonly auditEventId: string;
 }
 
+/**
+ * Response of `PATCH /api/control/v1/published-apps/:appId`.
+ *
+ * Mirrors `SuspendAppResponse`: returns the slim `appView()` shape so the
+ * client must re-fetch `PublishedAppDetail` to pick up the new `name` /
+ * `allowedOrigins` for re-rendering. `auditEventId` is `null` for the
+ * empty-body no-op case.
+ */
+export interface UpdatePublishedAppResponse {
+	readonly app: {
+		readonly id: string;
+		readonly publicAppId: string;
+		readonly status: string;
+		readonly currentVersionId: string | null;
+	};
+	readonly auditEventId: string | null;
+}
+
 export interface CreateLaunchKeyResponse {
 	readonly id: string;
 	readonly keyId: string;

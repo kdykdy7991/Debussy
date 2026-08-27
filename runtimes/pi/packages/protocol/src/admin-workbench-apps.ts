@@ -69,3 +69,16 @@ export interface CreatePublishedAppRequest {
 	readonly allowedOrigins?: readonly string[];
 	readonly theme?: { readonly primaryColor?: string; readonly welcomeMessage?: string };
 }
+
+/**
+ * Partial-update request for `PATCH /api/control/v1/published-apps/:appId`.
+ * All fields optional — undefined keys leave the existing column value intact
+ * (coalesce semantics at the repository layer). Currently limited to `name`
+ * and `allowedOrigins`; `accessMode`, `theme`, and `status` are deliberately
+ * excluded — status changes go through dedicated `/suspend` etc. routes, and
+ * the others are not yet wired through the UI.
+ */
+export interface UpdatePublishedAppRequest {
+	readonly name?: string;
+	readonly allowedOrigins?: readonly string[];
+}

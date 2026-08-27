@@ -20,6 +20,8 @@ import type {
 	PublishedAppDetail,
 	PublishedAppSummary,
 	PublishedAppVersionSummary,
+	UpdatePublishedAppRequest,
+	UpdatePublishedAppResponse,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 import { newIdempotencyKey } from "./idempotency.ts";
@@ -44,7 +46,7 @@ export interface AppApiOptions {
 }
 
 interface RequestOptions {
-	readonly method: "GET" | "POST" | "DELETE";
+	readonly method: "GET" | "POST" | "PATCH" | "DELETE";
 	readonly path: string;
 	readonly body?: unknown;
 	readonly idempotencyKey?: string;
@@ -210,6 +212,22 @@ export class AppApi {
 			method: "POST",
 			path: `/api/control/v1/published-apps/${encodeURIComponent(input.appId)}/suspend`,
 			body: input.reason === undefined ? {} : { reason: input.reason },
+			idempotencyKey: this.randomKey(),
+		});
+	}
+
+	/**
+	 * Partial-update a PublishedApp. Currently only `name` and
+	 * `allowedOrigins` are exposed. The server validates the origin list
+	 * with `validateOriginList` and returns 400 INVALID_ORIGINS on bad
+	 * entries. An empty patch is a no-op (auditEventId === null in the
+	 * response).
+	 */
+	updatePublishedApp(appId: string, patch: UpdatePublishedAppRequest): Promise<UpdatePublishedAppResponse> {
+		return this.request<UpdatePublishedAppResponse>({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${encodeURIComponent(appId)}`,
+			body: patch,
 			idempotencyKey: this.randomKey(),
 		});
 	}

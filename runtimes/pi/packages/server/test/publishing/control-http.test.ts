@@ -79,6 +79,7 @@ function createAgentBody(name: string): Record<string, unknown> {
 		toolIds: [],
 		knowledgeBaseIds: [],
 		capabilities: {
+			newConversations: false,
 			liveSpeech: false,
 			avatar: false,
 			attachments: false,
@@ -240,6 +241,14 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		expect(first.body.data.id).toMatch(/^agent_/);
 		expect(first.body.data.revision).toBe(1);
 		expect(first.body.data.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+		const detail = await httpCall({
+			method: "GET",
+			path: `/api/control/v1/agent-definitions/${first.body.data.id}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+		});
+		expect(detail.status).toBe(200);
+		expect(detail.body.data.capabilities.newConversations).toBe(false);
 
 		const replay = await httpCall({
 			method: "POST",
@@ -406,6 +415,183 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		expect(app.body.data.currentVersionId).toBeNull();
 		expect(app.body.data.embedUrl).toBe(`https://embed.test/embed/${app.body.data.publicAppId}`);
 		expect(app.body.requestId).toBeTruthy();
+	});
+
+	// --- PATCH /api/control/v1/published-apps/:appId -------------------------
+	// Helper to import an agent + create a draft app with default fields, then
+	// return the created app id. Each PATCH test gets its own app to keep the
+	// assertions independent.
+	async function createAppForPatch(name: string): Promise<string> {
+		const imported = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions/import-current",
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": `import-${name}` },
+			body: { name: `agent-${name}`, expectedSourceHash: null },
+		});
+		const app = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/published-apps",
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": `create-${name}` },
+			body: {
+				agentDefinitionId: imported.body.data.agentDefinitionId,
+				name: `Original ${name}`,
+				accessMode: "mixed",
+				allowedOrigins: ["https://original.example.com"],
+			},
+		});
+		expect(app.status).toBe(201);
+		return app.body.data.id as string;
+	}
+
+	test("PATCH published-apps updates name only (200) and returns slim appView", async () => {
+		const id = await createAppForPatch("name-only");
+		const patch = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-name" },
+			body: { name: "Renamed" },
+		});
+		expect(patch.status).toBe(200);
+		expect(patch.body.data.app.id).toBe(id);
+		expect(patch.body.data.app.publicAppId).toMatch(/^pub_/);
+		expect(patch.body.data.app.status).toBe("draft");
+		expect(patch.body.data.app.currentVersionId).toBeNull();
+		expect(patch.body.data.auditEventId).toMatch(/^aud_/);
+		expect(patch.body.requestId).toBeTruthy();
+	});
+
+	test("PATCH published-apps updates allowedOrigins only (200)", async () => {
+		const id = await createAppForPatch("origins-only");
+		const patch = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-origins" },
+			body: { allowedOrigins: ["http://127.0.0.1:5176"] },
+		});
+		expect(patch.status).toBe(200);
+		expect(patch.body.data.auditEventId).toMatch(/^aud_/);
+	});
+
+	test("PATCH published-apps updates both fields (200)", async () => {
+		const id = await createAppForPatch("both");
+		const patch = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-both" },
+			body: {
+				name: "Both Renamed",
+				allowedOrigins: ["http://127.0.0.1:5176", "http://localhost:5176"],
+			},
+		});
+		expect(patch.status).toBe(200);
+		expect(patch.body.data.auditEventId).toMatch(/^aud_/);
+	});
+
+	test("PATCH published-apps with empty body (200) returns auditEventId null and no-op", async () => {
+		const id = await createAppForPatch("empty");
+		const patch = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-empty" },
+			body: {},
+		});
+		expect(patch.status).toBe(200);
+		expect(patch.body.data.auditEventId).toBeNull();
+	});
+
+	test("PATCH published-apps rejects invalid origins (400 INVALID_ORIGINS)", async () => {
+		const id = await createAppForPatch("bad-origins");
+		for (const bad of [["*"], ["not-a-url"], ["https://*.com"], [""]]) {
+			const patch = await httpCall({
+				method: "PATCH",
+				path: `/api/control/v1/published-apps/${id}`,
+				base: httpBase,
+				headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": `bad-${bad.join(",")}` },
+				body: { allowedOrigins: bad },
+			});
+			expect(patch.status).toBe(400);
+			expect(patch.body.error.code).toBe("INVALID_ORIGINS");
+		}
+	});
+
+	test("PATCH published-apps rejects blank name (400 INVALID_AGENT_NAME)", async () => {
+		const id = await createAppForPatch("blank-name");
+		const patch = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-blank" },
+			body: { name: "   " },
+		});
+		expect(patch.status).toBe(400);
+		expect(patch.body.error.code).toBe("INVALID_AGENT_NAME");
+	});
+
+	test("PATCH published-apps rejects bad appId format (400 INVALID_REQUEST)", async () => {
+		const patch = await httpCall({
+			method: "PATCH",
+			path: "/api/control/v1/published-apps/not-an-id",
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-bad-id" },
+			body: { name: "x" },
+		});
+		expect(patch.status).toBe(400);
+		expect(patch.body.error.code).toBe("INVALID_REQUEST");
+	});
+
+	test("PATCH published-apps rejects unknown appId (404 APP_NOT_FOUND)", async () => {
+		const patch = await httpCall({
+			method: "PATCH",
+			path: "/api/control/v1/published-apps/app_00000000-0000-7000-8000-000000000001",
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "patch-404" },
+			body: { name: "x" },
+		});
+		expect(patch.status).toBe(404);
+		expect(patch.body.error.code).toBe("APP_NOT_FOUND");
+	});
+
+	test("PATCH published-apps requires auth (401)", async () => {
+		const patch = await httpCall({
+			method: "PATCH",
+			path: "/api/control/v1/published-apps/app_00000000-0000-7000-8000-000000000001",
+			base: httpBase,
+			headers: { "idempotency-key": "patch-noauth" },
+			body: { name: "x" },
+		});
+		expect(patch.status).toBe(401);
+		expect(patch.body.error.code).toBe("UNAUTHORIZED");
+	});
+
+	test("PATCH published-apps idempotency replay returns same response", async () => {
+		const id = await createAppForPatch("idempotent");
+		const headers = {
+			authorization: `Bearer ${ADMIN_TOKEN}`,
+			"idempotency-key": "patch-idem",
+		};
+		const first = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers,
+			body: { name: "Once" },
+		});
+		expect(first.status).toBe(200);
+		const second = await httpCall({
+			method: "PATCH",
+			path: `/api/control/v1/published-apps/${id}`,
+			base: httpBase,
+			headers,
+			body: { name: "Once" },
+		});
+		expect(second.status).toBe(first.status);
+		expect(second.body).toEqual(first.body);
 	});
 
 	test("create version: 201 for ready, 422 for rejected with validationErrors", async () => {

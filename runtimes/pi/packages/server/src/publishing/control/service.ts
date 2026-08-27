@@ -363,6 +363,30 @@ export interface CreatePublishedAppResult {
 	readonly embedUrl: string;
 }
 
+/**
+ * Partial-update input for `updatePublishedApp`. Only `name` and
+ * `allowedOrigins` are exposed today — `accessMode` / `theme` / `status`
+ * changes go through dedicated routes. Empty patch (both undefined) is a
+ * no-op that returns the existing record without writing an audit event.
+ */
+export interface UpdatePublishedAppInput {
+	readonly tenantId: TenantId;
+	readonly publishedAppId: PublishedAppId;
+	readonly name?: string;
+	readonly allowedOrigins?: readonly string[];
+	readonly requestId?: RequestId;
+}
+
+export interface UpdatePublishedAppResult {
+	readonly app: PublishedAppRecord;
+	/**
+	 * Empty string sentinel for the no-op case (both fields undefined) so the
+	 * caller can distinguish "no change" from a real audit id. The HTTP layer
+	 * maps this to `null` in the wire response.
+	 */
+	readonly auditEventId: AuditEventId;
+}
+
 export interface CreatePublishedAppVersionInput {
 	readonly tenantId: TenantId;
 	readonly publishedAppId: PublishedAppId;
@@ -1001,9 +1025,13 @@ export class ControlService {
 			limit: 200,
 		});
 		const filteredApps = associatedApps.filter((row) => row.agentDefinitionId === input.agentDefinitionId);
+		const [skills, mcpServers] = await Promise.all([
+			this.repos.skills.listBindings({ tenantId: input.tenantId }, input.agentDefinitionId, latest.revision),
+			this.repos.mcpServers.listBindings({ tenantId: input.tenantId }, input.agentDefinitionId, latest.revision),
+		]);
 		return {
 			ok: true,
-			data: this.agentDetailView(latest, filteredApps.length),
+			data: this.agentDetailView(latest, filteredApps.length, skills, mcpServers),
 		};
 	}
 
@@ -1107,7 +1135,11 @@ export class ControlService {
 						input.revision - 1,
 					)
 				: undefined;
-		return { ok: true, data: this.revisionView(record, previous) };
+		const [skills, mcpServers] = await Promise.all([
+			this.repos.skills.listBindings({ tenantId: input.tenantId }, input.agentDefinitionId, input.revision),
+			this.repos.mcpServers.listBindings({ tenantId: input.tenantId }, input.agentDefinitionId, input.revision),
+		]);
+		return { ok: true, data: this.revisionView(record, previous, skills, mcpServers) };
 	}
 
 	/** WB-003: create a new immutable revision from the client's draft. */
@@ -1909,6 +1941,12 @@ export class ControlService {
 			readonly updatedAt: Date;
 		},
 		associatedAppCount: number,
+		skills: readonly { readonly skillId: SkillId; readonly skillRevision: number }[],
+		mcpServers: readonly {
+			readonly mcpServerId: McpServerId;
+			readonly mcpRevision: number;
+			readonly toolAllowlist: readonly string[];
+		}[],
 	): AgentDefinitionDetail {
 		const snapshot = this.draftToSnapshot(record.draftConfig);
 		const draft = (record.draftConfig ?? {}) as Partial<AgentDraftConfig>;
@@ -1923,6 +1961,15 @@ export class ControlService {
 			toolIds: snapshot.toolIds,
 			knowledgeBaseIds: snapshot.knowledgeBaseIds,
 			capabilities: snapshot.capabilities,
+			skills: skills.map((binding) => ({
+				skillId: toPublicId("SkillId", binding.skillId),
+				revision: binding.skillRevision,
+			})),
+			mcpServers: mcpServers.map((binding) => ({
+				mcpServerId: toPublicId("McpServerId", binding.mcpServerId),
+				revision: binding.mcpRevision,
+				toolNames: binding.toolAllowlist,
+			})),
 			hasDraft: false,
 			updatedAt: record.updatedAt.toISOString(),
 			updatedBy: "system",
@@ -1941,6 +1988,12 @@ export class ControlService {
 			readonly draftConfig?: unknown;
 		},
 		previousRow: { readonly draftConfig: unknown; readonly revision: number } | undefined = undefined,
+		skills?: readonly { readonly skillId: SkillId; readonly skillRevision: number }[],
+		mcpServers?: readonly {
+			readonly mcpServerId: McpServerId;
+			readonly mcpRevision: number;
+			readonly toolAllowlist: readonly string[];
+		}[],
 	): AgentDefinitionRevision {
 		const draftConfig = row.draftConfig ?? {};
 		const snapshot = this.draftToSnapshot(draftConfig);
@@ -1953,6 +2006,23 @@ export class ControlService {
 			createdBy: "system",
 			createdAt: row.createdAt.toISOString(),
 			configSnapshot: snapshot,
+			...(skills === undefined
+				? {}
+				: {
+						skills: skills.map((binding) => ({
+							skillId: toPublicId("SkillId", binding.skillId),
+							revision: binding.skillRevision,
+						})),
+					}),
+			...(mcpServers === undefined
+				? {}
+				: {
+						mcpServers: mcpServers.map((binding) => ({
+							mcpServerId: toPublicId("McpServerId", binding.mcpServerId),
+							revision: binding.mcpRevision,
+							toolNames: binding.toolAllowlist,
+						})),
+					}),
 			diffFromPrevious: diff,
 			associatedVersionIds: [],
 		};
@@ -1964,6 +2034,7 @@ export class ControlService {
 		const toolIds = Array.isArray(d.tools) ? d.tools.map((t) => t.id) : [];
 		const knowledgeBaseIds = Array.isArray(d.knowledgeBases) ? d.knowledgeBases.map((k) => k.id) : [];
 		const capabilities: AgentCapabilities = {
+			newConversations: d.conversations?.allowNew !== false,
 			liveSpeech: d.speech?.enabled === true,
 			avatar: d.avatar?.enabled === true,
 			attachments: d.uploads?.enabled === true,
@@ -2002,6 +2073,7 @@ export class ControlService {
 			uploads: { enabled: request.capabilities.attachments },
 			speech: { enabled: request.capabilities.liveSpeech },
 			avatar: { enabled: request.capabilities.avatar },
+			conversations: { allowNew: request.capabilities.newConversations !== false },
 		};
 	}
 
@@ -2888,6 +2960,75 @@ export class ControlService {
 			requestId: input.requestId,
 			metadata: input.reason === undefined ? {} : { reason: input.reason },
 		});
+		const updated = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		return {
+			ok: true,
+			data: {
+				app: updated ?? app,
+				auditEventId,
+			},
+		};
+	}
+
+	/**
+	 * Partial-update an existing PublishedApp — currently only `name` and
+	 * `allowedOrigins`. Reuses `updateMutable` (coalesce semantics), so
+	 * unprovided fields are preserved. An empty patch (both fields
+	 * undefined) is a no-op: no DB write, no audit row.
+	 *
+	 * Origin list goes through the same `validateOriginList` policy as the
+	 * create path (spec 27.4). The `name` length range matches the SQL
+	 * CHECK constraint (1-200 chars after trimming).
+	 */
+	async updatePublishedApp(
+		input: UpdatePublishedAppInput,
+	): Promise<ControlResult<UpdatePublishedAppResult>> {
+		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
+		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
+		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
+
+		const patch: { name?: string; allowedOrigins?: readonly string[] } = {};
+
+		if (input.name !== undefined) {
+			const trimmed = input.name.trim();
+			// Length range matches the SQL CHECK constraint on
+			// `published_apps.name` (1-200 chars). HTTP layer also rejects
+			// blanks up front; this is a defence-in-depth check.
+			if (trimmed.length < 1 || trimmed.length > 200) {
+				return fail("INVALID_AGENT_NAME", 400, "name must be 1-200 characters after trimming");
+			}
+			patch.name = trimmed;
+		}
+
+		if (input.allowedOrigins !== undefined) {
+			const validation = validateOriginList(input.allowedOrigins);
+			if (!validation.ok) {
+				return fail("INVALID_ORIGINS", 400, `invalid allowedOrigins: ${validation.errors.join("; ")}`);
+			}
+			patch.allowedOrigins = input.allowedOrigins;
+		}
+
+		// No-op: empty patch keeps both DB row and audit log clean.
+		if (patch.name === undefined && patch.allowedOrigins === undefined) {
+			return { ok: true, data: { app, auditEventId: "" as AuditEventId } };
+		}
+
+		await this.repos.publishedApps.updateMutable(appScope, input.publishedAppId, patch);
+
+		const auditEventId = await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "published-app.updated",
+			resourceType: "published_app",
+			resourceId: input.publishedAppId,
+			requestId: input.requestId,
+			metadata: {
+				fields: {
+					name: input.name !== undefined,
+					allowedOrigins: input.allowedOrigins !== undefined,
+				},
+			},
+		});
+
 		const updated = await this.repos.publishedApps.get(appScope, input.publishedAppId);
 		return {
 			ok: true,
