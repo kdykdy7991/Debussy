@@ -102,7 +102,12 @@ export interface ExchangeAppView {
 	readonly publicAppId: string;
 	readonly name: string;
 	readonly currentVersionId: string | null;
-	readonly features: { readonly uploads: boolean; readonly speech: boolean; readonly avatar: boolean };
+	readonly features: {
+		readonly uploads: boolean;
+		readonly speech: boolean;
+		readonly avatar: boolean;
+		readonly newConversations: boolean;
+	};
 }
 
 export interface AnonymousExchangeData {
@@ -332,64 +337,69 @@ export class ExchangeService {
 							: tokenInvalid("Preview ticket invalid"),
 			};
 		}
-		// Cross-app guard: the ticket's app id must match the published app id
-		// derived from the publicAppId. Tickets are scoped via signature claim.
-		if (verified.appId !== app.publishedAppId) {
-			return { ok: false, error: forbidden("preview ticket does not match the requested app") };
-		}
-		const version = await this.repos.publishedAppVersions.get(
-			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
-			verified.versionId,
-		);
-		if (version === undefined || version.status !== "ready") {
-			return { ok: false, error: forbidden("preview version is not ready") };
-		}
-		// The preview principal is per-app, deterministic by ticket JTI so that
-		// subsequent tickets for the same admin converge to one Principal row
-		// but never collide with an anonymous or external_user principal.
-		const subjectHash = createHmac("sha256", this.subjectPepper)
-			.update(`preview\n${app.tenantId}\n${app.publishedAppId}\n${input.ticket}`, "utf8")
-			.digest("hex");
-		const principal = await this.repos.principals.upsert({
-			principalId: newPrincipalId(),
-			tenantId: app.tenantId,
-			publishedAppId: app.publishedAppId,
-			principalType: "platform_admin_preview",
-			subjectHash,
-			status: "active",
-			createdAt: new Date(),
-			lastSeenAt: new Date(),
-		});
-		if (principal.status !== "active") {
-			return { ok: false, error: forbidden("Principal is not active") };
-		}
-		const signed = await this.accessTokens.sign({
-			tenantId: app.tenantId,
-			publishedAppId: app.publishedAppId,
-			principalId: principal.principalId,
-			principalType: principal.principalType,
-			scopes: [],
-			publishedAppVersionId: verified.versionId,
-		});
-		return {
-			ok: true,
-			data: {
-				accessToken: signed.token,
-				expiresAt: signed.expiresAt.toISOString(),
-				principal: {
-					id: toPublicId("PrincipalId", principal.principalId),
-					type: "platform_admin_preview",
+		try {
+			// Cross-app guard: the ticket's app id must match the published app id
+			// derived from the publicAppId. Tickets are scoped via signature claim.
+			if (verified.appId !== app.publishedAppId) {
+				return { ok: false, error: forbidden("preview ticket does not match the requested app") };
+			}
+			const version = await this.repos.publishedAppVersions.get(
+				{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
+				verified.versionId,
+			);
+			if (version === undefined || version.status !== "ready") {
+				return { ok: false, error: forbidden("preview version is not ready") };
+			}
+			// The preview principal is per-app, deterministic by ticket JTI so that
+			// subsequent tickets for the same admin converge to one Principal row
+			// but never collide with an anonymous or external_user principal.
+			const subjectHash = createHmac("sha256", this.subjectPepper)
+				.update(`preview\n${app.tenantId}\n${app.publishedAppId}\n${input.ticket}`, "utf8")
+				.digest("hex");
+			const principal = await this.repos.principals.upsert({
+				principalId: newPrincipalId(),
+				tenantId: app.tenantId,
+				publishedAppId: app.publishedAppId,
+				principalType: "platform_admin_preview",
+				subjectHash,
+				status: "active",
+				createdAt: new Date(),
+				lastSeenAt: new Date(),
+			});
+			if (principal.status !== "active") {
+				return { ok: false, error: forbidden("Principal is not active") };
+			}
+			const signed = await this.accessTokens.sign({
+				tenantId: app.tenantId,
+				publishedAppId: app.publishedAppId,
+				principalId: principal.principalId,
+				principalType: principal.principalType,
+				scopes: [],
+				publishedAppVersionId: verified.versionId,
+			});
+			return {
+				ok: true,
+				data: {
+					accessToken: signed.token,
+					expiresAt: signed.expiresAt.toISOString(),
+					principal: {
+						id: toPublicId("PrincipalId", principal.principalId),
+						type: "platform_admin_preview",
+					},
+					app: {
+						publicAppId: app.publicAppId,
+						name: app.name,
+						currentVersionId:
+							app.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", app.currentVersionId),
+						features: await this.readFeaturesFromVersion(app, verified.versionId),
+					},
+					pinnedVersionId: verified.versionId,
 				},
-				app: {
-					publicAppId: app.publicAppId,
-					name: app.name,
-					currentVersionId:
-						app.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", app.currentVersionId),
-					features: await this.readFeaturesFromVersion(app, verified.versionId),
-				},
-				pinnedVersionId: verified.versionId,
-			},
-		};
+			};
+		} catch (error) {
+			await this.previewTickets.release(input.ticket);
+			throw error;
+		}
 	}
 
 	private async readFeaturesFromVersion(
@@ -400,30 +410,33 @@ export class ExchangeService {
 			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
 			versionId,
 		);
-		if (version === undefined) return { uploads: false, speech: false, avatar: false };
+		if (version === undefined) return { uploads: false, speech: false, avatar: false, newConversations: true };
 		const parsed = parseRuntimeSpec(version.runtimeSpec);
-		if (!parsed.ok) return { uploads: false, speech: false, avatar: false };
+		if (!parsed.ok) return { uploads: false, speech: false, avatar: false, newConversations: true };
 		return {
 			uploads: parsed.spec.capabilities.uploads.enabled,
 			speech: parsed.spec.capabilities.speech.enabled,
 			avatar: parsed.spec.capabilities.avatar.enabled,
+			newConversations: parsed.spec.capabilities.conversations.allowNew,
 		};
 	}
 
 	/** 从当前版本的 RuntimeSpec 读取功能开关（27.4）；缺失/不可解析时全部关闭。 */
 	private async readFeatures(app: PublishedAppRecord): Promise<ExchangeAppView["features"]> {
-		if (app.currentVersionId === null) return { uploads: false, speech: false, avatar: false };
+		if (app.currentVersionId === null)
+			return { uploads: false, speech: false, avatar: false, newConversations: true };
 		const version = await this.repos.publishedAppVersions.get(
 			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
 			app.currentVersionId,
 		);
-		if (version === undefined) return { uploads: false, speech: false, avatar: false };
+		if (version === undefined) return { uploads: false, speech: false, avatar: false, newConversations: true };
 		const parsed = parseRuntimeSpec(version.runtimeSpec);
-		if (!parsed.ok) return { uploads: false, speech: false, avatar: false };
+		if (!parsed.ok) return { uploads: false, speech: false, avatar: false, newConversations: true };
 		return {
 			uploads: parsed.spec.capabilities.uploads.enabled,
 			speech: parsed.spec.capabilities.speech.enabled,
 			avatar: parsed.spec.capabilities.avatar.enabled,
+			newConversations: parsed.spec.capabilities.conversations.allowNew,
 		};
 	}
 }

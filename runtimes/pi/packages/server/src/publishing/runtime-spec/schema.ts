@@ -40,6 +40,7 @@ export const PLATFORM_DEFAULTS = {
 	uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26_214_400 },
 	speech: { enabled: false },
 	avatar: { enabled: false },
+	conversations: { allowNew: true },
 	profile: "chat-only",
 	turnTimeoutMs: 120_000,
 	idleTtlMs: 1_200_000,
@@ -146,6 +147,10 @@ const capabilitiesSpec = z
 		uploads: uploadsCapability.default(PLATFORM_DEFAULTS.uploads),
 		speech: booleanCapability.default(PLATFORM_DEFAULTS.speech),
 		avatar: booleanCapability.default(PLATFORM_DEFAULTS.avatar),
+		conversations: z
+			.object({ allowNew: z.boolean().default(true) })
+			.strict()
+			.default(PLATFORM_DEFAULTS.conversations),
 	})
 	.strict();
 

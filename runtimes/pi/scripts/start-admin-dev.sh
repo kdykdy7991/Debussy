@@ -48,6 +48,7 @@ fi
 postgres_port="${PI_ADMIN_DEV_POSTGRES_PORT:-15432}"
 redis_port="${PI_ADMIN_DEV_REDIS_PORT:-16379}"
 web_server_port="${PI_WEB_SERVER_PORT:-8765}"
+web_ui_port="${PI_WEB_UI_PORT:-5173}"
 postgres_image="${PI_ADMIN_DEV_POSTGRES_IMAGE:-postgres:17-alpine}"
 if [[ -z "${PI_ADMIN_DEV_POSTGRES_IMAGE:-}" ]] && ! docker image inspect "$postgres_image" >/dev/null 2>&1; then
 	if docker image inspect skdy_prod-db:latest >/dev/null 2>&1; then
@@ -66,7 +67,9 @@ export PI_BOOTSTRAP_TENANT_ID
 PI_BOOTSTRAP_TENANT_ID=$(<"$tenant_id_file")
 export PI_BOOTSTRAP_TENANT_NAME="Local Admin"
 export PI_CONTROL_ADMIN_TOKEN_FILE="$admin_token_file"
-export PI_EMBED_ISSUER="http://127.0.0.1:${web_server_port}"
+# Embed/preview URLs are browser pages served by Vite, not Control API URLs.
+# The backend port remains the proxy target below.
+export PI_EMBED_ISSUER="http://127.0.0.1:${web_ui_port}"
 export PI_EMBED_SUBJECT_PEPPER
 PI_EMBED_SUBJECT_PEPPER=$(<"$pepper_file")
 export PI_EMBED_ACCESS_TOKEN_PRIVATE_KEY_FILE="$private_key_file"
@@ -76,7 +79,7 @@ export PI_EMBED_ACCESS_TOKEN_KEY_ID="local-admin-dev"
 docker compose --project-name pi-admin-dev --file "$compose_file" up --detach --wait
 
 echo
-echo "Admin Workbench: http://127.0.0.1:${PI_WEB_UI_PORT:-5173}/"
+echo "Admin Workbench: http://127.0.0.1:${web_ui_port}/"
 echo "Admin Token: $(<"$admin_token_file")"
 echo "Local PostgreSQL: 127.0.0.1:${postgres_port}"
 echo "Local Redis: 127.0.0.1:${redis_port}"

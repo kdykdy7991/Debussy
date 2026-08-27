@@ -120,7 +120,9 @@ export function PublishDrawer({
 		document.addEventListener("keydown", onKey);
 		return () => {
 			document.removeEventListener("keydown", onKey);
-			previousInert.forEach(({ node }) => node.removeAttribute("inert"));
+			previousInert.forEach(({ node }) => {
+				node.removeAttribute("inert");
+			});
 			lastFocusedRef.current?.focus();
 		};
 	}, [mode, onClose]);
@@ -232,6 +234,7 @@ export function PublishDrawer({
 	const blockedByDraft = hasDraft;
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: Escape and explicit close actions provide keyboard access; this handler only supports backdrop clicks.
 		<div
 			className={styles.overlay}
 			role="presentation"
@@ -371,7 +374,7 @@ export function PublishDrawer({
 								<p>可返回上一步重新选择。</p>
 							</div>
 						) : revisionDetail !== null ? (
-							<ConfigSummary snapshot={revisionDetail.configSnapshot} />
+							<ConfigSummary revision={revisionDetail} />
 						) : null}
 						<div className={styles.drawerActions}>
 							<AuroraButton variant="default" size="md" onClick={() => setStep("select-revision")}>
@@ -451,7 +454,8 @@ function cappedDiff(diff: unknown): React.ReactNode {
  * 按字段渲染 Revision 的配置摘要。绝不直接 `JSON.stringify` 整个对象。
  * 工具 / 知识库在此处只显示 ID 数量，避免伪造名称或健康状态。
  */
-function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.ReactElement {
+function ConfigSummary({ revision }: { revision: AgentDefinitionRevision }): React.ReactElement {
+	const snapshot: AgentConfigSnapshot = revision.configSnapshot;
 	const reasoning = snapshot.parameters.reasoning;
 	return (
 		<section className={styles.diffSummary} aria-label="配置摘要">
@@ -501,6 +505,8 @@ function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.R
 						"关闭"
 					)}
 				</dd>
+				<dt>新建对话 / 侧边栏</dt>
+				<dd>{snapshot.capabilities.newConversations === false ? "关闭" : "启用"}</dd>
 				<dt>工具</dt>
 				<dd>
 					{snapshot.toolIds.length === 0 ? (
@@ -521,6 +527,37 @@ function ConfigSummary({ snapshot }: { snapshot: AgentConfigSnapshot }): React.R
 							已引用 {snapshot.knowledgeBaseIds.length} 项
 							<span className={styles.diffSummary__muted}>（抽屉内不展示名称）</span>
 						</span>
+					)}
+				</dd>
+				<dt>Skills（冻结）</dt>
+				<dd>
+					{revision.skills?.length ? (
+						<ul className={styles.diffSummary__bindings}>
+							{revision.skills.map((binding) => (
+								<li key={`${binding.skillId}:${binding.revision}`}>
+									<code>{binding.skillId}</code> · Revision {binding.revision}
+								</li>
+							))}
+						</ul>
+					) : (
+						"未绑定"
+					)}
+				</dd>
+				<dt>MCP / Tool allowlist（冻结）</dt>
+				<dd>
+					{revision.mcpServers?.length ? (
+						<ul className={styles.diffSummary__bindings}>
+							{revision.mcpServers.map((binding) => (
+								<li key={`${binding.mcpServerId}:${binding.revision}`}>
+									<code>{binding.mcpServerId}</code> · Revision {binding.revision}
+									<small>
+										{binding.toolNames.length ? `Tools: ${binding.toolNames.join(", ")}` : "未开放 Tool"}
+									</small>
+								</li>
+							))}
+						</ul>
+					) : (
+						"未绑定"
 					)}
 				</dd>
 			</dl>

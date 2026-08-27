@@ -227,6 +227,21 @@
 	margin-left: 6px;
 }
 
+.diffSummary__bindings {
+	margin: 0;
+	padding-left: 18px;
+}
+
+.diffSummary__bindings li + li {
+	margin-top: 6px;
+}
+
+.diffSummary__bindings small {
+	display: block;
+	color: var(--aurora-text-muted, #667085);
+	overflow-wrap: anywhere;
+}
+
 .diffSummary__experimental {
 	color: var(--aurora-amber);
 	font-style: normal;

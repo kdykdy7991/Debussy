@@ -19,7 +19,12 @@ export interface EmbedAuthState {
 	readonly expiresAt: string;
 	readonly principalId: string;
 	readonly appName: string;
-	readonly features: { readonly uploads: boolean; readonly speech: boolean; readonly avatar: boolean };
+	readonly features: {
+		readonly uploads: boolean;
+		readonly speech: boolean;
+		readonly avatar: boolean;
+		readonly newConversations?: boolean;
+	};
 }
 
 export class EmbedAuthController {

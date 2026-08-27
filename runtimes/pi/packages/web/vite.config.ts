@@ -62,7 +62,7 @@ function routeRewritePlugin(): PluginOption {
 				if (isEmbedOnly) {
 					if (url === "/" || url === "" || url === "/index.html") {
 						req.url = "/embed.html";
-					} else if (url.startsWith("/embed/")) {
+					} else if (url.startsWith("/embed/") || url.startsWith("/preview/")) {
 						req.url = "/embed.html";
 					}
 					next();
@@ -78,7 +78,7 @@ function routeRewritePlugin(): PluginOption {
 				}
 				// Default (all / admin) dev mode: rewrite embed path to embed.html,
 				// and let admin SPA paths fall back to admin index.html.
-				if (/^\/embed\/pub_[0-9a-fA-F-]{36}(\/|$|\?)/.test(url)) {
+				if (/^\/(?:embed|preview)\/pub_[0-9a-fA-F-]{36}(\/|$|\?)/.test(url)) {
 					req.url = "/embed.html";
 					next();
 					return;

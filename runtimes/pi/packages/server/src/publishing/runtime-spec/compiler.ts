@@ -59,6 +59,7 @@ export interface AgentDraftConfig {
 	};
 	readonly speech?: { readonly enabled?: boolean };
 	readonly avatar?: { readonly enabled?: boolean };
+	readonly conversations?: { readonly allowNew?: boolean };
 	readonly theme?: { readonly primaryColor?: string; readonly welcomeMessage?: string };
 	readonly contextPolicy?: {
 		readonly maxTurns?: number;
@@ -176,6 +177,9 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 			...("uploads" in agent && agent.uploads !== undefined ? { uploads: agent.uploads } : {}),
 			...("speech" in agent && agent.speech !== undefined ? { speech: agent.speech } : {}),
 			...("avatar" in agent && agent.avatar !== undefined ? { avatar: agent.avatar } : {}),
+			...("conversations" in agent && agent.conversations !== undefined
+				? { conversations: agent.conversations }
+				: {}),
 		},
 		...("contextPolicy" in agent && agent.contextPolicy !== undefined ? { contextPolicy: agent.contextPolicy } : {}),
 		...("runtimePolicy" in agent && agent.runtimePolicy !== undefined ? { runtimePolicy: agent.runtimePolicy } : {}),

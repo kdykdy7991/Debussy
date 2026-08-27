@@ -15,8 +15,12 @@ import type {
 	AgentDefinitionListResponse,
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
+	AgentMcpRevisionReference,
 	AgentModelParameters,
 	AgentPublicId,
+	AgentSkillRevisionReference,
+	CreateAgentDefinitionRequest,
+	CreateAgentDefinitionResponse,
 	ImportCurrentAgentResponse,
 	SaveAgentRevisionResponse,
 } from "@earendil-works/pi-protocol";
@@ -128,6 +132,15 @@ export class AgentApi {
 		return this.request({ method: "GET", path: `/api/control/v1/agent-definitions/${agentId}` });
 	}
 
+	createAgent(draft: CreateAgentDefinitionRequest, idempotencyKey: string): Promise<CreateAgentDefinitionResponse> {
+		return this.request({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions",
+			body: draft,
+			idempotencyKey,
+		});
+	}
+
 	deleteAgent(agentId: AgentPublicId, confirmName: string): Promise<{ readonly deleted: true }> {
 		return this.request({
 			method: "DELETE",
@@ -167,6 +180,8 @@ export class AgentApi {
 			toolIds: readonly string[];
 			knowledgeBaseIds: readonly string[];
 			capabilities: AgentCapabilities;
+			skills?: readonly AgentSkillRevisionReference[];
+			mcpServers?: readonly AgentMcpRevisionReference[];
 			changeSummary: string;
 		},
 		idempotencyKey: string,

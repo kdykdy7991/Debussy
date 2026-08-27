@@ -43,6 +43,7 @@ export interface EmbedChatState {
 	readonly attachments: readonly ChatAttachment[];
 	/** 来自 bootstrap 的 uploads 能力开关（RuntimeSpec 控制，spec 5.5）。 */
 	readonly uploadsEnabled: boolean;
+	readonly newConversationsEnabled?: boolean;
 	readonly error: EmbedChatError | null;
 	/** WB-008: last rollover notice surfaced to the embed UI. */
 	readonly rolloverNotice: EmbedRolloverNotice | null;
@@ -121,6 +122,7 @@ export class EmbedChatController {
 			connectionStatus: "idle",
 			attachments: [],
 			uploadsEnabled: false,
+			newConversationsEnabled: true,
 			error: null,
 			rolloverNotice: null,
 		};
@@ -151,11 +153,17 @@ export class EmbedChatController {
 	}
 
 	/** 初始化：读能力开关 + 会话列表 + 恢复最近会话（PD-02）。 */
-	async initialize(features?: { readonly uploads?: boolean }): Promise<void> {
-		this.setState({ uploadsEnabled: features?.uploads ?? false, error: null });
+	async initialize(features?: { readonly uploads?: boolean; readonly newConversations?: boolean }): Promise<void> {
+		const newConversationsEnabled = features?.newConversations !== false;
+		this.setState({
+			uploadsEnabled: features?.uploads ?? false,
+			newConversationsEnabled,
+			error: null,
+		});
 		const response = await this.withToken((token) => this.options.api.listConversations(token));
 		this.setState({ conversations: response.items });
 		if (response.items.length > 0) await this.openConversation(response.items[0]!.id);
+		else if (!newConversationsEnabled) await this.newConversation();
 	}
 
 	/** 新建会话并打开（服务端固定当前版本）。 */
@@ -346,6 +354,7 @@ export class EmbedChatController {
 			messages: [],
 			sending: false,
 			uploading: false,
+			newConversationsEnabled: true,
 			connectionStatus: "closed",
 			attachments: [],
 			error: null,

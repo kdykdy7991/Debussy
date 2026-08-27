@@ -25,7 +25,12 @@ export interface ExchangeResponse {
 		readonly publicAppId: string;
 		readonly name: string;
 		readonly currentVersionId: string | null;
-		readonly features: { readonly uploads: boolean; readonly speech: boolean; readonly avatar: boolean };
+		readonly features: {
+			readonly uploads: boolean;
+			readonly speech: boolean;
+			readonly avatar: boolean;
+			readonly newConversations?: boolean;
+		};
 	};
 }
 
@@ -42,7 +47,12 @@ export interface BootstrapResponse {
 	readonly accessMode: "anonymous" | "signed_user" | "mixed";
 	readonly allowedOrigins: readonly string[];
 	readonly currentVersionId: string | null;
-	readonly features: { readonly uploads: boolean; readonly speech: boolean; readonly avatar: boolean };
+	readonly features: {
+		readonly uploads: boolean;
+		readonly speech: boolean;
+		readonly avatar: boolean;
+		readonly newConversations?: boolean;
+	};
 	readonly theme: { readonly primaryColor?: string; readonly welcomeMessage?: string };
 }
 

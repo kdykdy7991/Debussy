@@ -156,7 +156,10 @@ export class ConversationService {
 			input.principal.publishedAppId,
 		);
 		if (app === undefined) return { ok: false, error: appNotFound() };
-		if (app.status !== "active") return { ok: false, error: appSuspended("App is not active") };
+		const isDraftPreview = app.status === "draft" && input.principal.principalType === "platform_admin_preview";
+		if (app.status !== "active" && !isDraftPreview) {
+			return { ok: false, error: appSuspended("App is not active") };
+		}
 		const pinnedVersionId = input.principal.publishedAppVersionId;
 		const version = await this.repos.publishedAppVersions.get(scope, pinnedVersionId);
 		if (version === undefined || version.status !== "ready") return { ok: false, error: versionUnavailable() };

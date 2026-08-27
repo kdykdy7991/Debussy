@@ -150,6 +150,24 @@ export class PreviewTicketService {
 		return { ok: true, appId, versionId, tenantId };
 	}
 
+	/**
+	 * Roll back consumption when preview-session creation fails after ticket
+	 * verification. This keeps a transient database/signing failure retryable
+	 * without weakening successful single-use exchanges.
+	 */
+	async release(ticket: string): Promise<void> {
+		try {
+			const result = await jwtVerify<PreviewTicketClaims>(ticket, this.signingKey, {
+				clockTolerance: TICKET_CLOCK_SKEW_SEC,
+				algorithms: ["HS256"],
+			});
+			const jti = String(result.payload.jti ?? "");
+			if (jti !== "") this.consumed.delete(jti);
+		} catch {
+			// Invalid/expired tickets never acquire a consumed entry to release.
+		}
+	}
+
 	/** HMAC fingerprint for telemetry only (audit logs); never logs the bearer. */
 	static fingerprint(ticket: string): string {
 		return createHmac("sha256", "preview-ticket-fp").update(ticket).digest("hex").slice(0, 16);

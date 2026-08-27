@@ -29,6 +29,24 @@ describe("embed ConversationWorkspace adapter", () => {
 		expect(css).toContain('@import "../admin/styles.css"');
 	});
 
+	test("allows the first conversation before a conversation WebSocket exists", () => {
+		const stores = createEmbedWorkspaceStores(
+			controllerWith({
+				conversations: [],
+				activeId: null,
+				messages: [],
+				sending: false,
+				uploading: false,
+				connectionStatus: "idle",
+				attachments: [],
+				uploadsEnabled: false,
+				error: null,
+				rolloverNotice: null,
+			}),
+		);
+		expect(stores.connection.getSnapshot()).toEqual({ state: "connected", error: undefined });
+	});
+
 	test("keeps external-store snapshots stable until the controller publishes a change", () => {
 		let state: EmbedChatState = {
 			conversations: [],

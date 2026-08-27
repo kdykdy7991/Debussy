@@ -46,6 +46,8 @@ export interface AgentDefinitionDetail {
 	readonly toolIds: readonly string[];
 	readonly knowledgeBaseIds: readonly string[];
 	readonly capabilities: AgentCapabilities;
+	readonly skills?: readonly AgentSkillRevisionReference[];
+	readonly mcpServers?: readonly AgentMcpRevisionReference[];
 	readonly hasDraft: boolean;
 	readonly updatedAt: string;
 	readonly updatedBy: string;
@@ -55,6 +57,8 @@ export interface AgentDefinitionDetail {
 
 /** Capability toggles surfaced in the Agent detail tab (SPEC §5.2). */
 export interface AgentCapabilities {
+	/** Show conversation history/sidebar and allow users to create additional conversations. */
+	readonly newConversations?: boolean;
 	readonly liveSpeech: boolean;
 	readonly avatar: boolean;
 	readonly attachments: boolean;
@@ -80,6 +84,9 @@ export interface AgentDefinitionRevision {
 	readonly createdBy: string;
 	readonly createdAt: string;
 	readonly configSnapshot: AgentConfigSnapshot;
+	/** Frozen extension bindings for this immutable Agent revision. */
+	readonly skills?: readonly AgentSkillRevisionReference[];
+	readonly mcpServers?: readonly AgentMcpRevisionReference[];
 	readonly diffFromPrevious: AgentConfigDiff | null;
 	readonly associatedVersionIds: readonly PublishedAppVersionPublicId[];
 }

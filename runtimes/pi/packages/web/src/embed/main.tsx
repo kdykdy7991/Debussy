@@ -34,11 +34,7 @@ if (embedMatch === null && previewMatch === null) {
 	container.textContent = "Embed app requires a /embed/:publicAppId or /preview/:publicAppId URL.";
 	root.replaceChildren(container);
 } else if (previewMatch !== null) {
-	createRoot(root).render(
-		<StrictMode>
-			<PreviewBootstrap publicAppId={previewMatch[1]!} />
-		</StrictMode>,
-	);
+	createRoot(root).render(<PreviewBootstrap publicAppId={previewMatch[1]!} />);
 } else if (embedMatch !== null) {
 	createRoot(root).render(
 		<StrictMode>
@@ -53,6 +49,21 @@ interface PreviewTicketMessage {
 	readonly ticket: string;
 }
 
+function takeWindowNameTicket(publicAppId: string): string | null {
+	const prefix = "pi-preview:";
+	if (!window.name.startsWith(prefix)) return null;
+	const raw = window.name.slice(prefix.length);
+	window.name = "";
+	try {
+		const value = JSON.parse(raw) as { publicAppId?: unknown; ticket?: unknown };
+		return value.publicAppId === publicAppId && typeof value.ticket === "string" && value.ticket !== ""
+			? value.ticket
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 function isPreviewTicketMessage(value: unknown, publicAppId: string): value is PreviewTicketMessage {
 	if (value === null || typeof value !== "object") return false;
 	const message = value as Partial<PreviewTicketMessage>;
@@ -65,10 +76,11 @@ function isPreviewTicketMessage(value: unknown, publicAppId: string): value is P
 }
 
 function PreviewBootstrap({ publicAppId }: { readonly publicAppId: string }): React.JSX.Element {
-	const [ticket, setTicket] = useState<string | null>(null);
+	const [ticket, setTicket] = useState<string | null>(() => takeWindowNameTicket(publicAppId));
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
+		if (ticket !== null) return;
 		if (window.opener === null) {
 			setError("预览必须从管理员工作台打开。");
 			return;
@@ -79,9 +91,16 @@ function PreviewBootstrap({ publicAppId }: { readonly publicAppId: string }): Re
 			setTicket(event.data.ticket);
 		};
 		window.addEventListener("message", onMessage);
-		opener.postMessage({ type: "pi-preview-ready", publicAppId }, "*");
-		return () => window.removeEventListener("message", onMessage);
-	}, [publicAppId]);
+		const announceReady = (): void => {
+			opener.postMessage({ type: "pi-preview-ready", publicAppId }, "*");
+		};
+		announceReady();
+		const retry = window.setInterval(announceReady, 250);
+		return () => {
+			window.clearInterval(retry);
+			window.removeEventListener("message", onMessage);
+		};
+	}, [publicAppId, ticket]);
 
 	if (error !== null) return <p role="alert">{error}</p>;
 	if (ticket === null) return <output>正在建立安全预览连接…</output>;

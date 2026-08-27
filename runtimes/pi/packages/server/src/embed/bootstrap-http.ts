@@ -80,11 +80,11 @@ async function appSummary(
 	accessMode: "anonymous" | "signed_user" | "mixed";
 	allowedOrigins: readonly string[];
 	currentVersionId: string | null;
-	features: { uploads: boolean; speech: boolean; avatar: boolean };
+	features: { uploads: boolean; speech: boolean; avatar: boolean; newConversations: boolean };
 	theme: { primaryColor?: string; welcomeMessage?: string };
 }> {
 	const scope = { tenantId: app.tenantId as TenantId, publishedAppId: app.publishedAppId as PublishedAppId };
-	let features = { uploads: false, speech: false, avatar: false };
+	let features = { uploads: false, speech: false, avatar: false, newConversations: true };
 	if (app.currentVersionId !== null) {
 		const version = await options.repositories.publishedAppVersions.get(
 			scope,
@@ -97,6 +97,7 @@ async function appSummary(
 					uploads: parsed.spec.capabilities.uploads.enabled,
 					speech: parsed.spec.capabilities.speech.enabled,
 					avatar: parsed.spec.capabilities.avatar.enabled,
+					newConversations: parsed.spec.capabilities.conversations.allowNew,
 				};
 			}
 		}

@@ -139,7 +139,7 @@ describe.skipIf(!pgUp)("embed conversation api", () => {
 
 	async function createApp(
 		name: string,
-		options: { withVersion?: boolean; status?: "active" | "suspended" } = {},
+		options: { withVersion?: boolean; status?: "active" | "draft" | "suspended" } = {},
 	): Promise<{
 		appId: PublishedAppId;
 		publicAppId: string;
@@ -338,6 +338,39 @@ describe.skipIf(!pgUp)("embed conversation api", () => {
 		expect(Date.parse(res.body.data.createdAt)).toBeGreaterThan(0);
 		expect(res.body.requestId).toBeTruthy();
 		expect(res.headers["x-request-id"]).toBe(res.body.requestId);
+	});
+
+	test("preview principal can create a conversation for a ready version while app is draft", async () => {
+		const draft = await createApp("Draft Preview", { status: "draft" });
+		if (draft.versionId === null) throw new Error("draft preview fixture requires a ready version");
+		const principalId = newPrincipalId();
+		await repos.principals.upsert({
+			principalId,
+			tenantId,
+			publishedAppId: draft.appId,
+			principalType: "platform_admin_preview",
+			subjectHash: createHash("sha256").update(`preview:${principalId}`).digest("hex"),
+			status: "active",
+			createdAt: new Date(),
+			lastSeenAt: new Date(),
+		});
+		const signed = await accessTokens.sign({
+			tenantId,
+			publishedAppId: draft.appId,
+			principalId,
+			principalType: "platform_admin_preview",
+			scopes: [],
+			publishedAppVersionId: draft.versionId,
+		});
+		const res = await httpCall({
+			method: "POST",
+			path: "/api/embed/v1/conversations",
+			base: httpBase,
+			headers: { authorization: `Bearer ${signed.token}` },
+			body: { title: "draft preview" },
+		});
+		expect(res.status).toBe(201);
+		expect(res.body.data.publishedAppVersionId).toBe(`pav_${draft.versionId}`);
 	});
 
 	test("client cannot pin a version or owner: ignored fields fall back to server state", async () => {

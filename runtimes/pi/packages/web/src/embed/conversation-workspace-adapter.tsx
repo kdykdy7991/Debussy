@@ -38,6 +38,7 @@ export function EmbedConversationWorkspace(props: {
 			connection={stores.connection}
 			sessions={stores.sessions}
 			variant="admin"
+			showSidebar={state.newConversationsEnabled !== false}
 			enableVoice={false}
 			enableUploads={state.uploadsEnabled}
 			contextHeader={
@@ -110,6 +111,11 @@ export function createEmbedWorkspaceStores(controller: EmbedChatController): {
 
 function connectionSnapshot(state: EmbedChatState): PiConnectionSnapshot {
 	if (state.connectionStatus === "connected") return { state: "connected", error: undefined };
+	// The workspace is rendered only after authentication + conversation-list
+	// initialization. With an empty list there is intentionally no conversation
+	// WebSocket yet; treating this idle state as disconnected would disable the
+	// very action that creates the first conversation (a UI deadlock).
+	if (state.connectionStatus === "idle" && state.error === null) return { state: "connected", error: undefined };
 	if (state.connectionStatus === "connecting" || state.connectionStatus === "reconnecting") {
 		return { state: "connecting", error: undefined };
 	}
@@ -255,7 +261,7 @@ function connectionLabel(status: EmbedChatState["connectionStatus"]): string {
 		case "closed":
 			return "连接已断开";
 		case "idle":
-			return "等待连接";
+			return "可新建对话";
 		case "connecting":
 			return "正在连接";
 	}

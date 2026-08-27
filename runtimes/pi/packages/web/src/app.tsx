@@ -32,6 +32,7 @@ export interface AppProps {
 	contextHeader?: ReactNode;
 	enableVoice?: boolean;
 	enableUploads?: boolean;
+	showSidebar?: boolean;
 }
 
 const EMPTY_PROMPTS = [
@@ -50,6 +51,7 @@ export function ConversationWorkspace({
 	contextHeader,
 	enableVoice = true,
 	enableUploads = true,
+	showSidebar = true,
 }: AppProps) {
 	const connectionSnapshot = useSyncExternalStore(
 		connection.subscribe,
@@ -106,7 +108,7 @@ export function ConversationWorkspace({
 	const [agentReaction, setAgentReaction] = useState<AgentReaction | undefined>(undefined);
 	const agentReactionTimerRef = useRef<number | undefined>(undefined);
 	const [sessionQuery, setSessionQuery] = useState("");
-	const [sidebarOpen, setSidebarOpen] = useState(() => variant === "admin");
+	const [sidebarOpen, setSidebarOpen] = useState(() => variant === "admin" && showSidebar);
 	const composerRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const conversationScrollRef = useRef<HTMLDivElement>(null);
@@ -324,21 +326,23 @@ export function ConversationWorkspace({
 			}`}
 			data-theme={theme}
 		>
-			<ConversationSidebar
-				open={sidebarOpen}
-				connected={connected}
-				bootstrapping={bootstrapping}
-				query={sessionQuery}
-				connection={connectionSnapshot}
-				sessions={sessionSnapshot}
-				visibleSessions={visibleSessions}
-				onToggle={variant === "admin" ? () => setSidebarOpen((open) => !open) : undefined}
-				onCreate={createSession}
-				onQueryChange={setSessionQuery}
-				onSelect={selectSession}
-			/>
+			{showSidebar ? (
+				<ConversationSidebar
+					open={sidebarOpen}
+					connected={connected}
+					bootstrapping={bootstrapping}
+					query={sessionQuery}
+					connection={connectionSnapshot}
+					sessions={sessionSnapshot}
+					visibleSessions={visibleSessions}
+					onToggle={variant === "admin" ? () => setSidebarOpen((open) => !open) : undefined}
+					onCreate={createSession}
+					onQueryChange={setSessionQuery}
+					onSelect={selectSession}
+				/>
+			) : null}
 
-			{variant === "admin" && !sidebarOpen ? (
+			{showSidebar && variant === "admin" && !sidebarOpen ? (
 				<button
 					className="sidebar-reopen-button"
 					type="button"

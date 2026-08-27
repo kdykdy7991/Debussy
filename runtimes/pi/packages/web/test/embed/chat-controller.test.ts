@@ -217,6 +217,15 @@ afterEach(() => {
 });
 
 describe("embed chat controller", () => {
+	test("single-conversation mode creates the initial conversation automatically", async () => {
+		const harness = makeHarness({ conversations: [] });
+		await harness.controller.initialize({ newConversations: false });
+		expect(harness.router.state.calls).toContainEqual(
+			expect.objectContaining({ path: "/api/embed/v1/conversations", method: "POST" }),
+		);
+		expect(harness.controller.getState().activeId).toBe("conv_new");
+		expect(harness.controller.getState().newConversationsEnabled).toBe(false);
+	});
 	test("initialize lists conversations, restores the most recent and connects realtime", async () => {
 		const harness = makeHarness();
 		await harness.controller.initialize({ uploads: true });

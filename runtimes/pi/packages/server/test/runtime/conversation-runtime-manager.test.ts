@@ -70,7 +70,8 @@ function chatOnlySpec(): RuntimeSpec {
 			mcpServers: [],
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 			speech: { enabled: false },
-			avatar: { enabled: false },
+		avatar: { enabled: false },
+		conversations: { allowNew: true },
 		},
 		contextPolicy: { maxTurns: 100, maxContextTokens: 100000, toolResultMaxBytes: 65536, logLevel: "standard" },
 		runtimePolicy: {

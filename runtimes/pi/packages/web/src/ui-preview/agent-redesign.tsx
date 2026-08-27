@@ -1,5 +1,5 @@
 import type { LlmAvailableModel, ReasoningEffort } from "@earendil-works/pi-protocol";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import "./agent-redesign.css";
 import "./agent-action-menu.css";
 
@@ -28,6 +28,7 @@ export interface AgentDetailData {
 	readonly attachments: boolean;
 	readonly avatar: boolean;
 	readonly liveSpeech: boolean;
+	readonly newConversations: boolean;
 }
 
 export interface AgentEditableDraft {
@@ -40,6 +41,7 @@ export interface AgentEditableDraft {
 	readonly attachments: boolean;
 	readonly avatar: boolean;
 	readonly liveSpeech: boolean;
+	readonly newConversations: boolean;
 }
 
 const PREVIEW_DETAIL: AgentDetailData = {
@@ -53,6 +55,7 @@ const PREVIEW_DETAIL: AgentDetailData = {
 	attachments: true,
 	avatar: false,
 	liveSpeech: false,
+	newConversations: true,
 };
 
 const AGENTS: readonly AgentListItem[] = [
@@ -319,6 +322,7 @@ export function AgentRedesignPreview(): React.ReactElement {
 export function AgentListPreview({
 	onOpen,
 	onCreate,
+	createPending = false,
 	onDelete,
 	embedded = false,
 	items = AGENTS,
@@ -328,6 +332,7 @@ export function AgentListPreview({
 }: {
 	readonly onOpen: (agent: AgentListItem) => void;
 	readonly onCreate?: () => void;
+	readonly createPending?: boolean;
 	readonly onDelete?: (agent: AgentListItem) => void;
 	readonly embedded?: boolean;
 	readonly items?: readonly AgentListItem[];
@@ -362,11 +367,11 @@ export function AgentListPreview({
 					className="ard-primary"
 					type="button"
 					onClick={onCreate}
-					disabled={onCreate === undefined}
+					disabled={onCreate === undefined || createPending}
 					title={onCreate === undefined ? "创建 Agent 能力尚未接入" : undefined}
 				>
 					<Icon name="plus" />
-					<span>创建 Agent</span>
+					<span>{createPending ? "创建中…" : "创建 Agent"}</span>
 				</button>
 			</header>
 			<div className="ard-toolbar">
@@ -536,6 +541,9 @@ export function AgentDetailPreview({
 	modelsLoading = false,
 	modelsError,
 	onSave,
+	extensionPanel,
+	externallyDirty = false,
+	onDiscardExternal,
 }: {
 	readonly onBack: () => void;
 	readonly onTest?: () => void;
@@ -548,6 +556,9 @@ export function AgentDetailPreview({
 	readonly modelsLoading?: boolean;
 	readonly modelsError?: string;
 	readonly onSave?: (draft: AgentEditableDraft) => Promise<void>;
+	readonly extensionPanel?: ReactNode;
+	readonly externallyDirty?: boolean;
+	readonly onDiscardExternal?: () => void;
 }): React.ReactElement {
 	const [name, setName] = useState(data.name);
 	const [description, setDescription] = useState(data.description);
@@ -558,6 +569,7 @@ export function AgentDetailPreview({
 	const [attachments, setAttachments] = useState(data.attachments);
 	const [avatar, setAvatar] = useState(data.avatar);
 	const [speech, setSpeech] = useState(data.liveSpeech);
+	const [newConversations, setNewConversations] = useState(data.newConversations);
 	const [savedSnapshot, setSavedSnapshot] = useState(() =>
 		JSON.stringify({
 			name: data.name,
@@ -569,6 +581,7 @@ export function AgentDetailPreview({
 			attachments: data.attachments,
 			avatar: data.avatar,
 			speech: data.liveSpeech,
+			newConversations: data.newConversations,
 		}),
 	);
 	const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
@@ -583,8 +596,10 @@ export function AgentDetailPreview({
 		attachments,
 		avatar,
 		speech,
+		newConversations,
 	});
-	const dirty = savedSnapshot !== "" && snapshot !== savedSnapshot;
+	const formDirty = savedSnapshot !== "" && snapshot !== savedSnapshot;
+	const dirty = formDirty || externallyDirty;
 	const selectedModel = models?.find((item) => item.id === model);
 	const reasoningCapability = selectedModel?.parameterCapabilities.reasoning;
 	const effortOptions = reasoningCapability?.efforts ?? (effort === undefined ? [] : [effort]);
@@ -604,6 +619,7 @@ export function AgentDetailPreview({
 					attachments,
 					avatar,
 					liveSpeech: speech,
+					newConversations,
 				});
 			}
 			setSavedSnapshot(snapshot);
@@ -623,6 +639,8 @@ export function AgentDetailPreview({
 		setAttachments(data.attachments);
 		setAvatar(data.avatar);
 		setSpeech(data.liveSpeech);
+		setNewConversations(data.newConversations);
+		onDiscardExternal?.();
 	};
 	return (
 		<main className={`ard-detail-page${embedded ? " is-embedded" : ""}`}>
@@ -769,6 +787,12 @@ export function AgentDetailPreview({
 					<h2>对话能力</h2>
 					<div className="ard-capabilities">
 						<Capability
+							title="允许新建对话"
+							description="发布后显示会话侧边栏，用户可创建并切换多个对话"
+							value={newConversations}
+							onChange={setNewConversations}
+						/>
+						<Capability
 							title="附件"
 							description="允许用户上传文件作为对话输入"
 							value={attachments}
@@ -788,6 +812,7 @@ export function AgentDetailPreview({
 						/>
 					</div>
 				</section>
+				{extensionPanel}
 				<footer className="ard-savebar">
 					<span className={dirty || saveState === "error" ? "is-dirty" : ""}>
 						<Icon name="check" />

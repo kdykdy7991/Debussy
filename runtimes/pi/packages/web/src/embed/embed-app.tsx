@@ -199,7 +199,11 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	if (phase === "error") {
 		return (
 			<div className="embed-shell">
-				<EmbedErrorState message={error ?? "加载失败"} onRetry={() => window.location.reload()} />
+				<EmbedErrorState
+					message={error ?? "加载失败"}
+					onRetry={props.previewTicket === undefined ? () => window.location.reload() : () => window.close()}
+					retryLabel={props.previewTicket === undefined ? undefined : "关闭并重新预览"}
+				/>
 			</div>
 		);
 	}
