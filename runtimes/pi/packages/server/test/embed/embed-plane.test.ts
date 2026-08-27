@@ -360,7 +360,7 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 			path: "/api/embed/v1/exchange",
 			base: httpBase,
 			headers: { origin: ALLOWED_ORIGIN },
-			body: { publicAppId, mode: "anonymous", anonymousVisitorId: visitorId },
+			body: { publicAppId, mode: "anonymous", anonymousVisitorId: visitorId, hostOrigin: ALLOWED_ORIGIN },
 		});
 		expect(exchange.status).toBe(200);
 		const token = exchange.body.data.accessToken as string;

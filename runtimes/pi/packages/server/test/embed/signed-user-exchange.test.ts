@@ -272,7 +272,12 @@ describe.skipIf(!bothReady)("signed-user principal exchange", () => {
 			path: "/api/embed/v1/exchange",
 			base: httpBase,
 			headers: { origin: options.origin ?? ALLOWED_ORIGIN },
-			body: { publicAppId: options.publicAppId, mode: "signed_user", launchToken: options.launchToken },
+			body: {
+				publicAppId: options.publicAppId,
+				mode: "signed_user",
+				launchToken: options.launchToken,
+				hostOrigin: options.origin ?? ALLOWED_ORIGIN,
+			},
 		});
 	}
 

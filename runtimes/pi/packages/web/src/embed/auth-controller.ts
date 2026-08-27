@@ -45,12 +45,13 @@ export class EmbedAuthController {
 	}
 
 	/** 匿名 Exchange；同 App 同访客身份稳定（服务端按 subjectHash 收敛）。 */
-	async signIn(publicAppId: string): Promise<EmbedAuthState> {
+	async signIn(publicAppId: string, hostOrigin: string): Promise<EmbedAuthState> {
 		const visitorId = this.storage.getOrCreateVisitorId();
 		const response: ExchangeResponse = await this.api.exchange({
 			publicAppId,
 			mode: "anonymous",
 			anonymousVisitorId: visitorId,
+			hostOrigin,
 		});
 		this.mode = "anonymous";
 		return this.accept(response);
@@ -60,11 +61,12 @@ export class EmbedAuthController {
 	 * signed_user Exchange（TASK-029）：launchToken 只经 postMessage 进入，
 	 * 本方法立即用其换取 Access Token，**不留存 Launch Token**（PD-18）。
 	 */
-	async signInWithLaunchToken(publicAppId: string, launchToken: string): Promise<EmbedAuthState> {
+	async signInWithLaunchToken(publicAppId: string, launchToken: string, hostOrigin: string): Promise<EmbedAuthState> {
 		const response: ExchangeResponse = await this.api.exchange({
 			publicAppId,
 			mode: "signed_user",
 			launchToken,
+			hostOrigin,
 		});
 		this.mode = "signed_user";
 		return this.accept(response);
@@ -91,12 +93,12 @@ export class EmbedAuthController {
 	 * 到同一 Principal，身份稳定）；signed_user 模式 Launch Token 已即用即弃
 	 * （PD-18），无法静默刷新，抛 `AUTH_EXPIRED` 由宿主重新 `init`。
 	 */
-	async refresh(publicAppId: string): Promise<EmbedAuthState> {
+	async refresh(publicAppId: string, hostOrigin: string): Promise<EmbedAuthState> {
 		if (this.mode === "signed_user") {
 			throw new EmbedApiError("AUTH_EXPIRED", "登录已过期，请刷新页面或由宿主重新初始化", false);
 		}
 		if (this.mode === "anonymous") {
-			return this.signIn(publicAppId);
+			return this.signIn(publicAppId, hostOrigin);
 		}
 		if (this.mode === "preview") {
 			throw new EmbedApiError("AUTH_EXPIRED", "预览票已过期，请重新创建预览", false);

@@ -228,7 +228,7 @@ describe.skipIf(!pgUp)("embed data plane security matrix", () => {
 			path: "/api/embed/v1/exchange",
 			base: httpBase,
 			headers: { origin },
-			body: { publicAppId, mode: "anonymous", anonymousVisitorId: visitorId },
+			body: { publicAppId, mode: "anonymous", anonymousVisitorId: visitorId, hostOrigin: origin },
 		});
 		expect(res.status).toBe(200);
 		return res.body.data.accessToken as string;
@@ -398,7 +398,12 @@ describe.skipIf(!pgUp)("embed data plane security matrix", () => {
 				path: "/api/embed/v1/exchange",
 				base: httpBase,
 				headers,
-				body: { publicAppId: publicA, mode: "anonymous", anonymousVisitorId: "visitor-x-".repeat(4) },
+				body: {
+					publicAppId: publicA,
+					mode: "anonymous",
+					anonymousVisitorId: "visitor-x-".repeat(4),
+					hostOrigin: "https://evil.example.com",
+				},
 			});
 			expect(res.status).toBe(403);
 			expect(res.body.error.code).toBe("ORIGIN_NOT_ALLOWED");
@@ -460,7 +465,7 @@ describe.skipIf(!pgUp)("embed data plane security matrix", () => {
 			path: "/api/embed/v1/exchange",
 			base: httpBase,
 			headers: { origin: ALLOWED_ORIGIN },
-			body: { publicAppId: publicA, mode: "anonymous", anonymousVisitorId: visitorId },
+			body: { publicAppId: publicA, mode: "anonymous", anonymousVisitorId: visitorId, hostOrigin: ALLOWED_ORIGIN },
 		});
 		expect(res.status).toBe(200);
 		const text = JSON.stringify(res.body);

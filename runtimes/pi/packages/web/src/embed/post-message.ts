@@ -43,7 +43,7 @@ export interface EmbedPostMessageChannelOptions {
 	/** 宿主 Origin 白名单（来自 bootstrap；公开策略，非凭据）。 */
 	readonly allowedOrigins: readonly string[];
 	/** 收到合法 `init`；`launchToken` 为 undefined 表示匿名 init。 */
-	readonly onInit: (launchToken: string | undefined) => void;
+	readonly onInit: (launchToken: string | undefined, hostOrigin: string) => void;
 	/** 收到合法 `logout`：宿主登出，iframe 清理凭据并停止访问。 */
 	readonly onLogout: () => void;
 	/** 收到 `focus`（TASK-033，spec 12.1）：聚焦输入框。 */
@@ -61,7 +61,7 @@ export class EmbedPostMessageChannel {
 	private readonly window: WindowLike;
 	private readonly parent: ParentWindowLike;
 	private readonly allowedOrigins: readonly string[];
-	private readonly onInit: (launchToken: string | undefined) => void;
+	private readonly onInit: (launchToken: string | undefined, hostOrigin: string) => void;
 	private readonly onLogout: () => void;
 	private readonly onFocus: (() => void) | undefined;
 	private readonly onResizeRequest: (() => void) | undefined;
@@ -109,7 +109,7 @@ export class EmbedPostMessageChannel {
 		this.targetOrigin = event.origin;
 		switch (decoded.message.type) {
 			case "init":
-				this.onInit(decoded.message.launchToken);
+				this.onInit(decoded.message.launchToken, event.origin);
 				break;
 			case "logout":
 				this.onLogout();

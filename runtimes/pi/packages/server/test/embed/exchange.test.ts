@@ -91,8 +91,8 @@ function httpCall(options: {
 	});
 }
 
-function exchangeBody(publicAppId: string, visitorId: string): Record<string, unknown> {
-	return { publicAppId, mode: "anonymous", anonymousVisitorId: visitorId };
+function exchangeBody(publicAppId: string, visitorId: string, hostOrigin = ALLOWED_ORIGIN): Record<string, unknown> {
+	return { publicAppId, mode: "anonymous", anonymousVisitorId: visitorId, hostOrigin };
 }
 
 function specHash(spec: unknown): string {
@@ -384,22 +384,21 @@ describe.skipIf(!pgUp)("anonymous principal exchange", () => {
 			path: "/api/embed/v1/exchange",
 			base: httpBase,
 			headers: { origin: "https://evil.example.com" },
-			body: exchangeBody(appAPublicId, "e".repeat(64)),
+			body: exchangeBody(appAPublicId, "e".repeat(64), "https://evil.example.com"),
 		});
 		expect(res.status).toBe(403);
 		expect(res.body.error.code).toBe("ORIGIN_NOT_ALLOWED");
 		expect(res.body.error.requestId).toBeTruthy();
 	});
 
-	test("rejects a missing Origin header (403 ORIGIN_NOT_ALLOWED)", async () => {
+	test("uses the explicit host origin instead of the iframe request Origin header", async () => {
 		const res = await httpCall({
 			method: "POST",
 			path: "/api/embed/v1/exchange",
 			base: httpBase,
 			body: exchangeBody(appAPublicId, "m".repeat(64)),
 		});
-		expect(res.status).toBe(403);
-		expect(res.body.error.code).toBe("ORIGIN_NOT_ALLOWED");
+		expect(res.status).toBe(200);
 	});
 
 	test("rejects a suspended app (403 APP_SUSPENDED)", async () => {
@@ -480,28 +479,38 @@ describe.skipIf(!pgUp)("anonymous principal exchange", () => {
 			},
 			{
 				label: "bad publicAppId",
-				body: { publicAppId: "not-a-locator", mode: "anonymous", anonymousVisitorId: "x".repeat(64) },
+				body: {
+					publicAppId: "not-a-locator",
+					mode: "anonymous",
+					anonymousVisitorId: "x".repeat(64),
+					hostOrigin: ALLOWED_ORIGIN,
+				},
 				message: "pub_<uuid>",
 			},
 			{
 				label: "missing visitorId",
-				body: { publicAppId: appAPublicId, mode: "anonymous" },
+				body: { publicAppId: appAPublicId, mode: "anonymous", hostOrigin: ALLOWED_ORIGIN },
 				message: "anonymousVisitorId",
 			},
 			{
 				label: "too short visitorId",
-				body: { publicAppId: appAPublicId, mode: "anonymous", anonymousVisitorId: "short" },
+				body: {
+					publicAppId: appAPublicId,
+					mode: "anonymous",
+					anonymousVisitorId: "short",
+					hostOrigin: ALLOWED_ORIGIN,
+				},
 				message: "32..512",
 			},
 			{
 				label: "signed_user without launchToken",
-				body: { publicAppId: appAPublicId, mode: "signed_user" },
+				body: { publicAppId: appAPublicId, mode: "signed_user", hostOrigin: ALLOWED_ORIGIN },
 				message: "launchToken",
 			},
 			{
 				label: "unknown mode",
 				body: { publicAppId: appAPublicId, mode: "magic" },
-				message: "mode must be 'anonymous' or 'signed_user'",
+				message: "mode must be 'anonymous', 'preview' or 'signed_user'",
 			},
 		];
 		for (const c of cases) {

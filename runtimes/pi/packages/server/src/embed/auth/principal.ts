@@ -11,8 +11,8 @@
  *   路径保留既有 id）；
  * - 清理浏览器数据会得到新身份，这是匿名模式的产品语义（PD-01/PD-02）。
  *
- * Exchange 同时执行 App 状态、accessMode 与 Origin 校验（复用 TASK-014 的
- * `originAllowed`，HTTP/Exchange/Realtime 共用同一策略函数），随后签发仅
+ * Exchange 同时执行 App 状态、accessMode 与宿主 Origin 校验（复用
+ * TASK-014 的 `originAllowed`），随后签发仅
  * 授权一个 App 和一个 Principal 的短期 Access Token。
  */
 import { createHmac } from "node:crypto";
@@ -94,7 +94,7 @@ export type ExchangeResult<T> =
 export interface AnonymousExchangeInput {
 	readonly publicAppId: PublicAppId;
 	readonly anonymousVisitorId: string;
-	/** 请求 `Origin` 头；按 App allowlist 校验（spec 13.1）。 */
+	/** iframe 已确认的宿主 Origin；按 App allowlist 校验（spec 13.1）。 */
 	readonly origin: string | undefined;
 }
 
@@ -121,7 +121,7 @@ export interface SignedUserExchangeInput {
 	readonly publicAppId: PublicAppId;
 	/** 宿主后端签发的短期 Launch Token（spec 7.2）。 */
 	readonly launchToken: string;
-	/** 请求 `Origin` 头；须与 Launch Token `origin` claim 一致且过 allowlist。 */
+	/** iframe 已确认的宿主 Origin；须与 Launch Token `origin` claim 一致且过 allowlist。 */
 	readonly origin: string | undefined;
 }
 

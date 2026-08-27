@@ -8,8 +8,18 @@
 
 /** `POST /api/embed/v1/exchange`（spec 27.4 / WB-005）：匿名 / signed_user / preview。 */
 export type ExchangeRequest =
-	| { readonly publicAppId: string; readonly mode: "anonymous"; readonly anonymousVisitorId: string }
-	| { readonly publicAppId: string; readonly mode: "signed_user"; readonly launchToken: string }
+	| {
+			readonly publicAppId: string;
+			readonly mode: "anonymous";
+			readonly anonymousVisitorId: string;
+			readonly hostOrigin: string;
+	  }
+	| {
+			readonly publicAppId: string;
+			readonly mode: "signed_user";
+			readonly launchToken: string;
+			readonly hostOrigin: string;
+	  }
 	| { readonly publicAppId: string; readonly mode: "preview"; readonly ticket: string };
 
 /** Preview exchange response (WB-005). */

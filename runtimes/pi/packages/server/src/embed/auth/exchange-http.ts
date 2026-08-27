@@ -8,9 +8,10 @@
  * - `mode: "signed_user"` —— 宿主后端签发的 `launchToken` 经
  *   `LaunchTokenVerifier` 验证后建立 external_user Principal（TASK-028）。
  *
- * 端点只做 HTTP 关注点（请求体校验、Origin 提取、CORS、requestId、错误
- * 信封），业务校验全部在 `ExchangeService` 中；Origin 校验复用 TASK-014 的
- * 单一策略函数。错误消息绝不回显 visitorId / launchToken / externalUserId。
+ * 端点只做 HTTP 关注点（请求体校验、CORS、requestId、错误信封），业务校验
+ * 全部在 `ExchangeService` 中。请求体中的 hostOrigin 来自 iframe 校验后的
+ * postMessage event.origin，或浏览器提供的 iframe document.referrer；不能用
+ * iframe 自己发起 fetch 时的 HTTP Origin 代替宿主 Origin。
  */
 
 import type { SecretRegistry } from "../../logging/redact.ts";
@@ -137,7 +138,7 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 					? await options.service.exchangeAnonymous({
 							publicAppId,
 							anonymousVisitorId: parsed.anonymousVisitorId,
-							origin: request.headers.origin,
+							origin: parsed.hostOrigin,
 						})
 					: parsed.mode === "preview"
 						? await options.service.exchangePreview({
@@ -148,7 +149,7 @@ export function createExchangeHttpHandler(options: ExchangeHttpHandlerOptions): 
 						: await options.service.exchangeSignedUser({
 								publicAppId,
 								launchToken: parsed.launchToken,
-								origin: request.headers.origin,
+								origin: parsed.hostOrigin,
 							});
 			if (!result.ok) {
 				recordResult(result.error.code === "RATE_LIMITED" ? "rate_limited" : "denied");
@@ -184,8 +185,18 @@ function requestIp(request: import("node:http").IncomingMessage): string | undef
 }
 
 type ParsedExchangeBody =
-	| { readonly mode: "anonymous"; readonly publicAppId: string; readonly anonymousVisitorId: string }
-	| { readonly mode: "signed_user"; readonly publicAppId: string; readonly launchToken: string }
+	| {
+			readonly mode: "anonymous";
+			readonly publicAppId: string;
+			readonly anonymousVisitorId: string;
+			readonly hostOrigin: string;
+	  }
+	| {
+			readonly mode: "signed_user";
+			readonly publicAppId: string;
+			readonly launchToken: string;
+			readonly hostOrigin: string;
+	  }
 	| { readonly mode: "preview"; readonly publicAppId: string; readonly ticket: string };
 
 /** 校验 Exchange 请求体；错误消息绝不回显 visitorId / launchToken 的值。 */
@@ -210,14 +221,16 @@ function parseExchangeBody(body: unknown): ParsedExchangeBody {
 				`anonymousVisitorId must be a string of ${ANONYMOUS_VISITOR_ID_MIN_CHARS}..${ANONYMOUS_VISITOR_ID_MAX_CHARS} characters`,
 			);
 		}
-		return { mode: "anonymous", publicAppId, anonymousVisitorId: visitorId };
+		const hostOrigin = parseHostOrigin(record.hostOrigin);
+		return { mode: "anonymous", publicAppId, anonymousVisitorId: visitorId, hostOrigin };
 	}
 	if (mode === "signed_user") {
 		const launchToken = record.launchToken;
 		if (typeof launchToken !== "string" || launchToken === "" || launchToken.length > LAUNCH_TOKEN_MAX_CHARS) {
 			throw new ExchangeHttpValidationError("launchToken must be a non-empty JWS string");
 		}
-		return { mode: "signed_user", publicAppId, launchToken };
+		const hostOrigin = parseHostOrigin(record.hostOrigin);
+		return { mode: "signed_user", publicAppId, launchToken, hostOrigin };
 	}
 	if (mode === "preview") {
 		const ticket = record.ticket;
@@ -227,4 +240,20 @@ function parseExchangeBody(body: unknown): ParsedExchangeBody {
 		return { mode: "preview", publicAppId, ticket };
 	}
 	throw new ExchangeHttpValidationError("mode must be 'anonymous', 'preview' or 'signed_user'");
+}
+
+function parseHostOrigin(value: unknown): string {
+	if (typeof value !== "string" || value === "") {
+		throw new ExchangeHttpValidationError("hostOrigin must be an absolute origin");
+	}
+	try {
+		const parsed = new URL(value);
+		if (parsed.origin !== value || parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") {
+			throw new ExchangeHttpValidationError("hostOrigin must be an absolute origin");
+		}
+		return parsed.origin;
+	} catch (error) {
+		if (error instanceof ExchangeHttpValidationError) throw error;
+		throw new ExchangeHttpValidationError("hostOrigin must be an absolute origin");
+	}
 }

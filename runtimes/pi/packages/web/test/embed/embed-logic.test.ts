@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { EmbedApi, EmbedApiError } from "../../src/embed/api.ts";
 import { EmbedAuthController } from "../../src/embed/auth-controller.ts";
 import { messagesFromEvents } from "../../src/embed/conversation-controller.ts";
+import { originFromReferrer } from "../../src/embed/embed-app.tsx";
 import { createVisitorStorage, newVisitorId, type StorageLike } from "../../src/embed/storage.ts";
 
 function memoryStorage(): StorageLike {
@@ -52,6 +53,14 @@ describe("embed visitor storage", () => {
 	});
 });
 
+describe("embed host origin", () => {
+	test("derives the allowlisted parent origin from the iframe referrer", () => {
+		expect(originFromReferrer("http://localhost:8000/page", ["http://localhost:8000"])).toBe("http://localhost:8000");
+		expect(originFromReferrer("http://127.0.0.1:8000/page", ["http://localhost:8000"])).toBeNull();
+		expect(originFromReferrer("", ["http://localhost:8000"])).toBeNull();
+	});
+});
+
 describe("embed api client", () => {
 	test("parses success envelopes and error envelopes", async () => {
 		const fetchImpl = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
@@ -88,6 +97,7 @@ describe("embed api client", () => {
 			publicAppId: "pub_x",
 			mode: "anonymous",
 			anonymousVisitorId: "v".repeat(43),
+			hostOrigin: "https://host.example.com",
 		});
 		expect(exchange.accessToken).toBe("jwt");
 	});
@@ -101,7 +111,12 @@ describe("embed api client", () => {
 		);
 		const api = new EmbedApi({ fetchImpl: fetchImpl as unknown as typeof fetch });
 		await expect(
-			api.exchange({ publicAppId: "pub_x", mode: "anonymous", anonymousVisitorId: "v".repeat(43) }),
+			api.exchange({
+				publicAppId: "pub_x",
+				mode: "anonymous",
+				anonymousVisitorId: "v".repeat(43),
+				hostOrigin: "https://host.example.com",
+			}),
 		).rejects.toMatchObject({
 			code: "APP_SUSPENDED",
 			retryable: false,
@@ -146,7 +161,7 @@ describe("embed auth controller", () => {
 		);
 		const api = new EmbedApi({ fetchImpl: fetchImpl as unknown as typeof fetch });
 		const auth = new EmbedAuthController(api, storage);
-		const state = await auth.signIn("pub_x");
+		const state = await auth.signIn("pub_x", "https://host.example.com");
 		expect(state.appName).toBe("X");
 		expect(auth.hasToken).toBe(true);
 		expect(auth.getToken()).toBe("jwt-1");
@@ -175,17 +190,17 @@ describe("embed auth controller", () => {
 		);
 		const api = new EmbedApi({ fetchImpl: fetchImpl as unknown as typeof fetch });
 		const auth = new EmbedAuthController(api, storage);
-		await auth.signIn("pub_x");
+		await auth.signIn("pub_x", "https://host.example.com");
 		// 30 秒余量内视为过期：近过期 token 不可直接取用。
 		expect(() => auth.getToken()).toThrow(EmbedApiError);
 		// 匿名模式 refresh = 用同一 visitorId 重新 Exchange（身份稳定）。
 		expiresAt = new Date(Date.now() + 600_000).toISOString();
-		const refreshed = await auth.refresh("pub_x");
+		const refreshed = await auth.refresh("pub_x", "https://host.example.com");
 		expect(refreshed.accessToken).toBe("jwt-expiring");
 		expect(fetchImpl.mock.calls.length).toBe(2); // signIn + refresh
 		// signed_user 无法静默刷新（Launch Token 已即用即弃，PD-18）。
-		await auth.signInWithLaunchToken("pub_x", "host-signed-jws");
-		await expect(auth.refresh("pub_x")).rejects.toMatchObject({ code: "AUTH_EXPIRED" });
+		await auth.signInWithLaunchToken("pub_x", "host-signed-jws", "https://host.example.com");
+		await expect(auth.refresh("pub_x", "https://host.example.com")).rejects.toMatchObject({ code: "AUTH_EXPIRED" });
 	});
 });
 

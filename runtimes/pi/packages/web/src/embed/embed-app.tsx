@@ -36,6 +36,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const [error, setError] = useState<string | null>(null);
 	const controllersRef = useRef<{ auth: EmbedAuthController; chat: EmbedChatController } | null>(null);
 	const channelRef = useRef<EmbedPostMessageChannel | null>(null);
+	const hostOriginRef = useRef<string | null>(null);
 
 	/** 计算 iframe 内容高度并回发宿主（resize-request / 尺寸变化 / ready 后）。 */
 	const reportHeight = useCallback((): void => {
@@ -51,19 +52,22 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 
 	/** 认证 + 会话加载（匿名直接进入；signed_user 用宿主 init 的 Launch Token）。 */
 	const signInAndLoad = useCallback(
-		async (mode: EmbedMode, launchToken?: string): Promise<void> => {
+		async (mode: EmbedMode, launchToken?: string, hostOrigin?: string): Promise<void> => {
 			const controllers = controllersRef.current;
 			const channel = channelRef.current;
 			if (controllers === null) return;
 			if (mode === "signed_user" && launchToken === undefined) {
 				throw new EmbedApiError("INVALID_INIT", "宿主未提供 Launch Token", false);
 			}
+			if (mode !== "preview" && hostOrigin === undefined) {
+				throw new EmbedApiError("INVALID_INIT", "无法确认宿主 Origin", false);
+			}
 			const state =
 				mode === "signed_user"
-					? await controllers.auth.signInWithLaunchToken(props.publicAppId, launchToken!)
+					? await controllers.auth.signInWithLaunchToken(props.publicAppId, launchToken!, hostOrigin!)
 					: mode === "preview"
 						? await controllers.auth.signInWithPreviewTicket(props.publicAppId, props.previewTicket ?? "")
-						: await controllers.auth.signIn(props.publicAppId);
+						: await controllers.auth.signIn(props.publicAppId, hostOrigin!);
 			// PD-18：launchToken 即用即弃（此处不留存任何引用）。
 			await controllers.chat.initialize(state.features);
 			setPhase("ready");
@@ -86,7 +90,9 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			setPhase("loading");
 			if (mode === "anonymous") {
 				// 匿名模式无宿主会话：logout 后直接重新匿名进入。
-				await signInAndLoad("anonymous");
+				const hostOrigin = hostOriginRef.current;
+				if (hostOrigin === null) throw new EmbedApiError("INVALID_INIT", "无法确认宿主 Origin", false);
+				await signInAndLoad("anonymous", undefined, hostOrigin);
 			}
 			// signed_user：等宿主重新 `init`（channel 仍在监听）。
 		},
@@ -104,7 +110,9 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 					return auth.getToken();
 				} catch {
 					// 匿名可透明刷新；signed_user 过期抛 AUTH_EXPIRED。
-					return (await auth.refresh(props.publicAppId)).accessToken;
+					const hostOrigin = hostOriginRef.current;
+					if (hostOrigin === null) throw new EmbedApiError("INVALID_INIT", "无法确认宿主 Origin", false);
+					return (await auth.refresh(props.publicAppId, hostOrigin)).accessToken;
 				}
 			},
 			onAuthFailure: (authError) => {
@@ -137,16 +145,18 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			const summary = await api.bootstrap(props.publicAppId);
 			if (summary.status !== "active") throw new EmbedApiError("APP_SUSPENDED", "应用当前不可用", false);
 			setBootstrap(summary);
+			hostOriginRef.current = originFromReferrer(document.referrer, summary.allowedOrigins);
 			mode = summary.accessMode === "signed_user" ? "signed_user" : "anonymous";
 			channel = new EmbedPostMessageChannel({
 				window: window,
 				parent: window.parent,
 				allowedOrigins: summary.allowedOrigins,
-				onInit: (launchToken) => {
+				onInit: (launchToken, hostOrigin) => {
+					hostOriginRef.current = hostOrigin;
 					// anonymous/mixed：MVP 不切换身份（HANDOFF 记录）；signed_user
 					// 身份只来自宿主 init 的 Launch Token（AD-11）。
 					if (mode !== "signed_user") return;
-					void signInAndLoad("signed_user", launchToken).catch((caught: unknown) => {
+					void signInAndLoad("signed_user", launchToken, hostOrigin).catch((caught: unknown) => {
 						setError(caught instanceof EmbedApiError ? caught.message : "宿主初始化失败");
 						setPhase("error");
 					});
@@ -159,7 +169,9 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			channel.start();
 			if (mode === "anonymous") {
 				// anonymous / mixed：直接匿名进入；若嵌在宿主页中回发 ready。
-				await signInAndLoad("anonymous");
+				const hostOrigin = hostOriginRef.current;
+				if (hostOrigin === null) throw new EmbedApiError("INVALID_INIT", "无法确认宿主 Origin", false);
+				await signInAndLoad("anonymous", undefined, hostOrigin);
 			}
 			// signed_user：身份只来自宿主 postMessage init（AD-11），等待 onInit。
 		}
@@ -299,4 +311,14 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			</EmbedShell>
 		</>
 	); */
+}
+
+export function originFromReferrer(referrer: string, allowedOrigins: readonly string[]): string | null {
+	if (referrer === "") return null;
+	try {
+		const origin = new URL(referrer).origin;
+		return allowedOrigins.includes(origin) ? origin : null;
+	} catch {
+		return null;
+	}
 }

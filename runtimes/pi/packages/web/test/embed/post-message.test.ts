@@ -128,7 +128,7 @@ describe("EmbedPostMessageChannel", () => {
 		});
 		channel.start();
 		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("init", { launchToken: "jws-abc" }) });
-		expect(onInit).toHaveBeenCalledWith("jws-abc");
+		expect(onInit).toHaveBeenCalledWith("jws-abc", ALLOWED_ORIGIN);
 		// 通道自身不保留 token：回调外无从读取（PD-18）。
 		expect(JSON.stringify(channel)).not.toContain("jws-abc");
 	});
@@ -146,7 +146,7 @@ describe("EmbedPostMessageChannel", () => {
 		});
 		channel.start();
 		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("init") });
-		expect(onInit).toHaveBeenCalledWith(undefined);
+		expect(onInit).toHaveBeenCalledWith(undefined, ALLOWED_ORIGIN);
 	});
 
 	test("repeated init dispatches each time (latest wins, no double-start)", () => {
@@ -165,7 +165,7 @@ describe("EmbedPostMessageChannel", () => {
 		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("init", { launchToken: "one" }) });
 		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("init", { launchToken: "two" }) });
 		expect(onInit).toHaveBeenCalledTimes(2);
-		expect(onInit).toHaveBeenLastCalledWith("two");
+		expect(onInit).toHaveBeenLastCalledWith("two", ALLOWED_ORIGIN);
 	});
 
 	test("logout is dispatched", () => {
