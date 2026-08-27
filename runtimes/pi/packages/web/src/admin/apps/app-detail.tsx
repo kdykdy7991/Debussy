@@ -3,6 +3,7 @@ import type {
 	AgentDefinitionSummary,
 	AgentPublicId,
 	PublishedAppDetail,
+	PublishedAppVersionSummary,
 } from "@earendil-works/pi-protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import menuStyles from "../action-menu.module.css";
@@ -14,7 +15,12 @@ import styles from "./app-detail.module.css";
 
 type LoadState =
 	| { kind: "loading" }
-	| { kind: "ready"; app: PublishedAppDetail | null; agents: readonly AgentDefinitionSummary[] }
+	| {
+			kind: "ready";
+			app: PublishedAppDetail | null;
+			agents: readonly AgentDefinitionSummary[];
+			versions: readonly PublishedAppVersionSummary[];
+	  }
 	| { kind: "error"; message: string };
 const STATUS_LABEL = { draft: "草稿", active: "已上线", suspended: "已暂停", archived: "已归档" } as const;
 
@@ -93,15 +99,17 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 	const [accessMode, setAccessMode] = useState<"anonymous" | "signed_user">("anonymous");
 	const [origins, setOrigins] = useState("");
 	const [busy, setBusy] = useState(false);
+	const [versionBusy, setVersionBusy] = useState<"create" | "preview" | "activate" | null>(null);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	useEffect(() => {
 		void Promise.all([
 			agentApi.listAgents({ limit: 100 }),
 			appId ? appApi.getPublishedApp(appId) : Promise.resolve(null),
+			appId ? appApi.listVersions(appId, { limit: 100 }) : Promise.resolve({ items: [], nextCursor: null }),
 		]).then(
-			([agents, app]) => {
-				setState({ kind: "ready", app, agents: agents.items });
+			([agents, app, versions]) => {
+				setState({ kind: "ready", app, agents: agents.items, versions: versions.items });
 				if (app) {
 					setName(app.name);
 					setAgentId(app.sourceAgent.id);
@@ -120,6 +128,12 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 		void agentApi.getAgentDetail(agentId as AgentPublicId).then(setAgentDetail, () => setAgentDetail(null));
 	}, [agentApi, agentId]);
 	const app = state.kind === "ready" ? state.app : null;
+	const versions = state.kind === "ready" ? state.versions : [];
+	const newestReadyVersion = versions.find((version) => version.status === "ready");
+	const pendingReadyVersion = versions.find((version) => version.status === "ready" && !version.isCurrent) ?? null;
+	// Preview the newly built version before the currently active one. Otherwise an
+	// app that is already online keeps previewing its old frozen configuration.
+	const previewVersion = pendingReadyVersion ?? app?.currentVersion ?? newestReadyVersion ?? null;
 	const allowedOrigins = useMemo(
 		() =>
 			origins
@@ -149,6 +163,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 			navigate(`/apps/${created.id}`);
 		} catch (caught) {
 			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
 			setBusy(false);
 		}
 	};
@@ -167,7 +182,83 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 			navigate("/apps");
 		} catch (caught) {
 			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
 			setBusy(false);
+		}
+	};
+	const refreshApp = async (): Promise<void> => {
+		if (!appId || state.kind !== "ready") return;
+		const [nextApp, nextVersions] = await Promise.all([
+			appApi.getPublishedApp(appId),
+			appApi.listVersions(appId, { limit: 100 }),
+		]);
+		setState({ kind: "ready", app: nextApp, agents: state.agents, versions: nextVersions.items });
+	};
+	const createVersion = async (): Promise<void> => {
+		if (!appId || !agentDetail || versionBusy !== null) return;
+		setVersionBusy("create");
+		setError(null);
+		try {
+			await appApi.createVersion({ appId, sourceAgentRevision: agentDetail.currentRevision });
+			await refreshApp();
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setVersionBusy(null);
+		}
+	};
+	const preview = async (): Promise<void> => {
+		if (!appId || !app || !previewVersion || versionBusy !== null) return;
+		const popup = window.open("about:blank", "_blank", "popup,width=1100,height=760");
+		if (popup === null) {
+			setError("浏览器阻止了预览窗口，请允许此站点打开弹窗后重试");
+			return;
+		}
+		setVersionBusy("preview");
+		setError(null);
+		try {
+			const ticket = await appApi.createPreviewTicket({ appId, versionId: previewVersion.id });
+			const previewOrigin = new URL(ticket.previewUrl).origin;
+			let ticketSent = false;
+			const onMessage = (event: MessageEvent<unknown>): void => {
+				if (event.source !== popup || event.origin !== previewOrigin) return;
+				const message = event.data as { type?: unknown; publicAppId?: unknown } | null;
+				if (message?.type !== "pi-preview-ready" || message.publicAppId !== app.publicAppId) return;
+				if (ticketSent) return;
+				ticketSent = true;
+				popup.postMessage(
+					{ type: "pi-preview-ticket", publicAppId: app.publicAppId, ticket: ticket.ticket },
+					previewOrigin,
+				);
+				window.removeEventListener("message", onMessage);
+			};
+			window.addEventListener("message", onMessage);
+			window.setTimeout(() => {
+				window.removeEventListener("message", onMessage);
+			}, 10_000);
+			// `window.name` survives the initial about:blank -> preview navigation.
+			// It is an in-memory bootstrap fallback for browsers that sever or delay
+			// `window.opener`; PreviewBootstrap clears it before exchanging the ticket.
+			popup.name = `pi-preview:${JSON.stringify({ publicAppId: app.publicAppId, ticket: ticket.ticket })}`;
+			popup.location.replace(ticket.previewUrl);
+		} catch (caught) {
+			popup.close();
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setVersionBusy(null);
+		}
+	};
+	const activate = async (): Promise<void> => {
+		if (!appId || !pendingReadyVersion || versionBusy !== null) return;
+		setVersionBusy("activate");
+		setError(null);
+		try {
+			await appApi.activateVersion({ appId, versionId: pendingReadyVersion.id });
+			await refreshApp();
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setVersionBusy(null);
 		}
 	};
 	if (state.kind === "loading") return <div className={styles.loading}>正在加载应用详情…</div>;
@@ -379,13 +470,29 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 						{busy ? "正在保存…" : "保存配置"}
 					</button>
 					<div className={styles.actions}>
-						<button type="button" disabled>
-							<Icon name="eye" />
-							预览
+						<button
+							type="button"
+							disabled={isNew || !agentDetail || versionBusy !== null}
+							onClick={() => void createVersion()}
+						>
+							<Icon name="save" />
+							{versionBusy === "create" ? "创建中…" : versions.length === 0 ? "创建第一个版本" : "创建新版本"}
 						</button>
-						<button type="button" disabled>
+						<button
+							type="button"
+							disabled={!previewVersion || versionBusy !== null}
+							onClick={() => void preview()}
+						>
+							<Icon name="eye" />
+							{versionBusy === "preview" ? "打开中…" : "预览"}
+						</button>
+						<button
+							type="button"
+							disabled={!pendingReadyVersion || versionBusy !== null}
+							onClick={() => void activate()}
+						>
 							<Icon name="upload" />
-							上线
+							{versionBusy === "activate" ? "上线中…" : "上线"}
 						</button>
 					</div>
 					{error ? <p className={styles.error}>{error}</p> : null}
