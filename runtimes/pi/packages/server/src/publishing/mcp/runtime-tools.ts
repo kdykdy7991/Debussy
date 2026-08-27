@@ -18,6 +18,30 @@ export interface McpRuntimeToolFactoryOptions {
 
 export type McpRuntimeToolFactory = (spec: RuntimeSpec, scope: ScopeContext) => Promise<readonly ToolDefinition[]>;
 
+function isJsonSchema(value: unknown): value is Readonly<Record<string, unknown>> {
+	if (value === true || value === false) return true;
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+	const schema = value as Readonly<Record<string, unknown>>;
+	if (
+		schema.type !== undefined &&
+		(typeof schema.type !== "string" ||
+			!["null", "boolean", "object", "array", "number", "string", "integer"].includes(schema.type))
+	)
+		return false;
+	if (schema.properties !== undefined) {
+		if (schema.properties === null || typeof schema.properties !== "object" || Array.isArray(schema.properties))
+			return false;
+		if (!Object.values(schema.properties).every(isJsonSchema)) return false;
+	}
+	if (schema.items !== undefined && !isJsonSchema(schema.items)) return false;
+	if (
+		schema.required !== undefined &&
+		(!Array.isArray(schema.required) || !schema.required.every((item) => typeof item === "string"))
+	)
+		return false;
+	return true;
+}
+
 export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOptions): McpRuntimeToolFactory {
 	const connect = options.connect ?? connectSecureMcpClient;
 	return async (spec, scope) => {
@@ -29,6 +53,9 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 			for (const frozenTool of frozenServer.tools) {
 				if (names.has(frozenTool.name)) throw new Error(`duplicate MCP Tool name: ${frozenTool.name}`);
 				names.add(frozenTool.name);
+				if (!isJsonSchema(frozenTool.inputSchema)) {
+					throw new Error(`MCP Tool ${frozenTool.name} has an invalid input schema`);
+				}
 				const parameters = Type.Unsafe<Record<string, unknown>>(frozenTool.inputSchema as TSchema);
 				definitions.push({
 					name: frozenTool.name,
@@ -112,7 +139,7 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 								resultBytes,
 								resultTruncated,
 								errorCode,
-								requestId: null,
+								requestId: scope.requestId ?? null,
 								createdAt: new Date(),
 							});
 						}

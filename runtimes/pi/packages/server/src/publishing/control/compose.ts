@@ -84,6 +84,20 @@ export async function composeControlPlane(options: {
 	const repositories = createPublishingRepositories(client);
 	const mcpSecretBox =
 		publishing.mcpSecretMasterKey === undefined ? undefined : new McpSecretBox(publishing.mcpSecretMasterKey);
+	const configuredMcpNetworkPolicy = publishing.mcpNetworkPolicy;
+	const mcpNetworkPolicy =
+		configuredMcpNetworkPolicy === undefined
+			? undefined
+			: {
+					allowHttp: configuredMcpNetworkPolicy.allowHttp,
+					allowPrivateNetwork: configuredMcpNetworkPolicy.allowPrivateNetwork,
+					allowedPorts: new Set(configuredMcpNetworkPolicy.allowedPorts),
+				};
+	if (mcpNetworkPolicy?.allowHttp === true || mcpNetworkPolicy?.allowPrivateNetwork === true) {
+		log(
+			`warning: unsafe development MCP network policy enabled (HTTP=${mcpNetworkPolicy.allowHttp}, private=${mcpNetworkPolicy.allowPrivateNetwork})`,
+		);
+	}
 
 	// MVP: the publishable whitelist is the running agent's own capabilities.
 	const catalog = buildCapabilityCatalog(options.services);
@@ -100,6 +114,7 @@ export async function composeControlPlane(options: {
 		llm: createLlmConfigStore(options.services),
 		metricsEnabled: agentV2MetricsEnabled(),
 		mcpSecretBox,
+		mcpNetworkPolicy,
 	});
 
 	const bootstrapped = await controlService.bootstrapTenant({

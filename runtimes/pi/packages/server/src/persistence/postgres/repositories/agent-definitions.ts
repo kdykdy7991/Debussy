@@ -1,4 +1,10 @@
-import type { AgentDefinitionId, McpServerId, SkillId, TenantId } from "../../../publishing/domain/ids.ts";
+import {
+	type AgentDefinitionId,
+	type McpServerId,
+	newAgentDefinitionId,
+	type SkillId,
+	type TenantId,
+} from "../../../publishing/domain/ids.ts";
 import type {
 	AgentDefinitionListParams,
 	AgentDefinitionListRow,
@@ -176,6 +182,30 @@ export function createAgentDefinitionRepository(client: PostgresClient): AgentDe
 				record.createdAt,
 				record.updatedAt,
 			);
+		},
+		async importByName(record) {
+			return client.transaction(async (tx) => {
+				await txRows(
+					tx,
+					"select pg_advisory_xact_lock(hashtextextended($1, 0))",
+					`${record.tenantId}:${record.name}`,
+				);
+				const rows = await txRows(
+					tx,
+					"select * from agent_definitions where tenant_id = $1 and name = $2 and deleted_at is null order by revision desc limit 1",
+					record.tenantId,
+					record.name,
+				);
+				const existing = rows.length === 1 ? rowToRecord(rows[0]) : undefined;
+				if (existing?.sourceHash === record.sourceHash) return existing;
+				const imported: AgentDefinitionRecord = {
+					...record,
+					agentDefinitionId: existing?.agentDefinitionId ?? newAgentDefinitionId(),
+					revision: (existing?.revision ?? 0) + 1,
+				};
+				await insertAgentRow(tx, imported);
+				return imported;
+			});
 		},
 		async createInitial(record) {
 			return client.transaction(async (tx) => {

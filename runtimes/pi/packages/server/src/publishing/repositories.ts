@@ -179,6 +179,10 @@ export interface SkillRepository {
 	listRevisions(scope: TenantScope, skillId: SkillId): Promise<readonly SkillRevisionRecord[]>;
 	setStatus(scope: TenantScope, skillId: SkillId, status: "enabled" | "disabled"): Promise<boolean>;
 	softDelete(scope: TenantScope, skillId: SkillId): Promise<boolean>;
+	softDeleteIfUnreferenced(
+		scope: TenantScope,
+		skillId: SkillId,
+	): Promise<"deleted" | "published_reference" | "not_found">;
 	bindAgentRevision(input: {
 		readonly scope: TenantScope;
 		readonly agentDefinitionId: AgentDefinitionId;
@@ -283,6 +287,10 @@ export interface McpServerRepository {
 	): Promise<boolean>;
 	setStatus(scope: TenantScope, mcpServerId: McpServerId, status: "enabled" | "disabled"): Promise<boolean>;
 	softDelete(scope: TenantScope, mcpServerId: McpServerId): Promise<boolean>;
+	softDeleteIfUnreferenced(
+		scope: TenantScope,
+		mcpServerId: McpServerId,
+	): Promise<"deleted" | "published_reference" | "not_found">;
 	listBindings(
 		scope: TenantScope,
 		agentDefinitionId: AgentDefinitionId,
@@ -460,6 +468,12 @@ export interface AgentDefinitionRepository {
 	/** Insert a new revision; the `(id, revision)` pair must be unique. */
 	insert(record: AgentDefinitionRecord): Promise<void>;
 	/**
+	 * Import by `(tenant, name)` under a transaction-scoped advisory lock.
+	 * Returns the existing latest revision when its source hash is unchanged;
+	 * otherwise inserts the next immutable revision atomically.
+	 */
+	importByName(record: Omit<AgentDefinitionRecord, "agentDefinitionId" | "revision">): Promise<AgentDefinitionRecord>;
+	/**
 	 * Create revision 1 while serialising on `(tenant, name)`. Returns false
 	 * when an active Agent with the same name already exists.
 	 */
@@ -603,6 +617,22 @@ export interface PublishedAppVersionRepository {
 		scope: AppScope,
 		input: Omit<PublishedAppVersionRecord, "versionNumber"> & { readonly versionNumber?: never },
 	): Promise<PublishedAppVersionRecord>;
+	/**
+	 * Revalidate and row-lock every capability referenced by a candidate in the
+	 * same transaction that allocates and inserts the immutable version.
+	 */
+	createVersionGuarded(
+		scope: AppScope,
+		input: Omit<PublishedAppVersionRecord, "versionNumber"> & { readonly versionNumber?: never },
+		guards: {
+			readonly skills: readonly { readonly skillId: SkillId; readonly revision: number }[];
+			readonly mcpServers: readonly {
+				readonly mcpServerId: McpServerId;
+				readonly revision: number;
+				readonly requiresSecret: boolean;
+			}[];
+		},
+	): Promise<PublishedAppVersionRecord | undefined>;
 	/** Transition status only (validating -> ready/rejected -> retired). */
 	updateStatus(
 		scope: AppScope,

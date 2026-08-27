@@ -19,8 +19,8 @@ import {
 	type TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { WebSocket } from "ws";
-import type { ConversationId, TurnId } from "../../publishing/domain/ids.ts";
-import { newConversationEventId, toPublicId } from "../../publishing/domain/ids.ts";
+import type { ConversationId, RequestId, TurnId } from "../../publishing/domain/ids.ts";
+import { newConversationEventId, newRequestId, parseId, toPublicId } from "../../publishing/domain/ids.ts";
 import type { ConversationEventRecord, ConversationRecord } from "../../publishing/repositories.ts";
 import { createEffectOwner } from "../../runtime/effect-owner.ts";
 import type { TicketClaims } from "../auth/ws-ticket.ts";
@@ -46,6 +46,7 @@ export interface RealtimeServices {
 	executeTurn(input: {
 		readonly principal: EmbedAuthContext;
 		readonly conversationId: ConversationId;
+		readonly requestId: RequestId;
 		readonly text: string;
 		readonly onProgress?: (progress: TranscriptProgress) => void;
 	}): Promise<TurnOutcome>;
@@ -185,7 +186,8 @@ export class EmbedRealtimeConnection {
 		});
 	}
 
-	private async handleTurnStart(_requestId: string, text: string): Promise<void> {
+	private async handleTurnStart(rawRequestId: string, text: string): Promise<void> {
+		const requestId = parseId("RequestId", rawRequestId) ?? newRequestId();
 		this.activeTurnCount += 1;
 		this.cancellationRequested = false;
 		try {
@@ -214,13 +216,13 @@ export class EmbedRealtimeConnection {
 				const owner = createEffectOwner();
 				owner.register(() => slot.release());
 				try {
-					await this.runTurn(text);
+					await this.runTurn(requestId, text);
 				} finally {
 					await owner.close();
 				}
 				return;
 			}
-			await this.runTurn(text);
+			await this.runTurn(requestId, text);
 		} finally {
 			this.activeTurnCount -= 1;
 		}
@@ -241,7 +243,7 @@ export class EmbedRealtimeConnection {
 		this.send({ type: "turn.cancelled", ...this.eventBase(0), reason: "cancelled" });
 	}
 
-	private async runTurn(text: string): Promise<void> {
+	private async runTurn(requestId: RequestId, text: string): Promise<void> {
 		const startedAt = Date.now();
 		const report = (result: "completed" | "failed"): void => {
 			if (this.observability !== undefined) this.observability.onTurnResult(result, Date.now() - startedAt);
@@ -249,6 +251,7 @@ export class EmbedRealtimeConnection {
 		const outcome = await this.services.executeTurn({
 			principal: this.principal,
 			conversationId: this.conversationId,
+			requestId,
 			text,
 			onProgress: (progress) => this.forwardProgress(progress),
 		});

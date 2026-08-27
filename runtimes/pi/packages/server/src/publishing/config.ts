@@ -18,6 +18,9 @@ export const BOOTSTRAP_TENANT_ID_ENV = "PI_BOOTSTRAP_TENANT_ID";
 export const BOOTSTRAP_TENANT_NAME_ENV = "PI_BOOTSTRAP_TENANT_NAME";
 export const CONTROL_ADMIN_TOKEN_FILE_ENV = "PI_CONTROL_ADMIN_TOKEN_FILE";
 export const MCP_SECRET_MASTER_KEY_ENV = "PI_MCP_SECRET_MASTER_KEY";
+export const MCP_ALLOW_HTTP_ENV = "PI_MCP_ALLOW_HTTP";
+export const MCP_ALLOW_PRIVATE_NETWORK_ENV = "PI_MCP_ALLOW_PRIVATE_NETWORK";
+export const MCP_ALLOWED_PORTS_ENV = "PI_MCP_ALLOWED_PORTS";
 export const EMBED_ISSUER_ENV = "PI_EMBED_ISSUER";
 /** 匿名 subject hash 的服务端 HMAC pepper（spec 7.1，TASK-015）。 */
 export const EMBED_SUBJECT_PEPPER_ENV = "PI_EMBED_SUBJECT_PEPPER";
@@ -76,6 +79,12 @@ export interface PublishingConfig {
 	readonly controlAdminTokenFile: string | undefined;
 	/** Canonical Base64 decoded 32-byte AES key; optional until bearer MCP is configured. */
 	readonly mcpSecretMasterKey?: Uint8Array;
+	/** Explicit development-only outbound MCP network policy. */
+	readonly mcpNetworkPolicy?: {
+		readonly allowHttp: boolean;
+		readonly allowPrivateNetwork: boolean;
+		readonly allowedPorts: readonly number[];
+	};
 	/** `PI_EMBED_ISSUER`; base URL for generated embed URLs. */
 	readonly embedBaseUrl: string;
 	/**
@@ -180,8 +189,13 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 		if (bytes.byteLength !== 32 || bytes.toString("base64") !== mcpSecretMasterKeyRaw) {
 			throw new Error(`${MCP_SECRET_MASTER_KEY_ENV} must be canonical Base64 for exactly 32 bytes`);
 		}
-		mcpSecretMasterKey = bytes;
+		mcpSecretMasterKey = Uint8Array.from(bytes);
 	}
+	const mcpNetworkPolicy = {
+		allowHttp: parseBoolean(env[MCP_ALLOW_HTTP_ENV], false, MCP_ALLOW_HTTP_ENV),
+		allowPrivateNetwork: parseBoolean(env[MCP_ALLOW_PRIVATE_NETWORK_ENV], false, MCP_ALLOW_PRIVATE_NETWORK_ENV),
+		allowedPorts: parsePorts(env[MCP_ALLOWED_PORTS_ENV]),
+	};
 	return {
 		enabled: true,
 		databaseUrl: env[PUBLISHING_DATABASE_URL_ENV],
@@ -190,6 +204,7 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 		bootstrapTenantName: env[BOOTSTRAP_TENANT_NAME_ENV],
 		controlAdminTokenFile: env[CONTROL_ADMIN_TOKEN_FILE_ENV],
 		mcpSecretMasterKey,
+		mcpNetworkPolicy,
 		embedBaseUrl: env[EMBED_ISSUER_ENV] ?? "http://127.0.0.1:8765",
 		subjectPepper: env[EMBED_SUBJECT_PEPPER_ENV],
 		accessTokenPrivateKeyFile: env[ACCESS_TOKEN_PRIVATE_KEY_FILE_ENV],
@@ -217,6 +232,23 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 			),
 		},
 	};
+}
+
+function parseBoolean(raw: string | undefined, fallback: boolean, name: string): boolean {
+	if (raw === undefined || raw === "") return fallback;
+	const normalized = raw.trim().toLowerCase();
+	if (normalized === "true") return true;
+	if (normalized === "false") return false;
+	throw new Error(`${name} must be a boolean ("true" or "false"), got: ${JSON.stringify(raw)}`);
+}
+
+function parsePorts(raw: string | undefined): readonly number[] {
+	if (raw === undefined || raw.trim() === "") return [443];
+	const ports = raw.split(",").map((entry) => Number(entry.trim()));
+	if (ports.length === 0 || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)) {
+		throw new Error(`${MCP_ALLOWED_PORTS_ENV} must be a comma-separated list of ports between 1 and 65535`);
+	}
+	return [...new Set(ports)].sort((left, right) => left - right);
 }
 
 /** 解析字节数环境变量；非法（非正整数）启动失败。 */

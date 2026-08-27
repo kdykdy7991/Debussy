@@ -168,7 +168,8 @@ function createSecureFetch(
 		bodyTimeout: timeoutMs,
 	});
 	const secureFetch: FetchLike = async (input, init) => {
-		const target = new URL(input.toString());
+		const rawTarget = input instanceof Request ? input.url : input.toString();
+		const target = new URL(rawTarget, url);
 		if (target.origin !== url.origin) {
 			throw new McpNetworkPolicyError("MCP request attempted an unapproved origin");
 		}

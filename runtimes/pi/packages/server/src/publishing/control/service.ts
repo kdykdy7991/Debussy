@@ -133,7 +133,6 @@ import {
 import type { PreviewTicketService } from "../preview-ticket.ts";
 import type {
 	AdminConversationListRow,
-	AgentDefinitionRecord,
 	ConversationEventRecord,
 	ConversationSummaryRecord,
 	LaunchKeyRecord,
@@ -302,6 +301,7 @@ export type ControlErrorCode =
 	| "SKILL_INVALID"
 	| "SKILL_IMPORT_REJECTED"
 	| "SKILL_NAME_CONFLICT"
+	| "SKILL_BINDING_VIOLATION"
 	| "MCP_SERVER_NOT_FOUND"
 	| "MCP_TEST_FAILED"
 	| "MCP_SYNC_FAILED"
@@ -552,34 +552,31 @@ export class ControlService {
 				`expected source hash ${input.expectedSourceHash} does not match current configuration`,
 			);
 		}
-		const tenantScope = { tenantId: input.tenantId };
-		const existing = await this.repos.agentDefinitions.getLatestByName(tenantScope, collected.name);
-		if (existing !== undefined && existing.sourceHash === sourceHash) {
-			return {
-				ok: true,
-				data: {
-					agentDefinitionId: existing.agentDefinitionId,
-					revision: existing.revision,
-					sourceHash: existing.sourceHash,
-					warnings: collected.warnings,
-				},
-			};
-		}
 		const now = new Date();
-		const agentDefinitionId = existing?.agentDefinitionId ?? newAgentDefinitionId();
-		const revision = (existing?.revision ?? 0) + 1;
-		const record: AgentDefinitionRecord = {
-			agentDefinitionId,
+		const record = await this.repos.agentDefinitions.importByName({
 			tenantId: input.tenantId,
 			name: collected.name,
-			revision,
 			draftConfig: collected.config,
 			sourceHash,
 			createdAt: now,
 			updatedAt: now,
+		});
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "agent.imported",
+			resourceType: "agent_definition",
+			resourceId: record.agentDefinitionId,
+			metadata: { revision: record.revision, sourceHash: record.sourceHash },
+		});
+		return {
+			ok: true,
+			data: {
+				agentDefinitionId: record.agentDefinitionId,
+				revision: record.revision,
+				sourceHash: record.sourceHash,
+				warnings: collected.warnings,
+			},
 		};
-		await this.repos.agentDefinitions.insert(record);
-		return { ok: true, data: { agentDefinitionId, revision, sourceHash, warnings: collected.warnings } };
 	}
 
 	/** Create a new Agent and its first immutable revision. */
@@ -624,6 +621,13 @@ export class ControlService {
 			return fail("SKILL_NOT_FOUND", 404, "one or more Skill revisions are unavailable");
 		if (created === "mcp_unavailable")
 			return fail("MCP_BINDING_VIOLATION", 409, "one or more MCP bindings are unavailable");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "agent.created",
+			resourceType: "agent_definition",
+			resourceId: agentDefinitionId,
+			metadata: { revision: 1, sourceHash },
+		});
 		return {
 			ok: true,
 			data: {
@@ -663,6 +667,13 @@ export class ControlService {
 		};
 		const inserted = await this.repos.publishedApps.insertForActiveAgent(app);
 		if (!inserted) return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "published-app.created",
+			resourceType: "published_app",
+			resourceId: publishedAppId,
+			metadata: { agentDefinitionId: input.agentDefinitionId },
+		});
 		return {
 			ok: true,
 			data: {
@@ -785,7 +796,32 @@ export class ControlService {
 			validationErrors: compiled.ok ? [] : compiled.errors,
 			createdAt: now,
 		};
-		const created = await this.repos.publishedAppVersions.createVersion(appScope, version);
+		const created = await this.repos.publishedAppVersions.createVersionGuarded(appScope, version, {
+			skills: skillBindings.map((binding) => ({ skillId: binding.skillId, revision: binding.skillRevision })),
+			mcpServers: mcpBindings.map((binding) => {
+				const server = mcpServers.find(
+					(candidate) => candidate.mcpServerId === toPublicId("McpServerId", binding.mcpServerId),
+				);
+				return {
+					mcpServerId: binding.mcpServerId,
+					revision: binding.mcpRevision,
+					requiresSecret: server?.authentication === "bearer",
+				};
+			}),
+		});
+		if (created === undefined)
+			return fail("MCP_BINDING_VIOLATION", 409, "a bound capability changed while creating the version");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "published-app.version-created",
+			resourceType: "published_app_version",
+			resourceId: created.publishedAppVersionId,
+			metadata: {
+				publishedAppId: input.publishedAppId,
+				versionNumber: created.versionNumber,
+				status: created.status,
+			},
+		});
 		return { ok: true, data: { version: created } };
 	}
 
@@ -985,6 +1021,13 @@ export class ControlService {
 		if (outcome === "has_associated_apps")
 			return fail("AGENT_HAS_ASSOCIATED_APPS", 409, "Agent is still associated with one or more applications");
 		if (outcome === "not_found") return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "agent.deleted",
+			resourceType: "agent_definition",
+			resourceId: input.agentDefinitionId,
+			metadata: {},
+		});
 		return { ok: true, data: { deleted: true } };
 	}
 
@@ -1001,6 +1044,13 @@ export class ControlService {
 		if (this.repos.publishedApps.softDelete === undefined)
 			return fail("DELETE_NOT_SUPPORTED", 501, "application deletion is not supported by this repository");
 		await this.repos.publishedApps.softDelete(scope, input.publishedAppId);
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "published-app.deleted",
+			resourceType: "published_app",
+			resourceId: input.publishedAppId,
+			metadata: {},
+		});
 		return { ok: true, data: { deleted: true } };
 	}
 
@@ -1099,6 +1149,13 @@ export class ControlService {
 			return fail("SKILL_NOT_FOUND", 404, "one or more Skill revisions are unavailable");
 		if (inserted === "mcp_unavailable")
 			return fail("MCP_BINDING_VIOLATION", 409, "one or more MCP bindings are unavailable");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "agent.revision-created",
+			resourceType: "agent_definition",
+			resourceId: input.agentDefinitionId,
+			metadata: { revision: nextRevision, sourceHash },
+		});
 		return {
 			ok: true,
 			data: {
@@ -1194,6 +1251,13 @@ export class ControlService {
 			},
 		});
 		if (outcome === "name_conflict") return fail("SKILL_NAME_CONFLICT", 409, "an active Skill with this name exists");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "skill.created",
+			resourceType: "skill",
+			resourceId: skillId,
+			metadata: { revision: 1, sourceHash: parsed.sourceHash },
+		});
 		return {
 			ok: true,
 			data: {
@@ -1251,6 +1315,13 @@ export class ControlService {
 			},
 		});
 		if (revision === undefined) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "skill.revision-created",
+			resourceType: "skill",
+			resourceId: input.skillId,
+			metadata: { revision: revision.revision, sourceHash: revision.sourceHash },
+		});
 		return {
 			ok: true,
 			data: {
@@ -1354,6 +1425,13 @@ export class ControlService {
 			input.enabled ? "enabled" : "disabled",
 		);
 		if (!updated) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: input.enabled ? "skill.enabled" : "skill.disabled",
+			resourceType: "skill",
+			resourceId: input.skillId,
+			metadata: {},
+		});
 		return { ok: true, data: { id: toPublicId("SkillId", input.skillId), enabled: input.enabled } };
 	}
 
@@ -1361,8 +1439,17 @@ export class ControlService {
 		readonly tenantId: TenantId;
 		readonly skillId: SkillId;
 	}): Promise<ControlResult<{ readonly deleted: true }>> {
-		const deleted = await this.repos.skills.softDelete({ tenantId: input.tenantId }, input.skillId);
-		if (!deleted) return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		const outcome = await this.repos.skills.softDeleteIfUnreferenced({ tenantId: input.tenantId }, input.skillId);
+		if (outcome === "not_found") return fail("SKILL_NOT_FOUND", 404, "Skill not found in tenant scope");
+		if (outcome === "published_reference")
+			return fail("SKILL_BINDING_VIOLATION", 409, "Skill is referenced by a Published App Version");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "skill.deleted",
+			resourceType: "skill",
+			resourceId: input.skillId,
+			metadata: {},
+		});
 		return { ok: true, data: { deleted: true } };
 	}
 
@@ -1401,6 +1488,13 @@ export class ControlService {
 		});
 		if (outcome === "name_conflict")
 			return fail("MCP_NAME_CONFLICT", 409, "an active MCP Server with this name exists");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "mcp-server.created",
+			resourceType: "mcp_server",
+			resourceId: mcpServerId,
+			metadata: { revision: 1, transport: config.data.transport },
+		});
 		return this.getMcpServerDetail({ tenantId: input.tenantId, mcpServerId });
 	}
 
@@ -1423,6 +1517,13 @@ export class ControlService {
 			tools: [],
 		});
 		if (revision === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "mcp-server.revision-created",
+			resourceType: "mcp_server",
+			resourceId: input.mcpServerId,
+			metadata: { revision: revision.revision },
+		});
 		return {
 			ok: true,
 			data: {
@@ -1535,6 +1636,13 @@ export class ControlService {
 			mcpServerId: input.mcpServerId,
 			...sealed,
 		});
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "mcp-server.secret-replaced",
+			resourceType: "mcp_server",
+			resourceId: input.mcpServerId,
+			metadata: { secretConfigured: true },
+		});
 		return { ok: true, data: { id: toPublicId("McpServerId", input.mcpServerId), secretConfigured: true } };
 	}
 
@@ -1567,6 +1675,13 @@ export class ControlService {
 				ok: true,
 				latencyMs,
 			});
+			await this.writeAudit({
+				tenantId: input.tenantId,
+				action: "mcp-server.tested",
+				resourceType: "mcp_server",
+				resourceId: input.mcpServerId,
+				metadata: { ok: true, latencyMs, toolCount: toolViews.length },
+			});
 			return { ok: true, data: { ok: true, latencyMs, tools: toolViews } };
 		} catch {
 			const latencyMs = Date.now() - startedAt;
@@ -1589,6 +1704,9 @@ export class ControlService {
 		if (!connected.ok) return connected;
 		try {
 			const discovered = await connected.data.session.listTools(input.signal);
+			if (discovered.length === 0) {
+				return fail("MCP_SYNC_FAILED", 422, "MCP Tool discovery returned no Tools");
+			}
 			const oldTools = await this.repos.mcpServers.listTools(
 				{ tenantId: input.tenantId },
 				input.mcpServerId,
@@ -1628,6 +1746,13 @@ export class ControlService {
 				tools: nextTools.map(({ mcpRevision: _mcpRevision, ...tool }) => tool),
 			});
 			if (created === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+			await this.writeAudit({
+				tenantId: input.tenantId,
+				action: "mcp-server.tools-synced",
+				resourceType: "mcp_server",
+				resourceId: input.mcpServerId,
+				metadata: { revision: created.revision, added, removed, changed },
+			});
 			return { ok: true, data: { ok: true, revision: created.revision, added, removed, changed } };
 		} catch {
 			return fail("MCP_SYNC_FAILED", 422, "MCP Tool discovery failed");
@@ -1647,6 +1772,13 @@ export class ControlService {
 			input.enabled ? "enabled" : "disabled",
 		);
 		if (!updated) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: input.enabled ? "mcp-server.enabled" : "mcp-server.disabled",
+			resourceType: "mcp_server",
+			resourceId: input.mcpServerId,
+			metadata: {},
+		});
 		return { ok: true, data: { id: toPublicId("McpServerId", input.mcpServerId), enabled: input.enabled } };
 	}
 
@@ -1654,9 +1786,21 @@ export class ControlService {
 		readonly tenantId: TenantId;
 		readonly mcpServerId: McpServerId;
 	}): Promise<ControlResult<{ readonly deleted: true }>> {
-		const deleted = await this.repos.mcpServers.softDelete({ tenantId: input.tenantId }, input.mcpServerId);
-		if (!deleted) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		const outcome = await this.repos.mcpServers.softDeleteIfUnreferenced(
+			{ tenantId: input.tenantId },
+			input.mcpServerId,
+		);
+		if (outcome === "not_found") return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		if (outcome === "published_reference")
+			return fail("MCP_BINDING_VIOLATION", 409, "MCP Server is referenced by a Published App Version");
 		await this.repos.mcpSecrets.delete({ tenantId: input.tenantId }, input.mcpServerId);
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "mcp-server.deleted",
+			resourceType: "mcp_server",
+			resourceId: input.mcpServerId,
+			metadata: {},
+		});
 		return { ok: true, data: { deleted: true } };
 	}
 
@@ -1960,7 +2104,7 @@ export class ControlService {
 		const pKb = new Set((p.knowledgeBases ?? []).map((k) => k.id));
 		const cKb = new Set((c.knowledgeBases ?? []).map((k) => k.id));
 		if (
-			JSON.stringify(p.model?.params ?? {}) !== JSON.stringify(c.model?.params ?? {}) ||
+			canonicalJson(p.model?.params ?? {}) !== canonicalJson(c.model?.params ?? {}) ||
 			(p.model?.provider ?? "") !== (c.model?.provider ?? "")
 		)
 			fields.push("parameters");

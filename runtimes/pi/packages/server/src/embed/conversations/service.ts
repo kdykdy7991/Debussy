@@ -511,6 +511,7 @@ export class ConversationService {
 				publishedAppVersionId: record.publishedAppVersionId,
 				principalId: input.principal.principalId,
 				conversationId: input.conversationId,
+				requestId: input.requestId,
 				turnId,
 				conversationEffort: conversationReasoning?.effort ?? null,
 				limits: {
@@ -699,6 +700,7 @@ export class ConversationService {
 export interface ExecuteTurnInput {
 	readonly principal: EmbedAuthContext;
 	readonly conversationId: ConversationId;
+	readonly requestId?: RequestId;
 	readonly text: string;
 	readonly onProgress?: (progress: TranscriptProgress) => void;
 }

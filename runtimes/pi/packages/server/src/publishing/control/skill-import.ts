@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent/skills";
-import { unzipSync } from "fflate";
+import { Unzip, UnzipInflate, UnzipPassThrough } from "fflate";
 import type { SkillDiagnosticRecord } from "../repositories.ts";
 
 export const SKILL_IMPORT_LIMITS = {
@@ -104,21 +104,20 @@ function expandArtifact(filename: string, bytes: Uint8Array): ReadonlyMap<string
 
 	let fileCount = 0;
 	let expandedBytes = 0;
-	const names = new Set<string>();
-	let expanded: Record<string, Uint8Array>;
+	const files = new Map<string, Uint8Array>();
+	let failure: unknown;
 	try {
-		expanded = unzipSync(bytes, {
-			filter: (entry) => {
-				const path = safeArchivePath(entry.name);
-				if (entry.name.endsWith("/")) return false;
+		const unzip = new Unzip((file) => {
+			try {
+				if (file.name.endsWith("/")) return;
+				const path = safeArchivePath(file.name);
 				fileCount += 1;
 				if (fileCount > SKILL_IMPORT_LIMITS.maxFiles) {
 					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", "archive contains too many files");
 				}
-				if (names.has(path)) {
+				if (files.has(path)) {
 					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", "archive contains duplicate paths");
 				}
-				names.add(path);
 				if (!ALLOWED_EXTENSIONS.has(extension(path))) {
 					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", `file type is not allowed: ${path}`);
 				}
@@ -126,29 +125,60 @@ function expandArtifact(filename: string, bytes: Uint8Array): ReadonlyMap<string
 					basename(path).toLowerCase() === "skill.md"
 						? SKILL_IMPORT_LIMITS.maxSkillMarkdownBytes
 						: SKILL_IMPORT_LIMITS.maxFileBytes;
-				if (entry.originalSize > maxBytes) {
+				if (file.originalSize !== undefined && file.originalSize > maxBytes) {
 					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", `file exceeds the size limit: ${path}`);
 				}
-				expandedBytes += entry.originalSize;
-				if (expandedBytes > SKILL_IMPORT_LIMITS.maxExpandedBytes) {
-					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", "archive expands beyond the total size limit");
-				}
 				if (
-					entry.originalSize > 0 &&
-					(entry.size === 0 || entry.originalSize / entry.size > SKILL_IMPORT_LIMITS.maxCompressionRatio)
+					file.originalSize !== undefined &&
+					file.originalSize > 0 &&
+					(file.size === 0 ||
+						(file.size !== undefined && file.originalSize / file.size > SKILL_IMPORT_LIMITS.maxCompressionRatio))
 				) {
 					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", `compression ratio is too high: ${path}`);
 				}
-				return true;
-			},
+				const chunks: Uint8Array[] = [];
+				let fileBytes = 0;
+				file.ondata = (error, chunk, final) => {
+					if (failure !== undefined) return;
+					try {
+						if (error !== null) throw error;
+						fileBytes += chunk.byteLength;
+						expandedBytes += chunk.byteLength;
+						if (fileBytes > maxBytes)
+							throw new SkillImportRejected("SKILL_IMPORT_REJECTED", `file exceeds the size limit: ${path}`);
+						if (expandedBytes > SKILL_IMPORT_LIMITS.maxExpandedBytes)
+							throw new SkillImportRejected(
+								"SKILL_IMPORT_REJECTED",
+								"archive expands beyond the total size limit",
+							);
+						chunks.push(chunk);
+						if (final) {
+							const content = new Uint8Array(fileBytes);
+							let offset = 0;
+							for (const part of chunks) {
+								content.set(part, offset);
+								offset += part.byteLength;
+							}
+							files.set(path, content);
+						}
+					} catch (error) {
+						failure = error;
+						file.terminate();
+					}
+				};
+				file.start();
+			} catch (error) {
+				failure = error;
+				file.terminate();
+			}
 		});
+		unzip.register(UnzipPassThrough);
+		unzip.register(UnzipInflate);
+		unzip.push(bytes, true);
+		if (failure !== undefined) throw failure;
 	} catch (error) {
 		if (error instanceof SkillImportRejected) throw error;
 		throw new SkillImportRejected("SKILL_IMPORT_REJECTED", "ZIP artifact is invalid or unsupported");
-	}
-	const files = new Map<string, Uint8Array>();
-	for (const [rawPath, content] of Object.entries(expanded)) {
-		files.set(safeArchivePath(rawPath), content);
 	}
 	return files;
 }
@@ -173,7 +203,7 @@ export async function parseSkillArtifact(filename: string, bytes: Uint8Array): P
 				code: diagnostic.type === "collision" ? "SKILL_NAME_COLLISION" : "SKILL_PARSE_WARNING",
 				path: diagnostic.path === undefined ? "SKILL.md" : basename(diagnostic.path),
 				message: diagnostic.message,
-				severity: "error",
+				severity: diagnostic.type === "collision" ? "error" : "warning",
 			}),
 		);
 		if (loaded.skills.length !== 1 || diagnostics.some((diagnostic) => diagnostic.severity === "error")) {

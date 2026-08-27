@@ -136,6 +136,7 @@ describe("publishing feature configuration", () => {
 			bootstrapTenantName: "SKDY",
 			controlAdminTokenFile: "/run/secrets/control-admin-token",
 			mcpSecretMasterKey: Uint8Array.from({ length: 32 }, (_, index) => index),
+			mcpNetworkPolicy: { allowHttp: false, allowPrivateNetwork: false, allowedPorts: [443] },
 			embedBaseUrl: "https://agent.example.com",
 			subjectPepper: "pepper-0123456789abcdef0123456789abcdef",
 			accessTokenPrivateKeyFile: "/run/secrets/embed-access-private.pem",
@@ -151,6 +152,26 @@ describe("publishing feature configuration", () => {
 				appBytes: 2 * 1024 * 1024 * 1024,
 			},
 		});
+	});
+
+	test("requires explicit, validated MCP development network policy", () => {
+		const config = parsePublishingConfig({
+			PI_PUBLISHING_ENABLED: "true",
+			PI_MCP_ALLOW_HTTP: "true",
+			PI_MCP_ALLOW_PRIVATE_NETWORK: "true",
+			PI_MCP_ALLOWED_PORTS: "4312,443,4312",
+		});
+		expect(config.mcpNetworkPolicy).toEqual({
+			allowHttp: true,
+			allowPrivateNetwork: true,
+			allowedPorts: [443, 4312],
+		});
+		expect(() => parsePublishingConfig({ PI_PUBLISHING_ENABLED: "true", PI_MCP_ALLOW_HTTP: "yes" })).toThrow(
+			/PI_MCP_ALLOW_HTTP/,
+		);
+		expect(() => parsePublishingConfig({ PI_PUBLISHING_ENABLED: "true", PI_MCP_ALLOWED_PORTS: "0,443" })).toThrow(
+			/PI_MCP_ALLOWED_PORTS/,
+		);
 	});
 
 	test("rejects malformed MCP master keys so encrypted credentials remain recoverable", () => {

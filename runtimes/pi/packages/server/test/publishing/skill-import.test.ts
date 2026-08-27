@@ -51,8 +51,19 @@ describe("Skill artifact import", () => {
 		});
 	});
 
-	test("rejects invalid Skill frontmatter using the existing parser diagnostics", async () => {
-		const invalid = strToU8("---\nname: Bad Name\n---\n\nMissing description.");
+	test("preserves non-blocking parser diagnostics as warnings", async () => {
+		const parsed = await parseSkillArtifact(
+			"SKILL.md",
+			strToU8("---\nname: Bad Name\ndescription: Still importable.\n---\n\nInstructions."),
+		);
+		expect(parsed.name).toBe("Bad Name");
+		expect(parsed.diagnostics).toEqual([
+			expect.objectContaining({ code: "SKILL_PARSE_WARNING", severity: "warning" }),
+		]);
+	});
+
+	test("rejects a Skill that the shared parser cannot load", async () => {
+		const invalid = strToU8("---\nname: valid-name\n---\n\nMissing description.");
 		await expect(parseSkillArtifact("SKILL.md", invalid)).rejects.toMatchObject({ code: "SKILL_INVALID" });
 	});
 });

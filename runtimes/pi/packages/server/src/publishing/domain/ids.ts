@@ -184,7 +184,7 @@ export function newIdempotencyKey(): IdempotencyKey {
 	return buildId("IdempotencyKey") as IdempotencyKey;
 }
 export function newAuditEventId(): AuditEventId {
-	return buildId("IdempotencyKey") as AuditEventId;
+	return buildId("AuditEventId") as AuditEventId;
 }
 export function newLaunchKeyId(): LaunchKeyId {
 	return buildId("LaunchKeyId") as LaunchKeyId;

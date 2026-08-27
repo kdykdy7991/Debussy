@@ -247,6 +247,39 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 			);
 			return rows.length === 1;
 		},
+		async softDeleteIfUnreferenced(scope, mcpServerId) {
+			return client.transaction(async (tx) => {
+				const locked = await txRows(
+					tx,
+					"select id from mcp_servers where id = $1 and tenant_id = $2 and deleted_at is null for update",
+					mcpServerId,
+					scope.tenantId,
+				);
+				if (locked.length !== 1) return "not_found";
+				const references = await txRows(
+					tx,
+					`select 1
+					 from agent_revision_mcp_bindings arb
+					 join published_apps pa
+					   on pa.tenant_id = arb.tenant_id and pa.agent_definition_id = arb.agent_definition_id
+					 join published_app_versions pav
+					   on pav.tenant_id = pa.tenant_id and pav.published_app_id = pa.id
+					  and pav.source_agent_revision = arb.agent_revision
+					 where arb.tenant_id = $1 and arb.mcp_server_id = $2
+					 limit 1`,
+					scope.tenantId,
+					mcpServerId,
+				);
+				if (references.length > 0) return "published_reference";
+				await txRows(
+					tx,
+					"update mcp_servers set status = 'disabled', deleted_at = now(), updated_at = now() where id = $1 and tenant_id = $2",
+					mcpServerId,
+					scope.tenantId,
+				);
+				return "deleted";
+			});
+		},
 		async listBindings(scope, agentDefinitionId, agentRevision) {
 			const rows = await client.run(
 				`select * from agent_revision_mcp_bindings where tenant_id = $1

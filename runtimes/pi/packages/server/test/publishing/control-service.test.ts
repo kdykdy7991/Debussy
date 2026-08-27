@@ -134,6 +134,18 @@ describe.skipIf(!pgUp)("control service", () => {
 		expect(again.data.agentDefinitionId).toBe(first.data.agentDefinitionId);
 	});
 
+	test("importAgent serializes concurrent imports of the same name and source", async () => {
+		const results = await Promise.all(
+			Array.from({ length: 4 }, () =>
+				service.importAgent({ tenantId: tenantA }, source(baseConfig(), "concurrent-import")),
+			),
+		);
+		expect(results.every((result) => result.ok)).toBe(true);
+		const successful = results.filter((result) => result.ok).map((result) => result.data);
+		expect(new Set(successful.map((result) => result.agentDefinitionId)).size).toBe(1);
+		expect(successful.map((result) => result.revision)).toEqual([1, 1, 1, 1]);
+	});
+
 	test("createAgentDefinition creates immutable revision 1 and rejects duplicate active names", async () => {
 		const request = {
 			name: "created-agent",
@@ -266,6 +278,10 @@ describe.skipIf(!pgUp)("control service", () => {
 			expect.objectContaining({ revision: 2, tools: [expect.objectContaining({ name: "crm_lookup" })] }),
 		]);
 		expect(JSON.stringify(runtimeSpec)).not.toContain(token);
+		const deletion = await mcpService.deleteMcpServer({ tenantId: tenantA, mcpServerId });
+		expect(deletion.ok).toBe(false);
+		if (!deletion.ok) expect(deletion.error.code).toBe("MCP_BINDING_VIOLATION");
+		expect(await repos.mcpSecrets.has({ tenantId: tenantA }, mcpServerId)).toBe(true);
 	});
 
 	test("Agent create and save reject prompts above the RuntimeSpec limit", async () => {

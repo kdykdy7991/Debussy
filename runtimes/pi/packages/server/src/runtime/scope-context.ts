@@ -14,6 +14,7 @@ import type {
 	PrincipalId,
 	PublishedAppId,
 	PublishedAppVersionId,
+	RequestId,
 	TenantId,
 	TurnId,
 } from "../publishing/domain/ids.ts";
@@ -25,6 +26,8 @@ export interface ScopeContext {
 	readonly publishedAppVersionId: PublishedAppVersionId;
 	readonly principalId: PrincipalId;
 	readonly conversationId: ConversationId;
+	/** Correlation id for the client request that started the current Turn. */
+	readonly requestId?: RequestId;
 	/** 当前正在执行的 Turn；TASK-018 起由 executeTurn 填充。 */
 	readonly turnId?: TurnId;
 	/**

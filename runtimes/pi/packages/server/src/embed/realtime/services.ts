@@ -10,8 +10,8 @@ import type { RealtimeServices } from "./connection.ts";
 
 export function conversationRealtimeServices(service: ConversationService): RealtimeServices {
 	return {
-		async executeTurn({ principal, conversationId, text, onProgress }) {
-			const result = await service.executeTurn({ principal, conversationId, text, onProgress });
+		async executeTurn({ principal, conversationId, requestId, text, onProgress }) {
+			const result = await service.executeTurn({ principal, conversationId, requestId, text, onProgress });
 			if (!result.ok) {
 				return {
 					ok: false,

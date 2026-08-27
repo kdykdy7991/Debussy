@@ -13,6 +13,7 @@ import type { ScopeContext } from "../../src/runtime/scope-context.ts";
 const tenantId = parseIdOrThrow("TenantId", "00000000-0000-7000-8000-000000000001", "tenant");
 const mcpServerId = parseIdOrThrow("McpServerId", "00000000-0000-7000-8000-000000000002", "MCP Server");
 const now = new Date("2026-08-26T00:00:00.000Z");
+const requestId = parseIdOrThrow("RequestId", "00000000-0000-7000-8000-000000000007", "request");
 
 function frozenSpec(): RuntimeSpec {
 	return {
@@ -67,6 +68,7 @@ function runtimeScope(): ScopeContext {
 		),
 		principalId: parseIdOrThrow("PrincipalId", "00000000-0000-7000-8000-000000000005", "principal"),
 		conversationId: parseIdOrThrow("ConversationId", "00000000-0000-7000-8000-000000000006", "conversation"),
+		requestId,
 		limits: {
 			maxTurns: 100,
 			maxContextTokens: 100_000,
@@ -78,6 +80,24 @@ function runtimeScope(): ScopeContext {
 }
 
 describe("MCP runtime Tool boundary", () => {
+	it("rejects an invalid frozen Tool schema before exposing runtime Tools", async () => {
+		const spec = frozenSpec();
+		const invalidSpec = {
+			...spec,
+			capabilities: {
+				...spec.capabilities,
+				mcpServers: spec.capabilities.mcpServers.map((server) => ({
+					...server,
+					tools: server.tools.map((tool) => ({ ...tool, inputSchema: { type: 42 } })),
+				})),
+			},
+		} as unknown as RuntimeSpec;
+		const repositories = {} as PublishingRepositories;
+		await expect(createMcpRuntimeToolFactory({ repositories })(invalidSpec, runtimeScope())).rejects.toThrow(
+			"invalid input schema",
+		);
+	});
+
 	it("exposes only the frozen Tool and fails closed with a redacted audit when its Server is disabled", async () => {
 		const audits: McpCallAuditRecord[] = [];
 		const server: McpServerRecord = {
@@ -189,6 +209,7 @@ describe("MCP runtime Tool boundary", () => {
 		expect(audits).toHaveLength(1);
 		expect(audits[0]).toMatchObject({ outcome: "success", resultTruncated: true, errorCode: null });
 		expect(audits[0]?.resultBytes).toBeGreaterThan(64);
+		expect(audits[0]?.requestId).toBe(requestId);
 
 		const controller = new AbortController();
 		controller.abort();

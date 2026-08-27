@@ -35,6 +35,32 @@ function rowToRecord(row: Record<string, unknown>): PublishedAppVersionRecord {
 	};
 }
 
+async function insertAllocatedVersion(
+	tx: Parameters<typeof txRows>[0],
+	input: Omit<PublishedAppVersionRecord, "versionNumber">,
+	versionNumber: number,
+): Promise<PublishedAppVersionRecord> {
+	await txRows(
+		tx,
+		`insert into published_app_versions
+		 (id, tenant_id, published_app_id, version_number, source_agent_revision,
+		  snapshot, runtime_spec, runtime_spec_hash, status, validation_errors, created_by, created_at)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2, $11)`,
+		input.publishedAppVersionId,
+		input.tenantId,
+		input.publishedAppId,
+		versionNumber,
+		input.sourceAgentRevision,
+		input.snapshot as object,
+		input.runtimeSpec as object,
+		input.runtimeSpecHash,
+		input.status,
+		input.validationErrors ?? [],
+		input.createdAt,
+	);
+	return { ...input, versionNumber, validationErrors: input.validationErrors ?? [] } as PublishedAppVersionRecord;
+}
+
 /**
  * PublishedAppVersion repository. Versions are immutable: the repository only
  * inserts and transitions status (validating -> ready/rejected -> retired);
@@ -97,29 +123,60 @@ export function createPublishedAppVersionRepository(client: PostgresClient): Pub
 					scope.tenantId,
 				);
 				const versionNumber = Number(nextRows[0]?.next ?? 1);
-				await txRows(
+				return insertAllocatedVersion(tx, input, versionNumber);
+			});
+		},
+		async createVersionGuarded(scope, input, guards) {
+			return client.transaction(async (tx) => {
+				const locked = await txRows(
 					tx,
-					`insert into published_app_versions
-					 (id, tenant_id, published_app_id, version_number, source_agent_revision,
-					  snapshot, runtime_spec, runtime_spec_hash, status, validation_errors, created_by, created_at)
-					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2, $11)`,
-					input.publishedAppVersionId,
-					input.tenantId,
+					"select id from published_apps where id = $1 and tenant_id = $2 for update",
 					input.publishedAppId,
-					versionNumber,
-					input.sourceAgentRevision,
-					input.snapshot as object,
-					input.runtimeSpec as object,
-					input.runtimeSpecHash,
-					input.status,
-					input.validationErrors ?? [],
-					input.createdAt,
+					scope.tenantId,
 				);
-				return {
-					...input,
-					versionNumber,
-					validationErrors: input.validationErrors ?? [],
-				} as PublishedAppVersionRecord;
+				if (locked.length !== 1) return undefined;
+				for (const guard of guards.skills) {
+					const rows = await txRows(
+						tx,
+						`select 1 from skills s join skill_revisions sr
+						 on sr.tenant_id = s.tenant_id and sr.skill_id = s.id
+						 where s.tenant_id = $1 and s.id = $2 and sr.revision = $3
+						 and s.deleted_at is null and s.status = 'enabled' for share of s, sr`,
+						scope.tenantId,
+						guard.skillId,
+						guard.revision,
+					);
+					if (rows.length !== 1) return undefined;
+				}
+				for (const guard of guards.mcpServers) {
+					const rows = await txRows(
+						tx,
+						`select 1 from mcp_servers s join mcp_server_revisions r
+						 on r.tenant_id = s.tenant_id and r.mcp_server_id = s.id
+						 where s.tenant_id = $1 and s.id = $2 and r.revision = $3
+						 and s.deleted_at is null and s.status = 'enabled' for share of s, r`,
+						scope.tenantId,
+						guard.mcpServerId,
+						guard.revision,
+					);
+					if (rows.length !== 1) return undefined;
+					if (guard.requiresSecret) {
+						const secret = await txRows(
+							tx,
+							"select 1 from mcp_secrets where tenant_id = $1 and mcp_server_id = $2 for share",
+							scope.tenantId,
+							guard.mcpServerId,
+						);
+						if (secret.length !== 1) return undefined;
+					}
+				}
+				const nextRows = await txRows(
+					tx,
+					"select coalesce(max(version_number), 0) + 1 as next from published_app_versions where published_app_id = $1 and tenant_id = $2",
+					input.publishedAppId,
+					scope.tenantId,
+				);
+				return insertAllocatedVersion(tx, input, Number(nextRows[0]?.next ?? 1));
 			});
 		},
 		async updateStatus(scope: AppScope, publishedAppVersionId, status, validationErrors) {
@@ -166,7 +223,8 @@ export function createPublishedAppVersionRepository(client: PostgresClient): Pub
 				 join published_apps a on a.id = v.published_app_id and a.tenant_id = v.tenant_id
 				 where a.tenant_id = $1 and v.status = 'ready'
 				   and a.current_version_id is distinct from v.id
-				 order by a.id, v.version_number desc`,
+				 order by a.id, v.version_number desc
+				 limit 100`,
 				scope.tenantId,
 			);
 			return rows.map((row) => ({
