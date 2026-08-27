@@ -8,6 +8,7 @@
 .titleRow h1 { margin: 0; font-size: 25px; letter-spacing: -.03em; }
 .actions { display: flex; gap: 12px; }
 .actions select, .actions button, .timelineHeader button { height: 34px; padding: 0 14px; border: 1px solid #d9dee6; border-radius: 6px; background: #fff; color: #343b46; font: inherit; font-size: 12px; }
+.actions .danger { border-color: #efb7b7; color: #d9363e; }
 .summaryGrid { display: grid; grid-template-columns: 1.06fr .94fr; gap: 12px; margin-bottom: 18px; }
 .infoCard { min-height: 132px; padding: 17px 24px; border: 1px solid #dfe3e9; border-radius: 7px; background: #fff; }
 .infoCard h2, .detailPanel h2 { margin: 0 0 18px; font-size: 13px; }

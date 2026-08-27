@@ -715,6 +715,40 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			},
 		},
 		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/archive$/,
+			operation: "conversations.archive",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const result = await service.updateConversationAdminStatus({
+					tenantId,
+					conversationId,
+					status: "archived",
+					requestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "DELETE",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)$/,
+			operation: "conversations.delete",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const result = await service.updateConversationAdminStatus({
+					tenantId,
+					conversationId,
+					status: "deleted",
+					requestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/events$/,
 			operation: "conversations.list-events",

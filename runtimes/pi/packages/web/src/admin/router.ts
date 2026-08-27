@@ -21,6 +21,8 @@ export type AdminRouteId =
 	| "chat"
 	| "agents"
 	| "agent-detail"
+	| "skills"
+	| "mcp"
 	| "apps"
 	| "app-create"
 	| "app-detail"
@@ -65,6 +67,12 @@ export function parseRoute(path: string): AdminRoute {
 		if (AGENT_PUBLIC_ID_PATTERN.test(id)) {
 			return { id: "agent-detail", path: path, params: { agentId: id } };
 		}
+	}
+	if (path === "/skills") {
+		return { id: "skills", path, params: {} };
+	}
+	if (path === "/mcp") {
+		return { id: "mcp", path, params: {} };
 	}
 	if (path === r.apps) {
 		return { id: "apps", path: r.apps, params: {} };

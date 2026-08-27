@@ -26,6 +26,7 @@ import {
 	type ReasoningUpdateRequest,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
+import { newIdempotencyKey } from "./idempotency.ts";
 
 export interface ConversationsApiOptions {
 	readonly auth: AdminAuthController;
@@ -174,7 +175,7 @@ export class ConversationsApi {
 	 */
 	private async requestWithBody<T>(
 		path: string,
-		init: { readonly method: "PUT" | "POST"; readonly body: unknown; readonly signal?: AbortSignal },
+		init: { readonly method: "PUT" | "POST" | "DELETE"; readonly body: unknown; readonly signal?: AbortSignal },
 	): Promise<T> {
 		const token = this.auth.getToken();
 		if (token === null || token === "") {
@@ -187,6 +188,7 @@ export class ConversationsApi {
 				Authorization: `Bearer ${token}`,
 				Accept: "application/json",
 				"Content-Type": "application/json",
+				"Idempotency-Key": newIdempotencyKey({ operation: "conversation.write" }),
 			},
 			body: JSON.stringify(init.body),
 			...(init.signal !== undefined ? { signal: init.signal } : {}),
@@ -280,6 +282,20 @@ export class ConversationsApi {
 		readonly latestSummary: import("@earendil-works/pi-protocol").ConversationAdminSummaryEntry | null;
 	}> {
 		return this.request(`/api/control/v1/conversations/${encodeURIComponent(conversationId)}`);
+	}
+
+	archive(conversationId: string): Promise<{ readonly id: string; readonly status: "archived" }> {
+		return this.requestWithBody(`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/archive`, {
+			method: "POST",
+			body: {},
+		});
+	}
+
+	delete(conversationId: string): Promise<{ readonly id: string; readonly status: "deleted" }> {
+		return this.requestWithBody(`/api/control/v1/conversations/${encodeURIComponent(conversationId)}`, {
+			method: "DELETE",
+			body: {},
+		});
 	}
 
 	listEvents(

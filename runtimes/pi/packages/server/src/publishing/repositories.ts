@@ -754,6 +754,13 @@ export interface ConversationRepository {
 	 * reads return `undefined` (uniform 404).
 	 */
 	getByTenant(scope: TenantScope, conversationId: ConversationId): Promise<AdminConversationListRow | undefined>;
+	/** Admin-only tenant-scoped lifecycle transition. Returns false when no row changed. */
+	updateStatusByTenant?(
+		scope: TenantScope,
+		conversationId: ConversationId,
+		from: readonly ConversationStatus[],
+		status: Exclude<ConversationStatus, "active">,
+	): Promise<boolean>;
 }
 
 /** Expired/aged-out attachment selection for the background sweep (TASK-030). */

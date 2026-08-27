@@ -49,7 +49,9 @@ describe("AdminAppShell (WB-002)", () => {
 			// v4：模块导航为左侧竖排 AppSidebar，label 渲染为独立 span。
 			expect(html).toContain(`>${term}</span>`);
 		}
-		// 顶部 AuroraTopNav 不再渲染模块 tabs；左侧 AppSidebar 持有 6 项。
+		expect(html).toContain(">Skills</span>");
+		expect(html).toContain(">MCP</span>");
+		// 顶部 AuroraTopNav 不再渲染模块 tabs；模块导航只由侧边栏持有。
 		expect(html.match(/aria-label="模块导航"/g)?.length ?? 0).toBe(1);
 	});
 
@@ -92,6 +94,8 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(parseRoute("/").id).toBe("chat");
 		expect(parseRoute("/agents").id).toBe("agents");
 		expect(parseRoute("/agents/agent_00000000-0000-0000-0000-000000000000").id).toBe("agent-detail");
+		expect(parseRoute("/skills").id).toBe("skills");
+		expect(parseRoute("/mcp").id).toBe("mcp");
 		expect(parseRoute("/apps").id).toBe("apps");
 		expect(parseRoute("/apps/app_00000000-0000-0000-0000-000000000000").id).toBe("app-detail");
 		expect(parseRoute("/usage").id).toBe("usage");

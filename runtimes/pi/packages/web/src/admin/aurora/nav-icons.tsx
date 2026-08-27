@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-type NavIconName = "chat" | "agent" | "publish" | "usage" | "sessions" | "settings";
+type NavIconName = "chat" | "agent" | "skills" | "mcp" | "publish" | "usage" | "sessions" | "settings";
 
 const PATHS: Readonly<Record<NavIconName, ReactNode>> = {
 	chat: <path d="M4.5 5.5h15v10h-9l-4.5 3v-3H4.5z" />,
@@ -8,6 +8,20 @@ const PATHS: Readonly<Record<NavIconName, ReactNode>> = {
 		<>
 			<path d="M8 4.5h8M6 8.5h12v9H6z" />
 			<path d="M9 12h.01M15 12h.01M9.5 15h5" />
+		</>
+	),
+	skills: (
+		<>
+			<path d="M8 3.5h8v5H8zM5 11h14v9.5H5z" />
+			<path d="M9 15.5h6M12 11V8.5" />
+		</>
+	),
+	mcp: (
+		<>
+			<circle cx="6" cy="12" r="2.5" />
+			<circle cx="18" cy="6" r="2.5" />
+			<circle cx="18" cy="18" r="2.5" />
+			<path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6" />
 		</>
 	),
 	publish: (

@@ -311,5 +311,20 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			);
 			return rows.length === 1 ? toAdminListRow(rows[0]) : undefined;
 		},
+		async updateStatusByTenant(scope, conversationId, from, status) {
+			if (from.length === 0) return false;
+			const rows = await client.run(
+				`update conversations
+				 set status = $3, updated_at = now()
+				 where id = $1 and tenant_id = $2 and deleted_at is null
+				   and status = any($4::text[])
+				 returning id`,
+				conversationId,
+				scope.tenantId,
+				status,
+				from,
+			);
+			return rows.length === 1;
+		},
 	};
 }

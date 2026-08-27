@@ -140,6 +140,61 @@ describe("WB-006 ControlService.listConversations", () => {
 	});
 });
 
+describe("WB-006 conversation lifecycle", () => {
+	test("archives an active conversation and audits the transition", async () => {
+		const auditRows: AuditRow[] = [];
+		let transition: string | undefined;
+		const { service } = buildService({
+			auditRows,
+			getByTenant: async () => adminRow({ status: "active" }),
+			conversations: {
+				updateStatusByTenant: async (_scope: unknown, _id: unknown, _from: unknown, status: string) => {
+					transition = status;
+					return true;
+				},
+			},
+		});
+		const result = await service.updateConversationAdminStatus({
+			tenantId: TENANT_A,
+			conversationId: CONV_A,
+			status: "archived",
+		});
+		expect(result.ok).toBe(true);
+		expect(transition).toBe("archived");
+		expect(auditRows.some((row) => row.action === "conversation.archived")).toBe(true);
+	});
+
+	test("soft-deletes an archived conversation while preserving its row", async () => {
+		let transition: string | undefined;
+		const { service } = buildService({
+			getByTenant: async () => adminRow({ status: "archived" }),
+			conversations: {
+				updateStatusByTenant: async (_scope: unknown, _id: unknown, _from: unknown, status: string) => {
+					transition = status;
+					return true;
+				},
+			},
+		});
+		const result = await service.updateConversationAdminStatus({
+			tenantId: TENANT_A,
+			conversationId: CONV_A,
+			status: "deleted",
+		});
+		expect(result.ok).toBe(true);
+		expect(transition).toBe("deleted");
+	});
+
+	test("idempotently accepts an already archived conversation", async () => {
+		const { service } = buildService({ getByTenant: async () => adminRow({ status: "archived" }) });
+		const result = await service.updateConversationAdminStatus({
+			tenantId: TENANT_A,
+			conversationId: CONV_A,
+			status: "archived",
+		});
+		expect(result.ok).toBe(true);
+	});
+});
+
 describe("WB-006 ControlService.listConversationEvents", () => {
 	test("classifies unknown event types as kind=unknown and audits the read", async () => {
 		const auditRows: AuditRow[] = [];

@@ -348,7 +348,8 @@ function mockToDisplay(items: readonly MockConversation[]): readonly DisplayConv
 function statusBadge(status: string): React.ReactNode {
 	if (status === "active") return <span className={`${styles.status} ${styles.statusActive}`}>进行中</span>;
 	if (status === "archived") return <span className={styles.status}>已结束</span>;
-	return <span className={`${styles.status} ${styles.statusFailed}`}>失败</span>;
+	if (status === "deleted") return <span className={`${styles.status} ${styles.statusFailed}`}>已删除</span>;
+	return <span className={`${styles.status} ${styles.statusFailed}`}>未知</span>;
 }
 
 export function AdminConversationsIndexView(): React.ReactElement {
@@ -365,6 +366,7 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const [useMock, setUseMock] = useState(false);
+	const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
 
 	const load = useCallback(
 		(args: ConversationListArgs) => {
@@ -423,6 +425,21 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
 	const safePage = Math.min(page, totalPages);
 	const pagedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+	const updateLifecycle = async (row: DisplayConversation) => {
+		if (useMock || row.status === "deleted") return;
+		const archive = row.status === "active";
+		if (!window.confirm(archive ? "确定结束这条会话吗？" : "确定软删除这条会话吗？审计记录仍会保留。")) return;
+		setLifecycleBusy(row.id);
+		try {
+			if (archive) await api.archive(row.id);
+			else await api.delete(row.id);
+			load(apiFilters);
+		} catch (error) {
+			window.alert(error instanceof Error ? error.message : String(error));
+		} finally {
+			setLifecycleBusy(null);
+		}
+	};
 
 	return (
 		<section className={styles.shell} aria-label="用户会话列表">
@@ -543,7 +560,18 @@ export function AdminConversationsIndexView(): React.ReactElement {
 										)}
 									</td>
 									<td className={styles.chevron}>
-										<Icon name="chevron" />
+										{row.status !== "deleted" ? (
+											<button
+												type="button"
+												disabled={useMock || lifecycleBusy !== null}
+												onClick={(event) => {
+													event.stopPropagation();
+													void updateLifecycle(row);
+												}}
+											>
+												{lifecycleBusy === row.id ? "处理中" : row.status === "active" ? "结束" : "删除"}
+											</button>
+										) : null}
 									</td>
 								</tr>
 							))}

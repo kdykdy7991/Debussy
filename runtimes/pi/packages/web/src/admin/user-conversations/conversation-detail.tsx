@@ -45,6 +45,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 	const [fullExportOpen, setFullExportOpen] = useState(false);
 	const [exporting, setExporting] = useState<ConversationExportMode | null>(null);
 	const [exportError, setExportError] = useState<string | null>(null);
+	const [lifecycleBusy, setLifecycleBusy] = useState<"archive" | "delete" | null>(null);
 
 	const load = useCallback(() => {
 		setDetail({ kind: "loading" });
@@ -103,6 +104,24 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 	const selectedEvent =
 		events.kind === "loaded" ? (events.items.find((event) => event.sequence === selectedSequence) ?? null) : null;
 	const modelId = events.kind === "loaded" ? readModel(events.items) : "—";
+	const updateLifecycle = async (action: "archive" | "delete") => {
+		const message =
+			action === "archive"
+				? "结束后用户将不能继续在此会话中发送消息，确定结束会话吗？"
+				: "删除后会话会标记为已删除，但审计记录仍会保留。确定删除吗？";
+		if (!window.confirm(message)) return;
+		setLifecycleBusy(action);
+		setExportError(null);
+		try {
+			if (action === "archive") await api.archive(conversationId);
+			else await api.delete(conversationId);
+			load();
+		} catch (error) {
+			setExportError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setLifecycleBusy(null);
+		}
+	};
 
 	return (
 		<section className={styles.page}>
@@ -133,6 +152,25 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 					<button type="button" disabled={exporting !== null} onClick={() => void downloadExport("transcript")}>
 						导出日志
 					</button>
+					{detail.kind === "loaded" && detail.data.conversation.status === "active" ? (
+						<button
+							type="button"
+							disabled={lifecycleBusy !== null}
+							onClick={() => void updateLifecycle("archive")}
+						>
+							{lifecycleBusy === "archive" ? "结束中…" : "结束会话"}
+						</button>
+					) : null}
+					{detail.kind === "loaded" && detail.data.conversation.status !== "deleted" ? (
+						<button
+							className={styles.danger}
+							type="button"
+							disabled={lifecycleBusy !== null}
+							onClick={() => void updateLifecycle("delete")}
+						>
+							{lifecycleBusy === "delete" ? "删除中…" : "删除"}
+						</button>
+					) : null}
 				</div>
 			</div>
 			{exportError ? <div className={styles.errorBanner}>导出失败：{exportError}</div> : null}

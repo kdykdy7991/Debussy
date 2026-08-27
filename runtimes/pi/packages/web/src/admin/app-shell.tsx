@@ -32,7 +32,9 @@ import { AdminAuthProvider, useAdminAuth } from "./auth/admin-auth-context.tsx";
 import { AdminAgentsPage } from "./pages/agents-page.tsx";
 import { AdminAppsPage } from "./pages/apps-page.tsx";
 import { AdminChatPage } from "./pages/chat-page.tsx";
+import { AdminMcpPage } from "./pages/mcp-page.tsx";
 import { AdminSettingsPage } from "./pages/settings-page.tsx";
+import { AdminSkillsPage } from "./pages/skills-page.tsx";
 import { AdminUsagePage } from "./pages/usage-page.tsx";
 import { AdminUserConversationsPage } from "./pages/user-conversations-page.tsx";
 import { type AdminRoute, type AdminRouteId, useAdminRoute } from "./router.ts";
@@ -42,6 +44,8 @@ type NavItemId = AuroraAppSidebarItem["id"];
 const SIDEBAR_ITEMS: readonly AuroraAppSidebarItem[] = [
 	{ id: "chat", label: "Chat", path: "/", icon: <NavIcon name="chat" /> },
 	{ id: "agents", label: "Agent 设计", path: "/agents", icon: <NavIcon name="agent" /> },
+	{ id: "skills", label: "Skills", path: "/skills", icon: <NavIcon name="skills" /> },
+	{ id: "mcp", label: "MCP", path: "/mcp", icon: <NavIcon name="mcp" /> },
 	{ id: "apps", label: "发布", path: "/apps", icon: <NavIcon name="publish" /> },
 	{ id: "usage", label: "Usage", path: "/usage", icon: <NavIcon name="usage" /> },
 	{
@@ -58,6 +62,10 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 		case "agents":
 		case "agent-detail":
 			return "agents";
+		case "skills":
+			return "skills";
+		case "mcp":
+			return "mcp";
 		case "apps":
 		case "app-create":
 		case "app-detail":
@@ -85,6 +93,10 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 		case "agents":
 		case "agent-detail":
 			return <AdminAgentsPage route={route} />;
+		case "skills":
+			return <AdminSkillsPage />;
+		case "mcp":
+			return <AdminMcpPage />;
 		case "apps":
 		case "app-create":
 		case "app-detail":

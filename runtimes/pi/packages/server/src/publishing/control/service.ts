@@ -290,6 +290,8 @@ export type ControlErrorCode =
 	| "KEY_ALREADY_REVOKED" // revoke target is already revoked (409)
 	| "PREVIEW_TICKET_FAILED" // preview ticket creation failed (500)
 	| "CONVERSATION_NOT_FOUND" // WB-006: conversation not visible in tenant scope (404)
+	| "CONVERSATION_STATE_CONFLICT" // lifecycle transition is invalid or raced (409)
+	| "CONVERSATION_LIFECYCLE_UNAVAILABLE" // admin lifecycle storage unavailable (503)
 	| "CONFLICT" // unexpected concurrent conflict (409)
 	| "LLM_CONFIG_UNAVAILABLE" // Custom LLM console disabled (503)
 	| "INVALID_LLM_CONFIG" // Custom LLM provider failed validation (400)
@@ -2375,6 +2377,44 @@ export class ControlService {
 				redacted: true,
 			},
 		};
+	}
+
+	async updateConversationAdminStatus(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly status: "archived" | "deleted";
+		readonly requestId?: string;
+	}): Promise<ControlResult<{ readonly id: string; readonly status: "archived" | "deleted" }>> {
+		const scope = { tenantId: input.tenantId };
+		const conversation = await this.repos.conversations.getByTenant(scope, input.conversationId);
+		if (conversation === undefined)
+			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		if (conversation.status === input.status) {
+			return { ok: true, data: { id: toPublicId("ConversationId", input.conversationId), status: input.status } };
+		}
+		const allowedFrom: readonly ("active" | "archived" | "deleted")[] =
+			input.status === "archived" ? ["active"] : ["active", "archived"];
+		if (!allowedFrom.includes(conversation.status)) {
+			return fail(
+				"CONVERSATION_STATE_CONFLICT",
+				409,
+				`conversation cannot transition from ${conversation.status} to ${input.status}`,
+			);
+		}
+		const update = this.repos.conversations.updateStatusByTenant;
+		if (update === undefined)
+			return fail("CONVERSATION_LIFECYCLE_UNAVAILABLE", 503, "conversation lifecycle storage is unavailable");
+		const changed = await update(scope, input.conversationId, allowedFrom, input.status);
+		if (!changed) return fail("CONVERSATION_STATE_CONFLICT", 409, "conversation state changed concurrently");
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: input.status === "archived" ? "conversation.archived" : "conversation.deleted",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: { previousStatus: conversation.status, status: input.status },
+		});
+		return { ok: true, data: { id: toPublicId("ConversationId", input.conversationId), status: input.status } };
 	}
 
 	/**

@@ -31,7 +31,7 @@
 .tableWrap th:nth-child(6) { width: 7%; }
 .tableWrap th:nth-child(7) { width: 15%; }
 .tableWrap th:nth-child(8) { width: 6%; }
-.tableWrap th:nth-child(9) { width: 24px; }
+.tableWrap th:nth-child(9) { width: 62px; }
 .tableWrap td { height: 57px; box-sizing: border-box; padding: 0 12px; border-top: 1px solid #e3e6eb; color: #252b35; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tableWrap tbody tr { cursor: pointer; transition: background 120ms ease; }
 .tableWrap tbody tr:hover { background: #fafbfc; }
@@ -42,6 +42,8 @@
 .statusFailed { background: #fdeaea; color: #df3e3e; }
 .errorIcon { display: inline-flex; color: #ed3030; }
 .chevron { color: #7d8795; text-align: right; }
+.chevron button { height: 28px; padding: 0 8px; border: 1px solid #d9dee6; border-radius: 5px; background: #fff; color: #4c5666; font: inherit; font-size: 10px; cursor: pointer; }
+.chevron button:disabled { cursor: not-allowed; opacity: .55; }
 .empty { padding: 72px 24px; border-bottom: 1px solid #e3e6eb; text-align: center; }
 .emptyTitle { margin-bottom: 6px; color: #252b35; font-weight: 600; }
 .emptyDesc { color: #7b8391; font-size: 13px; }
