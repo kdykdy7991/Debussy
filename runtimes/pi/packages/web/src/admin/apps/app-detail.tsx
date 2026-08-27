@@ -129,11 +129,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 	}, [agentApi, agentId]);
 	const app = state.kind === "ready" ? state.app : null;
 	const versions = state.kind === "ready" ? state.versions : [];
-	const newestReadyVersion = versions.find((version) => version.status === "ready");
 	const pendingReadyVersion = versions.find((version) => version.status === "ready" && !version.isCurrent) ?? null;
-	// Preview the newly built version before the currently active one. Otherwise an
-	// app that is already online keeps previewing its old frozen configuration.
-	const previewVersion = pendingReadyVersion ?? app?.currentVersion ?? newestReadyVersion ?? null;
 	const allowedOrigins = useMemo(
 		() =>
 			origins
@@ -208,7 +204,9 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 		}
 	};
 	const preview = async (): Promise<void> => {
-		if (!appId || !app || !previewVersion || versionBusy !== null) return;
+		if (!appId || !app || !agentId || versionBusy !== null) return;
+		// Open the popup synchronously: browsers block popups that are opened
+		// after an `await` boundary.
 		const popup = window.open("about:blank", "_blank", "popup,width=1100,height=760");
 		if (popup === null) {
 			setError("浏览器阻止了预览窗口，请允许此站点打开弹窗后重试");
@@ -217,7 +215,38 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 		setVersionBusy("preview");
 		setError(null);
 		try {
-			const ticket = await appApi.createPreviewTicket({ appId, versionId: previewVersion.id });
+			// Re-fetch the Agent detail so we pin the preview to the latest saved
+			// revision. `agentDetail` captured in the component state may be stale
+			// (the user saved the agent in another tab, or `useEffect` didn't
+			// re-run on re-entry), and creating a version off a stale revision
+			// silently captures the old `newConversations` toggle value.
+			const latestAgent = await agentApi.getAgentDetail(agentId as AgentPublicId);
+			setAgentDetail(latestAgent);
+			// Find-or-create a ready version compiled from the latest agent
+			// revision. Without this, preview would pin to whichever pending
+			// version happened to be the newest (possibly compiled before the
+			// user's latest save) and the preview's features (e.g.
+			// `newConversations`) would not reflect the agent's current state.
+			const readyForLatest =
+				state.kind === "ready"
+					? state.versions.find(
+							(version) =>
+								version.status === "ready" &&
+								version.sourceAgentRevision === latestAgent.currentRevision,
+						)
+					: undefined;
+			let versionId: string;
+			if (readyForLatest !== undefined) {
+				versionId = readyForLatest.id;
+			} else {
+				const created = await appApi.createVersion({
+					appId,
+					sourceAgentRevision: latestAgent.currentRevision,
+				});
+				versionId = created.version.id;
+				await refreshApp();
+			}
+			const ticket = await appApi.createPreviewTicket({ appId, versionId });
 			const previewOrigin = new URL(ticket.previewUrl).origin;
 			let ticketSent = false;
 			const onMessage = (event: MessageEvent<unknown>): void => {
@@ -480,7 +509,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 						</button>
 						<button
 							type="button"
-							disabled={!previewVersion || versionBusy !== null}
+							disabled={!agentDetail || versionBusy !== null}
 							onClick={() => void preview()}
 						>
 							<Icon name="eye" />
