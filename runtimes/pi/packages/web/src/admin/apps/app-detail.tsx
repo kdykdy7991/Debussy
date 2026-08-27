@@ -102,6 +102,30 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 	const [versionBusy, setVersionBusy] = useState<"create" | "preview" | "activate" | null>(null);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [copiedKey, setCopiedKey] = useState<string | null>(null);
+	const copyToClipboard = async (key: string, text: string): Promise<void> => {
+		try {
+			if (navigator.clipboard?.writeText !== undefined) {
+				await navigator.clipboard.writeText(text);
+			} else {
+				const textarea = document.createElement("textarea");
+				textarea.value = text;
+				textarea.setAttribute("readonly", "");
+				textarea.style.position = "absolute";
+				textarea.style.left = "-9999px";
+				document.body.appendChild(textarea);
+				textarea.select();
+				document.execCommand("copy");
+				document.body.removeChild(textarea);
+			}
+			setCopiedKey(key);
+			window.setTimeout(() => {
+				setCopiedKey((current) => (current === key ? null : current));
+			}, 1500);
+		} catch {
+			// Clipboard is best-effort; the row still shows the full text.
+		}
+	};
 	useEffect(() => {
 		void Promise.all([
 			agentApi.listAgents({ limit: 100 }),
@@ -494,6 +518,66 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 							</span>
 						</div>
 					</section>
+					{app !== null && (app.status === "active" || app.status === "suspended") ? (
+						<section>
+							<h3>接入 / Embed</h3>
+							{(() => {
+								// In dev the admin and embed are served from the same
+								// origin; for split-host deployments the embed base URL
+								// should be set via a config in the future.
+								const origin =
+									typeof window !== "undefined" ? window.location.origin : "";
+								const embedUrl = buildEmbedUrl(origin, app.publicAppId);
+								const iframeSnippet = buildIframeSnippet(origin, app.publicAppId);
+								const sdkSnippet = buildSdkSnippet(origin, app.publicAppId);
+								return (
+									<div className={styles.connection}>
+										<div className={styles.connectionRow}>
+											<code title={embedUrl}>{embedUrl}</code>
+											<button
+												type="button"
+												className={`${styles.connectionCopy}${copiedKey === "url" ? ` ${styles["is-copied"]}` : ""}`}
+												onClick={() => void copyToClipboard("url", embedUrl)}
+											>
+												{copiedKey === "url" ? "已复制" : "复制链接"}
+											</button>
+										</div>
+										<div className={styles.connectionBlock}>
+											<small>Iframe 嵌入</small>
+											<div className={styles.connectionCode}>
+												<pre>{iframeSnippet}</pre>
+												<button
+													type="button"
+													className={`${styles.connectionCopy}${copiedKey === "iframe" ? ` ${styles["is-copied"]}` : ""}`}
+													onClick={() => void copyToClipboard("iframe", iframeSnippet)}
+												>
+													{copiedKey === "iframe" ? "已复制" : "复制"}
+												</button>
+											</div>
+										</div>
+										<div className={styles.connectionBlock}>
+											<small>SDK 挂载</small>
+											<div className={styles.connectionCode}>
+												<pre>{sdkSnippet}</pre>
+												<button
+													type="button"
+													className={`${styles.connectionCopy}${copiedKey === "sdk" ? ` ${styles["is-copied"]}` : ""}`}
+													onClick={() => void copyToClipboard("sdk", sdkSnippet)}
+												>
+													{copiedKey === "sdk" ? "已复制" : "复制"}
+												</button>
+											</div>
+										</div>
+										{app.accessMode === "signed_user" || app.accessMode === "mixed" ? (
+											<p className={styles.note}>
+												登录访问还需要 Launch Key，前往"Launch Keys"页签签发。
+											</p>
+										) : null}
+									</div>
+								);
+							})()}
+						</section>
+					) : null}
 					<button type="button" className={styles.save} disabled={busy} onClick={() => void save()}>
 						<Icon name="save" />
 						{busy ? "正在保存…" : "保存配置"}
@@ -525,14 +609,13 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 						</button>
 					</div>
 					{error ? <p className={styles.error}>{error}</p> : null}
-					<p className={styles.note}>应用上线后，用户即可通过链接或嵌入方式访问。</p>
 				</aside>
 			</div>
 		</main>
 	);
 }
 
-/** Kept as public helpers for embed consumers; the simplified detail UI no longer renders this section. */
+/** Build the public embed URL for a PublishedApp. Used by the app-detail "接入" section. */
 export function buildEmbedUrl(origin: string, publicAppId: string): string {
 	return `${origin.replace(/\/+$/, "")}/embed/${publicAppId}`;
 }
