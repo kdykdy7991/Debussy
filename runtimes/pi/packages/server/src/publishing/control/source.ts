@@ -7,7 +7,7 @@
  *
  *  - system prompt from the resource loader,
  *  - default model (provider + model id) from settings / model runtime,
- *  - tool and knowledge-base references that pass the platform whitelist,
+ *  - tool references that pass the platform whitelist,
  *  - conservative defaults for uploads / speech / avatar / theme.
  *
  * It NEVER collects: API keys, bearer tokens, cookies, proxy credentials,
@@ -55,12 +55,11 @@ export function createServerAgentSource(options: ServerAgentSourceOptions): Curr
 		const prompt = collectPrompt();
 		const model = collectModel();
 		const tools = collectTools();
-		const knowledgeBases = collectKnowledgeBases();
 		return {
 			prompt,
 			model,
 			tools,
-			knowledgeBases,
+			knowledgeBases: [],
 			// Conservative MVP defaults: local single-user values are not
 			// publishable, so uploads stay enabled with platform defaults.
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
@@ -134,24 +133,6 @@ export function createServerAgentSource(options: ServerAgentSourceOptions): Curr
 					continue;
 				}
 				out.push({ id: toolId });
-			}
-		}
-		return out;
-	}
-
-	function collectKnowledgeBases(): NonNullable<AgentDraftConfig["knowledgeBases"]> {
-		const out: { id: string }[] = [];
-		const skills = services.resourceLoader.getSkills();
-		for (const skill of skills.skills) {
-			const entry = catalog.knowledgeBases.find((candidate) => candidate.id === skill.name);
-			if (entry !== undefined) {
-				out.push({ id: skill.name });
-			} else {
-				warnings.push({
-					code: "KNOWLEDGE_EXCLUDED",
-					path: `knowledgeBases.${skill.name}`,
-					message: `Skill ${skill.name} is not in the platform knowledge-base whitelist`,
-				});
 			}
 		}
 		return out;

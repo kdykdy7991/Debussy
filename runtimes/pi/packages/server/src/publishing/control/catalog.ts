@@ -2,10 +2,10 @@
  * Capability catalog snapshot for the running server (TASK-013).
  *
  * MVP semantics: the publishable whitelist IS the current agent's own
- * capabilities — the tools registered by the loaded extensions, the models
- * currently available, and the enabled knowledge bases (skills). The compiler
- * (TASK-010) then accepts exactly these references, so a server publishing
- * itself produces a `ready` version instead of rejecting everything.
+ * capabilities — the tools registered by the loaded extensions and the models
+ * currently available. Local Skills are not knowledge bases: Skills are
+ * imported and bound through the dedicated publishing repositories, while no
+ * production knowledge-base provider exists yet.
  *
  * The catalog is derived from `AgentSessionServices` (never from implicit
  * global settings) and carries no secrets: only ids and display names.
@@ -44,10 +44,5 @@ export function buildCapabilityCatalog(services: AgentSessionServices): Capabili
 		});
 	}
 
-	const knowledgeBases: { id: string }[] = [];
-	for (const skill of services.resourceLoader.getSkills().skills) {
-		knowledgeBases.push({ id: skill.name });
-	}
-
-	return { tools, models, knowledgeBases };
+	return { tools, models, knowledgeBases: [] };
 }
