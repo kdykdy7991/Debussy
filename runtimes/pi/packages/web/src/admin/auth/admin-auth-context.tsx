@@ -42,7 +42,14 @@ export interface AdminAuthProviderProps {
 }
 
 export function AdminAuthProvider({ controller, baseUrl, children }: AdminAuthProviderProps): React.ReactElement {
-	const [ctrl] = useState(() => controller ?? new AdminAuthController({ initialBaseUrl: baseUrl ?? "" }));
+	const [ctrl] = useState(() => {
+		const initialized = controller ?? new AdminAuthController({ initialBaseUrl: baseUrl ?? "" });
+		// Child page effects can run before this provider's effects. Seed the
+		// placeholder synchronously so their initial API requests never observe
+		// an empty token; the proxy replaces it with the real credential.
+		initialized.connect(DEV_PLACEHOLDER_TOKEN);
+		return initialized;
+	});
 	const [snapshot, setSnapshot] = useState<AdminAuthSnapshot>(() => ctrl.getSnapshot());
 
 	useEffect(() => {
@@ -53,11 +60,8 @@ export function AdminAuthProvider({ controller, baseUrl, children }: AdminAuthPr
 	}, [ctrl]);
 
 	useEffect(() => {
-		// 自动连接：放进 controller 一个占位 token 供上游 API 客户端使用；
-		// 真正鉴权由 vite proxy（dev）或网关（prod）注入真实 token 完成。
 		let cancelled = false;
 		const connect = async (): Promise<void> => {
-			ctrl.connect(DEV_PLACEHOLDER_TOKEN);
 			const api = new AdminSessionApi({ auth: ctrl });
 			try {
 				const session = await api.fetchSession();

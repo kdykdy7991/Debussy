@@ -136,7 +136,7 @@ describe("publishing feature configuration", () => {
 			bootstrapTenantName: "SKDY",
 			controlAdminTokenFile: "/run/secrets/control-admin-token",
 			mcpSecretMasterKey: Uint8Array.from({ length: 32 }, (_, index) => index),
-			mcpNetworkPolicy: { allowHttp: false, allowPrivateNetwork: false, allowedPorts: [443] },
+			mcpNetworkPolicy: { allowHttp: true, allowPrivateNetwork: true, allowedPorts: undefined },
 			embedBaseUrl: "https://agent.example.com",
 			subjectPepper: "pepper-0123456789abcdef0123456789abcdef",
 			accessTokenPrivateKeyFile: "/run/secrets/embed-access-private.pem",

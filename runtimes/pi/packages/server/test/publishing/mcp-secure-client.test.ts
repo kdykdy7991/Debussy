@@ -11,16 +11,28 @@ describe("MCP outbound network policy", () => {
 		expect(validateMcpEndpoint("https://mcp.example.com/rpc").toString()).toBe("https://mcp.example.com/rpc");
 	});
 
-	it.each([
-		"http://mcp.example.com/rpc",
-		"https://user:secret@mcp.example.com/rpc",
-		"https://mcp.example.com:8443/rpc",
-		"https://mcp.example.com/rpc#fragment",
-	])("rejects an unsafe endpoint: %s", (endpoint) => {
-		expect(() => validateMcpEndpoint(endpoint)).toThrow(McpNetworkPolicyError);
+	it("accepts HTTP on the default HTTP port", () => {
+		expect(validateMcpEndpoint("http://mcp.example.com/rpc").toString()).toBe("http://mcp.example.com/rpc");
 	});
 
-	it("requires explicit development policy for HTTP and private ports", () => {
+	it("accepts a non-standard port by default", () => {
+		expect(validateMcpEndpoint("http://mcp.example.com:8765/rpc").port).toBe("8765");
+	});
+
+	it.each(["https://user:secret@mcp.example.com/rpc", "https://mcp.example.com/rpc#fragment"])(
+		"rejects an unsafe endpoint: %s",
+		(endpoint) => {
+			expect(() => validateMcpEndpoint(endpoint)).toThrow(McpNetworkPolicyError);
+		},
+	);
+
+	it("allows requiring HTTPS explicitly", () => {
+		expect(() => validateMcpEndpoint("http://mcp.example.com/rpc", { allowHttp: false })).toThrow(
+			"MCP endpoint must use HTTPS",
+		);
+	});
+
+	it("requires an explicit policy for non-standard ports", () => {
 		const url = validateMcpEndpoint("http://localhost:4312/mcp", {
 			allowHttp: true,
 			allowedPorts: new Set([4312]),
@@ -52,22 +64,29 @@ describe("MCP outbound network policy", () => {
 	it("rejects the entire hostname when any resolved address is private", async () => {
 		const url = validateMcpEndpoint("https://mcp.example.com/rpc");
 		await expect(
-			resolveApprovedMcpAddresses(url, {}, async () => [
+			resolveApprovedMcpAddresses(url, { allowPrivateNetwork: false }, async () => [
 				{ address: "8.8.8.8", family: 4 },
 				{ address: "127.0.0.1", family: 4 },
 			]),
 		).rejects.toThrow("non-public address");
 	});
 
-	it("permits local addresses only behind the explicit development switch", async () => {
+	it("permits local addresses by default", async () => {
 		const url = validateMcpEndpoint("http://localhost:4312/mcp", {
 			allowHttp: true,
 			allowedPorts: new Set([4312]),
 		});
 		await expect(
-			resolveApprovedMcpAddresses(url, { allowPrivateNetwork: true }, async () => [
+			resolveApprovedMcpAddresses(url, {}, async () => [{ address: "127.0.0.1", family: 4 }]),
+		).resolves.toEqual([{ address: "127.0.0.1", family: 4 }]);
+	});
+
+	it("allows rejecting local addresses explicitly", async () => {
+		const url = validateMcpEndpoint("http://localhost:8765/mcp");
+		await expect(
+			resolveApprovedMcpAddresses(url, { allowPrivateNetwork: false }, async () => [
 				{ address: "127.0.0.1", family: 4 },
 			]),
-		).resolves.toEqual([{ address: "127.0.0.1", family: 4 }]);
+		).rejects.toThrow("non-public address");
 	});
 });

@@ -79,11 +79,11 @@ export interface PublishingConfig {
 	readonly controlAdminTokenFile: string | undefined;
 	/** Canonical Base64 decoded 32-byte AES key; optional until bearer MCP is configured. */
 	readonly mcpSecretMasterKey?: Uint8Array;
-	/** Explicit development-only outbound MCP network policy. */
+	/** Outbound MCP network policy. MCP endpoints are unrestricted by default. */
 	readonly mcpNetworkPolicy?: {
 		readonly allowHttp: boolean;
 		readonly allowPrivateNetwork: boolean;
-		readonly allowedPorts: readonly number[];
+		readonly allowedPorts: readonly number[] | undefined;
 	};
 	/** `PI_EMBED_ISSUER`; base URL for generated embed URLs. */
 	readonly embedBaseUrl: string;
@@ -192,8 +192,8 @@ export function parsePublishingConfig(env: NodeJS.ProcessEnv): PublishingConfig 
 		mcpSecretMasterKey = Uint8Array.from(bytes);
 	}
 	const mcpNetworkPolicy = {
-		allowHttp: parseBoolean(env[MCP_ALLOW_HTTP_ENV], false, MCP_ALLOW_HTTP_ENV),
-		allowPrivateNetwork: parseBoolean(env[MCP_ALLOW_PRIVATE_NETWORK_ENV], false, MCP_ALLOW_PRIVATE_NETWORK_ENV),
+		allowHttp: parseBoolean(env[MCP_ALLOW_HTTP_ENV], true, MCP_ALLOW_HTTP_ENV),
+		allowPrivateNetwork: parseBoolean(env[MCP_ALLOW_PRIVATE_NETWORK_ENV], true, MCP_ALLOW_PRIVATE_NETWORK_ENV),
 		allowedPorts: parsePorts(env[MCP_ALLOWED_PORTS_ENV]),
 	};
 	return {
@@ -242,8 +242,8 @@ function parseBoolean(raw: string | undefined, fallback: boolean, name: string):
 	throw new Error(`${name} must be a boolean ("true" or "false"), got: ${JSON.stringify(raw)}`);
 }
 
-function parsePorts(raw: string | undefined): readonly number[] {
-	if (raw === undefined || raw.trim() === "") return [443];
+function parsePorts(raw: string | undefined): readonly number[] | undefined {
+	if (raw === undefined || raw.trim() === "") return undefined;
 	const ports = raw.split(",").map((entry) => Number(entry.trim()));
 	if (ports.length === 0 || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)) {
 		throw new Error(`${MCP_ALLOWED_PORTS_ENV} must be a comma-separated list of ports between 1 and 65535`);

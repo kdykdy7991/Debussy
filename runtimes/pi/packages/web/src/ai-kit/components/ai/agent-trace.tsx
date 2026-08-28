@@ -22,6 +22,10 @@ export type AgentTraceProps = {
 	children: ReactNode;
 };
 
+function defaultsToCollapsedTrace() {
+	return typeof window !== "undefined" && window.matchMedia("(max-width: 1100px)").matches;
+}
+
 /**
  * Agent 活动轨（250px rail 列）。
  * - 默认 summary ≤5 事件 + "查看 N 次调用的完整轨迹 →" 披露
@@ -39,6 +43,7 @@ export function AgentTrace({
 }: AgentTraceProps) {
 	const [expanded, setExpanded] = useState(false);
 	const [compactOpen, setCompactOpen] = useState(false);
+	const [collapsed, setCollapsed] = useState(defaultsToCollapsedTrace);
 
 	const events = Children.toArray(children).filter(
 		(child): child is ReactElement => isValidElement(child) && child.type === AgentTraceEvent,
@@ -52,9 +57,22 @@ export function AgentTrace({
 
 	return (
 		<div className="ai-trace" role="log" aria-label={railTitle}>
-			<div className="ai-trace-title">{railTitle}</div>
+			<button
+				type="button"
+				className="ai-trace-title"
+				aria-expanded={!collapsed}
+				onClick={() => setCollapsed((value) => !value)}
+			>
+				<span>{railTitle}</span>
+				<span className="ai-trace-title-summary">
+					{collapsed ? `${total} 步` : ""}
+					<span className="ai-trace-chevron" aria-hidden>
+						⌃
+					</span>
+				</span>
+			</button>
 
-			{isCompactCollapsed ? (
+			{collapsed ? null : isCompactCollapsed ? (
 				<button type="button" className="ai-trace-compact" onClick={() => setCompactOpen(true)}>
 					<span>
 						{railTitle} · {total} 步{typeof durationMs === "number" ? ` · ${formatDuration(durationMs)}` : ""}

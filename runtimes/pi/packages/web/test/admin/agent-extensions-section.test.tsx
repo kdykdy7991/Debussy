@@ -37,7 +37,7 @@ const mcp: McpServerDetail = {
 };
 
 describe("AgentExtensionsSection", () => {
-	test("renders frozen Skill/MCP revisions and the exact Tool allowlist", () => {
+	test("renders MCP Server selection without revision or Tool controls", () => {
 		const html = renderToStaticMarkup(
 			<AgentExtensionsSection
 				catalog={{ skills: [skill], mcpServers: [mcp] }}
@@ -51,8 +51,9 @@ describe("AgentExtensionsSection", () => {
 		expect(html).toContain("Web search");
 		expect(html).toContain("Revision 2");
 		expect(html).toContain("Search MCP");
-		expect(html).toContain("search");
-		expect(html).toContain("fetch");
+		expect(html).not.toContain("固定 Revision");
+		expect(html).not.toContain("Tool allowlist");
+		expect(html).not.toContain("fetch");
 		expect(html).toContain('checked=""');
 	});
 });

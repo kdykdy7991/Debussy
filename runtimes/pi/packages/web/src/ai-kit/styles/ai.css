@@ -510,6 +510,15 @@
 	white-space: pre;
 }
 
+.ai-markdown-table {
+	width: 100%;
+	margin: 0 0 var(--ai-prose-gap);
+	overflow-x: auto;
+	border: 1px solid var(--ai-border-soft);
+	border-radius: var(--ai-radius-sm);
+	background: var(--ai-bg-surface);
+}
+
 .ai-markdown table {
 	width: 100%;
 	min-width: max-content;
@@ -590,12 +599,55 @@
 }
 
 .ai-trace-title {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--ai-space-md);
+	padding: 0;
+	border: 0;
+	background: transparent;
 	font-size: var(--ai-text-micro);
 	letter-spacing: var(--ai-track-rail-title);
 	text-transform: uppercase;
 	color: var(--ai-text-faint);
 	font-weight: var(--ai-weight-medium);
 	margin-bottom: var(--ai-space-lg);
+	cursor: pointer;
+	font-family: var(--ai-font-sans);
+	text-align: left;
+}
+
+.ai-trace-title[aria-expanded="false"] {
+	margin-bottom: 0;
+}
+
+.ai-trace-title-summary {
+	display: flex;
+	align-items: center;
+	gap: var(--ai-space-sm);
+	white-space: nowrap;
+	letter-spacing: 0;
+	text-transform: none;
+}
+
+.ai-trace-chevron {
+	display: inline-block;
+	font-size: 14px;
+	transition: transform var(--ai-motion-fast) ease;
+}
+
+.ai-trace-title[aria-expanded="false"] .ai-trace-chevron {
+	transform: rotate(180deg);
+}
+
+.ai-trace-title:hover {
+	color: var(--ai-text-secondary);
+}
+
+.ai-trace-title:focus-visible {
+	outline: 2px solid var(--ai-accent);
+	outline-offset: 4px;
 }
 
 .ai-trace-compact {
@@ -702,36 +754,6 @@
 	line-height: var(--ai-text-meta-lh);
 	color: var(--ai-text-faint);
 	margin-top: var(--ai-space-2xs);
-}
-
-.ai-trace-payload-toggle {
-	display: inline-block;
-	margin-top: var(--ai-space-sm);
-	font-size: var(--ai-text-meta);
-	color: var(--ai-text-faint);
-	background: none;
-	border: none;
-	padding: 0;
-	cursor: pointer;
-	letter-spacing: 0.04em;
-	font-family: var(--ai-font-sans);
-}
-
-.ai-trace-payload-toggle:hover {
-	color: var(--ai-text-muted);
-}
-
-.ai-trace-payload {
-	margin-top: var(--ai-space-sm);
-	padding: var(--ai-space-sm) var(--ai-space-md);
-	background: var(--ai-bg-inset);
-	border-radius: var(--ai-radius-xs);
-	font-family: var(--ai-font-mono);
-	font-size: var(--ai-text-meta);
-	line-height: 1.6;
-	color: var(--ai-text-muted);
-	white-space: pre-wrap;
-	word-break: break-all;
 }
 
 .ai-link {

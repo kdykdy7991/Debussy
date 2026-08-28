@@ -21,6 +21,7 @@ admin_token_file="$state_dir/control-admin-token"
 private_key_file="$state_dir/embed-access-private.pem"
 public_key_file="$state_dir/embed-access-public.pem"
 pepper_file="$state_dir/embed-subject-pepper"
+mcp_secret_master_key_file="$state_dir/mcp-secret-master-key"
 tenant_id_file="$state_dir/tenant-id"
 
 if [[ ! -s "$admin_token_file" ]]; then
@@ -30,6 +31,10 @@ fi
 if [[ ! -s "$pepper_file" ]]; then
 	node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > "$pepper_file"
 	chmod 600 "$pepper_file"
+fi
+if [[ ! -s "$mcp_secret_master_key_file" ]]; then
+	node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64"))' > "$mcp_secret_master_key_file"
+	chmod 600 "$mcp_secret_master_key_file"
 fi
 if [[ ! -s "$tenant_id_file" ]]; then
 	node -e 'process.stdout.write(require("node:crypto").randomUUID())' > "$tenant_id_file"
@@ -67,6 +72,8 @@ export PI_BOOTSTRAP_TENANT_ID
 PI_BOOTSTRAP_TENANT_ID=$(<"$tenant_id_file")
 export PI_BOOTSTRAP_TENANT_NAME="Local Admin"
 export PI_CONTROL_ADMIN_TOKEN_FILE="$admin_token_file"
+export PI_MCP_SECRET_MASTER_KEY
+PI_MCP_SECRET_MASTER_KEY=$(<"$mcp_secret_master_key_file")
 # Embed/preview URLs are browser pages served by Vite, not Control API URLs.
 # The backend port remains the proxy target below.
 export PI_EMBED_ISSUER="http://127.0.0.1:${web_ui_port}"

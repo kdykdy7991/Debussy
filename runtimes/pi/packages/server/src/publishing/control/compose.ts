@@ -91,14 +91,11 @@ export async function composeControlPlane(options: {
 			: {
 					allowHttp: configuredMcpNetworkPolicy.allowHttp,
 					allowPrivateNetwork: configuredMcpNetworkPolicy.allowPrivateNetwork,
-					allowedPorts: new Set(configuredMcpNetworkPolicy.allowedPorts),
+					allowedPorts:
+						configuredMcpNetworkPolicy.allowedPorts === undefined
+							? undefined
+							: new Set(configuredMcpNetworkPolicy.allowedPorts),
 				};
-	if (mcpNetworkPolicy?.allowHttp === true || mcpNetworkPolicy?.allowPrivateNetwork === true) {
-		log(
-			`warning: unsafe development MCP network policy enabled (HTTP=${mcpNetworkPolicy.allowHttp}, private=${mcpNetworkPolicy.allowPrivateNetwork})`,
-		);
-	}
-
 	// MVP: the publishable whitelist is the running agent's own capabilities.
 	const catalog = buildCapabilityCatalog(options.services);
 	const source = createServerAgentSource({ services: options.services, catalog });

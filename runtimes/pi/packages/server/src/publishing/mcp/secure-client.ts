@@ -16,10 +16,11 @@ export const MCP_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 export const MCP_MAX_HEADER_BYTES = 16 * 1024;
 
 export interface McpNetworkPolicy {
-	/** Development-only escape hatch for local MCP servers. */
+	/** Set to false to require HTTPS endpoints. HTTP is allowed by default. */
 	readonly allowHttp?: boolean;
-	/** Development-only escape hatch for loopback/private addresses. */
+	/** Set to false to reject loopback/private addresses. They are allowed by default. */
 	readonly allowPrivateNetwork?: boolean;
+	/** When set, restrict endpoints to these ports. All ports are allowed by default. */
 	readonly allowedPorts?: ReadonlySet<number>;
 	readonly timeoutMs?: number;
 	readonly maxResponseBytes?: number;
@@ -79,13 +80,12 @@ export function validateMcpEndpoint(endpoint: string, policy: McpNetworkPolicy =
 		throw new McpNetworkPolicyError("MCP endpoint must not contain URL credentials");
 	}
 	if (url.hash !== "") throw new McpNetworkPolicyError("MCP endpoint must not contain a fragment");
-	if (url.protocol !== "https:" && !(policy.allowHttp === true && url.protocol === "http:")) {
+	if (url.protocol !== "https:" && !(policy.allowHttp !== false && url.protocol === "http:")) {
 		throw new McpNetworkPolicyError("MCP endpoint must use HTTPS");
 	}
 
 	const port = endpointPort(url);
-	const allowedPorts = policy.allowedPorts ?? new Set([443]);
-	if (!allowedPorts.has(port)) {
+	if (policy.allowedPorts !== undefined && !policy.allowedPorts.has(port)) {
 		throw new McpNetworkPolicyError(`MCP endpoint port ${port} is not approved`);
 	}
 	return url;
@@ -118,7 +118,7 @@ export async function resolveApprovedMcpAddresses(
 		if (!ipaddr.isValid(resolved.address)) {
 			throw new McpNetworkPolicyError("MCP endpoint resolved to an invalid address");
 		}
-		if (policy.allowPrivateNetwork !== true && !isPublicMcpAddress(resolved.address)) {
+		if (policy.allowPrivateNetwork === false && !isPublicMcpAddress(resolved.address)) {
 			throw new McpNetworkPolicyError("MCP endpoint resolved to a non-public address");
 		}
 	}
@@ -160,7 +160,10 @@ function createSecureFetch(
 	const timeoutMs = policy.timeoutMs ?? MCP_DEFAULT_TIMEOUT_MS;
 	const dispatcher = new Agent({
 		connect: { lookup: pinnedLookup(normalizedHostname(url), addresses), timeout: timeoutMs },
-		connections: 1,
+		// Streamable HTTP keeps one GET/SSE stream open while POST requests
+		// continue on a second connection. A single-connection pool deadlocks
+		// every request after initialization against servers that support SSE.
+		connections: 2,
 		pipelining: 1,
 		maxHeaderSize: MCP_MAX_HEADER_BYTES,
 		maxResponseSize: policy.maxResponseBytes ?? MCP_MAX_RESPONSE_BYTES,

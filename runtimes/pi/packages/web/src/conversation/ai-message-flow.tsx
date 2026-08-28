@@ -20,7 +20,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { AnimatedMarkdown } from "flowtoken";
 import "flowtoken/dist/styles.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
 	type AgentAvatarState,
 	AgentStatusAvatar,
@@ -40,6 +40,14 @@ import type { AgentReaction } from "./agent-reaction.ts";
 import { wrapSpeechButtonApi } from "./speech-wrap.ts";
 
 const SHOW_AGENT_STATE_DEBUG = false;
+
+const MARKDOWN_COMPONENTS = {
+	table: ({ children }: { readonly children?: ReactNode }) => (
+		<div className="ai-markdown-table">
+			<table>{children}</table>
+		</div>
+	),
+};
 
 interface TurnUnit {
 	user: UserTranscriptItem | undefined;
@@ -199,7 +207,6 @@ function TurnView({
 						status={tool.status === "running" ? "running" : tool.status === "error" ? "failed" : "completed"}
 						title={tool.toolName ?? "工具"}
 						detail={toolDetail(tool)}
-						payload={toolPayload(tool)}
 					/>
 				))}
 			</AgentTrace>
@@ -353,15 +360,16 @@ function isSearchTool(tool: ToolTranscriptItem): boolean {
  * 问题），新增 token 整体同时淡入，无段间并行。完成消息传 animation={null} 关闭
  * 动画降低重渲染成本。
  */
-function MarkdownText({ text, streaming }: { text: string; streaming: boolean }): React.ReactElement {
+export function MarkdownText({ text, streaming }: { text: string; streaming: boolean }): React.ReactElement {
 	return (
-		<div className="ai-prose-block">
+		<div className="ai-prose-block ai-markdown">
 			<AnimatedMarkdown
 				content={text}
 				sep="diff"
 				animation={streaming ? "slideUp" : null}
 				animationDuration="0.6s"
 				animationTimingFunction="ease-in-out"
+				customComponents={MARKDOWN_COMPONENTS}
 			/>
 		</div>
 	);
@@ -375,16 +383,6 @@ function userAttachments(item: UserTranscriptItem): string[] | undefined {
 function toolDetail(tool: ToolTranscriptItem): string | undefined {
 	const status = tool.status === "running" ? "执行中" : tool.status === "error" ? "失败" : "完成";
 	return status;
-}
-
-function toolPayload(tool: ToolTranscriptItem): string | undefined {
-	try {
-		const input = tool.input as unknown;
-		if (input === undefined || input === null) return undefined;
-		return JSON.stringify(input, null, 2);
-	} catch {
-		// input 非可序列化对象；忽略。
-	}
 }
 
 async function copyText(item: TranscriptItem): Promise<void> {

@@ -236,6 +236,7 @@ body,
 	height: 100%;
 	margin: 0;
 	overflow-x: hidden;
+	overflow-y: hidden;
 	font-family: var(--font-sans);
 	color: var(--aurora-ink);
 	background: var(--aurora-bg);
@@ -255,7 +256,8 @@ button {
 .admin-shell {
 	display: flex;
 	flex-direction: row;
-	min-height: 100vh;
+	height: 100vh;
+	min-height: 0;
 	width: 100%;
 	background: var(--aurora-surface);
 	overflow: hidden;

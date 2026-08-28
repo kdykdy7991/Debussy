@@ -162,8 +162,10 @@ describe("Admin shell CSS layout (WB-002)", () => {
 	it("uses a row shell with a left sidebar plus a scrollable main area", () => {
 		// v5：admin-shell 直接两栏水平 flex（sidebar + main），不再有顶部独立行。
 		expect(css).toMatch(/\.admin-shell\s*{[^}]*flex-direction:\s*row/);
+		expect(css).toMatch(/\.admin-shell\s*{[^}]*height:\s*100vh/);
 		expect(css).toMatch(/\.admin-shell__body\s*{[^}]*display:\s*flex/);
 		expect(css).toMatch(/\.admin-shell__main\s*{[^}]*overflow-y:\s*auto/);
+		expect(css).toMatch(/html,\s*body,\s*#root\s*{[^}]*overflow-y:\s*hidden/);
 	});
 
 	it("keeps the chat route full-bleed next to the sidebar", () => {

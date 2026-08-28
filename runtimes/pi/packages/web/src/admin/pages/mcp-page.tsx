@@ -56,22 +56,27 @@ export function AdminMcpPage(): React.ReactElement {
 	const [authentication, setAuthentication] = useState<"none" | "bearer">("none");
 	const [bearerToken, setBearerToken] = useState("");
 
-	const load = useCallback(async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			const result = await api.list();
-			const loaded = await Promise.all(result.items.map(async (item) => [item.id, await api.get(item.id)] as const));
-			const detailMap = new Map(loaded);
-			setItems(result.items);
-			setDetails(detailMap);
-			setSelectedId((current) => (current && detailMap.has(current) ? current : (result.items[0]?.id ?? null)));
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setLoading(false);
-		}
-	}, [api]);
+	const load = useCallback(
+		async (showLoading = true) => {
+			if (showLoading) setLoading(true);
+			setError(null);
+			try {
+				const result = await api.list();
+				const loaded = await Promise.all(
+					result.items.map(async (item) => [item.id, await api.get(item.id)] as const),
+				);
+				const detailMap = new Map(loaded);
+				setItems(result.items);
+				setDetails(detailMap);
+				setSelectedId((current) => (current && detailMap.has(current) ? current : (result.items[0]?.id ?? null)));
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : String(cause));
+			} finally {
+				if (showLoading) setLoading(false);
+			}
+		},
+		[api],
+	);
 	useEffect(() => void load(), [load]);
 
 	const selected = selectedId ? (details.get(selectedId) ?? null) : null;
@@ -99,57 +104,57 @@ export function AdminMcpPage(): React.ReactElement {
 			`${cause instanceof Error ? cause.message : String(cause)}${requestId ? ` · Request ID: ${requestId}` : ""}`,
 		);
 	};
-	const act = async (key: string, action: () => Promise<unknown>, success?: string) => {
+	const act = async (key: string, action: () => Promise<unknown>) => {
 		setBusy(key);
 		setError(null);
 		try {
 			await action();
-			await load();
-			if (success) window.alert(success);
+			await load(false);
 		} catch (cause) {
 			reportError(cause);
 		} finally {
 			setBusy(null);
 		}
 	};
+	const toggleServer = (detail: McpServerDetail): void => {
+		if (
+			detail.status === "enabled" &&
+			!window.confirm(`停用后，${detail.boundAgents.length} 个 Agent Revision 将无法使用此 MCP，确定继续吗？`)
+		)
+			return;
+		void act(`toggle-${detail.id}`, () => api.setEnabled(detail.id, detail.status !== "enabled"));
+	};
 	const create = async () => {
 		if (!name.trim() || !endpoint.trim()) return;
-		await act(
-			"create",
-			async () => {
-				const detail = await api.create(name, { transport: "streamable_http", endpoint, authentication });
-				if (authentication === "bearer" && bearerToken) await api.replaceSecret(detail.id, bearerToken);
-				setSelectedId(detail.id);
-				setShowCreate(false);
-				setName("");
-				setEndpoint("");
-				setAuthentication("none");
-				setBearerToken("");
-			},
-			"MCP Server 已创建",
-		);
+		await act("create", async () => {
+			const detail = await api.create(name, { transport: "streamable_http", endpoint, authentication });
+			if (authentication === "bearer" && bearerToken) await api.replaceSecret(detail.id, bearerToken);
+			setSelectedId(detail.id);
+			setShowCreate(false);
+			setName("");
+			setEndpoint("");
+			setAuthentication("none");
+			setBearerToken("");
+		});
 	};
 	const editConfig = async () => {
 		if (!selected) return;
 		const config = currentConfig(selected);
 		const nextEndpoint = window.prompt("请输入新的 Streamable HTTP 地址", config?.endpoint ?? "");
 		if (!nextEndpoint) return;
-		await act(
-			"edit",
-			() =>
-				api.createRevision(selected.id, {
-					transport: "streamable_http",
-					endpoint: nextEndpoint,
-					authentication: config?.authentication ?? "none",
-				}),
-			"已创建新的 MCP Revision",
+		await act("edit", () =>
+			api.createRevision(selected.id, {
+				transport: "streamable_http",
+				endpoint: nextEndpoint,
+				authentication: config?.authentication ?? "none",
+			}),
 		);
 	};
 	const replaceSecret = async () => {
 		if (!selected) return;
 		const token = window.prompt("请输入新的 Bearer Token（保存后不会回显）");
 		if (!token) return;
-		await act("secret", () => api.replaceSecret(selected.id, token), "认证凭据已更新");
+		await act("secret", () => api.replaceSecret(selected.id, token));
 	};
 
 	return (
@@ -235,7 +240,18 @@ export function AdminMcpPage(): React.ReactElement {
 										</td>
 										<td title={config?.endpoint}>{config?.endpoint ?? "—"}</td>
 										<td>
-											<span className={item.status === "enabled" ? styles.switchOn : styles.switchOff} />
+											<button
+												type="button"
+												className={item.status === "enabled" ? styles.switchOn : styles.switchOff}
+												aria-label={`${item.status === "enabled" ? "停用" : "启用"} ${item.name}`}
+												aria-pressed={item.status === "enabled"}
+												disabled={detail === undefined || busy !== null}
+												style={{ padding: 0, border: 0, cursor: busy === null ? "pointer" : "wait" }}
+												onClick={(event) => {
+													event.stopPropagation();
+													if (detail !== undefined) toggleServer(detail);
+												}}
+											/>
 											{item.status === "enabled" ? "已启用" : "已停用"}
 										</td>
 										<td>{detail ? <Connection detail={detail} /> : "—"}</td>
@@ -282,22 +298,15 @@ export function AdminMcpPage(): React.ReactElement {
 							<Overview
 								detail={selected}
 								busy={busy}
-								onTest={() => void act("test", () => api.test(selected.id), "连接测试成功")}
-								onSync={() =>
-									void act("sync", () => api.syncTools(selected.id), "Tools 同步完成，已创建新 Revision")
+								onTest={() =>
+									void act("test", async () => {
+										await api.test(selected.id);
+										await api.syncTools(selected.id);
+									})
 								}
 								onEdit={() => void editConfig()}
 								onSecret={() => void replaceSecret()}
-								onToggle={() => {
-									if (
-										selected.status === "enabled" &&
-										!window.confirm(
-											`停用后，${selected.boundAgents.length} 个 Agent Revision 将无法使用此 MCP，确定继续吗？`,
-										)
-									)
-										return;
-									void act("toggle", () => api.setEnabled(selected.id, selected.status !== "enabled"));
-								}}
+								onToggle={() => toggleServer(selected)}
 								onDelete={() => {
 									if (!window.confirm(`确定删除 MCP Server“${selected.name}”吗？`)) return;
 									void act("delete", () => api.delete(selected.id));
@@ -395,7 +404,6 @@ function Overview({
 	detail,
 	busy,
 	onTest,
-	onSync,
 	onEdit,
 	onSecret,
 	onToggle,
@@ -404,7 +412,6 @@ function Overview({
 	readonly detail: McpServerDetail;
 	readonly busy: string | null;
 	readonly onTest: () => void;
-	readonly onSync: () => void;
 	readonly onEdit: () => void;
 	readonly onSecret: () => void;
 	readonly onToggle: () => void;
@@ -454,25 +461,26 @@ function Overview({
 			</div>
 			<h3 className={styles.quickTitle}>快捷操作</h3>
 			<div className={styles.quickActions}>
-				<button type="button" disabled={busy !== null} onClick={onSync}>
-					同步 Tools
-				</button>
 				<button type="button" disabled={busy !== null} onClick={onTest}>
-					测试连接
+					{busy === "test" ? "测试并同步中…" : "测试连接"}
 				</button>
 				<button type="button" disabled={busy !== null} onClick={onEdit}>
-					编辑配置
+					{busy === "edit" ? "保存中…" : "编辑配置"}
 				</button>
 				{config?.authentication === "bearer" ? (
 					<button type="button" disabled={busy !== null} onClick={onSecret}>
-						替换 Token
+						{busy === "secret" ? "保存中…" : "替换 Token"}
 					</button>
 				) : null}
 				<button type="button" disabled={busy !== null} onClick={onToggle}>
-					{detail.status === "enabled" ? "停用 MCP" : "启用 MCP"}
+					{busy?.startsWith("toggle-") === true
+						? "更新中…"
+						: detail.status === "enabled"
+							? "停用 MCP"
+							: "启用 MCP"}
 				</button>
 				<button type="button" className={styles.deleteButton} disabled={busy !== null} onClick={onDelete}>
-					删除 MCP
+					{busy === "delete" ? "删除中…" : "删除 MCP"}
 				</button>
 			</div>
 		</>

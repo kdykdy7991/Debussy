@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { cx } from "../../lib/utils";
 
 export type AgentTraceEventStatus = "pending" | "running" | "completed" | "failed";
@@ -14,8 +13,6 @@ export type AgentTraceEventProps = {
 	title: string;
 	/** 至多 1 行技术信息：`技术名 · 指标 · 耗时`。 */
 	detail?: string;
-	/** 原始 protocol payload（progressive disclosure，mono 块）。 */
-	payload?: string;
 };
 
 /**
@@ -24,27 +21,12 @@ export type AgentTraceEventProps = {
  * reveal 用 motion-enter-soft（X 轴），running 用 motion-status-running，
  * 均由 motion.css 决定，本组件不暴露任何视觉属性。
  */
-export function AgentTraceEvent({ status, title, detail, payload }: AgentTraceEventProps) {
-	const [showPayload, setShowPayload] = useState(false);
-
+export function AgentTraceEvent({ status, title, detail }: AgentTraceEventProps) {
 	return (
 		<div className={cx("ai-trace-evt", `is-${status}`)} data-status={status}>
 			<span className="node" aria-hidden />
 			<span className="ai-trace-t">{title}</span>
 			{detail ? <span className="ai-trace-d">{detail}</span> : null}
-			{payload ? (
-				<span>
-					<button
-						type="button"
-						className="ai-trace-payload-toggle"
-						aria-expanded={showPayload}
-						onClick={() => setShowPayload((v) => !v)}
-					>
-						{showPayload ? "收起原始事件" : "查看原始事件"}
-					</button>
-					{showPayload ? <pre className="ai-trace-payload">{payload}</pre> : null}
-				</span>
-			) : null}
 		</div>
 	);
 }

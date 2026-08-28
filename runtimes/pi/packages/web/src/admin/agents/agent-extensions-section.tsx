@@ -37,7 +37,7 @@ export function AgentExtensionsSection({
 			<div className={styles.heading}>
 				<div>
 					<h2>扩展能力</h2>
-					<p>绑定固定版本；MCP 仅开放勾选的 Tools。</p>
+					<p>选择 Agent 需要接入的 Skill 和 MCP Server。</p>
 				</div>
 				<span>
 					{skills.length} Skills · {mcpServers.length} MCP
@@ -98,94 +98,33 @@ export function AgentExtensionsSection({
 					<h3>MCP Servers</h3>
 					{catalog.mcpServers.map((server) => {
 						const binding = mcpServers.find((value) => value.mcpServerId === server.id);
-						const revision =
-							server.revisions.find((value) => value.revision === binding?.revision) ??
-							server.revisions.find((value) => value.revision === server.currentRevision);
+						const currentRevision = server.revisions.find((value) => value.revision === server.currentRevision);
 						return (
-							<div className={styles.mcpCard} key={server.id}>
-								<label className={styles.card}>
-									<input
-										type="checkbox"
-										checked={binding !== undefined}
-										disabled={server.status !== "enabled" && binding === undefined}
-										onChange={(event) =>
-											onMcpServersChange(
-												event.currentTarget.checked
-													? [
-															...mcpServers,
-															{
-																mcpServerId: server.id,
-																revision: server.currentRevision,
-																toolNames: [],
-															},
-														]
-													: mcpServers.filter((value) => value.mcpServerId !== server.id),
-											)
-										}
-									/>
-									<span>
-										<b>{server.name}</b>
-										<small>{server.status === "enabled" ? "全局可用" : "全局停用"}</small>
-									</span>
-								</label>
-								{binding ? (
-									<div className={styles.mcpOptions}>
-										<label>
-											固定 Revision{" "}
-											<select
-												value={binding.revision}
-												onChange={(event) =>
-													onMcpServersChange(
-														mcpServers.map((value) =>
-															value.mcpServerId === server.id
-																? {
-																		...value,
-																		revision: Number(event.currentTarget.value),
-																		toolNames: [],
-																	}
-																: value,
-														),
-													)
-												}
-											>
-												{server.revisions.map((item) => (
-													<option value={item.revision} key={item.revision}>
-														Revision {item.revision}
-														{item.revision === server.currentRevision ? "（当前）" : ""}
-													</option>
-												))}
-											</select>
-										</label>
-										<div className={styles.tools}>
-											<strong>Tool allowlist</strong>
-											{revision?.tools.map((tool) => (
-												<label key={tool.name}>
-													<input
-														type="checkbox"
-														checked={binding.toolNames.includes(tool.name)}
-														onChange={(event) =>
-															onMcpServersChange(
-																mcpServers.map((value) =>
-																	value.mcpServerId === server.id
-																		? {
-																				...value,
-																				toolNames: event.currentTarget.checked
-																					? [...value.toolNames, tool.name]
-																					: value.toolNames.filter((name) => name !== tool.name),
-																			}
-																		: value,
-																),
-															)
-														}
-													/>
-													{tool.name}
-												</label>
-											))}
-											{revision?.tools.length === 0 ? <small>该 Revision 暂无 Tools</small> : null}
-										</div>
-									</div>
-								) : null}
-							</div>
+							<label className={styles.card} key={server.id}>
+								<input
+									type="checkbox"
+									checked={binding !== undefined}
+									disabled={server.status !== "enabled" && binding === undefined}
+									onChange={(event) =>
+										onMcpServersChange(
+											event.currentTarget.checked
+												? [
+														...mcpServers,
+														{
+															mcpServerId: server.id,
+															revision: server.currentRevision,
+															toolNames: currentRevision?.tools.map((tool) => tool.name) ?? [],
+														},
+													]
+												: mcpServers.filter((value) => value.mcpServerId !== server.id),
+										)
+									}
+								/>
+								<span>
+									<b>{server.name}</b>
+									<small>{server.status === "enabled" ? "可接入" : "已停用"}</small>
+								</span>
+							</label>
 						);
 					})}
 					{missingMcp.map((binding) => (
@@ -199,9 +138,7 @@ export function AgentExtensionsSection({
 							/>
 							<span>
 								<b>{binding.mcpServerId}</b>
-								<small>
-									目录中不可用 · Revision {binding.revision} · {binding.toolNames.length} Tools
-								</small>
+								<small>目录中不可用</small>
 							</span>
 						</label>
 					))}

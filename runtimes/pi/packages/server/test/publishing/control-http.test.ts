@@ -273,18 +273,17 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 
 	test("MCP HTTP routes create, list, revise, disable, and soft-delete without exposing a Secret", async () => {
 		const auth = { authorization: `Bearer ${ADMIN_TOKEN}` };
-		const unsafe = await httpCall({
+		const local = await httpCall({
 			method: "POST",
 			path: "/api/control/v1/mcp-servers",
 			base: httpBase,
 			headers: auth,
 			body: {
-				name: "unsafe-mcp",
+				name: "local-mcp",
 				config: { transport: "streamable_http", endpoint: "http://127.0.0.1/mcp", authentication: "none" },
 			},
 		});
-		expect(unsafe.status).toBe(422);
-		expect(unsafe.body.error.code).toBe("MCP_CONFIG_NOT_APPROVED");
+		expect(local.status).toBe(201);
 
 		const created = await httpCall({
 			method: "POST",

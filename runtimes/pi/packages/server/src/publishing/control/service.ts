@@ -335,6 +335,16 @@ function fail<T>(code: ControlErrorCode, httpStatus: number, message: string): C
 	return { ok: false, error: { code, httpStatus, message } };
 }
 
+function mcpFailureDetail(error: unknown, secrets: readonly string[] = []): string {
+	if (!(error instanceof Error) || error.message.trim() === "") return "unknown error";
+	let detail = error.message.replace(/\s+/g, " ").trim();
+	for (const secret of secrets) {
+		if (secret !== "") detail = detail.replaceAll(secret, "[redacted]");
+	}
+	detail = detail.replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, "$1[redacted]");
+	return detail.slice(0, 500);
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -1717,13 +1727,13 @@ export class ControlService {
 				metadata: { ok: true, latencyMs, toolCount: toolViews.length },
 			});
 			return { ok: true, data: { ok: true, latencyMs, tools: toolViews } };
-		} catch {
+		} catch (error) {
 			const latencyMs = Date.now() - startedAt;
 			await this.repos.mcpServers.setLastTest({ tenantId: input.tenantId }, input.mcpServerId, {
 				ok: false,
 				latencyMs,
 			});
-			return fail("MCP_TEST_FAILED", 422, "MCP connection or Tool discovery failed");
+			return fail("MCP_TEST_FAILED", 422, `MCP Tool discovery failed: ${mcpFailureDetail(error)}`);
 		} finally {
 			await connected.data.session.close();
 		}
@@ -1766,6 +1776,12 @@ export class ControlService {
 				})
 				.map(([name]) => name)
 				.sort();
+			if (added.length === 0 && removed.length === 0 && changed.length === 0) {
+				return {
+					ok: true,
+					data: { ok: true, revision: connected.data.revision.revision, added, removed, changed },
+				};
+			}
 			const created = await this.repos.mcpServers.addRevision({
 				scope: { tenantId: input.tenantId },
 				mcpServerId: input.mcpServerId,
@@ -1887,8 +1903,12 @@ export class ControlService {
 				signal: input.signal,
 			});
 			return { ok: true, data: { session, revision } };
-		} catch {
-			return fail("MCP_TEST_FAILED", 422, "MCP connection failed");
+		} catch (error) {
+			return fail(
+				"MCP_TEST_FAILED",
+				422,
+				`MCP connection failed: ${mcpFailureDetail(error, bearerToken === undefined ? [] : [bearerToken])}`,
+			);
 		}
 	}
 
