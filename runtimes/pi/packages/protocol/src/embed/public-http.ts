@@ -62,8 +62,22 @@ export interface BootstrapResponse {
 		readonly speech: boolean;
 		readonly avatar: boolean;
 		readonly newConversations?: boolean;
+		/** Bound Skill capabilities of the pinned version (drive `/skill:` completion + UI). */
+		readonly skills?: readonly BoundSkillSummary[];
 	};
 	readonly theme: { readonly primaryColor?: string; readonly welcomeMessage?: string };
+}
+
+/**
+ * Public summary of one bound Skill in a published app version. Names are
+ * already validated to be URL/path-safe by the import pipeline; clients use
+ * this to power `/skill:<name>` completion and show the app's skills.
+ */
+export interface BoundSkillSummary {
+	readonly name: string;
+	readonly description: string;
+	/** Whether the skill may also be auto-invoked by the model (`disable-model-invocation` = false). */
+	readonly automationAvailable: boolean;
 }
 
 /** Conversation 摘要（spec 27.5 响应形状）。 */

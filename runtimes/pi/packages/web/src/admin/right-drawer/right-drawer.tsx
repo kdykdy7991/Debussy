@@ -37,6 +37,9 @@ export function AdminRightDrawer({ route, hasContext = false }: RightDrawerProps
 				return `${ADMIN_WORKBENCH_TERMS.userConversations} · 详情`;
 			case "settings":
 				return "系统设置";
+			default:
+				// Technical drawer heading for routes without a dedicated label.
+				return "上下文";
 		}
 	})();
 	return (

@@ -3000,9 +3000,7 @@ export class ControlService {
 	 * create path (spec 27.4). The `name` length range matches the SQL
 	 * CHECK constraint (1-200 chars after trimming).
 	 */
-	async updatePublishedApp(
-		input: UpdatePublishedAppInput,
-	): Promise<ControlResult<UpdatePublishedAppResult>> {
+	async updatePublishedApp(input: UpdatePublishedAppInput): Promise<ControlResult<UpdatePublishedAppResult>> {
 		const appScope = { tenantId: input.tenantId, publishedAppId: input.publishedAppId };
 		const app = await this.repos.publishedApps.get(appScope, input.publishedAppId);
 		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");

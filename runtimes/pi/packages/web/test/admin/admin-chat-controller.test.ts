@@ -3,11 +3,8 @@
  *
  * Covers the contract the chat UI relies on:
  *
- *  - Selecting an agent creates an isolated controller; switching to a
- *    different agent and back returns the SAME controller (or a fresh one
- *    with the previously persisted debug session id).
- *  - The DebugSession store is shared: an id set on agent A is visible
- *    after switching to agent A again.
+ *  - Selecting an agent creates an isolated controller; switching agents
+ *    clears the previous temporary debug-session handle.
  *  - Connection state transitions are observable to subscribers.
  *  - Sending a message marks the controller as sending, then clears it.
  *  - `eventToTranscriptEntry` and `eventsToTranscript` never throw on
@@ -38,22 +35,21 @@ describe("AdminChatController (MVP-04)", () => {
 		expect(ctrl.current).toBe(b);
 	});
 
-	it("remembers DebugSession ids across agent switches", () => {
+	it("clears the temporary DebugSession id when switching agents", () => {
 		const ctrl = new AdminChatController();
 		const a = ctrl.selectAgent(agentA);
 		a.rememberSession("session_a_1");
 		ctrl.selectAgent(agentB);
 		const aAgain = ctrl.selectAgent(agentA);
-		expect(aAgain.getSnapshot().debugSessionId).toBe("session_a_1");
+		expect(aAgain.getSnapshot().debugSessionId).toBeNull();
 	});
 
-	it("clearSession wipes the store entry and the snapshot", () => {
+	it("clearSession wipes the snapshot", () => {
 		const ctrl = new AdminChatController();
 		const a = ctrl.selectAgent(agentA);
 		a.rememberSession("session_a_1");
 		a.clearSession();
 		expect(a.getSnapshot().debugSessionId).toBeNull();
-		expect(ctrl.debugStore.get(agentA)).toBeNull();
 	});
 
 	it("notifies subscribers on connection state changes", () => {

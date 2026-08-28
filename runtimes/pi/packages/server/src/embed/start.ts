@@ -26,6 +26,7 @@ import type { PublishingConfig } from "../publishing/config.ts";
 import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import type { PreviewTicketService } from "../publishing/preview-ticket.ts";
 import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/repositories.ts";
+import type { SkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import { parseRuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import { createConversationRuntimeManager } from "../runtime/conversation-runtime-manager.ts";
 import { createPiRuntimeAdapter, type RuntimeSessionFactory } from "../runtime/pi-runtime-adapter.ts";
@@ -78,6 +79,8 @@ export interface EmbedPlaneOptions {
 	readonly ttsProvider?: TtsProvider;
 	/** Preview ticket service (WB-005). */
 	readonly previewTickets?: PreviewTicketService;
+	/** Materialises frozen Skill revisions so published sessions inject them. */
+	readonly skillMaterializer?: SkillMaterializer;
 	readonly log?: (message: string) => void;
 }
 
@@ -178,6 +181,8 @@ export interface EmbedServicesOptions {
 	readonly tts?: { readonly maxPending?: number; readonly timeoutMs?: number };
 	/** Preview ticket service (WB-005). 未提供 = preview exchange 显式 403。 */
 	readonly previewTickets?: PreviewTicketService;
+	/** Materialises frozen Skills so published sessions inject them (skillsOverride). */
+	readonly skillMaterializer?: SkillMaterializer;
 }
 
 export interface EmbedServicesHandle {
@@ -201,6 +206,7 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 	const adapter = createPiRuntimeAdapter({
 		createSession: options.createSession,
 		...(options.mcpTools !== undefined ? { createMcpTools: options.mcpTools } : {}),
+		...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
 	});
 	// TASK-034：分层限流 + 并发槽（缺省内存实现 + spec 默认规则；生产可从
 	// compose 注入 Redis store）。暴露在 handle 上供 realtime upgrade 复用。
@@ -383,6 +389,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		uploadQuota: options.publishing.uploadQuota,
 		...(options.citations !== undefined ? { citations: options.citations } : {}),
 		...(options.previewTickets !== undefined ? { previewTickets: options.previewTickets } : {}),
+		...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
 	});
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。

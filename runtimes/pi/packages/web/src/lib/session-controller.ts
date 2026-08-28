@@ -63,6 +63,10 @@ export interface SessionBrowserStore {
 	getSnapshot(): SessionBrowserSnapshot;
 	subscribe(listener: () => void): () => void;
 	createSession(model?: ModelRef): Promise<void>;
+	/** Creates a memory-only session for admin debugging. */
+	createDebugSession(model?: ModelRef): Promise<void>;
+	/** Attaches a server-prepared, revision-bound admin debug session. */
+	openDebugSession(sessionId: string): Promise<void>;
 	openDefaultSession(): Promise<void>;
 	selectSession(sessionId: string): Promise<void>;
 	send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult>;
@@ -127,6 +131,19 @@ export class SessionController implements SessionBrowserStore {
 		await this.#activate(() => this.#client.createSession(model === undefined ? undefined : { model }));
 	}
 
+	async createDebugSession(model?: ModelRef): Promise<void> {
+		await this.#activate(() =>
+			this.#client.createSession({
+				ephemeral: true,
+				...(model === undefined ? {} : { model }),
+			}),
+		);
+	}
+
+	async openDebugSession(sessionId: string): Promise<void> {
+		await this.#activate(() => this.#client.attachSession(sessionId));
+	}
+
 	async selectSession(sessionId: string): Promise<void> {
 		if (this.#activeHandle?.id === sessionId && this.#activeHandle.active) return;
 		await this.#activate(() => this.#client.attachSession(sessionId));
@@ -147,6 +164,7 @@ export class SessionController implements SessionBrowserStore {
 		const shouldPrompt = this.#snapshot.activeSession?.phase === "idle";
 		const optimisticId = `local-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 		const activeSession = this.#snapshot.activeSession;
+		const priorPhase = activeSession?.phase ?? "idle";
 		if (activeSession) {
 			const optimisticMessage: UserTranscriptItem = {
 				id: optimisticId,
@@ -182,6 +200,10 @@ export class SessionController implements SessionBrowserStore {
 						...this.#snapshot,
 						activeSession: {
 							...current,
+							// On failure, revert the optimistic phase so the
+							// composer does not stay locked in "turn" (red Stop,
+							// disabled input) after a failed prompt.
+							phase: priorPhase,
 							transcript: current.transcript.filter((item) => item.id !== optimisticId),
 						},
 					});

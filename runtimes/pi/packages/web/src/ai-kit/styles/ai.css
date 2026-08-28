@@ -1270,6 +1270,54 @@
 		0 0 0 1px var(--ai-accent-soft);
 }
 
+/* `/skill:` 补全候选（发布版本已绑定 Skill 能力）。 */
+.ai-composer-skill-suggest {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ai-space-xs);
+	margin-top: var(--ai-space-sm);
+	padding: var(--ai-space-sm);
+	border: 1px solid var(--ai-border-soft);
+	border-radius: var(--ai-radius-md);
+	background: var(--ai-bg-surface);
+	max-height: 180px;
+	overflow-y: auto;
+}
+
+.ai-composer-skill-option {
+	display: flex;
+	align-items: baseline;
+	gap: var(--ai-space-sm);
+	text-align: left;
+	border: none;
+	background: none;
+	cursor: pointer;
+	font-family: var(--ai-font-sans);
+	padding: 6px 8px;
+	border-radius: var(--ai-radius-sm);
+}
+
+.ai-composer-skill-option:hover {
+	background: var(--ai-accent-soft);
+}
+
+.ai-composer-skill-name {
+	font-size: var(--ai-text-menu);
+	color: var(--ai-accent);
+	white-space: nowrap;
+	background: color-mix(in srgb, var(--ai-accent) 8%, transparent);
+	border-radius: var(--ai-radius-xs);
+	padding: 2px 6px;
+}
+
+.ai-composer-skill-desc {
+	font-size: var(--ai-text-small);
+	color: var(--ai-text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .ai-composer-box textarea {
 	display: block;
 	width: 100%;

@@ -29,6 +29,8 @@ export type ComposerProps = {
 	onModeToggle?: (id: string) => void;
 	/** 附件/工具菜单项（[+] 展开）。 */
 	menuItems?: readonly ComposerMenuItem[];
+	/** 已绑定 Skill（发布版本能力，review doc §4.5/§4.6）：支持 `/skill:` 补全。 */
+	skills?: readonly { name: string; description?: string }[];
 	/** 模型选择器槽位（业务层注入；此处不实现下拉）。 */
 	model?: ReactNode;
 	/** 键盘提示行。 */
@@ -38,6 +40,22 @@ export type ComposerProps = {
 };
 
 const MAX_HEIGHT = 150;
+
+/**
+ * Derive `/skill:name` completion candidates from the current text. Returns an
+ * empty array unless the text is actively typing `/skill:<prefix>` and at least
+ * one bound Skill name matches. Read-only hint, not a data-fetching hook.
+ */
+function useSkillSuggestions(
+	text: string,
+	skills: readonly { name: string; description?: string }[],
+): readonly { name: string; description?: string }[] {
+	if (skills.length === 0) return [];
+	const match = /^\/skill:(\S*)$/.exec(text.trim());
+	if (match === null) return [];
+	const prefix = match[1]!.toLowerCase();
+	return prefix === "" ? skills : skills.filter((skill) => skill.name.toLowerCase().startsWith(prefix));
+}
 
 /**
  * Composer（fixed dock，820px 居中）。
@@ -55,6 +73,7 @@ export function Composer({
 	modes = [],
 	onModeToggle,
 	menuItems = [],
+	skills = [],
 	model,
 	hint = (
 		<>
@@ -71,7 +90,11 @@ export function Composer({
 	const setText = (next: string) => {
 		if (value === undefined) setInternal(next);
 		onChange?.(next);
+		setMenuOpen(false);
 	};
+
+	// `/skill:` 补全：仅当文本以 `/skill:` 开头且绑定过 Skill 时输出候选。
+	const skillSuggestions = useSkillSuggestions(text, skills);
 
 	// textarea auto resize：1 行起步，至多 150px 后滚动
 	useEffect(() => {
@@ -93,6 +116,11 @@ export function Composer({
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			submit();
+			return;
+		}
+		if (e.key === "Escape" && skillSuggestions.length > 0) {
+			e.preventDefault();
+			setInternal(text.replace(/\/skill:[^\s]*$/, "/skill:"));
 			return;
 		}
 		if (e.key === "/" && text === "") {
@@ -137,6 +165,28 @@ export function Composer({
 						onChange={(e) => setText(e.target.value)}
 						onKeyDown={handleKeyDown}
 					/>
+
+					{skillSuggestions.length > 0 ? (
+						<div className="ai-composer-skill-suggest" role="listbox" aria-label="Skill 补全">
+							{skillSuggestions.map((skill) => (
+								<button
+									type="button"
+									key={skill.name}
+									role="option"
+									className="ai-composer-skill-option ai-hoverable"
+									onClick={() => {
+										setText(`/skill:${skill.name} `);
+										taRef.current?.focus();
+									}}
+								>
+									<span className="ai-composer-skill-name">/skill:{skill.name}</span>
+									{skill.description ? (
+										<span className="ai-composer-skill-desc">{skill.description}</span>
+									) : null}
+								</button>
+							))}
+						</div>
+					) : null}
 					<div className="ai-composer-row">
 						<button
 							type="button"

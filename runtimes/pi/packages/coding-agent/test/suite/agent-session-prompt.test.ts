@@ -441,4 +441,37 @@ describe("AgentSession prompt characterization", () => {
 			`No API key found for ${harness.getModel().provider}.`,
 		);
 	});
+
+	it("honors a per-turn systemPrompt override and resets on later turns", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		const seenSystemPrompts: Array<string | undefined> = [];
+		harness.setResponses([
+			(context) => {
+				seenSystemPrompts.push(context.systemPrompt);
+				return fauxAssistantMessage("frozen");
+			},
+			(context) => {
+				seenSystemPrompts.push(context.systemPrompt);
+				return fauxAssistantMessage("base-one");
+			},
+			(context) => {
+				seenSystemPrompts.push(context.systemPrompt);
+				return fauxAssistantMessage("base-two");
+			},
+		]);
+
+		await harness.session.prompt("first", { systemPrompt: "FROZEN published snapshot prompt" });
+		await harness.session.prompt("second");
+		await harness.session.prompt("third");
+
+		expect(seenSystemPrompts[0]).toContain("FROZEN published snapshot prompt");
+		// The override is cleared after the turn: later prompts fall back to the
+		// session base prompt and never leak the frozen text.
+		expect(seenSystemPrompts[1]).not.toContain("FROZEN published snapshot prompt");
+		expect(seenSystemPrompts[2]).not.toContain("FROZEN published snapshot prompt");
+		expect(seenSystemPrompts[1]).toBe(seenSystemPrompts[2]);
+		expect(harness.session.systemPrompt).not.toContain("FROZEN published snapshot prompt");
+	});
 });

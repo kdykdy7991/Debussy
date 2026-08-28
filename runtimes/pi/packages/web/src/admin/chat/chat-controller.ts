@@ -4,8 +4,8 @@
  * Owns the per-agent debug-chat state for the administrator workbench:
  *
  *  - The selected Agent (from `AgentPublicId`).
- *  - A per-agent DebugSession mapping backed by `debug-session-store` (the
- *    Web side does not own real session history; that lives on the server).
+ *  - A transient debug-session handle. The browser never persists it; the
+ *    server owns the short-lived runtime and destroys it on release.
  *  - A small transcript projection (user / assistant / system placeholders)
  *    built from the {@link SessionController} snapshot when available.
  *
@@ -19,7 +19,6 @@
  */
 
 import type { AgentPublicId, AgentRevisionSummary } from "@earendil-works/pi-protocol";
-import { createDebugSessionStore, type DebugSessionStore } from "../conversation/debug-session-store.ts";
 import type { ChatTranscriptEntry } from "./safe-render-event.ts";
 
 export type ChatConnectionState =
@@ -57,20 +56,17 @@ export interface AgentChatObserver {
  */
 export class AgentChatController implements AgentChatObserver {
 	readonly #agentId: AgentPublicId;
-	readonly #debugStore: DebugSessionStore;
 	readonly #listeners = new Set<() => void>();
 	#state: AgentDebugState;
 
 	constructor(input: {
 		readonly agentId: AgentPublicId;
-		readonly debugStore?: DebugSessionStore;
 		readonly pinnedRevision?: number | "draft";
 	}) {
 		this.#agentId = input.agentId;
-		this.#debugStore = input.debugStore ?? createDebugSessionStore();
 		this.#state = {
 			agentId: input.agentId,
-			debugSessionId: this.#debugStore.get(input.agentId),
+			debugSessionId: null,
 			connection: { kind: "idle" },
 			transcript: [],
 			sending: false,
@@ -81,10 +77,6 @@ export class AgentChatController implements AgentChatObserver {
 
 	get agentId(): AgentPublicId {
 		return this.#agentId;
-	}
-
-	get debugStore(): DebugSessionStore {
-		return this.#debugStore;
 	}
 
 	getSnapshot = (): AgentDebugState => this.#state;
@@ -121,12 +113,10 @@ export class AgentChatController implements AgentChatObserver {
 	}
 
 	rememberSession(sessionId: string): void {
-		this.#debugStore.set(this.#agentId, sessionId);
 		this.#update({ debugSessionId: sessionId });
 	}
 
 	clearSession(): void {
-		this.#debugStore.clear(this.#agentId);
 		this.#update({ debugSessionId: null, transcript: [] });
 	}
 
@@ -137,21 +127,16 @@ export class AgentChatController implements AgentChatObserver {
 }
 
 /**
- * Top-level admin debug chat controller. Keeps one `AgentChatController`
- * per agent id so switching agents is O(1) and the previous handle keeps
- * its session id in storage.
+ * Top-level admin debug chat controller. Switching agents clears the previous
+ * transient handle instead of retaining a resumable debug conversation.
  */
 export class AdminChatController {
 	readonly #cache = new Map<AgentPublicId, AgentChatController>();
-	readonly #globalStore: DebugSessionStore;
 	#current: AgentChatController | null = null;
-
-	constructor(debugStore?: DebugSessionStore) {
-		this.#globalStore = debugStore ?? createDebugSessionStore();
-	}
 
 	/** Switch to (or initialise) the controller for an agent. */
 	selectAgent(agentId: AgentPublicId, initialRevision?: AgentRevisionSummary | number | "draft"): AgentChatController {
+		if (this.#current !== null && this.#current.agentId !== agentId) this.#current.clearSession();
 		const existing = this.#cache.get(agentId);
 		if (existing !== undefined) {
 			this.#current = existing;
@@ -162,7 +147,6 @@ export class AdminChatController {
 		}
 		const controller = new AgentChatController({
 			agentId,
-			debugStore: this.#globalStore,
 			pinnedRevision: initialRevision === undefined ? "draft" : toPinned(initialRevision),
 		});
 		this.#cache.set(agentId, controller);
@@ -178,11 +162,8 @@ export class AdminChatController {
 		return [...this.#cache.values()];
 	}
 
-	get debugStore(): DebugSessionStore {
-		return this.#globalStore;
-	}
-
 	dispose(): void {
+		for (const controller of this.#cache.values()) controller.clearSession();
 		this.#cache.clear();
 		this.#current = null;
 	}

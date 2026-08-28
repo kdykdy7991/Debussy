@@ -16,6 +16,8 @@ export interface ConversationComposerProps {
 	readonly voiceEnabled: boolean;
 	readonly voiceAvailable: boolean;
 	readonly uploadsEnabled: boolean;
+	/** 已绑定 Skill（发布版本能力，review doc §4.6）：输入 `/skill:` 时补全。 */
+	readonly skills?: readonly { name: string; description?: string }[];
 	readonly onVoiceChange: (enabled: boolean) => void;
 	readonly onSubmit: FormEventHandler<HTMLFormElement>;
 	readonly onMessageChange: ChangeEventHandler<HTMLTextAreaElement>;
@@ -26,6 +28,8 @@ export interface ConversationComposerProps {
 	readonly onDismissUpload: (localId: string) => void;
 	readonly onRemoveAttachment: (attachmentId: string) => void;
 	readonly onAbort: () => void;
+	/** 选择 `/skill:` 补全候选时由宿主把 `skill:<name>` 追加到消息。 */
+	readonly onSkillPick: (name: string) => void;
 }
 
 function uploadErrorLabel(error: string | undefined): string {
@@ -33,8 +37,25 @@ function uploadErrorLabel(error: string | undefined): string {
 	return error ?? "上传失败";
 }
 
+/**
+ * Derive `/skill:name` candidates from the current message text. Empty array
+ * unless the user is actively typing `/skill:<prefix>` and a bound Skill
+ * matches. Pure helper (no hook) — driven by the controlled `message` prop.
+ */
+function skillSuggestions(
+	message: string,
+	skills: readonly { name: string; description?: string }[],
+): readonly { name: string; description?: string }[] {
+	if (skills.length === 0) return [];
+	const match = /^\/skill:(\S*)$/.exec(message.trim());
+	if (match === null) return [];
+	const prefix = match[1]!.toLowerCase();
+	return prefix === "" ? skills : skills.filter((skill) => skill.name.toLowerCase().startsWith(prefix));
+}
+
 export function ConversationComposer(props: ConversationComposerProps): React.ReactElement {
 	const active = props.active;
+	const suggestions = skillSuggestions(props.message, props.skills ?? []);
 	return (
 		<div className="composer-dock">
 			<form className={`editorial-composer ${props.running ? "running" : ""}`} onSubmit={props.onSubmit}>
@@ -99,6 +120,22 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 						onFocus={props.onMessageFocus}
 						onBlur={props.onMessageBlur}
 					/>
+					{suggestions.length > 0 ? (
+						<div className="composer-skill-suggest" role="listbox" aria-label="Skill 补全">
+							{suggestions.map((skill) => (
+								<button
+									type="button"
+									role="option"
+									key={skill.name}
+									className="composer-skill-option"
+									onClick={() => props.onSkillPick(skill.name)}
+								>
+									<span className="composer-skill-name">/skill:{skill.name}</span>
+									{skill.description ? <span className="composer-skill-desc">{skill.description}</span> : null}
+								</button>
+							))}
+						</div>
+					) : null}
 				</div>
 				<div className="composer-toolbar">
 					<div className="composer-tools">

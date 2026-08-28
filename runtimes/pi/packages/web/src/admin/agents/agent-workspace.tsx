@@ -53,7 +53,7 @@ const TAB_ITEMS: readonly AuroraPillTabItem<Tab>[] = [
 	{ value: "design", label: "设计" },
 	{ value: "revisions", label: "Revision" },
 	{ value: "apps", label: "发布应用" },
-	{ value: "debug", label: "最近调试" },
+	{ value: "debug", label: "调试" },
 ];
 
 export interface AgentWorkspaceProps {

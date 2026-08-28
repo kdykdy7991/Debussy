@@ -194,6 +194,39 @@ describe("runtime spec compiler", () => {
 		expect(result.canonicalJson).not.toContain("secret");
 	});
 
+	test("keeps bound Skill bodies out of the frozen system prompt", () => {
+		const result = compileRuntimeSpec({
+			agent: draft(),
+			publishedAppVersionId: "pav_x",
+			catalog,
+			skills: [
+				{
+					skillId: "skl_00000000-0000-7000-8000-000000000001",
+					revision: 1,
+					sourceHash: "a".repeat(64),
+					name: "analyze",
+					description: "Answer data questions.",
+					instructionText: "# Analyze\n\nFull confidential skill body.",
+					disableModelInvocation: false,
+				},
+			],
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		// The full SKILL.md body must not be spliced into the system prompt.
+		expect(result.spec.agent.systemPrompt).toBe("You are a helpful assistant.");
+		expect(result.spec.agent.systemPrompt).not.toContain("Full confidential skill body");
+		// Skill metadata stays in the frozen capability section so the runtime can
+		// materialize the revision and let Pi's native discovery drive the prompt.
+		expect(result.spec.capabilities.skills).toHaveLength(1);
+		expect(result.spec.capabilities.skills[0]).toMatchObject({
+			skillId: "skl_00000000-0000-7000-8000-000000000001",
+			revision: 1,
+			name: "analyze",
+			description: "Answer data questions.",
+		});
+	});
+
 	test("rejects duplicate MCP Tool names across Servers", () => {
 		const frozenTool = {
 			name: "search_docs",

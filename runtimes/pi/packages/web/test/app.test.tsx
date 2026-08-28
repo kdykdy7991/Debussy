@@ -30,6 +30,8 @@ function createSessions(snapshot: SessionBrowserSnapshot = EMPTY_SESSIONS): Sess
 		getSnapshot: () => snapshot,
 		subscribe: () => () => {},
 		createSession: async () => {},
+		createDebugSession: async () => {},
+		openDebugSession: async () => {},
 		openDefaultSession: async () => {},
 		selectSession: async () => {},
 		send: async () => ({ session: snapshot.activeSession ?? ({} as never) }),

@@ -33,6 +33,8 @@ export interface AppProps {
 	enableVoice?: boolean;
 	enableUploads?: boolean;
 	showSidebar?: boolean;
+	/** 已绑定 Skill（发布版本能力，review doc §4.6）：支持 `/skill:` 补全。 */
+	skills?: readonly { name: string; description?: string }[];
 }
 
 const EMPTY_PROMPTS = [
@@ -52,6 +54,7 @@ export function ConversationWorkspace({
 	enableVoice = true,
 	enableUploads = true,
 	showSidebar = true,
+	skills,
 }: AppProps) {
 	const connectionSnapshot = useSyncExternalStore(
 		connection.subscribe,
@@ -432,6 +435,8 @@ export function ConversationWorkspace({
 				voiceEnabled={live.enabled}
 				voiceAvailable={live.available}
 				uploadsEnabled={enableUploads}
+				skills={skills}
+				onSkillPick={(name) => setMessage(`/skill:${name} `)}
 				onVoiceChange={live.setEnabled}
 				onSubmit={submitMessage}
 				onMessageChange={handleMessageChange}

@@ -38,6 +38,19 @@ function revisionFromRow(row: Record<string, unknown>): SkillRevisionRecord {
 	};
 }
 
+function artifactFromRow(row: Record<string, unknown>): SkillArtifactRecord {
+	return {
+		artifactId: row.id as SkillArtifactId,
+		tenantId: row.tenant_id as TenantId,
+		filename: String(row.filename),
+		mediaType: String(row.media_type),
+		sourceHash: String(row.source_hash),
+		sizeBytes: Number(row.size_bytes),
+		content: row.content as Uint8Array,
+		createdAt: row.created_at as Date,
+	};
+}
+
 async function insertArtifact(tx: Parameters<typeof txRows>[0], artifact: SkillArtifactRecord): Promise<void> {
 	await txRows(
 		tx,
@@ -175,6 +188,14 @@ export function createSkillRepository(client: PostgresClient): SkillRepository {
 				revision,
 			);
 			return rows.length === 1 ? revisionFromRow(rows[0]) : undefined;
+		},
+		async getArtifact(scope, artifactId) {
+			const rows = await client.run(
+				"select * from skill_artifacts where id = $1 and tenant_id = $2",
+				artifactId,
+				scope.tenantId,
+			);
+			return rows.length === 1 ? artifactFromRow(rows[0]) : undefined;
 		},
 		async listRevisions(scope, skillId) {
 			const rows = await client.run(

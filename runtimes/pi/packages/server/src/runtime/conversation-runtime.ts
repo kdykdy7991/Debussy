@@ -84,7 +84,7 @@ export class ConversationRuntime {
 		const retrieval = options?.retrieval;
 		const hasHistory = history !== undefined && history.messages.length > 0;
 		if (!hasHistory && retrieval === undefined) {
-			await this.session.prompt({ text, systemPrompt: this.spec.agent.systemPrompt });
+			await this.session.prompt({ text });
 			return;
 		}
 		const contextParts: string[] = [];
@@ -99,7 +99,6 @@ export class ConversationRuntime {
 		}
 		await this.session.prompt({
 			text,
-			systemPrompt: this.spec.agent.systemPrompt,
 			retrieval: {
 				context: contextParts.join("\n\n"),
 				reference: referenceParts.join("\n"),

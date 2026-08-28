@@ -352,6 +352,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		if (skillPaths.length > 0) {
+			// Extension skill paths are folded back through
+			// updateSkillsFromPaths, so an authoritative skillsOverride (if set)
+			// runs after them and prevents re-injection into the effective set.
 			this.lastSkillPaths = this.mergePaths(
 				this.lastSkillPaths,
 				skillPaths.map((entry) => entry.path),
@@ -668,6 +671,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 	}
 
+	/**
+	 * Recompute the effective Skill collection from the resolved skill paths.
+	 *
+	 * This is the ONLY writer of `this.skills`/`this.skillDiagnostics`, and the
+	 * site where `skillsOverride` is the authoritative last word: when set, the
+	 * override REPLACES the candidate collection (it does not merge into it).
+	 * Extension skill paths reach this method through `extendResources`, so an
+	 * authoritative override always runs after them and can neither be bypassed
+	 * nor re-injected — the effective collection for a published session is
+	 * exactly its frozen snapshot, and for a main-chat session it is empty.
+	 */
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {

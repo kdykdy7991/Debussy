@@ -80,11 +80,24 @@ async function appSummary(
 	accessMode: "anonymous" | "signed_user" | "mixed";
 	allowedOrigins: readonly string[];
 	currentVersionId: string | null;
-	features: { uploads: boolean; speech: boolean; avatar: boolean; newConversations: boolean };
+	features: {
+		uploads: boolean;
+		speech: boolean;
+		avatar: boolean;
+		newConversations: boolean;
+		// Bound Skill capabilities of the pinned version; drives `/skill:` completion + UI.
+		skills: readonly { name: string; description: string; automationAvailable: boolean }[];
+	};
 	theme: { primaryColor?: string; welcomeMessage?: string };
 }> {
 	const scope = { tenantId: app.tenantId as TenantId, publishedAppId: app.publishedAppId as PublishedAppId };
-	let features = { uploads: false, speech: false, avatar: false, newConversations: true };
+	let features = {
+		uploads: false,
+		speech: false,
+		avatar: false,
+		newConversations: true,
+		skills: [] as readonly { name: string; description: string; automationAvailable: boolean }[],
+	};
 	if (app.currentVersionId !== null) {
 		const version = await options.repositories.publishedAppVersions.get(
 			scope,
@@ -98,6 +111,11 @@ async function appSummary(
 					speech: parsed.spec.capabilities.speech.enabled,
 					avatar: parsed.spec.capabilities.avatar.enabled,
 					newConversations: parsed.spec.capabilities.conversations.allowNew,
+					skills: parsed.spec.capabilities.skills.map((skill) => ({
+						name: skill.name,
+						description: skill.description,
+						automationAvailable: !skill.disableModelInvocation,
+					})),
 				};
 			}
 		}

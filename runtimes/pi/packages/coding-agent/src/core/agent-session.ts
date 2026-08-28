@@ -227,6 +227,13 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/**
+	 * Server-enforced read boundary for the built-in `read` tool (review doc
+	 * §4.5, preferred option 1). When set, `read` may only serve paths inside
+	 * these roots (e.g. the materialised skill package dirs). Enforced in the
+	 * tool, not by prompt.
+	 */
+	readAllowRoots?: string[];
 }
 
 export interface ExtensionBindings {
@@ -279,6 +286,14 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
+	/**
+	 * Per-turn system prompt override. When provided it replaces the base
+	 * system prompt for this prompt only (and takes precedence over any
+	 * system prompt an extension returns from `before_agent_start`). Cleared
+	 * after the turn completes. Used by runtime adapters (e.g. published-app
+	 * sessions) to freeze prompt/skill snapshots without mutating the session.
+	 */
+	systemPrompt?: string;
 }
 
 /** Result from cycleModel() */
@@ -389,6 +404,7 @@ export class AgentSession {
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
+	private _readAllowRoots?: string[];
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
@@ -425,6 +441,7 @@ export class AgentSession {
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
+		this._readAllowRoots = config.readAllowRoots;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
 		// Always subscribe to agent events for internal handling
@@ -1367,10 +1384,14 @@ export class AgentSession {
 					});
 				}
 			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt !== undefined) {
-				this._systemPromptOverride = result.systemPrompt;
-				this.agent.state.systemPrompt = result.systemPrompt;
+			// Apply per-turn (explicit) or extension-modified system prompt, or
+			// reset to the base prompt. An explicitly provided systemPrompt is
+			// authoritative: it overrides any extension-modified prompt so a
+			// frozen published snapshot can never drift on extension input.
+			const turnSystemPrompt = options?.systemPrompt ?? result?.systemPrompt;
+			if (turnSystemPrompt !== undefined) {
+				this._systemPromptOverride = turnSystemPrompt;
+				this.agent.state.systemPrompt = turnSystemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
 				this._systemPromptOverride = undefined;
@@ -2737,7 +2758,12 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: {
+						autoResizeImages,
+						...(this._readAllowRoots && this._readAllowRoots.length > 0
+							? { allowRoots: this._readAllowRoots }
+							: {}),
+					},
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
 				});
 

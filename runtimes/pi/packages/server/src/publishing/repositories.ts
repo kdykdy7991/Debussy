@@ -176,6 +176,7 @@ export interface SkillRepository {
 	list(scope: TenantScope, limit: number, cursor?: string): Promise<readonly SkillRecord[]>;
 	get(scope: TenantScope, skillId: SkillId): Promise<SkillRecord | undefined>;
 	getRevision(scope: TenantScope, skillId: SkillId, revision: number): Promise<SkillRevisionRecord | undefined>;
+	getArtifact(scope: TenantScope, artifactId: SkillArtifactId): Promise<SkillArtifactRecord | undefined>;
 	listRevisions(scope: TenantScope, skillId: SkillId): Promise<readonly SkillRevisionRecord[]>;
 	setStatus(scope: TenantScope, skillId: SkillId, status: "enabled" | "disabled"): Promise<boolean>;
 	softDelete(scope: TenantScope, skillId: SkillId): Promise<boolean>;

@@ -44,6 +44,7 @@ function normalizePhase(agentSession: AgentSession, activeOperation: boolean): S
  * the server through the `PiSessionRuntime` boundary.
  */
 export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
+	readonly ephemeral: boolean;
 	private readonly listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
 	private activeOperation = false;
 	private unsubscribeAgent: (() => void) | undefined;
@@ -52,9 +53,10 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	private readonly onDisposed: (() => void) | undefined;
 	private disposed = false;
 
-	constructor(agentSession: AgentSession, onDisposed?: () => void) {
+	constructor(agentSession: AgentSession, onDisposed?: () => void, ephemeral = false) {
 		this.agentSession = agentSession;
 		this.onDisposed = onDisposed;
+		this.ephemeral = ephemeral;
 		this.unsubscribeAgent = subscribeToAgentSession(agentSession, (progress) => {
 			this.emitProgress(progress);
 		});

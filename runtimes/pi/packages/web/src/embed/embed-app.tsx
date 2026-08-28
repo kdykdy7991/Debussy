@@ -230,7 +230,13 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const chatController = controllersRef.current?.chat;
 	if (chatController === undefined)
 		return <EmbedErrorState message="会话控制器未就绪" onRetry={() => window.location.reload()} />;
-	return <EmbedConversationWorkspace title={summary.name} controller={chatController} />;
+	return (
+		<EmbedConversationWorkspace
+			title={summary.name}
+			controller={chatController}
+			skills={summary.features.skills?.map((skill) => ({ name: skill.name, description: skill.description }))}
+		/>
+	);
 	/* Legacy EmbedShell fallback retained below temporarily for migration reference.
 	return (
 		<>

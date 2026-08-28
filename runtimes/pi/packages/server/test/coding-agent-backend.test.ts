@@ -7,6 +7,7 @@ import {
 	createExtensionRuntime,
 	ModelRuntime,
 	SettingsManager,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
 	CommandResult,
@@ -137,12 +138,161 @@ afterEach(async () => {
 // ============================================================================
 
 describe("CodingAgentPiSessionBackend", () => {
+	test("disableLocalSkills prevents main-chat discovery of machine Skills", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-b6-no-local-skills-"));
+		tempDirs.push(root);
+		const cwd = join(root, "project");
+		const agentDir = join(root, "agent");
+		const localSkillDir = join(agentDir, "skills", "host-only");
+		mkdirSync(cwd, { recursive: true });
+		mkdirSync(localSkillDir, { recursive: true });
+		writeFileSync(join(localSkillDir, "SKILL.md"), "---\nname: host-only\ndescription: Host only.\n---\n# Host");
+
+		const backend = await CodingAgentPiSessionBackend.create({
+			cwd,
+			agentDir,
+			sessionDir: join(root, "sessions"),
+			disableLocalSkills: true,
+		});
+
+		expect(backend.getServices().resourceLoader.getSkills().skills).toEqual([]);
+	});
+
 	test("listSessions empty, listModels has faux model", async () => {
 		const { backend } = await makeHarness();
 		expect(await backend.listSessions()).toEqual([]);
 		const models = await backend.listModels();
 		const fauxModels = models.filter((m) => m.provider === "faux");
 		expect(fauxModels.map((m) => m.id).sort()).toEqual(["faux-1", "faux-2"]);
+	});
+
+	test("ephemeral sessions are not written to the session index", async () => {
+		const { backend } = await makeHarness();
+		const runtime = await backend.createSession({
+			id: "debug-ephemeral",
+			model: { provider: "faux", id: "faux-1" },
+			ephemeral: true,
+		});
+
+		expect((await backend.listSessions()).map((session) => session.id)).not.toContain("debug-ephemeral");
+		await runtime.dispose();
+		await expect(backend.openSession("debug-ephemeral")).rejects.toThrow(/Unknown session/);
+	});
+
+	test("createSession with resourceOverrides builds an isolated per-session loader", async () => {
+		const { backend, root } = await makeHarness();
+		// A real host/user Skill must not leak into the published session.
+		const hostOnlyDir = join(root, "agent", "skills", "host-only");
+		mkdirSync(hostOnlyDir, { recursive: true });
+		writeFileSync(join(hostOnlyDir, "SKILL.md"), "---\nname: host-only\ndescription: Host only.\n---\n# Host only");
+		// A published version binds one available skill and one model-hidden skill.
+		const analyzeDir = join(root, "runtime-skills", "pav_x", "analyze");
+		const archiveDir = join(root, "runtime-skills", "pav_x", "archive");
+		mkdirSync(analyzeDir, { recursive: true });
+		mkdirSync(archiveDir, { recursive: true });
+		writeFileSync(join(analyzeDir, "SKILL.md"), "# Analyze\nUse this skill body.");
+		writeFileSync(join(archiveDir, "SKILL.md"), "# Archive\nExplicit only.");
+		const overrides = {
+			systemPrompt: "FROZEN published prompt for pav_x.",
+			skills: [
+				{
+					name: "analyze",
+					description: "Answer data questions.",
+					filePath: join(analyzeDir, "SKILL.md"),
+					baseDir: analyzeDir,
+					disableModelInvocation: false,
+				},
+				{
+					name: "archive",
+					description: "Explicit only.",
+					filePath: join(archiveDir, "SKILL.md"),
+					baseDir: archiveDir,
+					disableModelInvocation: true,
+				},
+			],
+		};
+
+		const runtime = await backend.createSession({
+			id: "published-sess",
+			model: { provider: "faux", id: "faux-1" },
+			resourceOverrides: overrides,
+		});
+
+		const session = (runtime as unknown as { session: unknown }).session as {
+			systemPrompt: string;
+			resourceLoader: { getSkills(): { skills: Array<{ name: string; disableModelInvocation: boolean }> } };
+		};
+		// The frozen prompt is what the session carries (via its per-session loader).
+		expect(session.systemPrompt).toContain("FROZEN published prompt for pav_x.");
+		// A bound Skill is disclosed to the model through the prompt's
+		// <available_skills> block (progressive disclosure). `archive` is
+		// model-hidden (disableModelInvocation), so only `analyze` is visible.
+		expect(session.systemPrompt).toContain("<available_skills>");
+		expect(session.systemPrompt).toContain("analyze");
+		const skills = session.resourceLoader.getSkills().skills;
+		// Only the published version's bound skills are visible — no host/project skills.
+		expect(skills.map((s) => s.name).sort()).toEqual(["analyze", "archive"]);
+		const analyze = skills.find((s) => s.name === "analyze")!;
+		expect(analyze.disableModelInvocation).toBe(false);
+		const archive = skills.find((s) => s.name === "archive")!;
+		expect(archive.disableModelInvocation).toBe(true);
+
+		// Published sessions preserve Pi's native read capability. Filesystem
+		// isolation is a future sandbox responsibility, not a tool allowlist.
+		const readTool = (session as unknown as { _toolRegistry: Map<string, unknown> })._toolRegistry.get("read") as {
+			execute(id: string, args: { path: string }): Promise<{ content: Array<{ type: "text"; text: string }> }>;
+		};
+		const allowed = await readTool.execute("read-ok", { path: join(analyzeDir, "SKILL.md") });
+		expect(allowed.content[0]?.text).toContain("Use this skill body.");
+		writeFileSync(join(root, "notes.txt"), "published session can read this.");
+		const regularRead = await readTool.execute("read-regular", { path: join(root, "notes.txt") });
+		expect(regularRead.content[0]?.text).toContain("published session can read this.");
+		await runtime.dispose();
+	});
+
+	test("published sessions keep Pi built-ins and MCP tools together", async () => {
+		const { backend, root } = await makeHarness();
+		const skillDir = join(root, "runtime-skills", "pav_x", "analyze");
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(join(skillDir, "SKILL.md"), "# Analyze\nUse this skill body.");
+		const mcpTool: ToolDefinition = {
+			name: "mcp_search",
+			label: "MCP Search",
+			description: "Search through MCP.",
+			parameters: { type: "object", properties: {} },
+			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: null }),
+		};
+
+		const runtime = await backend.createSession({
+			id: "published-mcp-sess",
+			model: { provider: "faux", id: "faux-1" },
+			customTools: [mcpTool],
+			resourceOverrides: {
+				systemPrompt: "FROZEN published prompt for pav_x.",
+				skills: [
+					{
+						name: "analyze",
+						description: "Answer data questions.",
+						filePath: join(skillDir, "SKILL.md"),
+						baseDir: skillDir,
+						disableModelInvocation: false,
+					},
+				],
+			},
+		});
+
+		const session = (
+			runtime as unknown as {
+				session: { systemPrompt: string; _toolRegistry: Map<string, unknown> };
+			}
+		).session;
+		expect(session.systemPrompt).toContain("<available_skills>");
+		expect(session.systemPrompt).toContain("<name>analyze</name>");
+		const tools = session._toolRegistry;
+		expect([...tools.keys()]).toEqual(
+			expect.arrayContaining(["read", "write", "edit", "bash", "grep", "find", "ls", "mcp_search"]),
+		);
+		await runtime.dispose();
 	});
 
 	test("listSessions returns one row when legacy files reuse the same assigned id", async () => {
@@ -387,6 +537,26 @@ describe("coding-agent backend over WebSocket", () => {
 		expect(listAfterDetach.ok).toBe(true);
 		if (!listAfterDetach.ok) return;
 		expect(sessionsOf(listAfterDetach.result).some((s) => s.id === sessionId)).toBe(true);
+	});
+
+	test("ephemeral debug sessions stay out of wire session listings", async () => {
+		const { backend } = await makeHarness();
+		const url = await startWireServer(backend);
+		const client = await connect(url);
+		await client.hello();
+
+		const created = await client.request({
+			command: "create",
+			ephemeral: true,
+			model: { provider: "faux", id: "faux-1" },
+		});
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		const sessionId = sessionOf(created.result).id;
+		const listed = await client.request({ command: "list" });
+		expect(listed.ok).toBe(true);
+		if (!listed.ok) return;
+		expect(sessionsOf(listed.result).some((session) => session.id === sessionId)).toBe(false);
 	});
 
 	test("prompt streams text and thinking progress then returns the authoritative snapshot", async () => {

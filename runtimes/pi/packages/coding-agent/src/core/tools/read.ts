@@ -60,6 +60,14 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/**
+	 * Server-enforced read boundary (review doc §4.5, preferred option 1).
+	 * When set, `read` only serves paths that resolve inside one of these
+	 * directories (e.g. the materialised skill package dirs). This is enforced
+	 * in the tool, not by prompt, so a frozen published session can never read
+	 * outside its skill resource roots.
+	 */
+	allowRoots?: string[];
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -93,6 +101,18 @@ function getNonVisionImageNote(model: Model<Api> | undefined): string | undefine
 
 function toPosixPath(filePath: string): string {
 	return filePath.split(sep).join("/");
+}
+
+/** True when `target` (already absolute) resolves inside any allowed root. */
+function isWithinAnyRoot(target: string, roots: string[]): boolean {
+	const normalizedTarget = resolvePath(target);
+	for (const root of roots) {
+		const normalizedRoot = resolvePath(root);
+		if (normalizedTarget === normalizedRoot) return true;
+		const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+		if (normalizedTarget.startsWith(prefix)) return true;
+	}
+	return false;
 }
 
 function getPiDocsClassification(absolutePath: string): CompactReadClassification | undefined {
@@ -206,6 +226,7 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
+	const allowRoots = options?.allowRoots?.map((root) => resolvePath(root)) ?? [];
 	return {
 		name: "read",
 		label: "read",
@@ -237,6 +258,12 @@ export function createReadToolDefinition(
 						try {
 							const absolutePath = await resolveReadPathAsync(path, cwd);
 							if (aborted) return;
+							// Server-enforced read boundary: when allowRoots is set, the
+							// model may only read within the materialised skill dirs.
+							if (allowRoots.length > 0 && !isWithinAnyRoot(absolutePath, allowRoots)) {
+								reject(new Error(`read denied: "${path}" is outside the allowed skill resource roots`));
+								return;
+							}
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
 							if (aborted) return;

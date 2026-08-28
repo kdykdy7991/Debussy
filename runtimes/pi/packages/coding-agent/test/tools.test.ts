@@ -85,6 +85,25 @@ describe("Coding Agent Tools", () => {
 			await expect(readTool.execute("test-call-2", { path: testFile })).rejects.toThrow(/ENOENT|not found/i);
 		});
 
+		it("enforces allowRoots: blocks reads outside the allowed skill roots", async () => {
+			const insideFile = join(testDir, "inside.txt");
+			const outsideFile = join(testDir, "..", "outside.txt");
+			writeFileSync(insideFile, "inside content");
+			writeFileSync(outsideFile, "outside content");
+
+			const restricted = createReadTool(process.cwd(), { allowRoots: [testDir] });
+			// Within the root: allowed.
+			const allowed = await restricted.execute("read-call-1", { path: insideFile });
+			expect(getTextOutput(allowed)).toContain("inside content");
+			// Outside the root: server-enforced denial, not silent.
+			await expect(restricted.execute("read-call-2", { path: outsideFile })).rejects.toThrow(
+				/outside the allowed skill resource roots/,
+			);
+			// The unrestricted tool still reads it (boundary is opt-in).
+			const unrestricted = await readTool.execute("read-call-3", { path: outsideFile });
+			expect(getTextOutput(unrestricted)).toContain("outside content");
+		});
+
 		it("should truncate files exceeding line limit", async () => {
 			const testFile = join(testDir, "large.txt");
 			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);

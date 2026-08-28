@@ -6,6 +6,8 @@
  * + control HTTP handler, and fails startup (never a silent degradation) when
  * any required piece of the 24.2 configuration is missing.
  */
+
+import type { IncomingMessage } from "node:http";
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
 import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
 import { PostgresClient } from "../../persistence/postgres/client.ts";
@@ -14,7 +16,7 @@ import { createPublishingRepositories } from "../../persistence/postgres/reposit
 import type { PublishingRepositories } from "../../publishing/repositories.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import type { PublishingConfig } from "../config.ts";
-import { parseIdOrThrow } from "../domain/ids.ts";
+import { parseIdOrThrow, type TenantId } from "../domain/ids.ts";
 import { McpSecretBox } from "../mcp/secret-box.ts";
 import { PreviewTicketService } from "../preview-ticket.ts";
 import { buildCapabilityCatalog } from "./catalog.ts";
@@ -22,7 +24,7 @@ import { createControlHttpHandler } from "./http.ts";
 import { createLlmConfigStore } from "./llm-config.ts";
 import { ControlService } from "./service.ts";
 import { createServerAgentSource } from "./source.ts";
-import { readTokenFile } from "./token.ts";
+import { readTokenFile, secureEqual } from "./token.ts";
 
 export interface ControlPlaneHandle {
 	readonly handler: HttpRequestHandler;
@@ -34,6 +36,9 @@ export interface ControlPlaneHandle {
 	/** Preview ticket service (WB-005), shared so embed exchange can consume tickets. */
 	readonly previewTicketService: PreviewTicketService;
 	readonly mcpSecretBox: McpSecretBox | undefined;
+	readonly tenantId: TenantId;
+	/** Reuse control-plane bearer authentication without exposing the token. */
+	isAuthorized(request: IncomingMessage): boolean;
 	close(): Promise<void>;
 }
 
@@ -142,6 +147,12 @@ export async function composeControlPlane(options: {
 		repositories,
 		previewTicketService,
 		mcpSecretBox,
+		tenantId,
+		isAuthorized(request) {
+			const header = request.headers.authorization ?? "";
+			const match = header.match(/^Bearer\s+(.+)$/);
+			return match !== null && secureEqual(match[1]!.trim(), adminToken);
+		},
 		close: () => client.close(),
 	};
 }

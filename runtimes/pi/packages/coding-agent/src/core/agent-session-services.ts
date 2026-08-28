@@ -63,6 +63,8 @@ export interface CreateAgentSessionFromServicesOptions {
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
+	/** Server-enforced read boundary for the built-in `read` tool. */
+	readAllowRoots?: string[];
 }
 
 /**
@@ -219,5 +221,6 @@ export async function createAgentSessionFromServices(
 		noTools: options.noTools,
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
+		...(options.readAllowRoots !== undefined ? { readAllowRoots: options.readAllowRoots } : {}),
 	});
 }

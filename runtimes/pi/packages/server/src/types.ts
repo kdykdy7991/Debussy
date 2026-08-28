@@ -81,13 +81,39 @@ export interface SteerInput {
 export interface CreateSessionOptions {
 	/** A collision-resistant ID assigned by PiServer. The backend must persist this exact ID. */
 	id: string;
+	/**
+	 * Debug-only session: keep its transcript in memory and discard it when the
+	 * live runtime is released. It must never be reopened from the session store.
+	 */
+	ephemeral?: boolean;
 	cwd?: string;
 	name?: string;
 	model?: ModelRef;
 	thinkingLevel?: ThinkingLevel;
 	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets">;
-	/** Frozen external Tool definitions (MCP); built-in coding tools are disabled when present. */
+	/** Frozen external Tool definitions (MCP), added alongside Pi's built-in coding tools. */
 	customTools?: readonly ToolDefinition[];
+	/**
+	 * Per-session resource overrides for published-app sessions. When present,
+	 * the backend builds an independent ResourceLoader (no local skill/ext/
+	 * context discovery) that injects the frozen system prompt and bound
+	 * skills, so a session only ever sees its published revision's snapshot.
+	 */
+	resourceOverrides?: {
+		/** Frozen PublishedAppVersion prompt. */
+		systemPrompt?: string;
+		/** Bound & materialized Skill revisions (filePath/baseDir under the runtime dir). */
+		skills?: readonly MaterializedSkill[];
+	};
+}
+
+/** A frozen Skill revision materialized to a server-controlled runtime directory. */
+export interface MaterializedSkill {
+	readonly name: string;
+	readonly description: string;
+	readonly filePath: string;
+	readonly baseDir: string;
+	readonly disableModelInvocation: boolean;
 }
 
 export type PiSessionRuntimeEvent =
@@ -97,6 +123,8 @@ export type PiSessionRuntimeEvent =
 
 /** One acquired durable session. Conflicting operations must reject rather than queue. */
 export interface PiSessionRuntime {
+	/** Memory-only/admin debug runtimes are omitted from normal session listings. */
+	readonly ephemeral?: boolean;
 	snapshot(): SessionSnapshot;
 	getPhase(): SessionPhase;
 	prompt(input: PromptInput): Promise<void>;

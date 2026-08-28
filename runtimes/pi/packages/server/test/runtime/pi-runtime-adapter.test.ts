@@ -87,8 +87,8 @@ function chatOnlySpec(overrides: Partial<RuntimeSpec> = {}): RuntimeSpec {
 			mcpServers: [],
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 			speech: { enabled: false },
-		avatar: { enabled: false },
-		conversations: { allowNew: true },
+			avatar: { enabled: false },
+			conversations: { allowNew: true },
 		},
 		contextPolicy: { maxTurns: 100, maxContextTokens: 100000, toolResultMaxBytes: 65536, logLevel: "standard" },
 		runtimePolicy: {
@@ -121,6 +121,38 @@ function scope(conversationId: string): ScopeContext {
 }
 
 describe("pi runtime adapter", () => {
+	test("passes the frozen prompt and materialized Skills when opening a session", async () => {
+		const calls: RuntimeSessionOptions[] = [];
+		const materializeCalls: { spec: RuntimeSpec; tenantId: string }[] = [];
+		const skill = {
+			name: "analyze",
+			description: "Analyze data.",
+			filePath: "/runtime-skills/pav/analyze/SKILL.md",
+			baseDir: "/runtime-skills/pav/analyze",
+			disableModelInvocation: false,
+		};
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				calls.push(options);
+				return new FakeSession(options.id, options.model);
+			},
+			skillMaterializer: {
+				materializeSkills: async () => [],
+				materialize: async (spec, materializeScope) => {
+					materializeCalls.push({ spec, tenantId: materializeScope!.tenantId });
+					return [skill];
+				},
+			},
+		});
+		const spec = chatOnlySpec();
+
+		const result = await adapter.open(spec, scope("conv-skills"));
+
+		expect(result.ok).toBe(true);
+		expect(materializeCalls).toEqual([{ spec, tenantId: "ten-test" }]);
+		expect(calls[0]).toMatchObject({ systemPrompt: "You are a helpful assistant.", skills: [skill] });
+	});
+
 	test("opens a runtime and maps model from the RuntimeSpec", async () => {
 		const calls: RuntimeSessionOptions[] = [];
 		const adapter = createPiRuntimeAdapter({
@@ -444,8 +476,8 @@ describe("pi runtime adapter", () => {
 					mcpServers: [],
 					uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 					speech: { enabled: false },
-			avatar: { enabled: false },
-			conversations: { allowNew: true },
+					avatar: { enabled: false },
+					conversations: { allowNew: true },
 				},
 			}),
 			scope("conv-1"),
@@ -460,8 +492,8 @@ describe("pi runtime adapter", () => {
 					mcpServers: [],
 					uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 					speech: { enabled: false },
-			avatar: { enabled: false },
-			conversations: { allowNew: true },
+					avatar: { enabled: false },
+					conversations: { allowNew: true },
 				},
 			}),
 			scope("conv-2"),

@@ -26,7 +26,9 @@ import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
 import { PiServerError } from "../errors.ts";
 import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
 import { type ControlPlaneHandle, composeControlPlane } from "../publishing/control/compose.ts";
+import { createAdminDebugSessionsHttpHandler } from "../publishing/control/debug-sessions-http.ts";
 import { createMcpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
+import { createSkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import type { PiServer } from "../server.ts";
 import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
@@ -154,6 +156,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 
 	let controlPlane: ControlPlaneHandle | undefined;
 	let embedPlane: EmbedPlaneHandle | undefined;
+	let debugSessions: ReturnType<typeof createAdminDebugSessionsHttpHandler> | undefined;
 	if (publishing.enabled) {
 		// 33.1/33.2: missing token / db / bootstrap config fails startup.
 		controlPlane = await composeControlPlane({
@@ -162,6 +165,19 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			log,
 		});
 		log("control plane HTTP handler mounted");
+		// 平台 Skill 运行时物化目录（审查 §4.3）：按发布版本冻结、sourceHash 缓存，
+		// 发布会话经独立 ResourceLoader 注入，绝不读取宿主机/项目目录。
+		const skillMaterializer = createSkillMaterializer({
+			root: join(resolved.sessionDir, "runtime-skills"),
+			skills: controlPlane.repositories.skills,
+		});
+		debugSessions = createAdminDebugSessionsHttpHandler({
+			backend,
+			repositories: controlPlane.repositories,
+			skillMaterializer,
+			tenantId: controlPlane.tenantId,
+			isAuthorized: (request) => controlPlane!.isAuthorized(request),
+		});
 		// 24.2: missing pepper / access-token keys fails startup; the embed
 		// data plane reuses the control plane's Postgres connection/repos while
 		// its Agent sessions remain isolated from the admin/debug session index.
@@ -172,6 +188,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				repositories: controlPlane.repositories,
 				secretBox: controlPlane.mcpSecretBox,
 			}),
+			skillMaterializer,
 			createSession: (options) =>
 				(embedBackend ?? backend).createSession({
 					id: options.id,
@@ -179,6 +196,16 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 					thinkingLevel: options.thinkingLevel,
 					streamOptions: options.streamOptions,
 					customTools: options.customTools,
+					// A published session carries its frozen prompt + skills so the
+					// backend can build an isolated per-session ResourceLoader.
+					...(options.systemPrompt !== undefined || (options.skills?.length ?? 0) > 0
+						? {
+								resourceOverrides: {
+									...(options.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : {}),
+									...(options.skills && options.skills.length > 0 ? { skills: options.skills } : {}),
+								},
+							}
+						: {}),
 				}),
 			citations,
 			previewTickets: controlPlane.previewTicketService,
@@ -205,6 +232,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		allowedHosts: resolved.listener.allowedHosts,
 	});
 	httpHandlers.push(...voiceHandlers);
+	if (debugSessions !== undefined) httpHandlers.push(debugSessions.handler);
 	if (controlPlane !== undefined) httpHandlers.push(controlPlane.handler);
 	if (embedPlane !== undefined) {
 		httpHandlers.push(
@@ -255,6 +283,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				await server.close();
 			} catch (error) {
 				log(`error during server.close: ${formatError(error)}`);
+			}
+			if (debugSessions !== undefined) {
+				try {
+					await debugSessions.close();
+				} catch (error) {
+					log(`error during debugSessions.close: ${formatError(error)}`);
+				}
 			}
 			if (controlPlane !== undefined) {
 				try {
@@ -340,6 +375,7 @@ export function resolveOptions(options: StartWebServerOptions): ResolvedOptions 
 			agentDir,
 			sessionDir,
 			allowedCwds,
+			disableLocalSkills: true,
 		},
 		listener: {
 			host,

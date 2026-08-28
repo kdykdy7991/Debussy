@@ -109,6 +109,7 @@ export class LiveSessionManager {
 				const id = randomUUID();
 				const options: CreateSessionOptions = {
 					id,
+					ephemeral: command.ephemeral,
 					cwd: command.cwd,
 					name: command.name,
 					model: command.model,
@@ -315,7 +316,7 @@ export class LiveSessionManager {
 		const stored = await this.options.backend.listSessions();
 		const liveSnapshots = await Promise.all(
 			[...this.liveSessions.values()]
-				.filter((live) => !live.disposing)
+				.filter((live) => !live.disposing && live.runtime.ephemeral !== true)
 				.map(async (live) => [live.id, await this.normalizedSnapshot(live)] as const),
 		);
 		const liveById = new Map(liveSnapshots);

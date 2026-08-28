@@ -169,6 +169,39 @@ export class AgentApi {
 		});
 	}
 
+	createDebugSession(
+		agentId: AgentPublicId,
+		revision: number,
+	): Promise<{
+		readonly sessionId: string;
+		readonly attachTicket: string;
+		readonly expiresAt: string;
+	}> {
+		return this.request({
+			method: "POST",
+			path: "/api/control/v1/debug-sessions",
+			body: { agentId, revision },
+		});
+	}
+
+	destroyDebugSession(sessionId: string): Promise<{ readonly destroyed: boolean }> {
+		return this.request({
+			method: "DELETE",
+			path: `/api/control/v1/debug-sessions/${encodeURIComponent(sessionId)}`,
+		});
+	}
+
+	exportDebugSession(sessionId: string): Promise<{
+		readonly agentId: AgentPublicId;
+		readonly agentRevision: number;
+		readonly transcript: readonly unknown[];
+	}> {
+		return this.request({
+			method: "GET",
+			path: `/api/control/v1/debug-sessions/${encodeURIComponent(sessionId)}/export`,
+		});
+	}
+
 	saveRevision(
 		agentId: AgentPublicId,
 		draft: {

@@ -373,8 +373,8 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 			body: { title: "plane" },
 		});
 		expect(created.status).toBe(201);
-		expect(created.body.data.publishedAppVersionId).toBe(`pav_${versionId}`);
-		const convId = created.body.data.id as string;
+		expect(created.body.data.conversation.publishedAppVersionId).toBe(`pav_${versionId}`);
+		const convId = created.body.data.conversation.id as string;
 
 		const turn = await httpCall({
 			method: "POST",
@@ -385,8 +385,9 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 		});
 		expect(turn.status).toBe(200);
 		expect(turn.body.data.outputText).toBe("回复来自 fake Pi");
-		expect(turn.body.data.userMessageSequence).toBe(1);
-		expect(turn.body.data.assistantSequence).toBe(2);
+		// `turn/start` is the first persisted event; message sequences follow it.
+		expect(turn.body.data.userMessageSequence).toBe(2);
+		expect(turn.body.data.assistantSequence).toBe(3);
 
 		// Token 可被同一 AccessTokenService 验证（issuer/audience 一致）。
 		const verified = await accessTokens.verify(token);
@@ -404,7 +405,9 @@ describe.skipIf(!pgUp)("embed plane composition", () => {
 		expect(ok.body.data.name).toBe("Plane App");
 		expect(ok.body.data.status).toBe("active");
 		expect(ok.body.data.currentVersionId).toBe(`pav_${versionId}`);
-		expect(ok.body.data.features).toEqual({ uploads: true, speech: false, avatar: false });
+		expect(ok.body.data.features).toEqual(
+			expect.objectContaining({ uploads: true, speech: false, avatar: false, newConversations: true, skills: [] }),
+		);
 		expect(ok.body.data.theme).toEqual({});
 		expect(ok.body.data.accessMode).toBe("anonymous");
 		expect(ok.body.data.allowedOrigins).toEqual([ALLOWED_ORIGIN]);

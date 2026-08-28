@@ -84,7 +84,8 @@ function validateUtf8(bytes: Uint8Array, label: string): string {
 	}
 }
 
-function expandArtifact(filename: string, bytes: Uint8Array): ReadonlyMap<string, Uint8Array> {
+/** Expand an already-import-validated artifact using the same safety limits as import. */
+export function expandSkillArtifact(filename: string, bytes: Uint8Array): ReadonlyMap<string, Uint8Array> {
 	if (bytes.byteLength === 0 || bytes.byteLength > SKILL_IMPORT_LIMITS.maxArtifactBytes) {
 		throw new SkillImportRejected("SKILL_IMPORT_REJECTED", "Skill artifact size is outside the allowed range");
 	}
@@ -184,7 +185,7 @@ function expandArtifact(filename: string, bytes: Uint8Array): ReadonlyMap<string
 }
 
 export async function parseSkillArtifact(filename: string, bytes: Uint8Array): Promise<ParsedSkillArtifact> {
-	const files = expandArtifact(filename, bytes);
+	const files = expandSkillArtifact(filename, bytes);
 	const skillFiles = [...files.entries()].filter(([path]) => basename(path).toLowerCase() === "skill.md");
 	if (skillFiles.length !== 1) {
 		throw new SkillImportRejected("SKILL_INVALID", "artifact must contain exactly one SKILL.md");

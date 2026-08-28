@@ -808,6 +808,70 @@ Content`,
 			expect(skills[0].name).toBe("injected");
 		});
 
+		it("skillsOverride is the authoritative override: an extension cannot re-inject a Skill via extendResources", async () => {
+			const frozenSkill: Skill = {
+				name: "frozen",
+				description: "Published snapshot skill",
+				filePath: "/snapshot/frozen",
+				baseDir: "/snapshot",
+				sourceInfo: createSyntheticSourceInfo("/snapshot/frozen", { source: "published-app" }),
+				disableModelInvocation: false,
+			};
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				skillsOverride: () => ({ skills: [frozenSkill], diagnostics: [] }),
+			});
+			await loader.reload();
+
+			// An extension registers its own skill directory after the override
+			// is in effect: it must not re-inject a Skill into the effective set.
+			const extractionSkillDir = join(tempDir, "extskill", "ext-injected");
+			mkdirSync(extractionSkillDir, { recursive: true });
+			writeFileSync(
+				join(extractionSkillDir, "SKILL.md"),
+				"---\nname: ext-injected\ndescription: Extension skill\n---\nExt",
+			);
+			loader.extendResources({
+				skillPaths: [
+					{
+						path: extractionSkillDir,
+						metadata: { source: "extension", scope: "temporary", origin: "top-level" },
+					},
+				],
+			});
+
+			const { skills } = loader.getSkills();
+			expect(skills.map((s) => s.name)).toEqual(["frozen"]);
+		});
+
+		it("skillsOverride to an empty set keeps main-chat skills empty after extension skill injection", async () => {
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				noSkills: true,
+				skillsOverride: () => ({ skills: [], diagnostics: [] }),
+			});
+			await loader.reload();
+
+			const extractionSkillDir = join(tempDir, "extskill", "ext-injected");
+			mkdirSync(extractionSkillDir, { recursive: true });
+			writeFileSync(
+				join(extractionSkillDir, "SKILL.md"),
+				"---\nname: ext-injected\ndescription: Extension skill\n---\nExt",
+			);
+			loader.extendResources({
+				skillPaths: [
+					{
+						path: extractionSkillDir,
+						metadata: { source: "extension", scope: "temporary", origin: "top-level" },
+					},
+				],
+			});
+
+			expect(loader.getSkills().skills).toEqual([]);
+		});
+
 		it("should apply systemPromptOverride", async () => {
 			const loader = new DefaultResourceLoader({
 				cwd,

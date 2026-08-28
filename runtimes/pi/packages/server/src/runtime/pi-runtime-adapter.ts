@@ -18,8 +18,9 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ModelRef, ReasoningEffort, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { resolveModelStreamOptions, withConversationEffort } from "../model-parameters.ts";
 import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
+import type { SkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
-import type { PiSessionRuntime } from "../types.ts";
+import type { MaterializedSkill, PiSessionRuntime } from "../types.ts";
 import { ConversationRuntime } from "./conversation-runtime.ts";
 import type { ScopeContext } from "./scope-context.ts";
 
@@ -33,6 +34,10 @@ export interface RuntimeSessionOptions {
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly streamOptions?: import("@earendil-works/pi-ai").SimpleStreamOptions;
 	readonly customTools?: readonly ToolDefinition[];
+	/** 冻结的发布版本 system prompt（创建会话时写入独立 ResourceLoader）。 */
+	readonly systemPrompt?: string;
+	/** 已物化的冻结 Skill（经 skillsOverride 注入独立 ResourceLoader）。 */
+	readonly skills?: readonly MaterializedSkill[];
 }
 
 export type RuntimeSessionFactory = (options: RuntimeSessionOptions) => Promise<PiSessionRuntime>;
@@ -49,6 +54,8 @@ export interface PiRuntimeAdapter {
 export function createPiRuntimeAdapter(deps: {
 	readonly createSession: RuntimeSessionFactory;
 	readonly createMcpTools?: McpRuntimeToolFactory;
+	/** Materialises frozen Skills to server-controlled runtime dirs before session creation. */
+	readonly skillMaterializer?: SkillMaterializer;
 }): PiRuntimeAdapter {
 	return {
 		async open(spec, scope) {
@@ -73,12 +80,20 @@ export function createPiRuntimeAdapter(deps: {
 			}
 			const thinkingLevel = resolved.thinkingLevel ?? legacyThinkingLevel;
 			const customTools = deps.createMcpTools === undefined ? [] : await deps.createMcpTools(spec, scope);
+			// 物化冻结 Skill 到运行时目录，并把 systemPrompt/Skill 一并交给会话工厂，
+			// 让发布会话通过独立 ResourceLoader（skillsOverride）只看到本版本快照。
+			const skills =
+				deps.skillMaterializer === undefined
+					? []
+					: await deps.skillMaterializer.materialize(spec, { tenantId: scope.tenantId });
 			const session = await deps.createSession({
 				id: scope.conversationId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
 				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
 				streamOptions: resolved.streamOptions,
 				...(customTools.length > 0 ? { customTools } : {}),
+				systemPrompt: spec.agent.systemPrompt,
+				...(skills.length > 0 ? { skills } : {}),
 			});
 			return { ok: true, runtime: new ConversationRuntime({ scope, spec, session }) };
 		},

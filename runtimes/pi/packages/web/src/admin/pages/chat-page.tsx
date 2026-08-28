@@ -16,8 +16,8 @@ import { createWebSocketTransportFactory } from "../../lib/websocket-transport.t
 import { productReasoningEfforts } from "../agents/reasoning-efforts.ts";
 import { AgentApi, AgentApiError } from "../api/agent-api.ts";
 import { LlmApi } from "../api/llm-api.ts";
+import { SkillApi } from "../api/skill-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
-import { createDebugSessionStore } from "../conversation/debug-session-store.ts";
 
 interface AgentOption {
 	readonly id: AgentPublicId;
@@ -141,14 +141,22 @@ export function AdminChatPage(): React.ReactElement {
 	const { controller, snapshot: auth } = useAdminAuth();
 	const agentApiRef = useRef(new AgentApi({ auth: controller })).current;
 	const llmApiRef = useRef(new LlmApi({ auth: controller })).current;
-	const debugSessionsRef = useRef(createDebugSessionStore()).current;
+	const skillApiRef = useRef(new SkillApi({ auth: controller })).current;
 	const requestedAgentIdRef = useRef(requestedAgentIdFromHash()).current;
+	const debugSessionIdRef = useRef<string | null>(null);
 	const [agents, setAgents] = useState<AgentListState>({ kind: "loading" });
 	const [models, setModels] = useState<ModelsState>({ kind: "loading" });
 	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null);
 	const [selectedAgentId, setSelectedAgentId] = useState<AgentPublicId | null>(null);
 	const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDefinitionDetail | null>(null);
 	const [runtime, setRuntime] = useState<ChatRuntime | null>(null);
+	const [debugSessionId, setDebugSessionId] = useState<string | null>(null);
+	const [exporting, setExporting] = useState(false);
+	// skillId -> { name, enabled } for resolving bound Skill references into the
+	// Composer's `/skill:` completion list (Agent detail only carries skillIds).
+	const [skillLookup, setSkillLookup] = useState<Map<string, { readonly name: string; readonly enabled: boolean }> | null>(
+		null,
+	);
 
 	useEffect(() => {
 		if (auth.state !== "connected") return;
@@ -204,6 +212,29 @@ export function AdminChatPage(): React.ReactElement {
 			cancelled = true;
 		};
 	}, [llmApiRef, auth.state]);
+
+	useEffect(() => {
+		if (auth.state !== "connected") {
+			setSkillLookup(null);
+			return;
+		}
+		let cancelled = false;
+		void skillApiRef.list(100).then(
+			(result: unknown) => {
+				if (cancelled) return;
+				const response = result as { readonly items: readonly { readonly id: string; readonly name: string; readonly enabled: boolean }[] };
+				const lookup = new Map<string, { readonly name: string; readonly enabled: boolean }>();
+				for (const skill of response.items) lookup.set(skill.id, { name: skill.name, enabled: skill.enabled });
+				setSkillLookup(lookup);
+			},
+			() => {
+				if (!cancelled) setSkillLookup(null);
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [skillApiRef, auth.state]);
 
 	useEffect(() => {
 		if (auth.state !== "connected" || selectedAgentId === null) {
@@ -262,51 +293,62 @@ export function AdminChatPage(): React.ReactElement {
 
 	useEffect(() => {
 		if (runtime === null) return;
+		const destroyPrevious = async () => {
+			const previous = debugSessionIdRef.current;
+			debugSessionIdRef.current = null;
+			setDebugSessionId(null);
+			if (previous !== null) await agentApiRef.destroyDebugSession(previous).catch(() => {});
+		};
 		if (selectedAgentId === null) {
 			// 没有已导入 Agent：直接以当前所选模型开新会话。
 			let cancelled = false;
 			void (async () => {
+				await destroyPrevious();
 				await runtime.connection.connect();
-				if (!cancelled) await runtime.sessions.createSession(selectedModel ?? undefined);
+				if (!cancelled) await runtime.sessions.createDebugSession(selectedModel ?? undefined);
 			})().catch(() => {});
 			return () => {
 				cancelled = true;
 			};
 		}
+		// Prefer the frozen revision from the detail (it is the current saved
+		// revision), but never let a slow/failed `getAgentDetail` leave the agent
+		// without a sendable session. The agent list carries the same current
+		// revision and is available synchronously.
+		const selectedAgent =
+			agents.kind === "loaded" ? agents.items.find((item) => item.id === selectedAgentId) : undefined;
+		if (selectedAgent === undefined) return;
+		const detailRevision =
+			selectedAgentDetail?.id === selectedAgentId ? selectedAgentDetail.currentRevision : undefined;
 		let cancelled = false;
-		const unsubscribe = runtime.sessions.subscribe(() => {
-			const sessionId = runtime.sessions.getSnapshot().activeSessionId;
-			if (sessionId) debugSessionsRef.set(selectedAgentId, sessionId);
-		});
 		void (async () => {
+			await destroyPrevious();
 			await runtime.connection.connect();
-			const applyAgentThinking = async () => {
-				const reasoning = selectedAgentDetail?.parameters.reasoning;
-				const thinkingLevel = reasoning?.enabled === false ? "off" : reasoning?.effort;
-				if (selectedAgentDetail?.id === selectedAgentId && thinkingLevel !== undefined) {
-					await runtime.sessions.setThinking(thinkingLevel as ThinkingLevel);
-				}
-			};
-			const remembered = debugSessionsRef.get(selectedAgentId);
-			if (remembered) {
-				try {
-					await runtime.sessions.selectSession(remembered);
-					await applyAgentThinking();
-					return;
-				} catch {
-					debugSessionsRef.clear(selectedAgentId);
-				}
+			const created = await agentApiRef.createDebugSession(
+				selectedAgentId,
+				detailRevision ?? selectedAgent.currentRevision,
+			);
+			if (cancelled) {
+				await agentApiRef.destroyDebugSession(created.sessionId).catch(() => {});
+				return;
 			}
-			if (!cancelled) {
-				await runtime.sessions.createSession(selectedModel ?? undefined);
-				await applyAgentThinking();
-			}
+			debugSessionIdRef.current = created.sessionId;
+			setDebugSessionId(created.sessionId);
+			await runtime.sessions.openDebugSession(created.attachTicket);
 		})().catch(() => {});
 		return () => {
 			cancelled = true;
-			unsubscribe();
 		};
-	}, [debugSessionsRef, runtime, selectedAgentDetail, selectedAgentId, selectedModel]);
+	}, [agentApiRef, runtime, agents, selectedAgentDetail, selectedAgentId, selectedModel]);
+
+	useEffect(
+		() => () => {
+			const sessionId = debugSessionIdRef.current;
+			debugSessionIdRef.current = null;
+			if (sessionId !== null) void agentApiRef.destroyDebugSession(sessionId).catch(() => {});
+		},
+		[agentApiRef],
+	);
 
 	if (auth.state !== "connected") {
 		return <ChatConnectionState auth={auth} />;
@@ -323,12 +365,41 @@ export function AdminChatPage(): React.ReactElement {
 		models.kind === "loaded"
 			? models.items.find((model) => model.provider === selectedModel?.provider && model.id === selectedModel?.id)
 			: undefined;
+	// Resolve the agent's bound Skill references to names so `/skill:` completion
+	// shows them. Only enabled skills are surfaced (runtime ignores disabled ones).
+	const composerSkills =
+		selectedAgentDetail?.skills !== undefined && skillLookup !== null
+			? selectedAgentDetail.skills
+					.map((binding) => skillLookup.get(binding.skillId))
+					.filter(
+						(skill): skill is { readonly name: string; readonly enabled: boolean } =>
+							skill !== undefined && skill.enabled,
+					)
+					.map((skill) => ({ name: skill.name }))
+			: undefined;
+	const exportDebugSession = async () => {
+		const sessionId = debugSessionIdRef.current;
+		if (sessionId === null || exporting) return;
+		setExporting(true);
+		try {
+			const exported = await agentApiRef.exportDebugSession(sessionId);
+			const url = URL.createObjectURL(new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" }));
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = `agent-debug-${exported.agentRevision}.json`;
+			link.click();
+			URL.revokeObjectURL(url);
+		} finally {
+			setExporting(false);
+		}
+	};
 	return (
 		<ConversationWorkspace
 			connection={runtime.connection}
 			sessions={runtime.sessions}
 			variant="admin"
 			enableVoice={false}
+			skills={composerSkills}
 			contextHeader={
 				<>
 					<div>
@@ -388,6 +459,13 @@ export function AdminChatPage(): React.ReactElement {
 						/>
 					) : null}
 					<span className="workspace-revision">Revision #{selected?.currentRevision ?? "—"}</span>
+					<button
+						type="button"
+						disabled={debugSessionId === null || exporting}
+						onClick={() => void exportDebugSession()}
+					>
+						{exporting ? "导出中…" : "导出测试用例"}
+					</button>
 				</>
 			}
 		/>

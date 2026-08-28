@@ -280,8 +280,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 				state.kind === "ready"
 					? state.versions.find(
 							(version) =>
-								version.status === "ready" &&
-								version.sourceAgentRevision === latestAgent.currentRevision,
+								version.status === "ready" && version.sourceAgentRevision === latestAgent.currentRevision,
 						)
 					: undefined;
 			let versionId: string;
@@ -550,8 +549,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 								// In dev the admin and embed are served from the same
 								// origin; for split-host deployments the embed base URL
 								// should be set via a config in the future.
-								const origin =
-									typeof window !== "undefined" ? window.location.origin : "";
+								const origin = typeof window !== "undefined" ? window.location.origin : "";
 								const embedUrl = buildEmbedUrl(origin, app.publicAppId);
 								const iframeSnippet = buildIframeSnippet(origin, app.publicAppId);
 								const sdkSnippet = buildSdkSnippet(origin, app.publicAppId);
@@ -594,9 +592,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 											</div>
 										</div>
 										{app.accessMode === "signed_user" || app.accessMode === "mixed" ? (
-											<p className={styles.note}>
-												登录访问还需要 Launch Key，前往"Launch Keys"页签签发。
-											</p>
+											<p className={styles.note}>登录访问还需要 Launch Key，前往"Launch Keys"页签签发。</p>
 										) : null}
 									</div>
 								);
@@ -616,11 +612,7 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 							<Icon name="save" />
 							{versionBusy === "create" ? "创建中…" : versions.length === 0 ? "创建第一个版本" : "创建新版本"}
 						</button>
-						<button
-							type="button"
-							disabled={!agentDetail || versionBusy !== null}
-							onClick={() => void preview()}
-						>
+						<button type="button" disabled={!agentDetail || versionBusy !== null} onClick={() => void preview()}>
 							<Icon name="eye" />
 							{versionBusy === "preview" ? "打开中…" : "预览"}
 						</button>

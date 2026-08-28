@@ -122,13 +122,13 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 	if (mcpToolNames.length > 32) errors.push("MCP Tool allowlist exceeds the platform limit of 32");
 	if (new Set(mcpToolNames).size !== mcpToolNames.length)
 		errors.push("MCP Tool names must be unique across all bound Servers");
-	const visibleSkillInstructions = skills
-		.filter((skill) => !skill.disableModelInvocation)
-		.map((skill) => `<skill name="${skill.name}">\n${skill.instructionText}\n</skill>`);
-	const systemPrompt =
-		visibleSkillInstructions.length === 0
-			? agent.prompt
-			: `${agent.prompt}\n\n<bound_skills>\n${visibleSkillInstructions.join("\n\n")}\n</bound_skills>`;
+	// Skills are NOT spliced into the frozen system prompt. The runtime
+	// materializes each frozen revision to a read-only dir and injects it into
+	// the session's ResourceLoader via skillsOverride, so Pi's native skill
+	// mechanics (progressive <available_skills> disclosure + /skill:name)
+	// apply. Keeping the full instruction text out of the system prompt avoids
+	// paying for every bound skill's body on every turn.
+	const systemPrompt = agent.prompt;
 
 	const model = catalog.models.find(
 		(entry) => entry.provider === agent.model.provider && entry.modelId === agent.model.modelId,

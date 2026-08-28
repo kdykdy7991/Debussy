@@ -80,6 +80,9 @@ export interface CreateAgentSessionOptions {
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
+	/** Server-enforced read boundary for the built-in `read` tool (sdk option). */
+	readAllowRoots?: string[];
+
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
 
@@ -396,6 +399,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		...(options.readAllowRoots !== undefined ? { readAllowRoots: options.readAllowRoots } : {}),
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

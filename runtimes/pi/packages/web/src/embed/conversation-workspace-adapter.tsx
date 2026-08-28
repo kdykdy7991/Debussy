@@ -26,6 +26,8 @@ import type { ChatAttachment, ChatMessage, ConversationSummary } from "./types.t
 export function EmbedConversationWorkspace(props: {
 	readonly title: string;
 	readonly controller: EmbedChatController;
+	/** 已绑定 Skill（发布版本能力）：传入后聊天输入支持 `/skill:` 补全。 */
+	readonly skills?: readonly { name: string; description?: string }[];
 }): React.JSX.Element {
 	const stores = useMemo(() => createEmbedWorkspaceStores(props.controller), [props.controller]);
 	const state = useSyncExternalStore(
@@ -41,6 +43,7 @@ export function EmbedConversationWorkspace(props: {
 			showSidebar={state.newConversationsEnabled !== false}
 			enableVoice={false}
 			enableUploads={state.uploadsEnabled}
+			skills={props.skills}
 			contextHeader={
 				<>
 					<div>
@@ -80,6 +83,8 @@ export function createEmbedWorkspaceStores(controller: EmbedChatController): {
 		subscribe,
 		getSnapshot: (): SessionBrowserSnapshot => cachedSessions,
 		createSession: async (_model?: ModelRef) => controller.newConversation(),
+		createDebugSession: async (_model?: ModelRef) => controller.newConversation(),
+		openDebugSession: async (sessionId: string) => controller.openConversation(sessionId),
 		openDefaultSession: async () => {
 			const first = controller.getState().conversations[0];
 			if (first) await controller.openConversation(first.id);

@@ -634,6 +634,8 @@ const PromptPayloadProperties = {
 export const ListCommandSchema = StrictObject({ command: Type.Literal("list") });
 export const CreateCommandSchema = StrictObject({
 	command: Type.Literal("create"),
+	/** Debug sessions are memory-only and disappear once released. */
+	ephemeral: Type.Optional(Type.Boolean()),
 	cwd: Type.Optional(Type.String({ minLength: 1 })),
 	name: Type.Optional(Type.String()),
 	model: Type.Optional(ModelRefSchema),

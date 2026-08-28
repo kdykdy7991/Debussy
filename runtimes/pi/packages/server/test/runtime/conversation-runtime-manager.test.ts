@@ -21,6 +21,7 @@ import type { PiSessionRuntime, PiSessionRuntimeEvent, PromptInput, SteerInput }
 class FakeSession implements PiSessionRuntime {
 	readonly sessionIdValue: string;
 	disposed = 0;
+	readonly prompts: PromptInput[] = [];
 	constructor(id: string) {
 		this.sessionIdValue = id;
 	}
@@ -45,7 +46,9 @@ class FakeSession implements PiSessionRuntime {
 	getPhase(): "idle" {
 		return "idle";
 	}
-	async prompt(_input: PromptInput): Promise<void> {}
+	async prompt(input: PromptInput): Promise<void> {
+		this.prompts.push(input);
+	}
 	async steer(_input: SteerInput): Promise<void> {}
 	async abort(): Promise<void> {}
 	async setModel(_model: ModelRef): Promise<void> {}
@@ -70,8 +73,8 @@ function chatOnlySpec(): RuntimeSpec {
 			mcpServers: [],
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26214400 },
 			speech: { enabled: false },
-		avatar: { enabled: false },
-		conversations: { allowNew: true },
+			avatar: { enabled: false },
+			conversations: { allowNew: true },
 		},
 		contextPolicy: { maxTurns: 100, maxContextTokens: 100000, toolResultMaxBytes: 65536, logLevel: "standard" },
 		runtimePolicy: {
@@ -126,6 +129,27 @@ function makeHarness(idleTtlMs = 1000, now?: () => number): Harness {
 }
 
 describe("conversation runtime manager", () => {
+	test("turn prompts preserve the session's base system prompt", async () => {
+		const session = new FakeSession("conv-1");
+		const runtime = new ConversationRuntime({ scope: scope("conv-1"), spec: chatOnlySpec(), session });
+
+		await runtime.prompt("hello");
+		await runtime.prompt("with context", {
+			retrieval: { context: "source", reference: "citation", citations: [] },
+		});
+
+		// Passing a per-turn systemPrompt replaces Pi's ResourceLoader prompt, which
+		// would remove its <available_skills> section. The prompt is fixed at open.
+		expect(session.prompts).toEqual([
+			{ text: "hello" },
+			{
+				text: "with context",
+				retrieval: { context: "source", reference: "citation", citations: [] },
+			},
+		]);
+		await runtime.close();
+	});
+
 	test("concurrent acquire of the same conversation creates it only once", async () => {
 		const harness = makeHarness();
 		const results = await Promise.all(

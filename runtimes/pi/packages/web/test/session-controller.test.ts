@@ -145,6 +145,30 @@ describe("SessionController", () => {
 		expect(controller.getSnapshot().sessions).toHaveLength(1);
 	});
 
+	it("creates an ephemeral session for admin debugging", async () => {
+		const client = createClient();
+		client.createSession.mockResolvedValue(createHandle(SESSION));
+		const controller = new SessionController(client, createUploadClient());
+
+		await controller.createDebugSession({ provider: "oneapi", id: "qwen" });
+
+		expect(client.createSession).toHaveBeenCalledWith({
+			ephemeral: true,
+			model: { provider: "oneapi", id: "qwen" },
+		});
+	});
+
+	it("attaches a server-prepared revision-bound debug session", async () => {
+		const client = createClient();
+		client.attachSession.mockResolvedValue(createHandle(SESSION));
+		const controller = new SessionController(client, createUploadClient());
+
+		await controller.openDebugSession("opaque-debug-ticket");
+
+		expect(client.attachSession).toHaveBeenCalledWith("opaque-debug-ticket");
+		expect(client.createSession).not.toHaveBeenCalled();
+	});
+
 	it("releases the previous session when switching", async () => {
 		const first = createHandle(SESSION);
 		const secondSnapshot = { ...SESSION, id: "session-2", name: "第二段对话" };

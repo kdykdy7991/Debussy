@@ -43,8 +43,8 @@ function frozenSpec(): RuntimeSpec {
 			],
 			uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26_214_400 },
 			speech: { enabled: false },
-		avatar: { enabled: false },
-		conversations: { allowNew: true },
+			avatar: { enabled: false },
+			conversations: { allowNew: true },
 		},
 		contextPolicy: { maxTurns: 100, maxContextTokens: 100_000, toolResultMaxBytes: 65_536, logLevel: "standard" },
 		runtimePolicy: {

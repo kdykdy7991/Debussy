@@ -23,11 +23,14 @@ import {
 	type AgentSessionServices,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
+	createSyntheticSourceInfo,
+	DefaultResourceLoader,
 	SessionManager,
+	type Skill,
 } from "@earendil-works/pi-coding-agent";
 import type { ModelMetadata, ModelRef, SessionSummary, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
-import type { CreateSessionOptions, PiSessionBackend, PiSessionRuntime } from "../types.ts";
+import type { CreateSessionOptions, MaterializedSkill, PiSessionBackend, PiSessionRuntime } from "../types.ts";
 import { CodingAgentPiSessionRuntime } from "./runtime.ts";
 
 const ALL_CWD_MARKER = "*";
@@ -38,6 +41,8 @@ export interface CodingAgentPiSessionBackendOptions {
 	agentDir: string;
 	sessionDir?: string;
 	allowedCwds?: readonly string[];
+	/** Do not discover Skills from the service machine or project directory. */
+	disableLocalSkills?: boolean;
 	/** Optional pre-built services (skip startup model/extension loading). */
 	services?: AgentSessionServices;
 }
@@ -98,6 +103,14 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			(await createAgentSessionServices({
 				cwd,
 				agentDir,
+				...(options.disableLocalSkills
+					? {
+							resourceLoaderOptions: {
+								noSkills: true,
+								skillsOverride: () => ({ skills: [], diagnostics: [] }),
+							},
+						}
+					: {}),
 			}));
 		return new CodingAgentPiSessionBackend(cwd, agentDir, sessionDir, allowedCwds, services);
 	}
@@ -105,6 +118,59 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 	/** Resolved cwd-bound services; used by the publishing control plane. */
 	getServices(): AgentSessionServices {
 		return this.services;
+	}
+
+	/**
+	 * Build a per-session service set whose ResourceLoader carries ONLY the
+	 * frozen published-version snapshot (systemPrompt + bound Skills) and does
+	 * no local discovery of the service machine / project dirs. This keeps
+	 * published sessions from leaking each other's or the host's skills.
+	 * @see https://agentskills.io — progressive disclosure + /skill:name lookup
+	 * both read from this loader's getSkills().
+	 */
+	private async buildOverriddenServices(
+		overrides: NonNullable<CreateSessionOptions["resourceOverrides"]>,
+		cwd: string,
+	): Promise<AgentSessionServices> {
+		const skills = (overrides.skills ?? []).map<Skill>((materialized: MaterializedSkill) => ({
+			name: materialized.name,
+			description: materialized.description,
+			filePath: materialized.filePath,
+			baseDir: materialized.baseDir,
+			disableModelInvocation: materialized.disableModelInvocation,
+			sourceInfo: createSyntheticSourceInfo(materialized.filePath, {
+				source: "published-app",
+				scope: "temporary",
+				origin: "top-level",
+				baseDir: materialized.baseDir,
+			}),
+		}));
+		const resourceLoader = new DefaultResourceLoader({
+			cwd,
+			agentDir: this.agentDir,
+			settingsManager: this.services.settingsManager,
+			// Never scan the host machine or the project for "local" skills.
+			// Extensions are intentionally NOT disabled: their provider, custom
+			// tool, and hook capabilities must survive. Skills stay confined by
+			// the authoritative skillsOverride below, and any Skill an extension
+			// tries to register via extendResources is folded through that same
+			// override, so a published session's effective skill set can never
+			// exceed its frozen snapshot.
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			noContextFiles: true,
+			systemPrompt: overrides.systemPrompt,
+			// This is a replacement, not a merge: even explicitly configured
+			// machine-local skills must never become visible to a published app,
+			// and extension skill paths cannot re-inject after this override runs.
+			skillsOverride: () => ({ skills, diagnostics: [] }),
+		});
+		await resourceLoader.reload();
+		return {
+			...this.services,
+			resourceLoader,
+		};
 	}
 
 	async listSessions(): Promise<SessionSummary[]> {
@@ -150,28 +216,33 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			throw new PiServerError("session_locked", `Session already exists: ${options.id}`);
 		}
 		const cwd = options.cwd ? resolveAbsolute(options.cwd) : this.cwd;
-		const sessionManager = SessionManager.create(cwd, this.sessionDir, { id: options.id });
+		const sessionManager = options.ephemeral
+			? SessionManager.inMemory(cwd, { id: options.id })
+			: SessionManager.create(cwd, this.sessionDir, { id: options.id });
 		const sessionFile = sessionManager.getSessionFile();
-		if (!sessionFile) {
+		if (!options.ephemeral && !sessionFile) {
 			throw new PiServerError("invalid_request", `Backend failed to allocate a session file for ${options.id}`);
 		}
 		const model = options.model ? this.resolveModel(options.model) : undefined;
 		const result = await createAgentSessionFromServices({
-			services: this.services,
+			services: options.resourceOverrides
+				? await this.buildOverriddenServices(options.resourceOverrides, cwd)
+				: this.services,
 			sessionManager,
 			model: model as never,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 			streamOptions: options.streamOptions,
-			...(options.customTools !== undefined
-				? { customTools: [...options.customTools], noTools: "builtin" as const }
-				: {}),
+			// Pi's native model is additive: MCP custom tools coexist with its
+			// built-in coding tools. Sandbox policy, rather than tool suppression,
+			// will constrain filesystem and process access for published sessions.
+			...(options.customTools !== undefined ? { customTools: [...options.customTools] } : {}),
 			sessionStartEvent: {
 				type: "session_start",
 				reason: "new",
 			},
 		});
-		const wrapper = this.registerLive(options.id, result.session);
-		this.sessionFileById.set(options.id, sessionFile);
+		const wrapper = this.registerLive(options.id, result.session, options.ephemeral === true);
+		if (sessionFile !== undefined) this.sessionFileById.set(options.id, sessionFile);
 		return wrapper;
 	}
 
@@ -207,12 +278,16 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 	 * AgentSession. The wrapper notifies us when the owning session manager
 	 * disposes it, at which point the entry drops from the live registry.
 	 */
-	private registerLive(id: string, session: AgentSession): CodingAgentPiSessionRuntime {
-		const wrapper = new CodingAgentPiSessionRuntime(session, () => {
-			if (this.liveRuntimes.get(id) === wrapper) {
-				this.liveRuntimes.delete(id);
-			}
-		});
+	private registerLive(id: string, session: AgentSession, ephemeral = false): CodingAgentPiSessionRuntime {
+		const wrapper = new CodingAgentPiSessionRuntime(
+			session,
+			() => {
+				if (this.liveRuntimes.get(id) === wrapper) {
+					this.liveRuntimes.delete(id);
+				}
+			},
+			ephemeral,
+		);
 		this.liveRuntimes.set(id, wrapper);
 		return wrapper;
 	}

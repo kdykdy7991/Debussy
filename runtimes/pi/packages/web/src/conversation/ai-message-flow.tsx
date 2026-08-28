@@ -39,7 +39,7 @@ import type { SpeechController } from "../features/voice/speech-controller.ts";
 import type { AgentReaction } from "./agent-reaction.ts";
 import { wrapSpeechButtonApi } from "./speech-wrap.ts";
 
-const SHOW_AGENT_STATE_DEBUG = false;
+const SHOW_AGENT_STATE_DEBUG = true;
 
 const MARKDOWN_COMPONENTS = {
 	table: ({ children }: { readonly children?: ReactNode }) => (

@@ -19,6 +19,8 @@ export interface PiClientOptions {
 }
 
 export interface CreateSessionOptions {
+	/** Debug session only: server keeps no persisted transcript. */
+	ephemeral?: boolean;
 	cwd?: string;
 	name?: string;
 	model?: ModelRef;
