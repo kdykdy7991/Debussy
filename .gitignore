@@ -13,3 +13,6 @@ services/voice/src/pi_voice_service.egg-info/
 excalidraw.log
 *.excalidraw
 .excalidraw/
+
+# macOS
+.DS_Store

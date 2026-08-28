@@ -1,16 +1,17 @@
-.section { border-top: 1px solid #e5e7eb; }
+.section { border-top: 1px solid #eceff3; }
 .heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .heading h2 { margin-bottom:4px; }
 .heading p,.heading span,.notice,.empty { color:#667085; font-size:13px; }
 .heading span { white-space:nowrap; padding-top:5px; }
 .columns { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:18px; }
 .columns h3 { font-size:14px; margin:0 0 10px; }
-.card { display:flex; gap:10px; align-items:flex-start; border:1px solid #e5e7eb; border-radius:8px; padding:11px 12px; margin-bottom:8px; cursor:pointer; }
+.card { display:flex; gap:10px; align-items:flex-start; border:1px solid #e5e7eb; border-radius:6px; padding:11px 12px; margin-bottom:8px; cursor:pointer; }
+.card:hover { background:#fafbfc; }
 .card input { margin-top:3px; }
 .card span { display:flex; min-width:0; flex-direction:column; gap:3px; }
 .card b { font-size:14px; overflow-wrap:anywhere; }
 .card small { color:#667085; }
-.mcpCard { border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px; }
+.mcpCard { border:1px solid #e5e7eb; border-radius:6px; margin-bottom:8px; }
 .mcpCard > .card { border:0; margin:0; }
 .mcpOptions { border-top:1px solid #e5e7eb; padding:10px 12px 12px 36px; font-size:13px; }
 .mcpOptions select { margin-left:8px; padding:5px 8px; border:1px solid #d0d5dd; border-radius:6px; background:white; }
