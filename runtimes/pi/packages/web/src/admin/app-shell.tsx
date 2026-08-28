@@ -42,11 +42,9 @@ import { type AdminRoute, type AdminRouteId, useAdminRoute } from "./router.ts";
 type NavItemId = AuroraAppSidebarItem["id"];
 
 const SIDEBAR_ITEMS: readonly AuroraAppSidebarItem[] = [
-	{ id: "chat", label: "Chat", path: "/", icon: <NavIcon name="chat" /> },
-	{ id: "agents", label: "Agent 设计", path: "/agents", icon: <NavIcon name="agent" /> },
+	{ id: "agents", label: "Agent", path: "/agents", icon: <NavIcon name="agent" /> },
 	{ id: "skills", label: "Skills", path: "/skills", icon: <NavIcon name="skills" /> },
 	{ id: "mcp", label: "MCP", path: "/mcp", icon: <NavIcon name="mcp" /> },
-	{ id: "apps", label: "发布", path: "/apps", icon: <NavIcon name="publish" /> },
 	{ id: "usage", label: "Usage", path: "/usage", icon: <NavIcon name="usage" /> },
 	{
 		id: "user-conversations",
@@ -66,10 +64,11 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 			return "skills";
 		case "mcp":
 			return "mcp";
+		// 「发布」已从侧边栏移除：路由仍可直达，但不再有对应导航项高亮
 		case "apps":
 		case "app-create":
 		case "app-detail":
-			return "apps";
+			return null;
 		case "usage":
 			return "usage";
 		case "user-conversations":
@@ -77,8 +76,9 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 			return "user-conversations";
 		case "settings":
 			return "settings";
+		// 「Chat」已从侧边栏移除：路由仍可直达，但不再有对应导航项高亮
 		case "chat":
-			return "chat";
+			return null;
 		default: {
 			const exhaustive: never = route.id;
 			return exhaustive;

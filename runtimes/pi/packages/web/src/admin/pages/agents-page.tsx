@@ -1,9 +1,13 @@
 /** Agent 列表与详情入口。列表只展示 Control API 返回的真实数据。 */
 import type {
+	AgentDefinitionAssociatedApp,
 	AgentDefinitionDetail,
+	AgentDefinitionRevision,
 	AgentDefinitionSummary,
 	AgentPublicId,
 	LlmAvailableModel,
+	McpServerSummary,
+	SkillSummary,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -12,10 +16,16 @@ import {
 	type AgentEditableDraft,
 	type AgentListItem,
 	AgentListPreview,
+	type AgentPublishData,
+	type AgentResource,
+	type PublishInstance,
+	type VersionHistoryItem,
 } from "../../ui-preview/agent-redesign.tsx";
 import { AgentApi } from "../api/agent-api.ts";
 import { newIdempotencyKey } from "../api/idempotency.ts";
 import { LlmApi } from "../api/llm-api.ts";
+import { McpApi } from "../api/mcp-api.ts";
+import { SkillApi } from "../api/skill-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import type { AdminRoute } from "../router.ts";
 import { navigate } from "../router.ts";
@@ -35,7 +45,27 @@ type ModelsState =
 	| { readonly kind: "loaded"; readonly items: readonly LlmAvailableModel[] }
 	| { readonly kind: "error"; readonly message: string };
 
+type RevisionsState =
+	| { readonly kind: "loading" }
+	| { readonly kind: "loaded"; readonly items: readonly AgentDefinitionRevision[] }
+	| { readonly kind: "error"; readonly message: string };
+
+type AppsState =
+	| { readonly kind: "loading" }
+	| { readonly kind: "loaded"; readonly items: readonly AgentDefinitionAssociatedApp[] }
+	| { readonly kind: "error"; readonly message: string };
+
+/** Skill / MCP 目录：只用来把 detail 里的 id 引用翻译成可读名称。 */
+type CatalogState<T> =
+	| { readonly kind: "loading" }
+	| { readonly kind: "loaded"; readonly items: readonly T[] }
+	| { readonly kind: "error"; readonly message: string };
+
 const CARD_TONES = ["blue", "green", "violet", "amber", "orange", "teal", "red", "slate"] as const;
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
 
 export function AdminAgentsPage({ route }: { route: AdminRoute }): React.ReactElement {
 	if (route.id === "agent-detail") {
@@ -50,28 +80,69 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	const { controller } = useAdminAuth();
 	const api = useMemo(() => new AgentApi({ auth: controller }), [controller]);
 	const llmApi = useMemo(() => new LlmApi({ auth: controller }), [controller]);
+	const skillApi = useMemo(() => new SkillApi({ auth: controller }), [controller]);
+	const mcpApi = useMemo(() => new McpApi({ auth: controller }), [controller]);
 	const [state, setState] = useState<DetailState>({ kind: "loading" });
 	const [models, setModels] = useState<ModelsState>({ kind: "loading" });
+	const [revisions, setRevisions] = useState<RevisionsState>({ kind: "loading" });
+	const [apps, setApps] = useState<AppsState>({ kind: "loading" });
+	const [skillCatalog, setSkillCatalog] = useState<CatalogState<SkillSummary>>({ kind: "loading" });
+	const [mcpCatalog, setMcpCatalog] = useState<CatalogState<McpServerSummary>>({ kind: "loading" });
+
 	const load = useCallback(() => {
 		setState({ kind: "loading" });
 		void api.getAgentDetail(agentId).then(
 			(detail) => setState({ kind: "loaded", detail }),
-			(error: unknown) =>
-				setState({ kind: "error", message: error instanceof Error ? error.message : String(error) }),
+			(error: unknown) => setState({ kind: "error", message: errorMessage(error) }),
+		);
+	}, [agentId, api]);
+
+	const loadRevisions = useCallback(() => {
+		setRevisions({ kind: "loading" });
+		void api.listRevisions(agentId, { limit: 20 }).then(
+			(result) => setRevisions({ kind: "loaded", items: result.items }),
+			(error: unknown) => setRevisions({ kind: "error", message: errorMessage(error) }),
+		);
+	}, [agentId, api]);
+
+	const loadApps = useCallback(() => {
+		setApps({ kind: "loading" });
+		void api.listAgentApps(agentId).then(
+			(result) => setApps({ kind: "loaded", items: result.items }),
+			(error: unknown) => setApps({ kind: "error", message: errorMessage(error) }),
 		);
 	}, [agentId, api]);
 
 	useEffect(() => {
 		load();
-	}, [load]);
+		loadRevisions();
+		loadApps();
+	}, [load, loadRevisions, loadApps]);
+
 	useEffect(() => {
 		setModels({ kind: "loading" });
 		void llmApi.listModels().then(
 			(result) => setModels({ kind: "loaded", items: result.items }),
-			(error: unknown) =>
-				setModels({ kind: "error", message: error instanceof Error ? error.message : String(error) }),
+			(error: unknown) => setModels({ kind: "error", message: errorMessage(error) }),
 		);
 	}, [llmApi]);
+
+	// Skill / MCP 目录：只用于把 detail 里的 id 引用翻译成可读名称
+	useEffect(() => {
+		setSkillCatalog({ kind: "loading" });
+		void skillApi.list(100).then(
+			(result) => setSkillCatalog({ kind: "loaded", items: result.items }),
+			(error: unknown) => setSkillCatalog({ kind: "error", message: errorMessage(error) }),
+		);
+	}, [skillApi]);
+
+	useEffect(() => {
+		setMcpCatalog({ kind: "loading" });
+		void mcpApi.list(100).then(
+			(result) => setMcpCatalog({ kind: "loaded", items: result.items }),
+			(error: unknown) => setMcpCatalog({ kind: "error", message: errorMessage(error) }),
+		);
+	}, [mcpApi]);
 	if (state.kind === "loading") {
 		return (
 			<div className="ard-empty" aria-busy="true">
@@ -137,18 +208,78 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 					liveSpeech: draft.liveSpeech,
 					newConversations: draft.newConversations,
 				},
-				skills: state.detail.skills,
-				mcpServers: state.detail.mcpServers,
+				skills: draft.skills ?? state.detail.skills,
+				mcpServers: draft.mcpServers ?? state.detail.mcpServers,
 				changeSummary: "Updated from Agent design",
 			},
 			newIdempotencyKey({ operation: "agent.save" }),
 		);
 		const refreshed = await api.getAgentDetail(agentId);
 		setState({ kind: "loaded", detail: refreshed });
+		loadRevisions();
+		loadApps();
 	};
+
+	// ---- 侧栏：Revision 历史 / 关联应用 / 发布状态 ----
+	const currentRevision = state.detail.currentRevision;
+	const versionHistory: readonly VersionHistoryItem[] =
+		revisions.kind === "loaded"
+			? revisions.items.map((rev) => ({
+					version: `v${rev.revision}`,
+					createdAt: new Date(rev.createdAt).toLocaleString("zh-CN", { hour12: false }),
+					author: rev.createdBy,
+					isCurrent: rev.revision === currentRevision,
+				}))
+			: [];
+	const instances: readonly PublishInstance[] =
+		apps.kind === "loaded"
+			? apps.items.map((app) => ({
+					id: app.appId,
+					name: app.name,
+					status: app.status === "active" ? "online" : "paused",
+				}))
+			: [];
+	const updatedAtLabel = new Date(state.detail.updatedAt).toLocaleString("zh-CN", { hour12: false });
+	const publishData: AgentPublishData = {
+		status: instances.some((item) => item.status === "online") ? "online" : "draft",
+		currentVersion: `v${currentRevision}`,
+		lastPublishedAt: updatedAtLabel,
+		instances,
+		versionHistory,
+	};
+
+	// ---- 主区：Skill / MCP 绑定，id 引用经目录翻译成可读名称 ----
+	const skillItems: readonly AgentResource[] = (state.detail.skills ?? []).map((ref) => {
+		const catalog =
+			skillCatalog.kind === "loaded"
+				? skillCatalog.items.find((item) => item.id === ref.skillId)
+				: undefined;
+		return {
+			id: ref.skillId,
+			name: catalog?.name ?? ref.skillId,
+			version: `v${ref.revision}`,
+			enabled: catalog?.enabled ?? false,
+			outdated: catalog !== undefined && ref.revision < catalog.currentRevision,
+		};
+	});
+	const mcpItems: readonly AgentResource[] = (state.detail.mcpServers ?? []).map((ref) => {
+		const catalog =
+			mcpCatalog.kind === "loaded"
+				? mcpCatalog.items.find((item) => item.id === ref.mcpServerId)
+				: undefined;
+		return {
+			id: ref.mcpServerId,
+			name: catalog?.name ?? ref.mcpServerId,
+			version: `v${ref.revision}`,
+			enabled: catalog?.status === "enabled",
+			toolCount: ref.toolNames.length,
+			outdated: catalog !== undefined && ref.revision < catalog.currentRevision,
+		};
+	});
+
 	return (
 		<AgentDetailPreview
-			key={`${agentId}:${state.detail.currentRevision}`}
+			key={`${agentId}:${currentRevision}`}
 			embedded
 			data={data}
 			saveEnabled
@@ -160,10 +291,36 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 			onSave={saveDraft}
 			onBack={() => navigate("/agents")}
 			onTest={() => navigate(`/?agentId=${agentId}`)}
-			createdAt={new Date(state.detail.updatedAt).toLocaleString("zh-CN", { hour12: false })}
+			createdAt={updatedAtLabel}
 			createdBy={state.detail.updatedBy}
 			agentId={state.detail.id}
 			toolsCount={state.detail.toolIds.length}
+			publishData={publishData}
+			skills={skillItems}
+			mcpServers={mcpItems}
+			resourcesLoading={skillCatalog.kind === "loading" || mcpCatalog.kind === "loading"}
+			skillCatalog={
+				skillCatalog.kind === "loaded"
+					? skillCatalog.items.map((item) => ({
+							id: item.id,
+							name: item.name,
+							currentRevision: item.currentRevision,
+							enabled: item.enabled,
+						}))
+					: undefined
+			}
+			mcpCatalog={
+				mcpCatalog.kind === "loaded"
+					? mcpCatalog.items.map((item) => ({
+							id: item.id,
+							name: item.name,
+							currentRevision: item.currentRevision,
+							enabled: item.status === "enabled",
+							toolCount: item.toolCount,
+						}))
+					: undefined
+			}
+			hasDraft={state.detail.hasDraft}
 		/>
 	);
 }

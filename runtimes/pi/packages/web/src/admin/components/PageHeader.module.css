@@ -30,14 +30,6 @@
 	line-height: 1.2;
 }
 
-.subtitle {
-	margin: 0;
-	font-size: var(--admin-text-base);
-	color: var(--admin-text-secondary);
-	max-width: 64ch;
-	line-height: 1.55;
-}
-
 .actions {
 	display: flex;
 	align-items: center;

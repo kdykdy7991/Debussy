@@ -326,7 +326,6 @@ export function AppListView(): React.ReactElement {
 		<section aria-label="应用列表">
 			<PageHeader
 				title="应用"
-				subtitle="应用把某个 Agent 的某个 Revision 交付给最终用户，每个应用拥有独立的访问模式与发布状态。同一个 Agent 可以被发布为多个应用，覆盖官网、内部工作台、外部合作方等不同场景。"
 				actions={
 					<Button variant="primary" onClick={() => navigate("/apps")}>
 						+ 创建应用

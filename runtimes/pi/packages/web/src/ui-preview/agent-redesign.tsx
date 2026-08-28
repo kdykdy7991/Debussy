@@ -1,5 +1,5 @@
 import type { LlmAvailableModel, ReasoningEffort } from "@earendil-works/pi-protocol";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import "./agent-redesign.css";
 import "./agent-action-menu.css";
 
@@ -42,6 +42,13 @@ export interface AgentEditableDraft {
 	readonly avatar: boolean;
 	readonly liveSpeech: boolean;
 	readonly newConversations: boolean;
+	/** 绑定编辑（Skill / MCP）；不传时由调用方沿用服务端当前绑定。 */
+	readonly skills?: readonly { readonly skillId: string; readonly revision: number }[];
+	readonly mcpServers?: readonly {
+		readonly mcpServerId: string;
+		readonly revision: number;
+		readonly toolNames: readonly string[];
+	}[];
 }
 
 /* ============================================================================
@@ -50,14 +57,20 @@ export interface AgentEditableDraft {
 
 export type PublishStatus = "online" | "paused" | "draft";
 
+/**
+ * 发布实例。audience / domain / publishedAt 在 Control API 的
+ * AgentDefinitionAssociatedApp 上没有对应字段，因此都是可选的：
+ * 缺失时 UI 直接省略那一行，而不是编一个值上去。
+ */
 export interface PublishInstance {
 	readonly id: string;
 	readonly name: string;
 	readonly status: "online" | "paused";
-	readonly audience: string;
+	readonly audience?: string;
 	readonly domain?: string;
-	readonly version: string;
-	readonly publishedAt: string;
+	/** Control API 只给 versionId，没有可读版本号，缺失时省略该行。 */
+	readonly version?: string;
+	readonly publishedAt?: string;
 }
 
 export interface VersionHistoryItem {
@@ -71,8 +84,24 @@ export interface AgentResource {
 	readonly id: string;
 	readonly name: string;
 	readonly version?: string;
-	readonly description: string;
+	/** Skill / MCP 目录接口不返回描述，缺失时 UI 省略该行。 */
+	readonly description?: string;
 	readonly enabled: boolean;
+	readonly toolCount?: number;
+	/** 绑定的 revision 落后于该资源的当前 revision。 */
+	readonly outdated?: boolean;
+	/** 绑定所用的资源 revision —— 保存（saveRevision）时需要还原成引用。 */
+	readonly revision?: number;
+	/** MCP 绑定冻结的工具名列表 —— 保存时随引用一起提交。 */
+	readonly toolNames?: readonly string[];
+}
+
+/** 可绑定的目录条目（Skill / MCP 通用形状）。 */
+export interface AgentCatalogEntry {
+	readonly id: string;
+	readonly name: string;
+	readonly currentRevision: number;
+	readonly enabled?: boolean;
 	readonly toolCount?: number;
 }
 
@@ -513,26 +542,16 @@ function Icon({ name }: { readonly name: string }): React.ReactElement {
 	);
 }
 
-export type PreviewNavId =
-	| "chat"
-	| "agents"
-	| "skills"
-	| "mcp"
-	| "publish"
-	| "usage"
-	| "sessions"
-	| "settings";
+export type PreviewNavId = "agents" | "skills" | "mcp" | "usage" | "sessions" | "settings";
 
 const PREVIEW_NAV_ITEMS: readonly {
 	readonly id: PreviewNavId;
 	readonly label: string;
 	readonly icon: string;
 }[] = [
-	{ id: "chat", label: "Chat", icon: "chat" },
 	{ id: "agents", label: "Agents", icon: "agent" },
 	{ id: "skills", label: "Skills", icon: "skills" },
 	{ id: "mcp", label: "MCP", icon: "mcp" },
-	{ id: "publish", label: "发布", icon: "publish" },
 	{ id: "usage", label: "用量", icon: "usage" },
 	{ id: "sessions", label: "Session 日志", icon: "sessions" },
 	{ id: "settings", label: "设置", icon: "settings" },
@@ -569,7 +588,7 @@ export function AgentListPreview({
 	// 否则点击 Agents 只会进入列表态，高亮却永远落在 Chat 上。
 	const [nav, setNav] = useState<PreviewNavId>("agents");
 	const active = activeId === null ? null : (items.find((it) => it.id === activeId) ?? null);
-	const activeNav = PREVIEW_NAV_ITEMS.find((item) => item.id === nav) ?? PREVIEW_NAV_ITEMS[1];
+	const activeNav = PREVIEW_NAV_ITEMS.find((item) => item.id === nav) ?? PREVIEW_NAV_ITEMS[0];
 	const selectNav = (id: PreviewNavId): void => {
 		setNav(id);
 		setPage("list");
@@ -652,10 +671,7 @@ function PreviewModulePlaceholder({
 	return (
 		<section className={`ard-list-page${embedded ? " is-embedded" : ""}`} aria-label={`${label} 预览`}>
 			<header className="ard-list-header">
-				<div>
-					<h1>{label}</h1>
-					<p>本 UI 预览仅实现了 Agent 模块。</p>
-				</div>
+				<h1>{label}</h1>
 			</header>
 			<div className="ard-state">
 				<strong>{label} 模块尚未实现</strong>
@@ -703,16 +719,7 @@ function AgentListView({
 	return (
 		<section className={`ard-list-page${embedded ? " is-embedded" : ""}`} aria-label="Agents">
 			<header className="ard-list-header">
-				<div className="ard-list-heading">
-					<h1>Agents</h1>
-					<p>管理可被发布的 Agent 定义；每次保存会冻结为一个新 Revision。</p>
-				</div>
-				{onCreate !== undefined ? (
-					<button type="button" className="ard-primary" onClick={onCreate} disabled={createPending}>
-						<Icon name="plus" />
-						<span>{createPending ? "创建中…" : "新建 Agent"}</span>
-					</button>
-				) : null}
+				<h1>Agents</h1>
 			</header>
 			<div className="ard-toolbar">
 				<div className="ard-search">
@@ -737,6 +744,12 @@ function AgentListView({
 					</select>
 					<i aria-hidden="true">▾</i>
 				</div>
+				{onCreate !== undefined ? (
+					<button type="button" className="ard-primary" onClick={onCreate} disabled={createPending}>
+						<Icon name="plus" />
+						<span>{createPending ? "创建中…" : "新建 Agent"}</span>
+					</button>
+				) : null}
 			</div>
 			<div className="ard-list-meta">
 				<small>{loadState === "ready" ? `共 ${filtered.length} 个 Agent` : "加载中…"}</small>
@@ -776,12 +789,6 @@ function AgentListView({
 							? "创建第一个 Agent，配置它的能力与发布方式。"
 							: "试试更换关键词，或把状态筛选切回「全部状态」。"}
 					</span>
-					{total === 0 && onCreate !== undefined ? (
-						<button type="button" className="ard-primary" onClick={onCreate} disabled={createPending}>
-							<Icon name="plus" />
-							<span>新建 Agent</span>
-						</button>
-					) : null}
 				</div>
 			) : (
 				<div className="ard-agent-grid">
@@ -873,6 +880,10 @@ export function AgentDetailPreview({
 	extensionPanel,
 	externallyDirty = false,
 	onDiscardExternal,
+	resourcesLoading = false,
+	skillCatalog,
+	mcpCatalog,
+	hasDraft = false,
 }: {
 	readonly onBack: () => void;
 	readonly onTest?: () => void;
@@ -896,6 +907,13 @@ export function AgentDetailPreview({
 	readonly extensionPanel?: ReactNode;
 	readonly externallyDirty?: boolean;
 	readonly onDiscardExternal?: () => void;
+	/** Skill / MCP 绑定与目录仍在拉取：此时不要渲染「尚未关联」这种误导文案。 */
+	readonly resourcesLoading?: boolean;
+	/** 可绑定的 Skill / MCP 目录（用于「添加」选择器）。 */
+	readonly skillCatalog?: readonly AgentCatalogEntry[];
+	readonly mcpCatalog?: readonly AgentCatalogEntry[];
+	/** 服务端存在未发布草稿时在标题旁提示。 */
+	readonly hasDraft?: boolean;
 }): React.ReactElement {
 	const [name, setName] = useState(data.name);
 	const [description, setDescription] = useState(data.description);
@@ -907,6 +925,15 @@ export function AgentDetailPreview({
 	const [avatar, setAvatar] = useState(data.avatar);
 	const [speech, setSpeech] = useState(data.liveSpeech);
 	const [newConversations, setNewConversations] = useState(data.newConversations);
+	// Skill / MCP 绑定草稿：props 只作为初始值（详情页按 revision 重建组件）
+	const [draftSkills, setDraftSkills] = useState<readonly AgentResource[]>(skills);
+	const [draftMcpServers, setDraftMcpServers] = useState<readonly AgentResource[]>(mcpServers);
+	const [pickerOpen, setPickerOpen] = useState<"skill" | "mcp" | null>(null);
+	const bindingKey = `${draftSkills
+		.map((item) => `${item.id}@${item.revision ?? 0}`)
+		.join(",")}|${draftMcpServers
+		.map((item) => `${item.id}@${item.revision ?? 0}`)
+		.join(",")}`;
 	const [savedSnapshot, setSavedSnapshot] = useState(() =>
 		JSON.stringify({
 			name: data.name,
@@ -919,6 +946,7 @@ export function AgentDetailPreview({
 			avatar: data.avatar,
 			speech: data.liveSpeech,
 			newConversations: data.newConversations,
+			bindings: bindingKey,
 		}),
 	);
 	const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
@@ -934,6 +962,7 @@ export function AgentDetailPreview({
 		avatar,
 		speech,
 		newConversations,
+		bindings: bindingKey,
 	});
 	const formDirty = savedSnapshot !== "" && snapshot !== savedSnapshot;
 	const dirty = formDirty || externallyDirty;
@@ -957,6 +986,16 @@ export function AgentDetailPreview({
 					avatar,
 					liveSpeech: speech,
 					newConversations,
+					skills: draftSkills
+						.filter((item) => item.revision !== undefined)
+						.map((item) => ({ skillId: item.id, revision: item.revision as number })),
+					mcpServers: draftMcpServers
+						.filter((item) => item.revision !== undefined)
+						.map((item) => ({
+							mcpServerId: item.id,
+							revision: item.revision as number,
+							toolNames: item.toolNames ?? [],
+						})),
 				});
 			}
 			setSavedSnapshot(snapshot);
@@ -977,6 +1016,9 @@ export function AgentDetailPreview({
 		setAvatar(data.avatar);
 		setSpeech(data.liveSpeech);
 		setNewConversations(data.newConversations);
+		setDraftSkills(skills);
+		setDraftMcpServers(mcpServers);
+		setPickerOpen(null);
 		onDiscardExternal?.();
 	};
 	return (
@@ -992,6 +1034,7 @@ export function AgentDetailPreview({
 						<Icon name="edit" />
 					</button>
 					{identityEditable ? <span className="ard-tag">编辑</span> : null}
+				{hasDraft ? <span className="ard-tag is-draft-tag">含草稿</span> : null}
 					<span className={dirty ? "is-dirty" : ""}>
 						<Icon name="check" />
 						{dirty ? "未保存" : "已保存"}
@@ -1185,45 +1228,117 @@ export function AgentDetailPreview({
 					<section>
 						<div className="ard-section-head">
 							<h2>Skill 能力</h2>
-							<button type="button" className="ard-add-btn">
+							<button
+								type="button"
+								className="ard-add-btn"
+								onClick={() => setPickerOpen(pickerOpen === "skill" ? null : "skill")}
+							>
 								<Icon name="plus" />
 								添加 Skill
 							</button>
+							{pickerOpen === "skill" ? (
+								<ResourcePicker
+									options={(skillCatalog ?? []).filter(
+										(entry) => !draftSkills.some((item) => item.id === entry.id),
+									)}
+									emptyLabel={
+										skillCatalog === undefined || skillCatalog.length === 0
+											? "Skill 目录为空"
+											: "目录中的 Skill 都已关联"
+									}
+									onPick={(entry) => {
+										setDraftSkills((current) => [
+											...current,
+											{
+												id: entry.id,
+												name: entry.name,
+												version: `v${entry.currentRevision}`,
+												revision: entry.currentRevision,
+												enabled: entry.enabled ?? true,
+												toolCount: entry.toolCount,
+											},
+										]);
+										setPickerOpen(null);
+									}}
+									onClose={() => setPickerOpen(null)}
+								/>
+							) : null}
 						</div>
 						<div className="ard-resource-list">
-							{skills.length === 0 ? (
+							{resourcesLoading && draftSkills.length === 0 ? (
+								<p className="ard-empty">正在加载 Skill 绑定…</p>
+							) : draftSkills.length === 0 ? (
 								<p className="ard-empty">尚未关联任何 Skill</p>
 							) : (
-								skills.map((item) => <ResourceRow key={item.id} item={item} kind="skill" />)
+								draftSkills.map((item) => (
+									<ResourceRow
+										key={item.id}
+										item={item}
+										kind="skill"
+										onRemove={() => setDraftSkills((current) => current.filter((it) => it.id !== item.id))}
+									/>
+								))
 							)}
 						</div>
-						{skills.length > 0 ? (
-							<div className="ard-see-more">
-								查看全部 {skills.length} 个 Skill <Icon name="chevronDown" />
-							</div>
-						) : null}
 					</section>
 
 					<section>
 						<div className="ard-section-head">
 							<h2>MCP 能力</h2>
-							<button type="button" className="ard-add-btn">
+							<button
+								type="button"
+								className="ard-add-btn"
+								onClick={() => setPickerOpen(pickerOpen === "mcp" ? null : "mcp")}
+							>
 								<Icon name="plus" />
 								添加 MCP
 							</button>
+							{pickerOpen === "mcp" ? (
+								<ResourcePicker
+									options={(mcpCatalog ?? []).filter(
+										(entry) => !draftMcpServers.some((item) => item.id === entry.id),
+									)}
+									emptyLabel={
+										mcpCatalog === undefined || mcpCatalog.length === 0
+											? "MCP 目录为空"
+											: "目录中的 MCP Server 都已关联"
+									}
+									onPick={(entry) => {
+										setDraftMcpServers((current) => [
+											...current,
+											{
+												id: entry.id,
+												name: entry.name,
+												version: `v${entry.currentRevision}`,
+												revision: entry.currentRevision,
+												enabled: entry.enabled ?? true,
+												toolCount: entry.toolCount,
+											},
+										]);
+										setPickerOpen(null);
+									}}
+									onClose={() => setPickerOpen(null)}
+								/>
+							) : null}
 						</div>
 						<div className="ard-resource-list">
-							{mcpServers.length === 0 ? (
+							{resourcesLoading && draftMcpServers.length === 0 ? (
+								<p className="ard-empty">正在加载 MCP 绑定…</p>
+							) : draftMcpServers.length === 0 ? (
 								<p className="ard-empty">尚未关联任何 MCP Server</p>
 							) : (
-								mcpServers.map((item) => <ResourceRow key={item.id} item={item} kind="mcp" />)
+								draftMcpServers.map((item) => (
+									<ResourceRow
+										key={item.id}
+										item={item}
+										kind="mcp"
+										onRemove={() =>
+											setDraftMcpServers((current) => current.filter((it) => it.id !== item.id))
+										}
+									/>
+								))
 							)}
 						</div>
-						{mcpServers.length > 0 ? (
-							<div className="ard-see-more">
-								查看全部 {mcpServers.length} 个 MCP <Icon name="chevronDown" />
-							</div>
-						) : null}
 					</section>
 
 					{extensionPanel}
@@ -1281,41 +1396,95 @@ export function AgentDetailPreview({
 function ResourceRow({
 	item,
 	kind,
+	onRemove,
 }: {
 	readonly item: AgentResource;
 	readonly kind: "skill" | "mcp";
+	readonly onRemove?: () => void;
 }): React.ReactElement {
-	const iconName =
-		kind === "skill"
-			? item.id === "skill_2"
-				? "doc"
-				: item.id === "skill_3"
-					? "users"
-					: "cube"
-			: item.id === "mcp_1"
-				? "mcp"
-				: "book";
+	const detail: string = [
+		item.description,
+		item.toolCount === undefined ? undefined : `工具 ${item.toolCount} 个`,
+	].filter((part): part is string => part !== undefined && part !== "").join(" · ");
 	return (
-		<button type="button" className="ard-resource-item">
+		<div className="ard-resource-item">
 			<span className="ard-resource-icon" aria-hidden="true">
-				<Icon name={iconName} />
+				<Icon name={kind === "skill" ? "cube" : "mcp"} />
 			</span>
 			<span className="ard-resource-body">
 				<span className="ard-resource-name">
 					{item.name}
 					{item.version !== undefined ? <small className="ard-resource-version">{item.version}</small> : null}
+					{item.outdated === true ? <small className="ard-resource-outdated">有新版本</small> : null}
 				</span>
-				<span className="ard-resource-desc">
-					{item.description}
-					{item.toolCount !== undefined ? <> · 工具 {item.toolCount} 个</> : null}
-				</span>
+				{detail === "" ? null : <span className="ard-resource-desc">{detail}</span>}
 			</span>
 			<span className={`ard-resource-status ${item.enabled ? "is-on" : "is-off"}`}>
 				<i aria-hidden="true" />
 				{kind === "mcp" ? (item.enabled ? "已连接" : "未连接") : item.enabled ? "已启用" : "未启用"}
 			</span>
-			<Icon name="chevron" />
-		</button>
+			{onRemove === undefined ? null : (
+				<button
+					type="button"
+					className="ard-resource-remove"
+					aria-label={`移除 ${item.name}`}
+					onClick={onRemove}
+				>
+					移除
+				</button>
+			)}
+		</div>
+	);
+}
+
+/** 目录选择 popover：只列出尚未绑定的条目。 */
+function ResourcePicker({
+	options,
+	emptyLabel,
+	onPick,
+	onClose,
+}: {
+	readonly options: readonly AgentCatalogEntry[];
+	readonly emptyLabel: string;
+	readonly onPick: (entry: AgentCatalogEntry) => void;
+	readonly onClose: () => void;
+}): React.ReactElement {
+	const ref = useRef<HTMLDivElement | null>(null);
+	useEffect(() => {
+		const onPointerDown = (event: MouseEvent): void => {
+			const target = event.target as Element | null;
+			if (target !== null && target.closest(".ard-resource-picker, .ard-add-btn") !== null) return;
+			onClose();
+		};
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") onClose();
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [onClose]);
+	return (
+		<div className="ard-resource-picker" ref={ref} role="listbox" aria-label="可添加的资源">
+			{options.length === 0 ? (
+				<p className="ard-picker-empty">{emptyLabel}</p>
+			) : (
+				options.map((entry) => (
+					<button
+						key={entry.id}
+						type="button"
+						role="option"
+						aria-selected="false"
+						onClick={() => onPick(entry)}
+					>
+						<span>{entry.name}</span>
+						<small>v{entry.currentRevision}</small>
+					</button>
+				))
+			)}
+		</div>
 	);
 }
 
@@ -1361,11 +1530,6 @@ function PublishStatusCard({
 }
 
 function PublishInstancesCard({ instances }: { readonly instances: readonly PublishInstance[] }): React.ReactElement {
-	const icons: Record<string, string> = {
-		inst_1: "globe",
-		inst_2: "users",
-		inst_3: "diamond",
-	};
 	return (
 		<section className="ard-side-card" aria-label="发布实例">
 			<div className="ard-side-head">
@@ -1375,32 +1539,39 @@ function PublishInstancesCard({ instances }: { readonly instances: readonly Publ
 					新建发布
 				</button>
 			</div>
-			<div className="ard-instance-list">
-				{instances.map((item) => (
-					<button type="button" className="ard-instance-item" key={item.id}>
-						<span className="ard-instance-icon" aria-hidden="true">
-							<Icon name={icons[item.id] ?? "publish"} />
-						</span>
-						<span className="ard-instance-body">
-							<span className="ard-instance-name">
-								{item.name}
-								<small className={`ard-instance-tag is-${item.status}`}>
-									{item.status === "online" ? "已上线" : "已暂停"}
-								</small>
-							</span>
-							<span className="ard-instance-meta">
-								{item.audience}
-								{item.domain !== undefined ? <> · {item.domain}</> : null}
-							</span>
-							<span className="ard-instance-meta">
-								{item.version} · {item.publishedAt}
-							</span>
-						</span>
-						<Icon name="chevron" />
-					</button>
-				))}
-			</div>
-			<div className="ard-side-link">查看全部 {instances.length} 个发布 →</div>
+			{instances.length === 0 ? (
+				<p className="ard-side-empty">还没有应用使用这个 Agent</p>
+			) : (
+				<div className="ard-instance-list">
+					{instances.map((item) => {
+						const notEmpty = (part: string | undefined): part is string =>
+							part !== undefined && part !== "";
+						const audienceLine = [item.audience, item.domain].filter(notEmpty).join(" · ");
+						const versionLine = [item.version, item.publishedAt].filter(notEmpty).join(" · ");
+						return (
+							<button type="button" className="ard-instance-item" key={item.id}>
+								<span className="ard-instance-icon" aria-hidden="true">
+									<Icon name="publish" />
+								</span>
+								<span className="ard-instance-body">
+									<span className="ard-instance-name">
+										{item.name}
+										<small className={`ard-instance-tag is-${item.status}`}>
+											{item.status === "online" ? "已上线" : "已暂停"}
+										</small>
+									</span>
+									{audienceLine === "" ? null : <span className="ard-instance-meta">{audienceLine}</span>}
+									{versionLine === "" ? null : <span className="ard-instance-meta">{versionLine}</span>}
+								</span>
+								<Icon name="chevron" />
+							</button>
+						);
+					})}
+				</div>
+			)}
+			{instances.length === 0 ? null : (
+				<div className="ard-side-link">共 {instances.length} 个关联应用</div>
+			)}
 		</section>
 	);
 }
@@ -1473,30 +1644,33 @@ function QuickInfoCard({
 }
 
 function VersionHistoryCard({ history }: { readonly history: readonly VersionHistoryItem[] }): React.ReactElement {
-	const icons = ["lightning", "history", "clock"];
 	return (
 		<section className="ard-side-card" aria-label="版本历史">
 			<h3>版本历史</h3>
-			<div className="ard-version-list">
-				{history.map((item, idx) => (
-					<button type="button" className="ard-version-item" key={item.version}>
-						<span className="ard-instance-icon" aria-hidden="true">
-							<Icon name={icons[idx] ?? "history"} />
-						</span>
-						<span className="ard-instance-body">
-							<span className="ard-version-name">
-								{item.version}
-								{item.isCurrent ? <small className="ard-version-current">当前版本</small> : null}
+			{history.length === 0 ? (
+				<p className="ard-side-empty">还没有 Revision</p>
+			) : (
+				<div className="ard-version-list">
+					{history.map((item) => (
+						<button type="button" className="ard-version-item" key={item.version}>
+							<span className="ard-instance-icon" aria-hidden="true">
+								<Icon name="history" />
 							</span>
-							<span className="ard-version-meta">
-								{item.createdAt} · {item.author}
+							<span className="ard-instance-body">
+								<span className="ard-version-name">
+									{item.version}
+									{item.isCurrent ? <small className="ard-version-current">当前版本</small> : null}
+								</span>
+								<span className="ard-version-meta">
+									{item.createdAt} · {item.author}
+								</span>
 							</span>
-						</span>
-						<Icon name="chevron" />
-					</button>
-				))}
-			</div>
-			<div className="ard-side-link">查看全部版本 →</div>
+							<Icon name="chevron" />
+						</button>
+					))}
+				</div>
+			)}
+			{history.length === 0 ? null : <div className="ard-side-link">共 {history.length} 个 Revision</div>}
 		</section>
 	);
 }

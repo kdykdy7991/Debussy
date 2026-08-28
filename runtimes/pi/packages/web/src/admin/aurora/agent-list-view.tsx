@@ -53,10 +53,7 @@ export function AgentListView(): React.ReactElement {
 
 	return (
 		<section className={styles.shell} aria-label="Agent 列表">
-			<AuroraPageHeader
-				title="Agent 设计"
-				description="配置 Agent 能力、保存 Revision，并查看它被哪些发布应用使用。"
-			/>
+			<AuroraPageHeader title="Agent" />
 
 			{load.kind === "loading" ? <div className={styles.empty}>正在加载 Agent…</div> : null}
 			{load.kind === "error" ? <div className={styles.empty}>加载 Agent 失败：{load.message}</div> : null}

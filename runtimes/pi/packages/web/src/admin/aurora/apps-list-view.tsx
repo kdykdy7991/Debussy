@@ -164,7 +164,6 @@ export function AppsListView(): React.ReactElement {
 			<header className={styles.header}>
 				<div>
 					<h1 id="apps-title">发布应用</h1>
-					<p>管理已发布的应用，查看状态与访问配置。</p>
 				</div>
 				<button className={styles.createButton} type="button" onClick={() => navigate("/apps/new")}>
 					<Icon name="plus" />

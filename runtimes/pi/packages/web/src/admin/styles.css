@@ -1730,3 +1730,37 @@ button {
 .conversation-workspace--admin .sidebar-footer strong {
 	color: var(--aurora-ink-2);
 }
+
+/* ==========================================================================
+   原生 select 统一自绘下拉箭头（全局兜底）
+   - 原生箭头被浏览器钉在最右侧：既贴着边框，又会压住右侧文字 —— 大量老
+     页面的 padding-right 只有 8~14px，小于箭头本身的宽度
+     （Pagination.sizeChanger 5px 8px、skills .filters 0 10px、
+     mcp .toolbar 0 12px、app-detail .form 0 14px、conversation-detail
+     .actions 0 14px）
+   - 这里用两个 linear-gradient 拼出三角形，颜色跟随 --aurora token，
+     并统一给出 28px 的右侧留白
+   - admin/styles.css 在页面 CSS Modules 之后加载，同特异性下可覆盖它们
+     的 padding 简写
+   ========================================================================== */
+.admin-shell select {
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 28px;
+	background-image:
+		linear-gradient(45deg, transparent 50%, var(--aurora-ink-3) 50%),
+		linear-gradient(135deg, var(--aurora-ink-3) 50%, transparent 50%);
+	background-position:
+		calc(100% - 17px) center,
+		calc(100% - 12px) center;
+	background-size: 5px 5px, 5px 5px;
+	background-repeat: no-repeat;
+}
+.admin-shell select:hover {
+	border-color: var(--aurora-ink-3);
+}
+/* 已自绘箭头的组件不再叠加背景箭头 */
+.admin-shell .ard-select select {
+	padding-right: 16px;
+	background-image: none;
+}

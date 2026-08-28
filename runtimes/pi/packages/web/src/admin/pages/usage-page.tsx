@@ -40,7 +40,6 @@ export function AdminUsagePage(): React.ReactElement {
 			<AuroraPageHeader
 				title="Usage"
 				titleId="usage-title"
-				description="查看模型返回的真实 Token 消耗，并按 Agent 与调用来源核对用量。"
 				actions={
 					<label className={styles.rangeControl}>
 						<span>统计周期</span>

@@ -172,31 +172,23 @@
 	min-height: 100vh;
 	margin-left: 220px;
 }
+/* 宽屏为主：内容限宽居中，不在超宽屏上无限拉伸 */
 .ard-list-page {
+	max-width: var(--aurora-page-max-width);
+	margin-inline: auto;
 	padding: 4px 40px 56px;
 }
 .ard-list-header {
-	display: flex;
-	align-items: flex-end;
-	justify-content: space-between;
-	gap: var(--aurora-space-6);
-	margin: 0 0 var(--aurora-space-6);
+	margin: 0 0 var(--aurora-space-5);
 }
-.ard-list-heading h1 {
+.ard-list-header h1 {
 	margin: 0;
 	font-family: var(--aurora-font-display);
-	font-size: var(--aurora-text-3xl);
+	font-size: var(--aurora-text-4xl);
 	font-weight: var(--aurora-weight-semibold);
 	letter-spacing: -0.02em;
 	line-height: 1.2;
 	color: var(--aurora-ink);
-}
-.ard-list-heading p {
-	margin: var(--aurora-space-2) 0 0;
-	max-width: 62ch;
-	color: var(--aurora-ink-3);
-	font-size: var(--aurora-text-md);
-	line-height: 1.6;
 }
 .ard-primary {
 	display: inline-flex;
@@ -243,12 +235,16 @@
 	font-weight: var(--aurora-weight-medium);
 	line-height: 1;
 }
+/* 一条工具条收口：搜索 + 筛选成组靠左，主操作靠右 */
 .ard-toolbar {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: var(--aurora-space-3);
+	gap: var(--aurora-space-2);
 	margin: 0 0 var(--aurora-space-4);
+}
+.ard-toolbar .ard-primary {
+	margin-left: auto;
 }
 .ard-search,
 .ard-select {
@@ -265,8 +261,7 @@
 		background var(--aurora-motion-fast) var(--aurora-ease-standard);
 }
 .ard-search {
-	flex: 1 1 260px;
-	max-width: 420px;
+	flex: 0 1 360px;
 	gap: 9px;
 	padding: 0 12px;
 }
@@ -295,7 +290,6 @@
 .ard-select {
 	position: relative;
 	padding: 0 12px;
-	margin-left: auto;
 }
 .ard-select:focus-within {
 	border-color: var(--aurora-accent);
@@ -344,17 +338,29 @@
 .ard-reset:hover {
 	text-decoration: underline;
 }
+/* 宽屏固定 3 列：列宽稳定在 ~390px，卡片更舒展；窄屏才逐级降列 */
 .ard-agent-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
-	gap: var(--aurora-space-4);
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 20px;
+}
+@media (max-width: 1100px) {
+	.ard-agent-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (max-width: 720px) {
+	.ard-agent-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }
 .ard-agent-card {
 	display: grid;
-	grid-template-columns: 44px minmax(0, 1fr);
-	column-gap: var(--aurora-space-3);
+	grid-template-columns: 48px minmax(0, 1fr);
+	column-gap: var(--aurora-space-4);
 	row-gap: var(--aurora-space-2);
-	padding: var(--aurora-space-5);
+	min-height: 168px;
+	padding: 22px;
 	border: 1px solid var(--aurora-line-soft);
 	border-radius: var(--aurora-radius-md);
 	background: var(--aurora-surface);
@@ -377,10 +383,10 @@
 	grid-row: 1 / span 2;
 	display: grid;
 	place-items: center;
-	width: 44px;
-	height: 44px;
-	border-radius: 12px;
-	font-size: 17px;
+	width: 48px;
+	height: 48px;
+	border-radius: 13px;
+	font-size: 18px;
 	font-weight: var(--aurora-weight-semibold);
 }
 /* 头像色只落在图标上：低饱和语义色，卡片本身保持纯白 */
@@ -830,6 +836,7 @@
 	letter-spacing: 0.01em;
 }
 .ard-section-head {
+	position: relative;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -1183,9 +1190,95 @@
 	color: var(--ard-muted);
 	font-weight: 400;
 }
+.ard-resource-outdated {
+	font-size: 10.5px;
+	padding: 1px 6px;
+	background: var(--ard-amber-soft);
+	color: var(--ard-amber);
+	border-radius: 4px;
+	font-weight: 500;
+}
 .ard-resource-desc {
 	font-size: 12px;
 	color: var(--ard-muted);
+}
+.ard-resource-remove {
+	flex: none;
+	height: 26px;
+	padding: 0 10px;
+	border: 1px solid var(--ard-line-soft);
+	border-radius: 6px;
+	background: #fff;
+	color: var(--ard-faint);
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+	opacity: 0;
+	transition:
+		opacity var(--ard-motion-fast, 120ms) ease,
+		color var(--ard-motion-fast, 120ms) ease,
+		border-color var(--ard-motion-fast, 120ms) ease;
+}
+.ard-resource-item:hover .ard-resource-remove,
+.ard-resource-remove:focus-visible {
+	opacity: 1;
+}
+.ard-resource-remove:hover {
+	border-color: var(--ard-red, #e11d48);
+	color: var(--ard-red, #e11d48);
+}
+
+/* 目录选择 popover（添加 Skill / MCP） */
+.ard-resource-picker {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 30;
+	display: flex;
+	min-width: 230px;
+	max-height: 260px;
+	flex-direction: column;
+	gap: 2px;
+	padding: 6px;
+	border: 1px solid var(--ard-line);
+	border-radius: var(--ard-radius-md);
+	background: #fff;
+	box-shadow: 0 4px 16px rgba(17, 19, 24, 0.06), 0 24px 64px rgba(17, 19, 24, 0.08);
+	overflow-y: auto;
+}
+.ard-resource-picker button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-height: 32px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--ard-ink-2);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+.ard-resource-picker button:hover {
+	background: var(--ard-row-hover);
+	color: var(--ard-ink);
+}
+.ard-resource-picker button small {
+	color: var(--ard-faint);
+	font-size: 11px;
+}
+.ard-picker-empty {
+	margin: 0;
+	padding: 10px;
+	color: var(--ard-faint);
+	font-size: 12.5px;
+}
+.ard-tag.is-draft-tag {
+	background: var(--ard-amber-soft);
+	color: var(--ard-amber);
 }
 .ard-resource-status {
 	display: inline-flex;
@@ -1325,6 +1418,12 @@
 	font-size: 13.5px;
 	font-weight: 600;
 	color: var(--ard-ink);
+}
+.ard-side-empty {
+	margin: 0;
+	padding: 10px 0 2px;
+	color: var(--ard-faint);
+	font-size: 12.5px;
 }
 .ard-side-head {
 	display: flex;

@@ -162,7 +162,6 @@ export function AdminMcpPage(): React.ReactElement {
 			<header className={styles.header}>
 				<div>
 					<h1 id="mcp-title">MCP 管理</h1>
-					<p>管理平台可用的 MCP Server 连接、版本和工具。</p>
 				</div>
 				<button type="button" className={styles.createButton} onClick={() => setShowCreate(true)}>
 					＋ 新建 MCP Server

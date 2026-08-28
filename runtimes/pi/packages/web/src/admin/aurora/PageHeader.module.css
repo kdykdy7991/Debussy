@@ -31,14 +31,6 @@
 	color: var(--aurora-ink);
 }
 
-.description {
-	margin: 0;
-	max-width: 68ch;
-	color: var(--aurora-ink-2);
-	font-size: var(--aurora-text-base);
-	line-height: 1.5;
-}
-
 .meta {
 	display: inline-flex;
 	align-items: center;

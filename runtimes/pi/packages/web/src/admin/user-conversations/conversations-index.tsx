@@ -591,7 +591,6 @@ export function AdminConversationsIndex(): React.ReactElement {
 		<section aria-label="用户会话列表">
 			<PageHeader
 				title="会话"
-				subtitle="查看和管理用户与 Agent 的交互日志"
 				actions={
 					<Button variant="secondary" size="sm">
 						导出

@@ -358,7 +358,6 @@ export function AdminAppDetail({ appId }: { readonly appId?: string }): React.Re
 						<h1>{isNew ? "创建应用" : "应用详情"}</h1>
 						<b className={styles.status}>{STATUS_LABEL[status]}</b>
 					</span>
-					<p>编辑应用信息、访问配置并发布到应用市场。</p>
 				</div>
 				<div className={menuStyles.anchor}>
 					<button

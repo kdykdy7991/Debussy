@@ -139,7 +139,6 @@ export function CustomLlmSection(): React.ReactElement {
 					<h1>
 						设置 <span>/</span> 模型服务
 					</h1>
-					<p>配置和管理连接大模型服务所需的信息，以及服务提供的模型和能力。</p>
 				</div>
 				<button
 					type="button"

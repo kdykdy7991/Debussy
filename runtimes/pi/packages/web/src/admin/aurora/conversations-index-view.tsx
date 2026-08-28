@@ -23,6 +23,40 @@ type ListState =
 	| { kind: "loaded"; data: ConversationAdminListResponse }
 	| { kind: "error"; message: string };
 
+/**
+ * 时间范围：起止日期常驻 + 右侧快捷预设（Grafana / CloudWatch 的常见组合）。
+ *
+ * 默认落在「近 30 天」而不是空区间：原生 input[type=date] 空值时会显示
+ * yyyy/mm/dd 占位，对使用者不友好；给一个默认区间即可避开。
+ */
+type RangePreset = "all" | "today" | "7d" | "30d" | "90d" | "custom";
+
+const DEFAULT_RANGE: "today" | "7d" | "30d" | "90d" = "30d";
+
+const RANGE_PRESETS: readonly { readonly value: RangePreset; readonly label: string }[] = [
+	{ value: "today", label: "今天" },
+	{ value: "7d", label: "近 7 天" },
+	{ value: "30d", label: "近 30 天" },
+	{ value: "90d", label: "近 90 天" },
+	{ value: "all", label: "不限" },
+];
+
+function toDateValue(date: Date): string {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
+	return `${year}-${month}-${day}`;
+}
+
+function presetRange(preset: "today" | "7d" | "30d" | "90d"): { readonly from: string; readonly to: string } {
+	const to = new Date();
+	const from = new Date();
+	if (preset === "7d") from.setDate(from.getDate() - 6);
+	if (preset === "90d") from.setDate(from.getDate() - 89);
+	if (preset === "30d") from.setDate(from.getDate() - 29);
+	return { from: toDateValue(from), to: toDateValue(to) };
+}
+
 interface MockConversation {
 	readonly id: string;
 	readonly title: string;
@@ -249,6 +283,12 @@ const STATUS_LABEL: Record<StatusTab, string> = {
 	deleted: "已删除",
 };
 
+const STATUS_TAB_OPTIONS: ReadonlyArray<{ value: string; label: string }> = (
+	Object.entries(STATUS_LABEL) as [StatusTab, string][]
+).map(([value, label]) => ({ value, label: label === "全部" ? "全部状态" : label }));
+
+type SelectOption = { readonly value: string; readonly label: string };
+
 function principalLabel(principalType: string): string {
 	switch (principalType) {
 		case "external_user":
@@ -361,8 +401,13 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	const [appFilter, setAppFilter] = useState(() => readInitialQueryParam("appId"));
 	const [agentFilter, setAgentFilter] = useState("");
 	const [query, setQuery] = useState("");
-	const [dateFrom, setDateFrom] = useState("");
-	const [dateTo, setDateTo] = useState("");
+	const [rangePreset, setRangePreset] = useState<RangePreset>(DEFAULT_RANGE);
+	const [dateFrom, setDateFrom] = useState(() => presetRange(DEFAULT_RANGE).from);
+	const [dateTo, setDateTo] = useState(() => presetRange(DEFAULT_RANGE).to);
+	const [rangeOpen, setRangeOpen] = useState(false);
+	const [draftFrom, setDraftFrom] = useState(() => presetRange(DEFAULT_RANGE).from);
+	const [draftTo, setDraftTo] = useState(() => presetRange(DEFAULT_RANGE).to);
+	const rangeRef = useRef<HTMLDivElement | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const [useMock, setUseMock] = useState(false);
@@ -396,6 +441,71 @@ export function AdminConversationsIndexView(): React.ReactElement {
 		}),
 		[appFilter, agentFilter, statusTab],
 	);
+
+	// 选预设 = 把起止输入填成对应区间；手动改日期则自动降级为「自定义」
+	const applyRangePreset = useCallback((next: RangePreset): void => {
+		setRangePreset(next);
+		if (next === "custom") return;
+		if (next === "all") {
+			setDateFrom("");
+			setDateTo("");
+			return;
+		}
+		const range = presetRange(next);
+		setDateFrom(range.from);
+		setDateTo(range.to);
+	}, []);
+
+	const rangeHint = useMemo(() => {
+		if (dateFrom === "" && dateTo === "") return undefined;
+		const crossYear = dateFrom.slice(0, 4) !== dateTo.slice(0, 4);
+		const short = (value: string): string => (value === "" || crossYear ? value : value.slice(5));
+		if (dateFrom !== "" && dateTo !== "") {
+			return dateFrom === dateTo ? short(dateFrom) : `${short(dateFrom)} ~ ${short(dateTo)}`;
+		}
+		return dateFrom !== "" ? `≥ ${short(dateFrom)}` : `≤ ${short(dateTo)}`;
+	}, [dateFrom, dateTo]);
+
+	// 触发按钮只显示摘要；区间详情收进弹出面板，避免工具条被撑到换行
+	const rangeSummary = useMemo(() => {
+		if (rangePreset === "all") return "不限";
+		if (rangePreset === "custom") return rangeHint ?? "自定义";
+		return RANGE_PRESETS.find((option) => option.value === rangePreset)?.label ?? "近 30 天";
+	}, [rangePreset, rangeHint]);
+
+	const toggleRangePanel = useCallback((): void => {
+		setRangeOpen((open) => {
+			if (!open) {
+				setDraftFrom(dateFrom);
+				setDraftTo(dateTo);
+			}
+			return !open;
+		});
+	}, [dateFrom, dateTo]);
+
+	const commitCustomRange = useCallback((): void => {
+		setDateFrom(draftFrom);
+		setDateTo(draftTo);
+		setRangePreset(draftFrom === "" && draftTo === "" ? "all" : "custom");
+		setRangeOpen(false);
+	}, [draftFrom, draftTo]);
+
+	useEffect(() => {
+		if (!rangeOpen) return;
+		const onPointerDown = (event: MouseEvent): void => {
+			const node = rangeRef.current;
+			if (node !== null && !node.contains(event.target as Node)) setRangeOpen(false);
+		};
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") setRangeOpen(false);
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [rangeOpen]);
 
 	useEffect(() => {
 		load(apiFilters);
@@ -446,7 +556,6 @@ export function AdminConversationsIndexView(): React.ReactElement {
 			<header className={styles.header}>
 				<div>
 					<h1>Session 日志</h1>
-					<p>查看发布应用的真实用户会话，支持搜索与筛选，快速定位会话并排查问题。</p>
 				</div>
 				<button type="button" className={styles.refresh} onClick={() => load(apiFilters)}>
 					<Icon name="refresh" />
@@ -464,51 +573,77 @@ export function AdminConversationsIndexView(): React.ReactElement {
 					/>
 					<kbd>/</kbd>
 				</label>
-				<Filter label="应用">
-					<select value={appFilter} onChange={(e) => setAppFilter(e.currentTarget.value)}>
-						{APP_OPTIONS.map((option) => (
-							<option key={option.value} value={option.value}>
-								{option.label}
-							</option>
-						))}
-					</select>
-				</Filter>
-				<Filter label="Agent">
-					<select value={agentFilter} onChange={(e) => setAgentFilter(e.currentTarget.value)}>
-						{AGENT_OPTIONS.map((option) => (
-							<option key={option.value} value={option.value}>
-								{option.label}
-							</option>
-						))}
-					</select>
-				</Filter>
-				<Filter label="状态">
-					<select value={statusTab} onChange={(e) => setStatusTab(e.currentTarget.value as StatusTab)}>
-						{Object.entries(STATUS_LABEL).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label === "全部" ? "全部状态" : label}
-							</option>
-						))}
-					</select>
-				</Filter>
-				<Filter label="时间范围" wide>
-					<div className={styles.dateRange}>
-						<Icon name="calendar" />
-						<input
-							type="date"
-							value={dateFrom}
-							onChange={(e) => setDateFrom(e.currentTarget.value)}
-							aria-label="开始日期"
-						/>
-						<i>→</i>
-						<input
-							type="date"
-							value={dateTo}
-							onChange={(e) => setDateTo(e.currentTarget.value)}
-							aria-label="结束日期"
-						/>
+				<SelectMenu label="应用筛选" value={appFilter} options={APP_OPTIONS} onChange={setAppFilter} />
+				<SelectMenu label="Agent 筛选" value={agentFilter} options={AGENT_OPTIONS} onChange={setAgentFilter} />
+				<SelectMenu
+					label="状态筛选"
+					value={statusTab}
+					options={STATUS_TAB_OPTIONS}
+					onChange={(next) => setStatusTab(next as StatusTab)}
+				/>
+				<div className={styles.filterField}>
+					<div className={styles.rangePicker} ref={rangeRef}>
+						<button
+							type="button"
+							className={styles.rangeTrigger}
+							onClick={() => toggleRangePanel()}
+							aria-haspopup="dialog"
+							aria-expanded={rangeOpen}
+						>
+							<Icon name="calendar" />
+							<span>{rangeSummary}</span>
+						</button>
+						{rangeOpen ? (
+							<div className={styles.rangePanel} role="dialog" aria-label="选择时间范围">
+								<div className={styles.rangePresets}>
+									{RANGE_PRESETS.map((option) => (
+										<button
+											key={option.value}
+											type="button"
+											className={rangePreset === option.value ? "is-active" : ""}
+											onClick={() => {
+												applyRangePreset(option.value);
+												setRangeOpen(false);
+											}}
+										>
+											{option.label}
+										</button>
+									))}
+								</div>
+								<div className={styles.rangeCustom}>
+									<span>自定义区间</span>
+									<div className={styles.rangeInputs}>
+										<input
+											type="date"
+											value={draftFrom}
+											onChange={(e) => setDraftFrom(e.currentTarget.value)}
+											aria-label="开始日期"
+										/>
+										<i>→</i>
+										<input
+											type="date"
+											value={draftTo}
+											onChange={(e) => setDraftTo(e.currentTarget.value)}
+											aria-label="结束日期"
+										/>
+									</div>
+									<div className={styles.rangeActions}>
+										<button
+											type="button"
+											className={styles.rangeGhost}
+											onClick={() => setRangeOpen(false)}
+										>
+											取消
+										</button>
+										<button type="button" className={styles.rangeApply} onClick={commitCustomRange}>
+											应用
+										</button>
+									</div>
+								</div>
+							</div>
+						) : null}
 					</div>
-				</Filter>
+				</div>
 			</div>
 
 			<div className={styles.count}>
@@ -598,24 +733,85 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	);
 }
 
-function Filter({
+/**
+ * 自绘下拉菜单。
+ *
+ * 不用原生 select：它的宽度按「最长的 option」计算，而当前选中项往往很短，
+ * 于是文字与箭头之间会出现大片空白（原生 select 无法跟随当前值收缩）。
+ */
+function SelectMenu({
 	label,
-	wide = false,
-	children,
+	value,
+	options,
+	onChange,
 }: {
-	label: string;
-	wide?: boolean;
-	children: React.ReactNode;
+	readonly label: string;
+	readonly value: string;
+	readonly options: readonly SelectOption[];
+	readonly onChange: (value: string) => void;
 }): React.ReactElement {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement | null>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const onPointerDown = (event: MouseEvent): void => {
+			const node = ref.current;
+			if (node !== null && !node.contains(event.target as Node)) setOpen(false);
+		};
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [open]);
+
+	const current = options.find((option) => option.value === value);
 	return (
-		<div className={`${styles.filterField} ${wide ? styles.filterWide : ""}`}>
-			<span>{label}</span>
-			{children}
+		<div className={styles.selectMenu} ref={ref}>
+			<button
+				type="button"
+				className={styles.selectTrigger}
+				onClick={() => setOpen((prev) => !prev)}
+				aria-haspopup="listbox"
+				aria-expanded={open}
+				aria-label={label}
+			>
+				<span>{current?.label ?? value}</span>
+				<Icon name="chevronDown" />
+			</button>
+			{open ? (
+				<div className={styles.selectPanel} role="listbox" aria-label={label}>
+					{options.map((option) => (
+						<button
+							key={option.value}
+							type="button"
+							role="option"
+							aria-selected={option.value === value}
+							className={option.value === value ? "is-active" : ""}
+							onClick={() => {
+								onChange(option.value);
+								setOpen(false);
+							}}
+						>
+							{option.label}
+						</button>
+					))}
+				</div>
+			) : null}
 		</div>
 	);
 }
 
-function Icon({ name }: { name: "search" | "calendar" | "refresh" | "warning" | "chevron" }): React.ReactElement {
+function Icon({
+	name,
+}: {
+	name: "search" | "calendar" | "refresh" | "warning" | "chevron" | "chevronDown";
+}): React.ReactElement {
 	const paths = {
 		search: (
 			<>
@@ -642,6 +838,7 @@ function Icon({ name }: { name: "search" | "calendar" | "refresh" | "warning" | 
 			</>
 		),
 		chevron: <path d="m9 18 6-6-6-6" />,
+		chevronDown: <path d="m6 9 6 6 6-6" />,
 	};
 	return (
 		<svg viewBox="0 0 24 24" aria-hidden="true">

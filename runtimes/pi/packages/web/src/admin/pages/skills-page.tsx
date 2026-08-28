@@ -202,7 +202,6 @@ export function AdminSkillsPage(): React.ReactElement {
 			<header className={styles.pageHeader}>
 				<div>
 					<h1 id="skills-title">Skills 管理</h1>
-					<p>管理平台中的 Skill，支持导入、版本管理、校验和启用控制。</p>
 				</div>
 				<div className={styles.headerActions}>
 					<button
