@@ -387,6 +387,15 @@ export function ConversationWorkspace({
 					</div>
 				) : null}
 
+				{sessionSnapshot.error ? (
+					<div className="connection-error session-error" role="alert">
+						<span>{sessionSnapshot.error}</span>
+						<button type="button" onClick={() => sessions.clearError()}>
+							知道了
+						</button>
+					</div>
+				) : null}
+
 				{liveHint ? (
 					<output className="live-hint" aria-live="polite">
 						<span>{liveHint}</span>

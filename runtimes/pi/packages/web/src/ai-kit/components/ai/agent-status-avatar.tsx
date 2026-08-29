@@ -71,6 +71,10 @@ const sourceState: Record<Exclude<AgentAvatarState, "failed">, string> = {
 	waiting: "dragging",
 	completed: "spawning",
 };
+// failed 不在 sourceState 里——它走 terminal 分支：把角色切到
+// "alerting"（fx.js 里的 bang overlay，即感叹号）并持续保留，
+// 失败是本次运行的终态，必须一直提示到下一次用户操作。
+// 冷挂载（页面刷新时已处于 failed）则直接以 "alerting" 加载引擎。
 
 const idleSourceStates = [
 	"sleeping",
@@ -119,31 +123,56 @@ function loadScript(source: string): Promise<void> {
 	});
 }
 
-/** 对话流专用的微型 Agent 状态标记；失败终态退化为红色圆点。 */
+/** 对话流专用的微型 Agent 状态标记；失败终态持续显示感叹号（alerting）。 */
 export const AgentStatusAvatar = memo(function AgentStatusAvatar({ state }: { state: AgentAvatarState }) {
 	const svgRef = useRef<SVGSVGElement>(null);
 	const characterRef = useRef<GrokCharacterInstance | undefined>(undefined);
 	const appliedStateRef = useRef<string | undefined>(undefined);
 	const lastActiveStateRef = useRef("thinking");
 	const [engineReady, setEngineReady] = useState(false);
-	const [showExitAvatar, setShowExitAvatar] = useState(false);
 	const terminal = state === "failed";
 
 	useEffect(() => {
 		if (terminal) {
-			if (!characterRef.current) return;
-			characterRef.current.setState(lastActiveStateRef.current);
-			const timer = window.setTimeout(() => {
-				characterRef.current?.destroy();
-				characterRef.current = undefined;
-				appliedStateRef.current = undefined;
-				setEngineReady(false);
-				setShowExitAvatar(false);
-			}, 1200);
-			return () => window.clearTimeout(timer);
+			// failed 是持续可见的终态，不是 1.2s 闪退。
+			// 切到 "alerting"（fx.js 里 bang overlay = 感叹号），让角色
+			// 一直挂着感叹号，等下一次非 failed 状态进来时由非 terminal
+			// 分支 `characterRef.current.setState(stateName)` 自然替换。
+			if (characterRef.current) {
+				characterRef.current.setState("alerting");
+				appliedStateRef.current = "alerting";
+				lastActiveStateRef.current = "alerting";
+				return undefined;
+			}
+			// 冷挂载直接落在 failed（例如页面刷新停在失败态）：引擎还没创建，
+			// 直接以 "alerting" 加载，而不是只留一个红点看不出发生了什么。
+			lastActiveStateRef.current = "alerting";
+			let disposed = false;
+			void loadStudyScripts()
+				.then(() => {
+					if (disposed || !svgRef.current || !window.GrokCharacter) return;
+					if (!characterRef.current) {
+						characterRef.current = new window.GrokCharacter(svgRef.current, {
+							state: "alerting",
+							sizePx: 64,
+							mode: "hold",
+							loginWrap: true,
+							followPointer: true,
+							followPointerBody: true,
+							followPointerStrength: 2.4,
+						});
+						appliedStateRef.current = "alerting";
+						setEngineReady(true);
+					}
+				})
+				.catch(() => {
+					// 资源加载失败时保持签名行可用；状态文本仍会正常显示。
+				});
+			return () => {
+				disposed = true;
+			};
 		}
 
-		setShowExitAvatar(true);
 		let disposed = false;
 		let idleTimer: number | undefined;
 		const stateName = state === "idle" ? pickIdleSourceState(appliedStateRef.current) : sourceState[state];
@@ -201,10 +230,6 @@ export const AgentStatusAvatar = memo(function AgentStatusAvatar({ state }: { st
 		},
 		[],
 	);
-
-	if (terminal && !showExitAvatar) {
-		return <span className={`ai-agent-terminal is-${state}`} aria-label={stateLabels[state]} role="img" />;
-	}
 
 	return (
 		<span

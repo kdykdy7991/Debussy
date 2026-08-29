@@ -31,6 +31,7 @@ import {
 	preloadAgentStatusAvatar,
 	UserMessage,
 } from "../ai-kit/index.ts";
+import { cx } from "../ai-kit/lib/utils.ts";
 import { LiveStatusRow } from "../features/voice/live-status-row.tsx";
 import type { LivePlaybackState } from "../features/voice/live-types.ts";
 import type { PlaybackArbiter } from "../features/voice/playback-arbiter.ts";
@@ -154,24 +155,27 @@ export function ActiveAgentPresence({
 		return () => window.clearTimeout(timer);
 	}, [showCompleted]);
 	const waitingForAssistant = currentTurn?.user !== undefined && assistant === undefined;
+	const lastAssistantFailed = assistant?.status === "error" || assistant?.status === "aborted";
 	const state = waking
 		? "waking"
 		: reaction
 			? reaction
 			: waitingForAssistant
 				? "loading"
-				: showCompleted || completedThisRender
-					? "completed"
-					: active.phase === "idle"
-						? composerFocused
-							? "waiting"
-							: "idle"
-						: resolveAgentState({
-								streaming: assistant?.status === "streaming",
-								textBlocks: assistant?.content.filter((content) => content.type === "text").length ?? 0,
-								thinking: assistant?.content.some((content) => content.type === "thinking") ?? false,
-								tools: currentTurn?.tools ?? [],
-							});
+				: lastAssistantFailed
+					? "failed"
+					: showCompleted || completedThisRender
+						? "completed"
+						: active.phase === "idle"
+							? composerFocused
+								? "waiting"
+								: "idle"
+							: resolveAgentState({
+									streaming: assistant?.status === "streaming",
+									textBlocks: assistant?.content.filter((content) => content.type === "text").length ?? 0,
+									thinking: assistant?.content.some((content) => content.type === "thinking") ?? false,
+									tools: currentTurn?.tools ?? [],
+								});
 	return (
 		<div className="active-agent-presence">
 			<AgentStatusAvatar state={state} />
@@ -265,13 +269,22 @@ function AssistantTurn({
 	onStopLive: () => void;
 }): React.ReactElement {
 	const streaming = item.status === "streaming";
+	const errored = item.status === "error";
+	const aborted = item.status === "aborted";
+	const completed = item.status === "complete";
 	const textBlocks = item.content.filter((content) => content.type === "text");
 	const thinkingBlock = item.content.find((content) => content.type === "thinking");
+	const hasCopyableText = textBlocks.some((block) => block.text.trim().length > 0);
 	const plain = textBlocks.length <= 1 && textBlocks.join("").length <= 120 && thinkingBlock === undefined;
+	const cardClass = cx(
+		"assistant-output-card",
+		errored && "is-error",
+		aborted && "is-aborted",
+	);
 	return (
 		<AssistantResponse rail={rail}>
-			<div className="assistant-output-card">
-				{!streaming ? (
+			<div className={cardClass}>
+				{!streaming && hasCopyableText ? (
 					<button
 						className="assistant-output-copy"
 						type="button"
@@ -315,9 +328,23 @@ function AssistantTurn({
 					) : null}
 				</div>
 
+				{errored || aborted ? (
+					<div
+						className={`ai-turn-failure ${errored ? "is-error" : "is-aborted"}`}
+						role={errored ? "alert" : "status"}
+					>
+						<span className="ai-turn-failure-label">
+							{errored ? "本次响应未完成" : "本次响应已中止"}
+						</span>
+						<p className="ai-turn-failure-message">
+							{(item.errorMessage ?? "").trim() || (errored ? "模型调用失败，请稍后重试。" : "响应被中止。")}
+						</p>
+					</div>
+				) : null}
+
 				<div className="ai-turn-extras">
 					{liveState !== "idle" ? <LiveStatusRow state={liveState} onStop={onStopLive} /> : null}
-					{speech?.voiceAvailable && !streaming ? (
+					{speech?.voiceAvailable && completed && hasCopyableText ? (
 						<SpeechButton
 							speech={speech && arbiter ? wrapSpeechButtonApi(speech, arbiter) : speech}
 							sessionId={sessionId}

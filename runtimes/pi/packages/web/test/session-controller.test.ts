@@ -489,6 +489,76 @@ describe("SessionController", () => {
 		expect(abort).toHaveBeenCalledOnce();
 		expect(controller.getSnapshot().activeSession).toBe(aborted);
 	});
+
+	it("does not let a stale prompt from a superseded session clobber the new session's state", async () => {
+		// Regression (admin debug → chat): the debug page re-binds a fresh
+		// session while a prompt is still in flight. When the in-flight prompt
+		// finally settles, it must not write `submitting` / `error` back into
+		// the snapshot of the *new* session — that stuck `submitting: true`
+		// used to silently disable the Send button.
+		let rejectPrompt: ((error: Error) => void) | undefined;
+		const prompt = vi
+			.fn<(text: string) => Promise<{ command: "prompt"; session: SessionSnapshot }>>()
+			.mockImplementation(
+				() =>
+					new Promise<never>((_resolve, reject) => {
+						rejectPrompt = reject;
+					}),
+			);
+		const first = { ...createHandle(SESSION), prompt };
+		const secondSnapshot = { ...SESSION, id: "session-2", name: "第二段对话", phase: "idle" } satisfies SessionSnapshot;
+		const client = createClient();
+		client.attachSession.mockResolvedValueOnce(first).mockResolvedValueOnce(createHandle(secondSnapshot));
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+
+		const sending = controller.send("第一条消息");
+		expect(controller.getSnapshot().submitting).toBe(true);
+
+		// The admin debug page destroys the old session and attaches a new one.
+		await controller.openDebugSession(secondSnapshot.id);
+		expect(first.dispose).toHaveBeenCalledOnce();
+		expect(controller.getSnapshot().activeSessionId).toBe(secondSnapshot.id);
+		expect(controller.getSnapshot().submitting).toBe(false);
+
+		// The in-flight prompt from the disposed session finally rejects.
+		rejectPrompt?.(new Error("Runtime is disposed"));
+		await expect(sending).rejects.toThrow("Runtime is disposed");
+
+		// The new session's snapshot must be untouched: no stuck `submitting`,
+		// no stale error, still pointing at the new session.
+		expect(controller.getSnapshot().submitting).toBe(false);
+		expect(controller.getSnapshot().error).toBeUndefined();
+		expect(controller.getSnapshot().activeSessionId).toBe(secondSnapshot.id);
+	});
+
+	it("unlocks submitting when activation fails", async () => {
+		// Regression: a failed attach used to leave the snapshot with
+		// `submitting: true` on top of the error, silently disabling Send.
+		const client = createClient();
+		client.attachSession.mockRejectedValue(new Error("会话已锁定"));
+		const controller = new SessionController(client, createUploadClient());
+
+		await expect(controller.selectSession("locked")).rejects.toThrow("会话已锁定");
+
+		expect(controller.getSnapshot().submitting).toBe(false);
+		expect(controller.getSnapshot().error).toBe("会话已锁定");
+	});
+
+	it("clears a surfaced session error without retrying anything", async () => {
+		const client = createClient();
+		client.attachSession.mockRejectedValue(new Error("会话已锁定"));
+		const controller = new SessionController(client, createUploadClient());
+
+		await expect(controller.selectSession("locked")).rejects.toThrow("会话已锁定");
+		expect(controller.getSnapshot().error).toBe("会话已锁定");
+
+		controller.clearError();
+
+		expect(controller.getSnapshot().error).toBeUndefined();
+		// Dismissing must not retry the attach.
+		expect(client.attachSession).toHaveBeenCalledTimes(1);
+	});
 });
 
 it("uploads files, attaches them, and removes attachments", async () => {

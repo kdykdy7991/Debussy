@@ -732,6 +732,7 @@ export class LiveSessionManager {
 function mergeRuntimeSnapshot(current: SessionSnapshot | undefined, runtime: SessionSnapshot): SessionSnapshot {
 	if (!current) return runtime;
 	const transcript = [...runtime.transcript];
+	let hasInFlight = false;
 	for (const item of current.transcript) {
 		if (transcript.some((candidate) => candidate.id === item.id)) continue;
 		if (
@@ -739,9 +740,22 @@ function mergeRuntimeSnapshot(current: SessionSnapshot | undefined, runtime: Ses
 			(item.role === "tool" && item.status === "running")
 		) {
 			transcript.push(item);
+			hasInFlight = true;
 		}
 	}
-	return { ...runtime, phase: current.phase === "turn" ? "turn" : runtime.phase, transcript };
+	// Phase must follow the runtime once it has settled. The previous rule
+	// (`current.phase === "turn" ? "turn" : runtime.phase`) was a sticky
+	// "turn" that ignored the runtime's true phase — after the last
+	// `item_finished` (status=error/aborted) `applyProgress` set
+	// `current.phase = "turn"`, then the next snapshot event saw
+	// `runtime.phase = "idle"` but still emitted "turn" because the
+	// condition was unconditional on the transient side. Symptom: composer
+	// kept showing the Stop button and the avatar showed "completed" even
+	// though the LLM call had failed. Trust the runtime, but hold "turn"
+	// when there are still in-flight items the runtime hasn't observed yet
+	// (more progress events are likely to follow this snapshot).
+	const phase = hasInFlight && runtime.phase === "idle" ? "turn" : runtime.phase;
+	return { ...runtime, phase, transcript };
 }
 
 function applyProgress(snapshot: SessionSnapshot, progress: TranscriptProgress): SessionSnapshot {

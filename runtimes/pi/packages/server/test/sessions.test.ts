@@ -389,4 +389,74 @@ describe("PiServer Unix integration", () => {
 		const unattached = await client.request({ command: "abort", sessionId: "locked" });
 		expect(unattached).toMatchObject({ ok: false, error: { code: "invalid_request" } });
 	});
+
+	test("phase returns to idle after an error/abort progress event when the runtime has settled", async () => {
+		// Regression: previously the merge kept `phase: "turn"` whenever the
+		// transient snapshot had ever seen "turn", so the very last
+		// `item_finished` (status=error/aborted) plus the post-operation
+		// snapshot would keep the UI stuck on Stop / "completed" even though
+		// the runtime had reported idle.
+		const backend = new MemoryBackend();
+		backend.seed();
+		const { server } = await startServer(backend);
+		const client = await connect(server);
+		await client.hello();
+		await attach(client, "session-1");
+		const runtime = backend.latestRuntime("session-1");
+
+		// 1. Simulate the LLM streaming: runtime is in "turn", an
+		//    `item_started` arrives so the transient snapshot has a
+		//    streaming assistant. `applyProgress` then forces phase="turn".
+		runtime.setPhase("turn");
+		const itemStarted: TranscriptProgress = {
+			type: "item_started",
+			item: {
+				id: "assistant-1",
+				role: "assistant",
+				content: [{ type: "text", text: "" }],
+				model: { provider: MODEL.provider, id: MODEL.id },
+				status: "streaming",
+				timestamp: 1,
+			},
+		};
+		runtime.emitProgress(itemStarted);
+		await client.next(
+			(message) => message.type === "event" && message.event.type === "session_progress",
+		);
+
+		// 2. The LLM errors out. Server pushes `item_finished` with
+		//    status="error"; `applyProgress` again sets phase="turn".
+		const itemFinished: TranscriptProgress = {
+			type: "item_finished",
+			item: {
+				id: "assistant-1",
+				role: "assistant",
+				content: [{ type: "text", text: "" }],
+				model: { provider: MODEL.provider, id: MODEL.id },
+				status: "error",
+				stopReason: "error",
+				errorMessage: "REQUEST_TIMEOUT",
+				timestamp: 1,
+			},
+		};
+		runtime.emitProgress(itemFinished);
+		await client.next(
+			(message) => message.type === "event" && message.event.type === "session_progress",
+		);
+
+		// 3. Operation's `finally` block fires — runtime is now idle, and the
+		//    server emits a snapshot. The snapshot MUST report phase="idle"
+		//    so the UI exits the running state.
+		runtime.setPhase("idle");
+		const snapshotMessage = await client.next(
+			(message) =>
+				message.type === "event" &&
+				message.event.type === "session_snapshot" &&
+				message.event.snapshot.phase !== undefined,
+		);
+		if (snapshotMessage.type !== "event" || snapshotMessage.event.type !== "session_snapshot") {
+			throw new Error("Expected a session_snapshot event");
+		}
+		expect(snapshotMessage.event.snapshot.phase).toBe("idle");
+	});
 });

@@ -67,6 +67,56 @@
 	background: var(--ai-bg-surface);
 }
 
+.assistant-output-card.is-error {
+	border-color: var(--ai-danger);
+	background: var(--ai-danger-soft);
+}
+
+.assistant-output-card.is-aborted {
+	border-style: dashed;
+	border-color: var(--ai-border-strong);
+	background: var(--ai-bg-inset);
+}
+
+.ai-turn-failure {
+	margin-top: var(--ai-space-md);
+	padding: var(--ai-space-sm) var(--ai-space-md);
+	border-radius: var(--ai-radius-sm);
+	font: var(--ai-font-sans);
+}
+
+.ai-turn-failure.is-error {
+	border: 1px solid color-mix(in srgb, var(--ai-danger) 55%, transparent);
+	background: color-mix(in srgb, var(--ai-danger) 12%, var(--ai-bg-surface));
+}
+
+.ai-turn-failure.is-aborted {
+	border: 1px solid var(--ai-border-strong);
+	background: var(--ai-bg-surface);
+}
+
+.ai-turn-failure-label {
+	display: block;
+	font-size: var(--ai-text-label);
+	letter-spacing: var(--ai-track-meta);
+	text-transform: uppercase;
+	color: var(--ai-danger);
+	font-weight: var(--ai-weight-medium);
+}
+
+.ai-turn-failure.is-aborted .ai-turn-failure-label {
+	color: var(--ai-text-muted);
+}
+
+.ai-turn-failure-message {
+	margin: 6px 0 0;
+	color: var(--ai-text-primary);
+	font-size: var(--ai-text-body);
+	line-height: var(--ai-text-body-lh);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 .assistant-output-copy {
 	position: absolute;
 	top: var(--ai-space-md);
@@ -148,8 +198,7 @@
 
 /* ===== AgentStatusAvatar ===== */
 
-.ai-agent-avatar,
-.ai-agent-terminal {
+.ai-agent-avatar {
 	flex: 0 0 auto;
 	display: inline-grid;
 	place-items: center;
@@ -238,26 +287,6 @@
 .ai-agent-avatar.is-writing .ai-agent-avatar-eyes { opacity: 0; }
 
 .ai-agent-avatar.is-waiting .ai-agent-avatar-core { animation: ai-agent-breathe 2200ms var(--ai-ease-loop) infinite; }
-
-.ai-agent-terminal {
-	position: relative;
-	width: 18px;
-	height: 18px;
-	border: 1.5px solid var(--ai-text-muted);
-	border-radius: 50%;
-	background: var(--ai-bg-inset);
-}
-
-.ai-agent-terminal::after {
-	width: 5px;
-	height: 5px;
-	border-radius: 50%;
-	background: var(--ai-text-secondary);
-	content: "";
-}
-
-.ai-agent-terminal.is-failed { border-color: var(--ai-danger); background: var(--ai-danger-soft); }
-.ai-agent-terminal.is-failed::after { background: var(--ai-danger); }
 
 @keyframes ai-agent-spin { to { transform: rotate(360deg); } }
 @keyframes ai-agent-breathe { 50% { transform: scale(.88); } }

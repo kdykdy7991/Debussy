@@ -110,6 +110,9 @@ export function createEmbedWorkspaceStores(controller: EmbedChatController): {
 		},
 		removeAttachment: (attachmentId) => controller.removeAttachment(attachmentId),
 		dismissUpload: () => {},
+		// The embed controller clears its error state on the next successful
+		// action, so there is nothing extra to do on manual dismiss.
+		clearError: () => {},
 	};
 	return { connection, sessions };
 }

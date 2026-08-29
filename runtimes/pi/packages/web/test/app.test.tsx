@@ -40,6 +40,7 @@ function createSessions(snapshot: SessionBrowserSnapshot = EMPTY_SESSIONS): Sess
 		uploadFiles: async () => {},
 		removeAttachment: async () => {},
 		dismissUpload: () => {},
+		clearError: () => {},
 	};
 }
 
@@ -333,5 +334,207 @@ describe("App AI kit conversation (design 复刻)", () => {
 		expect(markup).toContain("assistant-output-copy");
 		expect(markup).toContain("active-agent-presence");
 		expect(markup).toContain("ai-agent-avatar is-waking");
+	});
+});
+
+describe("App AI kit assistant failure states", () => {
+	function sessionsWith(active: SessionSnapshot): SessionBrowserStore {
+		return createSessions({
+			sessions: [active],
+			activeSessionId: active.id,
+			activeSession: active,
+			uploads: [],
+			loading: false,
+			submitting: false,
+			error: undefined,
+		});
+	}
+
+	it("shows a fallback failure notice when the LLM errors out without producing text", () => {
+		const activeSession = {
+			id: "session-err",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "idle",
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			revision: 1,
+			lastSequence: 0,
+			transcript: [
+				{ id: "user-1", role: "user", content: [{ type: "text", text: "讲个笑话" }], timestamp: 1 },
+				{
+					id: "assistant-1",
+					role: "assistant",
+					content: [{ type: "text", text: "" }],
+					model: { provider: "oneapi", id: "qwen" },
+					timestamp: 2,
+					status: "error",
+					stopReason: "error",
+					errorMessage: "REQUEST_TIMEOUT: provider timed out after 30s",
+				},
+			],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+		} satisfies SessionSnapshot;
+		const markup = renderToStaticMarkup(
+			<App connection={createConnection({ state: "connected", error: undefined })} sessions={sessionsWith(activeSession)} />,
+		);
+
+		expect(markup).toContain("ai-turn-failure is-error");
+		expect(markup).toContain("本次响应未完成");
+		expect(markup).toContain("REQUEST_TIMEOUT: provider timed out after 30s");
+		// 没有可复制内容时，复制按钮必须消失
+		expect(markup).not.toContain("assistant-output-copy");
+		// 朗读按钮同样不该出现
+		expect(markup).not.toContain("speech-button");
+	});
+
+	it("falls back to a generic message when errorMessage is missing", () => {
+		const activeSession = {
+			id: "session-err2",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "idle",
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			revision: 1,
+			lastSequence: 0,
+			transcript: [
+				{ id: "user-1", role: "user", content: [{ type: "text", text: "讲个笑话" }], timestamp: 1 },
+				{
+					id: "assistant-1",
+					role: "assistant",
+					content: [{ type: "text", text: "" }],
+					model: { provider: "oneapi", id: "qwen" },
+					timestamp: 2,
+					status: "error",
+					stopReason: "error",
+				},
+			],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+		} satisfies SessionSnapshot;
+		const markup = renderToStaticMarkup(
+			<App connection={createConnection({ state: "connected", error: undefined })} sessions={sessionsWith(activeSession)} />,
+		);
+
+		expect(markup).toContain("ai-turn-failure is-error");
+		expect(markup).toContain("模型调用失败，请稍后重试。");
+	});
+
+	it("shows an aborted notice when the run is cancelled, and keeps any partial text", () => {
+		const activeSession = {
+			id: "session-abort",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "idle",
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			revision: 1,
+			lastSequence: 0,
+			transcript: [
+				{ id: "user-1", role: "user", content: [{ type: "text", text: "讲个笑话" }], timestamp: 1 },
+				{
+					id: "assistant-1",
+					role: "assistant",
+					content: [{ type: "text", text: "说到一半…" }],
+					model: { provider: "oneapi", id: "qwen" },
+					timestamp: 2,
+					status: "aborted",
+					stopReason: "aborted",
+					errorMessage: "user pressed stop",
+				},
+			],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+		} satisfies SessionSnapshot;
+		const markup = renderToStaticMarkup(
+			<App connection={createConnection({ state: "connected", error: undefined })} sessions={sessionsWith(activeSession)} />,
+		);
+
+		expect(markup).toContain("ai-turn-failure is-aborted");
+		expect(markup).toContain("本次响应已中止");
+		expect(markup).toContain("user pressed stop");
+		// 部分内容仍然要展示
+		expect(markup).toContain("说到一半…");
+		// 已有部分内容时，复制按钮保留（用户能复制已生成片段）
+		expect(markup).toContain("assistant-output-copy");
+	});
+
+	it("keeps Stop button visible when phase is stuck at 'turn' after an error", () => {
+		// Regression: in real LLM-timeout flows the runtime may briefly stay
+		// in `phase: "turn"` while the post-run hook / compaction settles.
+		// The composer must keep showing Stop (the user can still cancel)
+		// and the assistant card must still surface the error. (The agent
+		// avatar's "failed" state can't be asserted in a static render
+		// because the 800ms `waking` timer always wins first — we cover
+		// the avatar state via the dedicated pure-function test below.)
+		const activeSession = {
+			id: "session-stuck",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "turn" as const,
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			revision: 2,
+			lastSequence: 0,
+			transcript: [
+				{ id: "user-1", role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 },
+				{
+					id: "assistant-1",
+					role: "assistant",
+					content: [{ type: "text", text: "" }],
+					model: { provider: "oneapi", id: "qwen" },
+					timestamp: 2,
+					status: "error",
+					stopReason: "error",
+					errorMessage: "REQUEST_TIMEOUT",
+				},
+			],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+		} satisfies SessionSnapshot;
+		const markup = renderToStaticMarkup(
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={sessionsWith(activeSession)}
+			/>,
+		);
+
+		// 1. composer 仍然在 running 状态（Stop 按钮可见，不是 Send）
+		expect(markup).toContain("stop-button");
+		expect(markup).not.toContain("send-button");
+		// 2. assistant 卡片仍然显示 error（确保错误信息没被吞）
+		expect(markup).toContain("assistant-output-card is-error");
+		expect(markup).toContain("ai-turn-failure is-error");
+		expect(markup).toContain("REQUEST_TIMEOUT");
+	});
+
+	it("surfaces sessionSnapshot.error as a dismissible banner instead of swallowing it", () => {
+		// Regression: session-level failures (send / attach / abort) used to set
+		// sessionSnapshot.error, which no view rendered — the composer just sat
+		// in its input box with a dead Send button. Now the error is a banner.
+		const markup = renderToStaticMarkup(
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={createSessions({ ...EMPTY_SESSIONS, error: "Runtime is disposed" })}
+			/>,
+		);
+
+		expect(markup).toContain("session-error");
+		expect(markup).toContain("Runtime is disposed");
+		expect(markup).toContain("知道了");
 	});
 });

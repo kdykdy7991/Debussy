@@ -75,6 +75,8 @@ export interface SessionBrowserStore {
 	uploadFiles(files: File[]): Promise<void>;
 	removeAttachment(attachmentId: string): Promise<void>;
 	dismissUpload(localId: string): void;
+	/** Dismiss a surfaced session error without retrying anything. */
+	clearError(): void;
 }
 
 export class SessionController implements SessionBrowserStore {
@@ -279,6 +281,11 @@ export class SessionController implements SessionBrowserStore {
 		});
 	}
 
+	clearError(): void {
+		if (this.#snapshot.error === undefined) return;
+		this.#setSnapshot({ ...this.#snapshot, error: undefined });
+	}
+
 	#updateUpload(localId: string, patch: Partial<UploadItem>): void {
 		this.#setSnapshot({
 			...this.#snapshot,
@@ -358,6 +365,9 @@ export class SessionController implements SessionBrowserStore {
 				activeSessionId: undefined,
 				activeSession: undefined,
 				loading: false,
+				// Activation is finished (failed): the composer must not stay
+				// locked in "submitting" on top of the error state.
+				submitting: false,
 				error: error instanceof Error ? error.message : "会话操作失败",
 			});
 			throw error;
@@ -368,10 +378,17 @@ export class SessionController implements SessionBrowserStore {
 		handle: PiSessionHandle,
 		action: () => Promise<{ session: SessionSnapshot; [key: string]: unknown }>,
 	): Promise<{ session: SessionSnapshot; command?: string; liveSpeech?: LiveSpeechJob }> {
+		// Capture the controller operation generation: `#activate` (session
+		// switch) and `dispose` both bump `#operation`, so a prompt that
+		// outlives its session must never write `submitting` / `error` back
+		// into the snapshot of the *new* session — that is how a stuck
+		// `submitting: true` (Send button silently disabled) used to happen
+		// when the admin debug page re-bound a fresh session mid-flight.
+		const operation = this.#operation;
 		this.#setSnapshot({ ...this.#snapshot, submitting: true, error: undefined });
 		try {
 			const result = await action();
-			if (this.#activeHandle !== handle) {
+			if (this.#operation !== operation) {
 				return { session: result.session };
 			}
 			this.#setSnapshot({
@@ -382,7 +399,7 @@ export class SessionController implements SessionBrowserStore {
 			});
 			return result;
 		} catch (error) {
-			if (this.#activeHandle === handle) {
+			if (this.#operation === operation) {
 				this.#setSnapshot({
 					...this.#snapshot,
 					submitting: false,
