@@ -28,6 +28,15 @@ export function CustomLlmSection(): React.ReactElement {
 	const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
 	const [openModelMenu, setOpenModelMenu] = useState<number | null>(null);
 	const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+	/**
+	 * 最近一次「测试连接」的真实结果，按 provider id 记录。
+	 *
+	 * 列表里的 apiKeyConfigured 只表示「存过 API Key」，与连通性无关 ——
+	 * 两者必须分开呈现，否则「已配置」会被误读成「已连通」。
+	 */
+	const [testResults, setTestResults] = useState<
+		Readonly<Record<string, { readonly ok: boolean; readonly text: string }>>
+	>({});
 
 	const select = useCallback((provider: CustomLlmProvider): void => {
 		selectedIdRef.current = provider.id;
@@ -104,10 +113,11 @@ export function CustomLlmSection(): React.ReactElement {
 				api: draft.api,
 				...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
 			});
-			setMessage({
-				tone: result.ok ? "success" : "error",
-				text: result.ok ? "连接成功" : (result.error ?? "连接失败"),
-			});
+			const text = result.ok ? "连接成功" : (result.error ?? "连接失败");
+			setMessage({ tone: result.ok ? "success" : "error", text });
+			if (draft.id !== "") {
+				setTestResults((current) => ({ ...current, [draft.id]: { ok: result.ok, text } }));
+			}
 		} catch (error) {
 			setMessage({ tone: "error", text: errorMessage(error) });
 		} finally {
@@ -172,23 +182,43 @@ export function CustomLlmSection(): React.ReactElement {
 					{loading ? (
 						<p className={styles.muted}>加载中…</p>
 					) : (
-						filtered.map((provider) => (
-							<button
-								type="button"
-								key={provider.id}
-								className={`${styles.providerItem} ${provider.id === selectedId ? styles.providerSelected : ""}`}
-								onClick={() => select(provider)}
-							>
-								<span className={styles.providerLogo}>{provider.name.slice(0, 1).toUpperCase()}</span>
-								<span>
-									<strong>{provider.name}</strong>
-									<small>{apiLabel(provider.api)}</small>
-								</span>
-								<i className={provider.apiKeyConfigured ? styles.connected : styles.disconnected}>
-									{provider.apiKeyConfigured ? "● 已连接" : "● 未连接"}
-								</i>
-							</button>
-						))
+						filtered.map((provider) => {
+							const testResult = testResults[provider.id];
+							return (
+								<button
+									type="button"
+									key={provider.id}
+									className={`${styles.providerItem} ${provider.id === selectedId ? styles.providerSelected : ""}`}
+									onClick={() => select(provider)}
+								>
+									<span className={styles.providerLogo}>{provider.name.slice(0, 1).toUpperCase()}</span>
+									<span>
+										<strong>{provider.name}</strong>
+										<small>{apiLabel(provider.api)}</small>
+									</span>
+									<span className={styles.stateCol}>
+										<i
+											className={styles.configState}
+											title={
+												provider.apiKeyConfigured
+													? "已保存 API Key —— 这表示配置过密钥，不代表连通性；点「测试连接」验证"
+													: "尚未保存 API Key"
+											}
+										>
+											{provider.apiKeyConfigured ? "● 已配置" : "● 未配置"}
+										</i>
+										{testResult === undefined ? null : (
+											<i
+												className={testResult.ok ? styles.testOk : styles.testFail}
+												title={testResult.text}
+											>
+												{testResult.ok ? "✓ 连通" : "✗ 未连通"}
+											</i>
+										)}
+									</span>
+								</button>
+							);
+						})
 					)}
 				</aside>
 				<main className={styles.editor}>
@@ -285,10 +315,10 @@ export function CustomLlmSection(): React.ReactElement {
 							<div className={styles.modelHeader}>
 								<span>模型 ID</span>
 								<span>显示名称</span>
-								<span>支持思考</span>
-								<span>low</span>
-								<span>medium</span>
-								<span>high</span>
+								<span title="模型是否声明支持 reasoning">支持思考</span>
+								<span title="控制台选「低」时，下发给模型的 reasoning effort 值">低 low</span>
+								<span title="控制台选「中」时，下发给模型的 reasoning effort 值">中 medium</span>
+								<span title="控制台选「高」时，下发给模型的 reasoning effort 值">高 high</span>
 								<span>操作</span>
 							</div>
 							{draft.models.map((modelId, index) => {
@@ -304,19 +334,35 @@ export function CustomLlmSection(): React.ReactElement {
 											}
 										/>
 										<input value={model?.name ?? modelId} disabled />
-										<label className={styles.switch}>
+										<label
+											className={styles.switch}
+											title={
+												model === undefined
+													? "模型尚未出现在运行目录中"
+													: `efforts: ${(model.parameterCapabilities?.reasoning?.efforts ?? []).join(", ") || "无"}`
+											}
+										>
 											<input type="checkbox" checked={model?.reasoning ?? false} disabled />
 											<span />
 										</label>
-										<select disabled>
-											<option>{mappedEffort(model, "low")}</option>
-										</select>
-										<select disabled>
-											<option>{mappedEffort(model, "medium")}</option>
-										</select>
-										<select disabled>
-											<option>{mappedEffort(model, "high")}</option>
-										</select>
+										{(["low", "medium", "high"] as const).map((effort) => {
+											const value = effortValue(model, effort);
+											return (
+												<span
+													key={effort}
+													className={`${styles.effortCell} ${value.state === "on" ? styles.effortOn : styles.effortOff}`}
+													title={
+														value.state === "unknown"
+															? "模型尚未出现在运行目录中"
+															: value.state === "off"
+																? "该模型未声明支持此档位"
+																: `下发 reasoning effort = ${value.text}`
+													}
+												>
+													{value.text}
+												</span>
+											);
+										})}
 										<div className={styles.modelAction}>
 											<button
 												type="button"
@@ -375,9 +421,26 @@ function Field({
 function apiLabel(api: CustomLlmApi): string {
 	return api === "openai-completions" ? "OpenAI 兼容" : "Responses API";
 }
-function mappedEffort(model: LlmAvailableModel | undefined, effort: "low" | "medium" | "high"): string {
-	const value = model?.thinkingLevelMap?.[effort];
-	return value === null ? "不支持" : (value ?? effort);
+/**
+ * 控制台档位（低/中/高）最终下发给模型的 reasoning effort 值。
+ *
+ * 三种「没有值」必须区分开，不能一律回落成档位名 —— 回落会让「模型根本
+ * 不支持思考」显示成「支持 low」，把配置缺失伪装成正常。
+ */
+function effortValue(
+	model: LlmAvailableModel | undefined,
+	effort: "low" | "medium" | "high",
+): { readonly text: string; readonly state: "on" | "off" | "unknown" } {
+	if (model === undefined) return { text: "—", state: "unknown" };
+	const reasoning = model.parameterCapabilities?.reasoning;
+	if (reasoning?.supported !== true) return { text: "—", state: "off" };
+	if (!reasoning.efforts.includes(effort)) return { text: "不支持", state: "off" };
+	const mapped = model.thinkingLevelMap?.[effort];
+	if (mapped === null) return { text: "不支持", state: "off" };
+	// 未显式映射时按同名下发，这是真实行为，不是缺失
+	return mapped === undefined
+		? { text: effort, state: "on" }
+		: { text: mapped, state: "on" };
 }
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
