@@ -15,7 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { ADMIN_WORKBENCH_TERMS, legacyPublishingRedirect } from "@earendil-works/pi-protocol";
+import { legacyPublishingRedirect } from "@earendil-works/pi-protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminAppShell } from "../../src/admin/app-shell.tsx";
@@ -38,25 +38,21 @@ describe("AdminAppShell (WB-002)", () => {
 
 	it("renders the sidebar module nav with correct terms", () => {
 		const html = renderToStaticMarkup(<AdminAppShell />);
-		for (const term of [
-			ADMIN_WORKBENCH_TERMS.conversation,
-			ADMIN_WORKBENCH_TERMS.agent,
-			ADMIN_WORKBENCH_TERMS.app,
-			ADMIN_WORKBENCH_TERMS.usage,
-			ADMIN_WORKBENCH_TERMS.userConversations,
-			ADMIN_WORKBENCH_TERMS.settings,
-		]) {
-			// v4：模块导航为左侧竖排 AppSidebar，label 渲染为独立 span。
+		// Chat 入口已从侧边栏移除（路由 `/chat` 仍可直达，供 Agent 调试按钮使用）；
+		// 发布（apps）入口也已从侧边栏移除。这里只断言真正显示在侧边栏里的标签：
+		// Agent / Skills / MCP / Usage / Session 日志 / 设置。
+		for (const term of ["Agent", "Skills", "MCP", "Usage", "Session 日志", "设置"]) {
+			// 模块导航为左侧竖排 AppSidebar，label 渲染为独立 span。
 			expect(html).toContain(`>${term}</span>`);
 		}
-		expect(html).toContain(">Skills</span>");
-		expect(html).toContain(">MCP</span>");
+		expect(html).not.toContain(">Chat</span>");
+		expect(html).not.toContain(">发布</span>");
 		// 顶部 AuroraTopNav 不再渲染模块 tabs；模块导航只由侧边栏持有。
 		expect(html.match(/aria-label="模块导航"/g)?.length ?? 0).toBe(1);
 	});
 
 	it("marks the active sidebar item with aria-current", async () => {
-		// 测试环境无 window（Node SSR），AppShell 默认落在 chat 路由、无 active；
+		// 测试环境无 window（Node SSR），AppShell 默认落在 agents 路由、无 active；
 		// 因此在隔离环境下直接渲染 AppSidebar 并指定 currentItemId 验证 active 态。
 		const { AuroraAppSidebar } = await import("../../src/admin/aurora/AppSidebar.tsx");
 		const html = renderToStaticMarkup(
@@ -90,8 +86,12 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(typeof navigate).toBe("function");
 	});
 
-	it("parses known admin paths and falls back to chat on unknown", () => {
-		expect(parseRoute("/").id).toBe("chat");
+	it("parses known admin paths and falls back to agents on unknown", () => {
+		// Chat 入口已从侧边栏移除：默认入口（`/`）和未知路径回落到 Agent 列表。
+		// `/chat` 仍是直连路由（Agent 详情/调试页"打开管理台 Chat"按钮走它）。
+		expect(parseRoute("/").id).toBe("agents");
+		expect(parseRoute("").id).toBe("agents");
+		expect(parseRoute("/chat").id).toBe("chat");
 		expect(parseRoute("/agents").id).toBe("agents");
 		expect(parseRoute("/agents/agent_00000000-0000-0000-0000-000000000000").id).toBe("agent-detail");
 		expect(parseRoute("/skills").id).toBe("skills");
@@ -104,8 +104,8 @@ describe("AdminAppShell (WB-002)", () => {
 			"user-conversation-detail",
 		);
 		expect(parseRoute("/settings").id).toBe("settings");
-		expect(parseRoute("/not-a-route").id).toBe("chat");
-		expect(parseRoute("/agents/not-an-id").id).toBe("chat");
+		expect(parseRoute("/not-a-route").id).toBe("agents");
+		expect(parseRoute("/agents/not-an-id").id).toBe("agents");
 	});
 
 	it("redirects legacy /publishing routes", () => {

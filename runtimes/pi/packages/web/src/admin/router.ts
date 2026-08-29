@@ -11,7 +11,10 @@
  *   自然恢复，依赖 SPEC §4.1 冻结的 `ADMIN_WORKBENCH_ROUTES`
  *
  * 路径只使用 `path` 字段（去掉 `?query` 与 `#hash`），route id 解析在
- * `parseRoute` 中按最长前缀匹配；未知路径回落到 `chat`。
+ * `parseRoute` 中按最长前缀匹配；空路径 / `/` 走 Agent 列表（Chat 入口
+ * 已从侧边栏移除，新的默认工作台落点是 Agent 列表）；`/chat` 仍保留
+ * 直达路由，方便 Agent 详情/调试页"打开管理台 Chat"按钮跳转；
+ * 未知路径回落到 Agent 列表。
  */
 
 import { ADMIN_WORKBENCH_ROUTES } from "@earendil-works/pi-protocol";
@@ -56,8 +59,15 @@ function readHash(): string {
 
 export function parseRoute(path: string): AdminRoute {
 	const r = ADMIN_WORKBENCH_ROUTES;
-	if (path === r.conversation || path === "" || path === "/") {
-		return { id: "chat", path: r.conversation, params: {} };
+	// 默认入口：空路径 / `/` 走 Agent 列表。Chat 入口已从侧边栏移除，
+	// 不再让未带路径的工作台落进一个没有导航的孤岛页面。
+	if (path === "" || path === "/" || path === r.conversation) {
+		return { id: "agents", path: r.agents, params: {} };
+	}
+	// 保留 `/chat` 直达路由，给 Agent 详情/调试页的"打开管理台 Chat"
+	// 按钮一个稳定的着陆点。侧边栏不显示 Chat 项，用户不会主动走到这。
+	if (path === "/chat") {
+		return { id: "chat", path: "/chat", params: {} };
 	}
 	if (path === r.agents) {
 		return { id: "agents", path: r.agents, params: {} };
@@ -105,7 +115,7 @@ export function parseRoute(path: string): AdminRoute {
 	if (path === r.settings) {
 		return { id: "settings", path: r.settings, params: {} };
 	}
-	return { id: "chat", path: r.conversation, params: {} };
+	return { id: "agents", path: r.agents, params: {} };
 }
 
 export function navigate(to: string): void {

@@ -49,6 +49,23 @@ function requestedAgentIdFromHash(): AgentPublicId | null {
 	return value !== null && /^agent_[0-9a-fA-F-]{36}$/.test(value) ? (value as AgentPublicId) : null;
 }
 
+/** Stable identity of the debug session this page should be bound to. */
+function debugSessionKeyFor(args: {
+	readonly agentId: AgentPublicId | null;
+	readonly revision: number | undefined;
+	readonly model: ModelRef | null;
+}): string {
+	if (args.agentId === null) {
+		const modelKey = args.model !== null ? `${args.model.provider}/${args.model.id}` : "default";
+		return `plain:${modelKey}`;
+	}
+	return `agent:${args.agentId}:${args.revision ?? "unknown"}`;
+}
+
+function describeDebugSessionError(error: unknown): string {
+	return error instanceof Error ? error.message : "调试会话建立失败";
+}
+
 function ThinkingControl({
 	model,
 	sessions,
@@ -144,6 +161,9 @@ export function AdminChatPage(): React.ReactElement {
 	const skillApiRef = useRef(new SkillApi({ auth: controller })).current;
 	const requestedAgentIdRef = useRef(requestedAgentIdFromHash()).current;
 	const debugSessionIdRef = useRef<string | null>(null);
+	// Identity of the debug session the page is currently bound to (see
+	// debugSessionKeyFor); used to skip needless destroy+recreate cycles.
+	const debugSessionKeyRef = useRef<string | null>(null);
 	const [agents, setAgents] = useState<AgentListState>({ kind: "loading" });
 	const [models, setModels] = useState<ModelsState>({ kind: "loading" });
 	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null);
@@ -151,6 +171,10 @@ export function AdminChatPage(): React.ReactElement {
 	const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDefinitionDetail | null>(null);
 	const [runtime, setRuntime] = useState<ChatRuntime | null>(null);
 	const [debugSessionId, setDebugSessionId] = useState<string | null>(null);
+	// Session-establishment failure surfaced in the context header with a
+	// retry button (previously these failures were swallowed by `.catch`).
+	const [debugSessionError, setDebugSessionError] = useState<string | null>(null);
+	const [debugSessionRetry, setDebugSessionRetry] = useState(0);
 	const [exporting, setExporting] = useState(false);
 	// skillId -> { name, enabled } for resolving bound Skill references into the
 	// Composer's `/skill:` completion list (Agent detail only carries skillIds).
@@ -296,50 +320,75 @@ export function AdminChatPage(): React.ReactElement {
 		const destroyPrevious = async () => {
 			const previous = debugSessionIdRef.current;
 			debugSessionIdRef.current = null;
+			debugSessionKeyRef.current = null;
 			setDebugSessionId(null);
 			if (previous !== null) await agentApiRef.destroyDebugSession(previous).catch(() => {});
 		};
-		if (selectedAgentId === null) {
-			// 没有已导入 Agent：直接以当前所选模型开新会话。
-			let cancelled = false;
-			void (async () => {
-				await destroyPrevious();
-				await runtime.connection.connect();
-				if (!cancelled) await runtime.sessions.createDebugSession(selectedModel ?? undefined);
-			})().catch(() => {});
-			return () => {
-				cancelled = true;
-			};
-		}
+		const selectedAgent =
+			agents.kind === "loaded" && selectedAgentId !== null
+				? agents.items.find((item) => item.id === selectedAgentId)
+				: undefined;
+		// While the agent is still resolving (list loading / entry missing),
+		// do not touch the session — the next run settles it.
+		if (selectedAgentId !== null && selectedAgent === undefined) return;
 		// Prefer the frozen revision from the detail (it is the current saved
 		// revision), but never let a slow/failed `getAgentDetail` leave the agent
 		// without a sendable session. The agent list carries the same current
 		// revision and is available synchronously.
-		const selectedAgent =
-			agents.kind === "loaded" ? agents.items.find((item) => item.id === selectedAgentId) : undefined;
-		if (selectedAgent === undefined) return;
 		const detailRevision =
-			selectedAgentDetail?.id === selectedAgentId ? selectedAgentDetail.currentRevision : undefined;
+			selectedAgent !== undefined && selectedAgentDetail?.id === selectedAgent.id
+				? selectedAgentDetail.currentRevision
+				: undefined;
+		const revision = selectedAgent !== undefined ? (detailRevision ?? selectedAgent.currentRevision) : undefined;
+		const sessionKey = debugSessionKeyFor({ agentId: selectedAgentId, revision, model: selectedModel });
+		// Key-based dedupe: only tear down + recreate the server session when
+		// the (agent, revision) or model actually changed. Previously every
+		// effect re-run (e.g. the agent detail finishing its load) destroyed
+		// and recreated the session, leaving the client's WS handle pointing at
+		// a dead session — which is how "send does nothing" happened.
+		const active = runtime.sessions.activeHandle;
+		if (
+			debugSessionKeyRef.current === sessionKey &&
+			debugSessionIdRef.current !== null &&
+			active !== undefined &&
+			active.active &&
+			active.id === debugSessionIdRef.current
+		) {
+			return undefined;
+		}
 		let cancelled = false;
 		void (async () => {
+			setDebugSessionError(null);
 			await destroyPrevious();
 			await runtime.connection.connect();
-			const created = await agentApiRef.createDebugSession(
-				selectedAgentId,
-				detailRevision ?? selectedAgent.currentRevision,
-			);
-			if (cancelled) {
-				await agentApiRef.destroyDebugSession(created.sessionId).catch(() => {});
-				return;
+			if (cancelled) return;
+			if (selectedAgent === undefined) {
+				// 没有已导入 Agent：直接以当前所选模型开新会话。
+				await runtime.sessions.createDebugSession(selectedModel ?? undefined);
+				if (cancelled) return;
+				debugSessionIdRef.current = runtime.sessions.activeHandle?.id ?? null;
+				setDebugSessionId(debugSessionIdRef.current);
+			} else {
+				// `selectedAgent` is narrowed to defined here, so the revision
+				// falls back to the agent list's current revision and is a number.
+				const created = await agentApiRef.createDebugSession(selectedAgent.id, detailRevision ?? selectedAgent.currentRevision);
+				if (cancelled) {
+					await agentApiRef.destroyDebugSession(created.sessionId).catch(() => {});
+					return;
+				}
+				debugSessionIdRef.current = created.sessionId;
+				setDebugSessionId(created.sessionId);
+				await runtime.sessions.openDebugSession(created.attachTicket);
 			}
-			debugSessionIdRef.current = created.sessionId;
-			setDebugSessionId(created.sessionId);
-			await runtime.sessions.openDebugSession(created.attachTicket);
-		})().catch(() => {});
+			if (!cancelled) debugSessionKeyRef.current = sessionKey;
+		})().catch((error: unknown) => {
+			// 不再静默吞掉：会话建立失败必须在界面上可见，并允许重试。
+			if (!cancelled) setDebugSessionError(describeDebugSessionError(error));
+		});
 		return () => {
 			cancelled = true;
 		};
-	}, [agentApiRef, runtime, agents, selectedAgentDetail, selectedAgentId, selectedModel]);
+	}, [agentApiRef, runtime, agents, selectedAgentDetail, selectedAgentId, selectedModel, debugSessionRetry]);
 
 	useEffect(
 		() => () => {
@@ -451,6 +500,14 @@ export function AdminChatPage(): React.ReactElement {
 								: null}
 						</select>
 					</label>
+					{debugSessionError !== null ? (
+						<div className="admin-debug-session-error" role="alert">
+							<span>{debugSessionError}</span>
+							<button type="button" onClick={() => setDebugSessionRetry((retry) => retry + 1)}>
+								重新建立会话
+							</button>
+						</div>
+					) : null}
 					{selectedModelMetadata ? (
 						<ThinkingControl
 							model={selectedModelMetadata}
