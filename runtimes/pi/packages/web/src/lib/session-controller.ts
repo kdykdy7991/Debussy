@@ -25,9 +25,19 @@ export interface PiSessionClient {
 export interface UploadItem {
 	localId: string;
 	name: string;
-	status: "uploading" | "failed";
+	/**
+	 * - `uploading`: bytes are in flight to the upload endpoint.
+	 * - `pending-attach`: upload succeeded but the Debug conversation is not
+	 *   attached yet. The chip renders with a remove button; sending the first
+	 *   message lazily creates the conversation and binds the pending IDs via
+	 *   `attach_upload`.
+	 * - `failed`: terminal failure (network, validation, auth).
+	 */
+	status: "uploading" | "pending-attach" | "failed";
 	/** 0-100 upload progress while uploading. */
 	progress?: number;
+	/** Server-side attachment id once upload succeeds; used by the bind step. */
+	attachmentId?: string;
 	error?: string;
 }
 
@@ -281,6 +291,20 @@ export class SessionController implements SessionBrowserStore {
 		});
 	}
 
+	/**
+	 * Append an upload chip entry. Used by subclasses that surface pre-uploaded
+	 * attachments (e.g. the lazy Debug controller renders a `pending-attach`
+	 * chip while the DebugConversation is still un-attached).
+	 */
+	addUpload(item: UploadItem): void {
+		this.#setSnapshot({ ...this.#snapshot, uploads: [...this.#snapshot.uploads, item] });
+	}
+
+	/** Patch a previously-added upload chip (e.g. progress, status change). */
+	updateUpload(localId: string, patch: Partial<UploadItem>): void {
+		this.#updateUpload(localId, patch);
+	}
+
 	clearError(): void {
 		if (this.#snapshot.error === undefined) return;
 		this.#setSnapshot({ ...this.#snapshot, error: undefined });
@@ -464,6 +488,26 @@ export class SessionController implements SessionBrowserStore {
 			this.#progressTimer = undefined;
 			this.#flushPendingProgress();
 		}, SessionController.STREAM_FLUSH_INTERVAL_MS);
+	}
+
+	/**
+	 * Mark the workspace "ready with no session" for the admin blank slate
+	 * (a bound Agent whose DebugConversation has not been lazily created yet).
+	 * This clears the initial bootstrapping loading flag WITHOUT attaching any
+	 * session, so the Composer becomes interactive and the first Send lazily
+	 * creates the conversation. No-op once a session is live.
+	 */
+	clearBootstrapping(): void {
+		if (this.#activeHandle !== undefined) return;
+		this.#setSnapshot({
+			...this.#snapshot,
+			activeSessionId: undefined,
+			activeSession: undefined,
+			uploads: [],
+			loading: false,
+			submitting: false,
+			error: undefined,
+		});
 	}
 
 	#setSnapshot(snapshot: SessionBrowserSnapshot): void {

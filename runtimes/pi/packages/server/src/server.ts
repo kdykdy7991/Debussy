@@ -71,6 +71,8 @@ export class PiServer {
 			sessionEventLogMaxEvents: resolved.sessionEventLogMaxEvents,
 			sessionEventLogRetentionMs: resolved.sessionEventLogRetentionMs,
 			attachments: options.attachments,
+			attachmentOwner: options.attachmentOwner,
+			onAttachmentEvent: options.onAttachmentEvent,
 			citations: options.citations,
 			liveSpeech: options.liveSpeech,
 		});

@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from "node:fs
 import { join } from "node:path";
 import type { Attachment, AttachmentScope } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
+import type { PrincipalId, TenantId } from "../publishing/domain/ids.ts";
 import { ATTACHMENT_RECORD_VERSION, type StoredAttachment } from "./types.ts";
 
 /**
@@ -68,7 +69,16 @@ export class AttachmentStore {
 			try {
 				const raw = await readFile(join(this.#root, entry.name), "utf-8");
 				const record = JSON.parse(raw) as StoredAttachment;
-				if (record.schemaVersion !== ATTACHMENT_RECORD_VERSION || record.attachment?.id !== id) continue;
+				// Both v1 (no ownership) and v2 (with ownership) load; v1 records
+				// remain on disk but cannot pass ownership checks until the user
+				// re-uploads. This keeps recover non-fatal across schema bumps.
+				if (
+					(record.schemaVersion !== (1 as unknown as typeof ATTACHMENT_RECORD_VERSION) &&
+						record.schemaVersion !== ATTACHMENT_RECORD_VERSION) ||
+					record.attachment?.id !== id
+				) {
+					continue;
+				}
 				loaded.push(record);
 				this.#records.set(id, record);
 			} catch {
@@ -87,10 +97,18 @@ export class AttachmentStore {
 		await rename(tmp, target);
 	}
 
-	/** Bind a ready upload to a session and clear its retention deadline. */
+	/**
+	 * Bind a ready upload to a session and clear its retention deadline.
+	 * Refuses to re-target an attachment already bound to a *different*
+	 * conversation (cross-conversation attach). Re-binding to the same
+	 * session is idempotent.
+	 */
 	async bind(id: string, sessionId: string, scope: AttachmentScope): Promise<StoredAttachment | undefined> {
 		const record = this.#records.get(id);
 		if (!record) return undefined;
+		if (record.attachment.sessionId !== undefined && record.attachment.sessionId !== sessionId) {
+			return undefined;
+		}
 		record.attachment = { ...record.attachment, sessionId, scope };
 		record.expiresAt = undefined;
 		await this.save(record);
@@ -108,7 +126,11 @@ export class AttachmentStore {
 	}
 
 	/** Move a fully received file into the store and persist its record. */
-	async adopt(attachment: Attachment, sourcePath: string): Promise<StoredAttachment> {
+	async adopt(
+		attachment: Attachment,
+		sourcePath: string,
+		owner?: { readonly tenantId: TenantId; readonly principalId: PrincipalId },
+	): Promise<StoredAttachment> {
 		const id = attachment.id;
 		const storageName = randomUUID();
 		const dir = join(this.#root, id);
@@ -119,9 +141,27 @@ export class AttachmentStore {
 			attachment,
 			storageName,
 			expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+			...(owner !== undefined ? { ownerTenantId: owner.tenantId, ownerPrincipalId: owner.principalId } : {}),
 		};
 		await this.save(record);
 		return record;
+	}
+
+	/** Throws when the caller is not the owner of the record. */
+	assertOwnership(id: string, caller: { readonly tenantId: TenantId; readonly principalId: PrincipalId }): void {
+		const record = this.#records.get(id);
+		if (record === undefined) {
+			throw new PiServerError("not_found", `Unknown attachment: ${id}`);
+		}
+		// Legacy v1 records carry no ownership metadata. Treat as foreign:
+		// cross-tenant attach hardening means they must be re-uploaded after
+		// deploy. The error code mirrors `not_found` so probing is impossible.
+		if (record.ownerTenantId === undefined || record.ownerPrincipalId === undefined) {
+			throw new PiServerError("not_found", `Unknown attachment: ${id}`);
+		}
+		if (record.ownerTenantId !== caller.tenantId || record.ownerPrincipalId !== caller.principalId) {
+			throw new PiServerError("not_found", `Unknown attachment: ${id}`);
+		}
 	}
 
 	/** Remove a record and its staged file directory entirely. */

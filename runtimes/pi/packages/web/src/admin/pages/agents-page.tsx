@@ -251,9 +251,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	// ---- 主区：Skill / MCP 绑定，id 引用经目录翻译成可读名称 ----
 	const skillItems: readonly AgentResource[] = (state.detail.skills ?? []).map((ref) => {
 		const catalog =
-			skillCatalog.kind === "loaded"
-				? skillCatalog.items.find((item) => item.id === ref.skillId)
-				: undefined;
+			skillCatalog.kind === "loaded" ? skillCatalog.items.find((item) => item.id === ref.skillId) : undefined;
 		return {
 			id: ref.skillId,
 			name: catalog?.name ?? ref.skillId,
@@ -264,9 +262,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	});
 	const mcpItems: readonly AgentResource[] = (state.detail.mcpServers ?? []).map((ref) => {
 		const catalog =
-			mcpCatalog.kind === "loaded"
-				? mcpCatalog.items.find((item) => item.id === ref.mcpServerId)
-				: undefined;
+			mcpCatalog.kind === "loaded" ? mcpCatalog.items.find((item) => item.id === ref.mcpServerId) : undefined;
 		return {
 			id: ref.mcpServerId,
 			name: catalog?.name ?? ref.mcpServerId,
@@ -290,7 +286,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 			modelsError={models.kind === "error" ? models.message : undefined}
 			onSave={saveDraft}
 			onBack={() => navigate("/agents")}
-			onTest={() => navigate(`/?agentId=${agentId}`)}
+			onTest={() => navigate(`/chat?agentId=${agentId}`)}
 			createdAt={updatedAtLabel}
 			createdBy={state.detail.updatedBy}
 			agentId={state.detail.id}

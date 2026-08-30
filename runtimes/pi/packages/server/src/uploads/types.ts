@@ -1,7 +1,15 @@
 import type { Attachment } from "@earendil-works/pi-protocol";
+import type { PrincipalId, TenantId } from "../publishing/domain/ids.ts";
 
-/** Version of the on-disk attachment record. Bump and migrate on incompatible changes. */
-export const ATTACHMENT_RECORD_VERSION = 1 as const;
+/**
+ * Version of the on-disk attachment record. Bump and migrate on incompatible changes.
+ *
+ * v1: initial schema, no ownership metadata.
+ * v2: adds `ownerTenantId`/`ownerPrincipalId` for cross-tenant/cross-principal attach
+ *     hardening (Phase 2C). v1 records are loaded on recover but cannot pass the
+ *     ownership checks; users must re-upload after deploy.
+ */
+export const ATTACHMENT_RECORD_VERSION = 2 as const;
 
 /** A persisted attachment record: the wire DTO plus server-internal storage fields. */
 export interface StoredAttachment {
@@ -11,6 +19,10 @@ export interface StoredAttachment {
 	storageName: string;
 	/** Cleanup deadline for unbound or removed attachments; undefined while bound to a session. */
 	expiresAt?: number;
+	/** Tenant that created this upload; required for v2 records, undefined for legacy v1. */
+	ownerTenantId?: TenantId;
+	/** Principal that created this upload; required for v2 records, undefined for legacy v1. */
+	ownerPrincipalId?: PrincipalId;
 }
 
 export interface ScanInput {

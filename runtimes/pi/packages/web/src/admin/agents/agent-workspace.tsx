@@ -29,8 +29,8 @@ import { LlmApi } from "../api/llm-api.ts";
 import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { type AuroraPillTabItem, AuroraPillTabs } from "../aurora/index.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { navigate } from "../router.ts";
 import { AgentAppsTab } from "./agent-apps-tab.tsx";
-import { AgentDebugTab } from "./agent-debug-tab.tsx";
 import { AgentDesignTab } from "./agent-design-tab.tsx";
 import type { ModelCatalogState } from "./agent-form.tsx";
 import { AgentRevisionTab } from "./agent-revision-tab.tsx";
@@ -184,6 +184,16 @@ export function AgentWorkspace({ agentId, api, llmApi, appApi }: AgentWorkspaceP
 	const isUnsaved = state.status === "dirty" || state.status === "error";
 	const isSaving = state.status === "saving";
 
+	const onTabChange = (value: Tab) => {
+		// 「调试」不是工作台内部 Tab：点击直接跳转管理台 Chat，并把当前
+		// Agent 通过 hash query 带给对话页，后者挂载时自动选中并绑定会话。
+		if (value === "debug") {
+			navigate(`/chat?agentId=${encodeURIComponent(agentId)}`);
+			return;
+		}
+		setTab(value);
+	};
+
 	const onEdit = (patch: Partial<AgentState["draft"]>) => {
 		setLoad((prev) =>
 			prev.kind === "loaded" ? { kind: "loaded", detail, state: editDraft(prev.state, patch) } : prev,
@@ -205,7 +215,7 @@ export function AgentWorkspace({ agentId, api, llmApi, appApi }: AgentWorkspaceP
 			data-unsaved={isUnsaved}
 			data-saving={isSaving}
 		>
-			<AuroraPillTabs<Tab> items={TAB_ITEMS} value={tab} onChange={setTab} ariaLabel="Agent Workspace" />
+			<AuroraPillTabs<Tab> items={TAB_ITEMS} value={tab} onChange={onTabChange} ariaLabel="Agent Workspace" />
 
 			<div className={styles.body}>
 				{tab === "design" ? (
@@ -220,7 +230,6 @@ export function AgentWorkspace({ agentId, api, llmApi, appApi }: AgentWorkspaceP
 				) : null}
 				{tab === "revisions" ? <AgentRevisionTab agentId={agentId} api={resolvedApi} /> : null}
 				{tab === "apps" ? <AgentAppsTab agentId={agentId} agentApi={resolvedApi} appApi={resolvedAppApi} /> : null}
-				{tab === "debug" ? <AgentDebugTab agentId={agentId} /> : null}
 			</div>
 
 			{tab === "design" ? (

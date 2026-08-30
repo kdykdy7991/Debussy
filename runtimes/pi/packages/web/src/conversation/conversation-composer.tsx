@@ -8,6 +8,8 @@ export interface ConversationComposerProps {
 	readonly connected: boolean;
 	readonly running: boolean;
 	readonly canSend: boolean;
+	/** Admin Debug: a conversation may not be attached yet; allow typing anyway. */
+	readonly emptySendable?: boolean;
 	readonly message: string;
 	readonly sessions: SessionBrowserSnapshot;
 	readonly composerRef: RefObject<HTMLTextAreaElement | null>;
@@ -59,7 +61,8 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 	return (
 		<div className="composer-dock">
 			<form className={`editorial-composer ${props.running ? "running" : ""}`} onSubmit={props.onSubmit}>
-				{active && ((active.attachments?.length ?? 0) > 0 || props.sessions.uploads.length > 0) ? (
+				{(active || props.sessions.uploads.length > 0) &&
+				((active?.attachments?.length ?? 0) > 0 || props.sessions.uploads.length > 0) ? (
 					<div className="composer-attachments">
 						{props.sessions.uploads.map((upload) => (
 							<span className={`attachment-chip ${upload.status}`} key={upload.localId}>
@@ -68,21 +71,23 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 								</span>
 								{upload.status === "uploading" ? (
 									<small>{upload.progress ?? 0}%</small>
-								) : (
+								) : upload.status === "failed" ? (
 									<small title={uploadErrorLabel(upload.error)}>{uploadErrorLabel(upload.error)}</small>
+								) : (
+									<small>待发送</small>
 								)}
-								{upload.status === "failed" ? (
+								{upload.status !== "uploading" ? (
 									<button
 										type="button"
 										onClick={() => props.onDismissUpload(upload.localId)}
-										aria-label="移除失败项"
+										aria-label={`移除 ${upload.name}`}
 									>
 										×
 									</button>
 								) : null}
 							</span>
 						))}
-						{active.attachments?.map((attachment) => (
+						{active?.attachments?.map((attachment) => (
 							<span className="attachment-chip ready" key={attachment.id}>
 								<span className="attachment-chip__name" title={attachment.name}>
 									{attachment.name}
@@ -111,9 +116,16 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 								? props.running
 									? "Agent 运行中，可停止后继续输入…"
 									: "Ask anything, or point me at a document…"
-								: "选择或新建一个会话后开始…"
+								: props.emptySendable
+									? "输入第一条消息，发送时创建调试会话…"
+									: "选择或新建一个会话后开始…"
 						}
-						disabled={!props.connected || active === undefined || props.sessions.loading || props.running}
+						disabled={
+							!props.connected ||
+							(active === undefined && !props.emptySendable) ||
+							props.sessions.loading ||
+							props.running
+						}
 						value={props.message}
 						onChange={props.onMessageChange}
 						onKeyDown={props.onMessageKeyDown}

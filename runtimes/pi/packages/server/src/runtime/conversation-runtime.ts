@@ -11,7 +11,7 @@
  * 鉴权：调用方必须先完成逐资源授权，再以已授权的 Scope 打开 Runtime。
  */
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
-import type { PiSessionRuntime, PiSessionRuntimeEvent, RetrievalInput } from "../types.ts";
+import type { PiSessionRuntime, PiSessionRuntimeEvent, ResolvedAttachmentInput, RetrievalInput } from "../types.ts";
 import { historyToContextText, historyToReference, type RestoredContext } from "./context-restore.ts";
 import { createEffectOwner, type EffectOwner } from "./effect-owner.ts";
 import type { ScopeContext } from "./scope-context.ts";
@@ -77,13 +77,25 @@ export class ConversationRuntime {
 	 */
 	async prompt(
 		text: string,
-		options?: { readonly history?: RestoredContext; readonly retrieval?: RetrievalInput },
+		options?: {
+			readonly history?: RestoredContext;
+			readonly retrieval?: RetrievalInput;
+			/** Stable attachment ids; surfaced to the inner session as prompt-time input. */
+			readonly attachmentIds?: readonly string[];
+			/** Resolved attachment inputs already prepared by the caller. */
+			readonly attachments?: readonly ResolvedAttachmentInput[];
+		},
 	): Promise<void> {
 		if (this.closed) throw new Error("ConversationRuntime is closed");
 		const history = options?.history;
 		const retrieval = options?.retrieval;
+		const attachmentIds = options?.attachmentIds;
+		const attachments = options?.attachments;
 		const hasHistory = history !== undefined && history.messages.length > 0;
-		if (!hasHistory && retrieval === undefined) {
+		const hasAttachments =
+			(attachmentIds !== undefined && attachmentIds.length > 0) ||
+			(attachments !== undefined && attachments.length > 0);
+		if (!hasHistory && retrieval === undefined && !hasAttachments) {
 			await this.session.prompt({ text });
 			return;
 		}
@@ -99,6 +111,14 @@ export class ConversationRuntime {
 		}
 		await this.session.prompt({
 			text,
+			...(hasAttachments
+				? {
+						...(attachmentIds !== undefined && attachmentIds.length > 0
+							? { attachmentIds: [...attachmentIds] }
+							: {}),
+						...(attachments !== undefined && attachments.length > 0 ? { attachments: [...attachments] } : {}),
+					}
+				: {}),
 			retrieval: {
 				context: contextParts.join("\n\n"),
 				reference: referenceParts.join("\n"),

@@ -119,6 +119,86 @@ describe("createLlmConfigStore", () => {
 		}
 	});
 
+	it("upsert persists explicit per-model reasoning and preserves existing when omitted", async () => {
+		world = makeWorld();
+		await world.store.upsert({
+			id: "gate",
+			name: "Gate",
+			baseUrl: "https://g.example.com/v1",
+			api: "openai-completions",
+			models: [{ id: "m1", reasoning: true }, "m2"],
+		});
+
+		let onDisk = readModelsJson(world.agentDir);
+		let models = onDisk.providers?.gate as { models?: readonly { id?: string; reasoning?: boolean }[] };
+		expect(models.models).toEqual([{ id: "m1", reasoning: true }, { id: "m2" }]);
+
+		// Re-save with m1 as a plain id: its saved reasoning:true must survive.
+		await world.store.upsert({
+			id: "gate",
+			name: "Gate",
+			baseUrl: "https://g.example.com/v1",
+			api: "openai-completions",
+			models: ["m1", "m2"],
+		});
+		onDisk = readModelsJson(world.agentDir);
+		models = onDisk.providers?.gate as { models?: readonly { id?: string; reasoning?: boolean }[] };
+		expect(models.models).toEqual([{ id: "m1", reasoning: true }, { id: "m2" }]);
+
+		// Explicit false overrides the preserved true.
+		await world.store.upsert({
+			id: "gate",
+			name: "Gate",
+			baseUrl: "https://g.example.com/v1",
+			api: "openai-completions",
+			models: [{ id: "m1", reasoning: false }, "m2"],
+		});
+		onDisk = readModelsJson(world.agentDir);
+		models = onDisk.providers?.gate as { models?: readonly { id?: string; reasoning?: boolean }[] };
+		expect(models.models).toEqual([{ id: "m1", reasoning: false }, { id: "m2" }]);
+	});
+
+	it("upsert persists per-model thinkingLevelMap and merges it with existing", async () => {
+		world = makeWorld();
+		await world.store.upsert({
+			id: "gate",
+			name: "Gate",
+			baseUrl: "https://g.example.com/v1",
+			api: "openai-completions",
+			models: [{ id: "m1", reasoning: true, thinkingLevelMap: { low: "xlow", high: "xhigh" } }],
+		});
+		let onDisk = readModelsJson(world.agentDir).providers?.gate as {
+			models?: readonly { id?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, string> }[];
+		};
+		expect(onDisk.models).toEqual([{ id: "m1", reasoning: true, thinkingLevelMap: { low: "xlow", high: "xhigh" } }]);
+
+		// Re-save touching only medium: existing low/high mapping must survive.
+		await world.store.upsert({
+			id: "gate",
+			name: "Gate",
+			baseUrl: "https://g.example.com/v1",
+			api: "openai-completions",
+			models: [{ id: "m1", reasoning: true, thinkingLevelMap: { medium: "mid" } }],
+		});
+		onDisk = readModelsJson(world.agentDir).providers?.gate as {
+			models?: readonly { id?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, string> }[];
+		};
+		expect(onDisk.models?.[0]?.thinkingLevelMap).toEqual({ low: "xlow", high: "xhigh", medium: "mid" });
+
+		// Clearing a level (null) removes it so the runtime falls back to default.
+		await world.store.upsert({
+			id: "gate",
+			name: "Gate",
+			baseUrl: "https://g.example.com/v1",
+			api: "openai-completions",
+			models: [{ id: "m1", reasoning: true, thinkingLevelMap: { low: "xlow", medium: null, high: "xhigh" } }],
+		});
+		onDisk = readModelsJson(world.agentDir).providers?.gate as {
+			models?: readonly { id?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, string> }[];
+		};
+		expect(onDisk.models?.[0]?.thinkingLevelMap).toEqual({ low: "xlow", high: "xhigh" });
+	});
+
 	it("invalid input is rejected without writing or reloading", async () => {
 		world = makeWorld();
 		await expect(
@@ -211,5 +291,122 @@ describe("createLlmConfigStore", () => {
 		};
 		expect(provider.compat).toEqual({ supportsStore: false });
 		expect(provider.models?.[0]?.thinkingLevelMap).toEqual({ high: "xhigh" });
+	});
+
+	it("test falls back to the persisted provider key when apiKey is omitted", async () => {
+		world = makeWorld();
+		writeFileSync(
+			join(world.agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					oneapi: {
+						baseUrl: "http://127.0.0.1:3000/v1",
+						api: "openai-completions",
+						apiKey: "PERSISTED-KEY",
+						models: [{ id: "Qwen" }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+
+		const realFetch = globalThis.fetch;
+		let requestedAuthorization: string | undefined;
+		const stub: typeof fetch = (async (_url, init) => {
+			requestedAuthorization = ((init as RequestInit)?.headers as Record<string, string> | undefined)?.Authorization;
+			return { ok: true, json: async () => ({ models: [{ id: "Qwen" }] }) } as unknown as Response;
+		}) as typeof fetch;
+		(stub as unknown as { assign: unknown }).assign; // placeholder
+		globalThis.fetch = stub;
+		try {
+			await world.store.test({
+				providerId: "oneapi",
+				baseUrl: "http://127.0.0.1:3000/v1",
+				api: "openai-completions",
+			});
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+		expect(requestedAuthorization).toBe("Bearer PERSISTED-KEY");
+	});
+
+	it("test uses an explicitly provided apiKey over the persisted key", async () => {
+		world = makeWorld();
+		writeFileSync(
+			join(world.agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					oneapi: {
+						baseUrl: "http://127.0.0.1:3000/v1",
+						api: "openai-completions",
+						apiKey: "PERSISTED-KEY",
+						models: [{ id: "Qwen" }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+
+		const realFetch = globalThis.fetch;
+		let requestedAuthorization: string | undefined;
+		const stub: typeof fetch = (async (_url, init) => {
+			requestedAuthorization = ((init as RequestInit)?.headers as Record<string, string> | undefined)?.Authorization;
+			return { ok: true, json: async () => ({ models: [{ id: "Qwen" }] }) } as unknown as Response;
+		}) as typeof fetch;
+		(stub as unknown as { assign: unknown }).assign; // placeholder
+		globalThis.fetch = stub;
+		try {
+			await world.store.test({
+				providerId: "oneapi",
+				baseUrl: "http://127.0.0.1:3000/v1",
+				api: "openai-completions",
+				apiKey: "EXPLICIT-KEY",
+			});
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+		expect(requestedAuthorization).toBe("Bearer EXPLICIT-KEY");
+	});
+
+	it("test parses the OpenAI standard `data` shape when the gateway returns it", async () => {
+		world = makeWorld();
+		writeFileSync(
+			join(world.agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					oneapi: {
+						baseUrl: "https://api.example.com",
+						api: "openai-completions",
+						models: [],
+					},
+				},
+			}),
+			"utf-8",
+		);
+
+		const realFetch = globalThis.fetch;
+		const stub: typeof fetch = (async () => {
+			return {
+				ok: true,
+				json: async () => ({
+					object: "list",
+					data: [
+						{ id: "kimi-k3", object: "model" },
+						{ id: "glm-5.2", object: "model" },
+					],
+				}),
+			} as unknown as Response;
+		}) as typeof fetch;
+		(stub as unknown as { assign: unknown }).assign; // placeholder
+		globalThis.fetch = stub;
+		const result = await world.store.test({
+			providerId: "oneapi",
+			baseUrl: "https://api.example.com",
+			api: "openai-completions",
+		});
+		globalThis.fetch = realFetch;
+
+		expect(result.ok).toBe(true);
+		expect(result.advertisedModels).toEqual(["kimi-k3", "glm-5.2"]);
 	});
 });

@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attachment } from "@earendil-works/pi-protocol";
 import busboy from "busboy";
+import { PiServerError } from "../errors.ts";
+import type { PrincipalId, TenantId } from "../publishing/domain/ids.ts";
 import { requestPathname } from "../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { createDefaultUploadPipeline, processUploadFile } from "../uploads/pipeline.ts";
@@ -27,6 +29,14 @@ export interface UploadHttpHandlerOptions {
 	allowedOrigins?: readonly string[];
 	/** Host header allowlist, mirroring the WebSocket listener. */
 	allowedHosts?: readonly string[];
+	/**
+	 * Ownership stamped onto every upload this handler creates and required on
+	 * every read/attach/delete attempt. When omitted the handler is
+	 * backwards-compatible but treats the upload as legacy and the cross-tenant
+	 * attach hardening still applies (legacy records cannot pass ownership
+	 * checks).
+	 */
+	readonly owner?: { readonly tenantId: TenantId; readonly principalId: PrincipalId };
 	onError?: (error: unknown) => void;
 }
 
@@ -94,6 +104,15 @@ export function createUploadHttpHandler(options: UploadHttpHandlerOptions): Http
 	};
 
 	async function handleGet(id: string, response: ServerResponse): Promise<void> {
+		try {
+			if (options.owner) store.assertOwnership(id, options.owner);
+		} catch (error) {
+			if (error instanceof PiServerError) {
+				errorBody(response, { status: 404, code: "not_found", message: error.message });
+				return;
+			}
+			throw error;
+		}
 		const record = store.get(id);
 		if (!record) {
 			errorBody(response, { status: 404, code: "not_found", message: "Unknown upload" });
@@ -103,6 +122,15 @@ export function createUploadHttpHandler(options: UploadHttpHandlerOptions): Http
 	}
 
 	async function handleDelete(id: string, response: ServerResponse): Promise<void> {
+		try {
+			if (options.owner) store.assertOwnership(id, options.owner);
+		} catch (error) {
+			if (error instanceof PiServerError) {
+				errorBody(response, { status: 404, code: "not_found", message: error.message });
+				return;
+			}
+			throw error;
+		}
 		const record = store.get(id);
 		if (!record) {
 			errorBody(response, { status: 404, code: "not_found", message: "Unknown upload" });
@@ -166,7 +194,12 @@ export function createUploadHttpHandler(options: UploadHttpHandlerOptions): Http
 						});
 						attachments.push(attachment);
 						if (attachment.status === "ready") {
-							await store.adopt(attachment, tempPath);
+							// Owner stamp: when the handler is configured with an
+							// owner (admin tenant + principal) the record carries
+							// ownership metadata. Without it the upload is legacy
+							// (e.g. test fixtures) and cannot be attached across
+							// tenants by any caller.
+							await store.adopt(attachment, tempPath, options.owner);
 							adopted.push(id);
 						}
 					})().catch((error: unknown) => {

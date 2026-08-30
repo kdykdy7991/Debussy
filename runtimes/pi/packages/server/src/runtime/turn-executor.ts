@@ -10,7 +10,7 @@
  * 本路径标记为 internal/dev，不作为最终公开协议（TASK-025 的 Realtime
  * 通道建成后关闭或仅测试可用）。
  */
-import type { SessionSnapshot, TranscriptProgress, Usage } from "@earendil-works/pi-protocol";
+import type { AssistantTranscriptItem, SessionSnapshot, TranscriptProgress, Usage } from "@earendil-works/pi-protocol";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { RetrievalInput } from "../types.ts";
 import type { RestoredContext } from "./context-restore.ts";
@@ -119,19 +119,50 @@ export function lastAssistantResult(snapshot: SessionSnapshot): {
 		const item = snapshot.transcript[i];
 		if (item === undefined || item.role !== "assistant") continue;
 		if (item.status !== "complete") continue;
-		const outputText = item.content
-			.filter((content) => content.type === "text")
-			.map((content) => (content as { type: "text"; text: string }).text)
-			.join("\n");
-		const thinkingText = item.content
-			.filter((content) => content.type === "thinking" && !content.redacted)
-			.map((content) => (content as { type: "thinking"; thinking: string }).thinking)
-			.join("\n");
-		return {
-			outputText,
-			...(thinkingText ? { thinkingText } : {}),
-			...(item.usage ? { usage: item.usage } : {}),
-		};
+		return assistantResultFromItem(item);
 	}
 	return { outputText: "" };
+}
+
+/**
+ * Extract the LAST assistant item regardless of terminal status (complete,
+ * aborted, error, streaming). Used for cancel semantics: an interrupted Turn
+ * must keep whatever thinking/text was already streamed to the UI instead of
+ * being cleared, while still being a `turn/interrupted` (never a fabricated
+ * complete assistant/message).
+ */
+export function lastAssistantResultAnyStatus(snapshot: SessionSnapshot): {
+	readonly outputText: string;
+	readonly thinkingText?: string;
+	readonly usage?: Usage;
+} {
+	for (let i = snapshot.transcript.length - 1; i >= 0; i -= 1) {
+		const item = snapshot.transcript[i];
+		if (item === undefined || item.role !== "assistant") continue;
+		return assistantResultFromItem(item);
+	}
+	return { outputText: "" };
+}
+
+function assistantResultFromItem(item: {
+	readonly content: readonly AssistantTranscriptItem["content"][number][];
+	readonly usage?: Usage;
+}): {
+	readonly outputText: string;
+	readonly thinkingText?: string;
+	readonly usage?: Usage;
+} {
+	const outputText = item.content
+		.filter((content) => content.type === "text")
+		.map((content) => (content as { type: "text"; text: string }).text)
+		.join("\n");
+	const thinkingText = item.content
+		.filter((content) => content.type === "thinking" && !content.redacted)
+		.map((content) => (content as { type: "thinking"; thinking: string }).thinking)
+		.join("\n");
+	return {
+		outputText,
+		...(thinkingText ? { thinkingText } : {}),
+		...(item.usage ? { usage: item.usage } : {}),
+	};
 }

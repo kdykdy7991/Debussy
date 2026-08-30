@@ -90,6 +90,16 @@ export function createConversationRuntimeManager(
 		const conversationId = scope.conversationId;
 		const existing = active.get(conversationId);
 		if (existing !== undefined) {
+			// TURN-TASK：capability 须按每个 Turn 的目标 Agent Revision 重新
+			// resolve。Runtime 打开时即冻结了该版本的 skills/MCP/tools；若当前
+			// Turn 的目标 publishedAppVersionId 与缓存 Runtime 已打开的版本不同
+			// （版本升级/切换），不得复用旧 Runtime 的能力集合——关闭并从当前
+			// spec 重建，避免从历史会话继承 tool/skill 能力。
+			if (existing.runtime.scope.publishedAppVersionId !== scope.publishedAppVersionId) {
+				active.delete(conversationId);
+				await existing.runtime.close().catch(onError);
+				return { runtime: await openOnce(spec, scope, conversationId), created: true };
+			}
 			existing.lastActiveAt = now();
 			return { runtime: existing.runtime, created: false };
 		}

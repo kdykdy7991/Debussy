@@ -35,6 +35,13 @@ export interface AppProps {
 	showSidebar?: boolean;
 	/** 已绑定 Skill（发布版本能力，review doc §4.6）：支持 `/skill:` 补全。 */
 	skills?: readonly { name: string; description?: string }[];
+	/**
+	 * Admin Debug only: allow sending even before a conversation is attached.
+	 * In this state the Composer stays usable with an empty transcript and the
+	 * first message lazily creates + attaches the conversation (strict
+	 * lazy-create — opening Debug never creates a conversation).
+	 */
+	emptySendable?: boolean;
 }
 
 const EMPTY_PROMPTS = [
@@ -55,6 +62,7 @@ export function ConversationWorkspace({
 	enableUploads = true,
 	showSidebar = true,
 	skills,
+	emptySendable = false,
 }: AppProps) {
 	const connectionSnapshot = useSyncExternalStore(
 		connection.subscribe,
@@ -128,7 +136,11 @@ export function ConversationWorkspace({
 	const active = sessionSnapshot.activeSession;
 	const activeId = active?.id;
 	const running = active !== undefined && active.phase !== "idle";
-	const canSend = connected && active !== undefined && !sessionSnapshot.loading && !sessionSnapshot.submitting;
+	const canSend =
+		connected &&
+		!sessionSnapshot.loading &&
+		!sessionSnapshot.submitting &&
+		(active !== undefined || (variant === "admin" && emptySendable));
 	const bootstrapping = !active && sessionSnapshot.loading && !connectionSnapshot.error;
 	const visibleSessions = useMemo(() => {
 		const query = sessionQuery.trim().toLocaleLowerCase();
@@ -417,6 +429,10 @@ export function ConversationWorkspace({
 						/>
 					) : bootstrapping ? (
 						<StartupConversation />
+					) : emptySendable && variant === "admin" ? (
+						<div className="empty-conversation">
+							<p className="admin-debug-lazy-hint">输入第一条消息以创建调试会话。</p>
+						</div>
 					) : (
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
@@ -436,6 +452,7 @@ export function ConversationWorkspace({
 				connected={connected}
 				running={running}
 				canSend={canSend}
+				emptySendable={variant === "admin" && emptySendable}
 				message={message}
 				sessions={sessionSnapshot}
 				composerRef={composerRef}

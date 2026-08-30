@@ -4,12 +4,21 @@ import { LlmApi } from "../api/llm-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import styles from "./settings-view.module.css";
 
+type ReasoningEffort = "low" | "medium" | "high";
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ["low", "medium", "high"];
+
+interface ModelDraftRow {
+	readonly id: string;
+	readonly reasoning: boolean | undefined;
+	readonly thinkingLevelMap: Partial<Record<ReasoningEffort, string>>;
+}
+
 interface ProviderDraft {
 	readonly id: string;
 	readonly name: string;
 	readonly baseUrl: string;
 	readonly api: CustomLlmApi;
-	readonly models: readonly string[];
+	readonly models: readonly ModelDraftRow[];
 	readonly apiKey: string;
 }
 
@@ -25,7 +34,7 @@ export function CustomLlmSection(): React.ReactElement {
 	const [draft, setDraft] = useState<ProviderDraft>(EMPTY);
 	const [query, setQuery] = useState("");
 	const [loading, setLoading] = useState(true);
-	const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
+	const [busy, setBusy] = useState<"save" | "test" | "delete" | "refresh" | null>(null);
 	const [openModelMenu, setOpenModelMenu] = useState<number | null>(null);
 	const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 	/**
@@ -46,7 +55,7 @@ export function CustomLlmSection(): React.ReactElement {
 			name: provider.name,
 			baseUrl: provider.baseUrl,
 			api: provider.api,
-			models: provider.models,
+			models: provider.models.map((id) => ({ id, reasoning: undefined, thinkingLevelMap: {} })),
 			apiKey: "",
 		});
 		setMessage(null);
@@ -90,7 +99,25 @@ export function CustomLlmSection(): React.ReactElement {
 				name: draft.name,
 				baseUrl: draft.baseUrl,
 				api: draft.api,
-				models: draft.models,
+				models: draft.models.map((row) => {
+					const entry: {
+						id: string;
+						reasoning?: boolean;
+						thinkingLevelMap?: Partial<Record<ReasoningEffort, string | null>>;
+					} = { id: row.id };
+					if (row.reasoning !== undefined) entry.reasoning = row.reasoning;
+					const map: Partial<Record<ReasoningEffort, string | null>> = {};
+					for (const effort of REASONING_EFFORTS) {
+						const value = row.thinkingLevelMap[effort];
+						if (value === undefined) continue;
+						const trimmed = value.trim();
+						// A cleared cell sends null so the backend drops the level;
+						// untouched levels (no key) are omitted and preserve existing.
+						map[effort] = trimmed === "" ? null : trimmed;
+					}
+					if (Object.keys(map).length > 0) entry.thinkingLevelMap = map;
+					return entry;
+				}),
 				...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
 			});
 			selectedIdRef.current = draft.id;
@@ -104,20 +131,51 @@ export function CustomLlmSection(): React.ReactElement {
 		}
 	}
 
+	async function probe(): Promise<{ ok: boolean; advertisedModels?: readonly string[]; error?: string }> {
+		return api.testProvider({
+			providerId: draft.id !== "" ? draft.id : undefined,
+			baseUrl: draft.baseUrl,
+			api: draft.api,
+			...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+		});
+	}
+
 	async function test(): Promise<void> {
 		setBusy("test");
 		setMessage(null);
 		try {
-			const result = await api.testProvider({
-				baseUrl: draft.baseUrl,
-				api: draft.api,
-				...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
-			});
+			const result = await probe();
 			const text = result.ok ? "连接成功" : (result.error ?? "连接失败");
 			setMessage({ tone: result.ok ? "success" : "error", text });
 			if (draft.id !== "") {
 				setTestResults((current) => ({ ...current, [draft.id]: { ok: result.ok, text } }));
 			}
+		} catch (error) {
+			setMessage({ tone: "error", text: errorMessage(error) });
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function refreshModels(): Promise<void> {
+		if (!draft.baseUrl.trim() || !draft.name.trim()) {
+			setMessage({ tone: "error", text: "请先填写服务名称和 Base URL，再刷新模型列表" });
+			return;
+		}
+		setBusy("refresh");
+		setMessage(null);
+		try {
+			const result = await probe();
+			if (!result.ok) {
+				setMessage({ tone: "error", text: result.error ?? "获取模型列表失败" });
+				return;
+			}
+			if (result.advertisedModels === undefined || result.advertisedModels.length === 0) {
+				setMessage({ tone: "error", text: "连接成功，但该接口未返回可用的模型 ID" });
+				return;
+			}
+			set({ models: result.advertisedModels.map((id) => ({ id, reasoning: undefined, thinkingLevelMap: {} })) });
+			setMessage({ tone: "success", text: `已拉取 ${result.advertisedModels.length} 个可用模型` });
 		} catch (error) {
 			setMessage({ tone: "error", text: errorMessage(error) });
 		} finally {
@@ -208,10 +266,7 @@ export function CustomLlmSection(): React.ReactElement {
 											{provider.apiKeyConfigured ? "● 已配置" : "● 未配置"}
 										</i>
 										{testResult === undefined ? null : (
-											<i
-												className={testResult.ok ? styles.testOk : styles.testFail}
-												title={testResult.text}
-											>
+											<i className={testResult.ok ? styles.testOk : styles.testFail} title={testResult.text}>
 												{testResult.ok ? "✓ 连通" : "✗ 未连通"}
 											</i>
 										)}
@@ -302,11 +357,16 @@ export function CustomLlmSection(): React.ReactElement {
 								服务提供的模型 <span>（{draft.models.length}）</span>
 							</h3>
 							<div>
-								<button type="button" onClick={() => void reload()}>
+								<button type="button" disabled={busy !== null} onClick={() => void refreshModels()}>
 									<Icon name="refresh" />
 									刷新模型列表
 								</button>
-								<button type="button" onClick={() => set({ models: [...draft.models, ""] })}>
+								<button
+									type="button"
+									onClick={() =>
+										set({ models: [...draft.models, { id: "", reasoning: undefined, thinkingLevelMap: {} }] })
+									}
+								>
 									＋ 添加模型
 								</button>
 							</div>
@@ -321,15 +381,19 @@ export function CustomLlmSection(): React.ReactElement {
 								<span title="控制台选「高」时，下发给模型的 reasoning effort 值">高 high</span>
 								<span>操作</span>
 							</div>
-							{draft.models.map((modelId, index) => {
+							{draft.models.map((row, index) => {
+								const modelId = row.id;
 								const model = models.find((item) => item.id === modelId);
+								const effectiveReasoning = row.reasoning ?? model?.reasoning ?? false;
 								return (
 									<div className={styles.modelRow} key={`${index}-${modelId}`}>
 										<input
 											value={modelId}
 											onChange={(e) =>
 												set({
-													models: draft.models.map((id, i) => (i === index ? e.currentTarget.value : id)),
+													models: draft.models.map((r, i) =>
+														i === index ? { ...r, id: e.currentTarget.value } : r,
+													),
 												})
 											}
 										/>
@@ -342,27 +406,48 @@ export function CustomLlmSection(): React.ReactElement {
 													: `efforts: ${(model.parameterCapabilities?.reasoning?.efforts ?? []).join(", ") || "无"}`
 											}
 										>
-											<input type="checkbox" checked={model?.reasoning ?? false} disabled />
+											<input
+												type="checkbox"
+												checked={effectiveReasoning}
+												onChange={() =>
+													set({
+														models: draft.models.map((r, i) =>
+															i === index ? { ...r, reasoning: !effectiveReasoning } : r,
+														),
+													})
+												}
+											/>
 											<span />
 										</label>
-										{(["low", "medium", "high"] as const).map((effort) => {
-											const value = effortValue(model, effort);
-											return (
-												<span
-													key={effort}
-													className={`${styles.effortCell} ${value.state === "on" ? styles.effortOn : styles.effortOff}`}
-													title={
-														value.state === "unknown"
-															? "模型尚未出现在运行目录中"
-															: value.state === "off"
-																? "该模型未声明支持此档位"
-																: `下发 reasoning effort = ${value.text}`
-													}
-												>
-													{value.text}
-												</span>
-											);
-										})}
+										{REASONING_EFFORTS.map((effort) => (
+											<input
+												key={effort}
+												className={styles.effortCell}
+												value={row.thinkingLevelMap[effort] ?? ""}
+												placeholder={model?.thinkingLevelMap?.[effort] ?? effort}
+												disabled={!effectiveReasoning}
+												title={
+													model === undefined
+														? "模型能力未知；开启思考后填入下发给 Provider 的 effort 值"
+														: `下发给 Provider 的 reasoning effort（留空 = 同名 ${effort}）`
+												}
+												onChange={(e) =>
+													set({
+														models: draft.models.map((r, i) =>
+															i === index
+																? {
+																		...r,
+																		thinkingLevelMap: {
+																			...r.thinkingLevelMap,
+																			[effort]: e.currentTarget.value,
+																		},
+																	}
+																: r,
+														),
+													})
+												}
+											/>
+										))}
 										<div className={styles.modelAction}>
 											<button
 												type="button"
@@ -420,27 +505,6 @@ function Field({
 }
 function apiLabel(api: CustomLlmApi): string {
 	return api === "openai-completions" ? "OpenAI 兼容" : "Responses API";
-}
-/**
- * 控制台档位（低/中/高）最终下发给模型的 reasoning effort 值。
- *
- * 三种「没有值」必须区分开，不能一律回落成档位名 —— 回落会让「模型根本
- * 不支持思考」显示成「支持 low」，把配置缺失伪装成正常。
- */
-function effortValue(
-	model: LlmAvailableModel | undefined,
-	effort: "low" | "medium" | "high",
-): { readonly text: string; readonly state: "on" | "off" | "unknown" } {
-	if (model === undefined) return { text: "—", state: "unknown" };
-	const reasoning = model.parameterCapabilities?.reasoning;
-	if (reasoning?.supported !== true) return { text: "—", state: "off" };
-	if (!reasoning.efforts.includes(effort)) return { text: "不支持", state: "off" };
-	const mapped = model.thinkingLevelMap?.[effort];
-	if (mapped === null) return { text: "不支持", state: "off" };
-	// 未显式映射时按同名下发，这是真实行为，不是缺失
-	return mapped === undefined
-		? { text: effort, state: "on" }
-		: { text: mapped, state: "on" };
 }
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);

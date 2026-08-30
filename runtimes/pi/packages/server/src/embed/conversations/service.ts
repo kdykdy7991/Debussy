@@ -21,6 +21,7 @@ import type {
 	ConversationRollover,
 	ReasoningUpdateRequest,
 	SessionLogLevel,
+	ToolTranscriptItem,
 	TranscriptProgress,
 	TurnMetrics,
 } from "@earendil-works/pi-protocol";
@@ -388,6 +389,53 @@ export class ConversationService {
 		}
 	}
 
+	/**
+	 * TURN-TASK：把 Tool 进度持久化为 tool/call / tool/result / tool/error 事件
+	 * （均带 turnId + toolCallId + toolName + toolType + 状态 + 时间戳）。这样凭
+	 * conversationId + turnId 可完整还原该 Turn 的每次 tool/MCP/skill 调用。
+	 * 写失败仅丢失旁路观察，不阻断 Turn（WB-007）。不新建 tool_runs 表，
+	 * 沿用现有 Conversation Event Stream。
+	 */
+	private async persistToolProgress(
+		scope: OwnerScope,
+		conversationId: ConversationId,
+		turnId: TurnId,
+		spec: RuntimeSpec,
+		progressType: "item_started" | "item_updated" | "item_finished",
+		item: ToolTranscriptItem,
+	): Promise<void> {
+		const base = {
+			toolCallId: item.toolCallId,
+			toolName: item.toolName,
+			toolType: deriveToolType(spec, item.toolName),
+		};
+		if (progressType === "item_started") {
+			// 运行态启动：落 tool/call（仅当 item 仍为 running）。
+			if (item.status !== "running") return;
+			await this.safeAppend(scope, conversationId, {
+				eventType: "tool/call",
+				turnId,
+				payload: { ...base, status: "running", startedAt: item.timestamp },
+			});
+			return;
+		}
+		if (progressType === "item_updated") return;
+		// item_finished：complete -> tool/result；error -> tool/error。
+		if (item.status === "complete") {
+			await this.safeAppend(scope, conversationId, {
+				eventType: "tool/result",
+				turnId,
+				payload: { ...base, status: "complete", finishedAt: item.timestamp },
+			});
+		} else if (item.status === "error") {
+			await this.safeAppend(scope, conversationId, {
+				eventType: "tool/error",
+				turnId,
+				payload: { ...base, status: "error", error: deriveToolError(item), finishedAt: item.timestamp },
+			});
+		}
+	}
+
 	/** 读取持久事件并恢复上下文（TASK-022）；in-flight turn 收敛为 interrupted。 */
 	private async restoreHistory(
 		scope: OwnerScope,
@@ -492,6 +540,9 @@ export class ConversationService {
 		try {
 			const version = await this.repos.publishedAppVersions.get(scope, record.publishedAppVersionId);
 			if (version === undefined) return { ok: false, error: versionUnavailable() };
+			// TURN-TASK：Turn 配置快照需要 agentId（App 归属的 AgentDefinition）。
+			// 读失败仅省略该字段（用于历史追溯，非执行必需），不阻断 Turn。
+			const agentId = (await this.repos.publishedApps.get(scope, record.publishedAppId))?.agentDefinitionId;
 			const parsed = parseRuntimeSpec(version.runtimeSpec);
 			if (!parsed.ok) return { ok: false, error: runtimeUnavailable("RuntimeSpec is invalid") };
 			const spec = parsed.spec;
@@ -504,7 +555,10 @@ export class ConversationService {
 			// 收敛为 turn.interrupted（幂等：已收敛的事件会终止对应 pending）。
 			const history = await this.restoreHistory(scope, input.conversationId, spec);
 
-			const turnId = newTurnId();
+			// TURN-TASK：优先采用调用方（Realtime connection）预生成的 turnId，
+			// 使 turn 内所有事件（含 realtime 转发）共享同一 turnId，不依赖
+			// "当前连接只运行一个 Turn"；缺省时服务端自生成。
+			const turnId = input.turnId ?? newTurnId();
 			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
 			// Agent V2 §4.3：会话级 reasoning effort 覆盖（事实源；缺省=Revision 默认）。
 			const conversationReasoning = await this.repos.conversationReasoning.get(scope, input.conversationId);
@@ -526,10 +580,20 @@ export class ConversationService {
 				},
 			};
 
+			// TURN-TASK：turn/start 固化该 Turn 实际使用的 Agent 配置——agentId
+			// （App 归属）、agentRevisionId（版本来源 revision）、runtimeSpecHash
+			// （防混淆）、model。均取自 version/app 记录，不从会话当前状态反推；
+			// 凭 runtimeSpecHash 可恢复完整 RuntimeSpec，故不重复存整个 spec。
 			const turnStart = await this.safeAppend(scope, input.conversationId, {
 				eventType: "turn/start",
 				turnId,
-				payload: { model: spec.agent.model.modelId, logLevel },
+				payload: {
+					model: spec.agent.model.modelId,
+					logLevel,
+					agentRevisionId: version.sourceAgentRevision,
+					...(version.runtimeSpecHash !== null ? { runtimeSpecHash: version.runtimeSpecHash } : {}),
+					...(agentId !== undefined ? { agentId } : {}),
+				},
 			});
 			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
 
@@ -583,13 +647,22 @@ export class ConversationService {
 			// Agent V2 M1：捕获 provider 开始与终态时点。真实首增量指标后续由
 			// metrics collector 接入 onProgress；这里仍不以整个请求完成时间伪造 TTFT。
 			const providerStartAtMs = metricsTiming === undefined ? undefined : performance.now();
+			// TURN-TASK：onProgress 同时转发给调用方并持久化 tool 进度——Tool/MCP/Skill
+			// 归属到本 turn（带 turnId + toolCallId + toolName + toolType + 状态 +
+			// 时间戳），复用既有事件流模型（tool/call|result|error），不新增表。
+			const onProgress: ExecuteTurnInput["onProgress"] = (progress) => {
+				input.onProgress?.(progress);
+				if (progress.type === "assistant_delta") return;
+				if (progress.item.role !== "tool") return;
+				void this.persistToolProgress(scope, input.conversationId, turnId, spec, progress.type, progress.item);
+			};
 			const result = await this.turnExecutor({
 				scope: turnScope,
 				spec,
 				text: input.text,
 				history,
 				retrieval,
-				onProgress: input.onProgress,
+				onProgress,
 			});
 			const completedAtMs = metricsTiming === undefined ? undefined : performance.now();
 			let turnMetrics: TurnMetrics | undefined;
@@ -705,6 +778,8 @@ export interface ExecuteTurnInput {
 	readonly conversationId: ConversationId;
 	readonly requestId?: RequestId;
 	readonly text: string;
+	/** TURN-TASK：由调用方（Realtime connection）预生成的 turnId；缺省自生成。 */
+	readonly turnId?: TurnId;
 	readonly onProgress?: (progress: TranscriptProgress) => void;
 }
 
@@ -724,6 +799,18 @@ function ownerScope(principal: EmbedAuthContext) {
 		publishedAppId: principal.publishedAppId,
 		principalId: principal.principalId,
 	};
+}
+
+/** TURN-TASK：按 Tool 名推断其归属类型（skill > mcp > builtin），用于 tool 事件归属。 */
+import { deriveToolType } from "../../publishing/runtime/tool-type.ts";
+
+/** TURN-TASK：从 error tool item 的文本 content 提取错误信息；缺省给占位串。 */
+function deriveToolError(item: ToolTranscriptItem): string {
+	if (item.status !== "error") return "tool error";
+	for (const part of item.content) {
+		if (part.type === "text" && typeof part.text === "string") return part.text;
+	}
+	return "tool error";
 }
 
 /** WB-008: merge the synthetic summary header with the post-summary events. */

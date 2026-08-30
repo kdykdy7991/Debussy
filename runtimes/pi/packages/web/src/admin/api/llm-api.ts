@@ -102,7 +102,14 @@ export class LlmApi {
 		readonly name: string;
 		readonly baseUrl: string;
 		readonly api: CustomLlmApi;
-		readonly models: readonly string[];
+		readonly models: readonly (
+			| string
+			| {
+					id: string;
+					reasoning?: boolean;
+					thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
+			  }
+		)[];
 		readonly apiKey?: string;
 	}): Promise<LlmProviderResponse> {
 		return this.request({
@@ -123,6 +130,7 @@ export class LlmApi {
 	}
 
 	testProvider(input: {
+		readonly providerId?: string;
 		readonly baseUrl: string;
 		readonly api: CustomLlmApi;
 		readonly apiKey?: string;

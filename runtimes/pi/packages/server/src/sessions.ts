@@ -59,6 +59,28 @@ interface LiveSessionManagerOptions {
 	sessionEventLogRetentionMs: number;
 	/** Upload/attachment store backing `attach_upload` / `remove_attachment`. */
 	attachments?: AttachmentStore;
+	/**
+	 * Default ownership stamp used by `attach_upload` / `remove_attachment` to
+	 * enforce cross-tenant / cross-principal attach hardening. The admin web
+	 * WS plane has a single tenant + principal per server; production embed
+	 * plane passes the connection's authenticated principal instead.
+	 */
+	attachmentOwner?: {
+		readonly tenantId: import("./publishing/domain/ids.ts").TenantId;
+		readonly principalId: import("./publishing/domain/ids.ts").PrincipalId;
+	};
+	/**
+	 * Debug Conversation hook: when a broadcast `attachment_snapshot` /
+	 * `attachment_removed` reaches this live session, the optional callback is
+	 * invoked so the DebugConversationService can persist the event into the
+	 * conversation's durable event stream.
+	 */
+	onAttachmentEvent?: (
+		liveId: string,
+		event:
+			| { readonly type: "attachment_snapshot"; readonly attachment: Attachment }
+			| { readonly type: "attachment_removed"; readonly sessionId: string; readonly attachmentId: string },
+	) => Promise<void>;
 	/** Citation index + retrieval service backing P2 source/citation flows. */
 	citations?: CitationService;
 	/** Phase 2 live speech coordinator; when absent, live jobs are unavailable. */
@@ -161,7 +183,10 @@ export class LiveSessionManager {
 			}
 			case "prompt": {
 				const live = this.requireAttached(connection, command.sessionId);
-				const turnId = randomUUID();
+				// A runtime that owns the durable Turn identity (e.g. the Debug
+				// Conversation Adapter) supplies the real Turn id here; legacy
+				// runtimes fall back to the server-side random uuid unchanged.
+				const turnId = live.runtime.beginTurn?.() ?? randomUUID();
 				const { attachments, retrieval } = await this.preparePromptInputs(
 					live,
 					command.attachmentIds,
@@ -602,6 +627,13 @@ export class LiveSessionManager {
 	/** Bind a ready upload to a session; idempotent when already bound to the same session. */
 	private async attachUpload(live: LiveSession, uploadId: string, scope: AttachmentScope): Promise<Attachment> {
 		const store = this.requireAttachmentStore();
+		// Cross-tenant / cross-principal attach hardening: refuse binds from
+		// any caller that does not match the record's owner stamp. Legacy v1
+		// records (no ownership metadata) also fail closed — users must
+		// re-upload after deploy.
+		if (this.options.attachmentOwner) {
+			store.assertOwnership(uploadId, this.options.attachmentOwner);
+		}
 		const record = store.get(uploadId);
 		if (!record) throw new PiServerError("not_found", `Unknown upload: ${uploadId}`);
 		const attachment = record.attachment;
@@ -629,6 +661,9 @@ export class LiveSessionManager {
 	/** Unbind an attachment from its session and mark it removed (metadata kept for history). */
 	private async removeAttachment(live: LiveSession, attachmentId: string): Promise<void> {
 		const store = this.requireAttachmentStore();
+		if (this.options.attachmentOwner) {
+			store.assertOwnership(attachmentId, this.options.attachmentOwner);
+		}
 		const record = store.get(attachmentId);
 		if (!record || record.attachment.sessionId !== live.id) {
 			throw new PiServerError("not_found", `Attachment is not attached to this session: ${attachmentId}`);
@@ -657,6 +692,11 @@ export class LiveSessionManager {
 		const resolved: ResolvedAttachmentInput[] = [];
 		const sourceIds: string[] = [];
 		for (const id of attachmentIds) {
+			// Cross-tenant attach hardening: prompt-time ids must belong to the
+			// calling tenant/principal. Legacy v1 records fail closed here too.
+			if (this.options.attachmentOwner) {
+				store.assertOwnership(id, this.options.attachmentOwner);
+			}
 			const record = store.get(id);
 			if (!record || record.attachment.sessionId !== live.id) {
 				throw new PiServerError("invalid_request", `Attachment is not attached to this session: ${id}`);
@@ -718,6 +758,16 @@ export class LiveSessionManager {
 	private broadcastEvent(live: LiveSession, event: ServerEvent): void {
 		const envelope: EventEnvelope = { type: "event", event };
 		for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
+		// Debug Conversation hook: persist attachment_* events to the
+		// conversation's event stream so reconnect can rebuild attachments.
+		if (
+			this.options.onAttachmentEvent &&
+			(event.type === "attachment_snapshot" || event.type === "attachment_removed")
+		) {
+			void this.options.onAttachmentEvent(live.id, event).catch((error: unknown) => {
+				this.options.reportError(error);
+			});
+		}
 	}
 
 	/** Broadcast a Source status change to the session that owns it. */

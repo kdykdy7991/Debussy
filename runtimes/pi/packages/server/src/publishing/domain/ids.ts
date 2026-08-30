@@ -42,6 +42,9 @@ export type McpServerId = string & Brand<"McpServerId">;
 export type McpToolId = string & Brand<"McpToolId">;
 export type McpSecretId = string & Brand<"McpSecretId">;
 export type McpCallAuditId = string & Brand<"McpCallAuditId">;
+/** Admin workbench Debug Conversation identity (Phase 1). */
+export type DebugConversationId = string & Brand<"DebugConversationId">;
+export type DebugConversationEventId = string & Brand<"DebugConversationEventId">;
 
 /** Identifier kinds and their display prefixes (representation layer only). */
 export type IdKind =
@@ -64,7 +67,9 @@ export type IdKind =
 	| "McpServerId"
 	| "McpToolId"
 	| "McpSecretId"
-	| "McpCallAuditId";
+	| "McpCallAuditId"
+	| "DebugConversationId"
+	| "DebugConversationEventId";
 
 const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	TenantId: "ten_",
@@ -87,6 +92,8 @@ const ID_PREFIXES: Readonly<Record<IdKind, string>> = {
 	McpToolId: "mcptool_",
 	McpSecretId: "mcpsec_",
 	McpCallAuditId: "mcpaud_",
+	DebugConversationId: "dconv_",
+	DebugConversationEventId: "devt_",
 };
 
 /** Generate a UUIDv7 string: 48-bit millisecond timestamp + random bits. */
@@ -206,6 +213,12 @@ export function newMcpSecretId(): McpSecretId {
 }
 export function newMcpCallAuditId(): McpCallAuditId {
 	return buildId("McpCallAuditId") as McpCallAuditId;
+}
+export function newDebugConversationId(): DebugConversationId {
+	return buildId("DebugConversationId") as DebugConversationId;
+}
+export function newDebugConversationEventId(): DebugConversationEventId {
+	return buildId("DebugConversationEventId") as DebugConversationEventId;
 }
 
 /** Public locator: stored in the `public_app_id` text column, keeps `pub_`. */

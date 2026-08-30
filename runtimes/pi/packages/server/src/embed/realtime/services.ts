@@ -10,8 +10,16 @@ import type { RealtimeServices } from "./connection.ts";
 
 export function conversationRealtimeServices(service: ConversationService): RealtimeServices {
 	return {
-		async executeTurn({ principal, conversationId, requestId, text, onProgress }) {
-			const result = await service.executeTurn({ principal, conversationId, requestId, text, onProgress });
+		async executeTurn({ principal, conversationId, requestId, text, turnId, onProgress }) {
+			// TURN-TASK：透传连接层预生成的 turnId，使 realtime 事件与持久事件共享同一 turnId。
+			const result = await service.executeTurn({
+				principal,
+				conversationId,
+				requestId,
+				text,
+				...(turnId ? { turnId } : {}),
+				onProgress,
+			});
 			if (!result.ok) {
 				return {
 					ok: false,

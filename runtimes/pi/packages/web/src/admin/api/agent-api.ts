@@ -46,6 +46,25 @@ export class AgentApiError extends Error {
 	}
 }
 
+/** Debug Conversation DTO returned by the control API (Phase 1). */
+export interface DebugConversationDto {
+	readonly conversationId: string;
+	readonly agentId: AgentPublicId | null;
+	readonly status: "active" | "deleted";
+	readonly lastActiveAt: string;
+	readonly lastEventSequence: number;
+}
+
+/** Debug Conversation event DTO returned by the control API (Phase 1). */
+export interface DebugEventDto {
+	readonly eventId: string;
+	readonly sequence: number;
+	readonly eventType: string;
+	readonly turnId: string | null;
+	readonly payload: Record<string, unknown>;
+	readonly createdAt: string;
+}
+
 interface RequestOptions {
 	readonly method: "GET" | "POST" | "DELETE";
 	readonly path: string;
@@ -199,6 +218,64 @@ export class AgentApi {
 		return this.request({
 			method: "GET",
 			path: `/api/control/v1/debug-sessions/${encodeURIComponent(sessionId)}/export`,
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// Debug Conversation (Phase 1): persistent, per-agent debug conversations
+	// that survive Agent revision changes. Revision is resolved server-side per
+	// Turn ("followLatest"); the client never submits a revision number.
+	// ---------------------------------------------------------------------
+
+	/** Resume the most recent active Debug conversation for an agent (fresh reload). */
+	resumeDebugConversation(agentId: AgentPublicId): Promise<{
+		readonly conversation: DebugConversationDto | null;
+		readonly events: readonly DebugEventDto[];
+	}> {
+		const params = new URLSearchParams({ agentId });
+		return this.request({
+			method: "GET",
+			path: `/api/control/v1/debug-conversations?${params.toString()}`,
+		});
+	}
+
+	/** Explicitly create a brand-new active Debug conversation (New Conversation). */
+	createDebugConversation(agentId: AgentPublicId): Promise<{
+		readonly conversation: DebugConversationDto;
+		readonly events: readonly DebugEventDto[];
+	}> {
+		return this.request({
+			method: "POST",
+			path: "/api/control/v1/debug-conversations",
+			body: { agentId },
+		});
+	}
+
+	/** Execute one Turn on an existing Debug conversation. */
+	sendDebugConversationMessage(
+		conversationId: string,
+		text: string,
+	): Promise<{
+		readonly conversation: DebugConversationDto;
+		readonly turn: {
+			readonly turnId: string;
+			readonly outputText: string;
+			readonly thinkingText?: string;
+		};
+	}> {
+		return this.request({
+			method: "POST",
+			path: `/api/control/v1/debug-conversations/${encodeURIComponent(conversationId)}/messages`,
+			body: { text },
+		});
+	}
+
+	/** Incremental event list for a Debug conversation (reload / refresh). */
+	listDebugConversationEvents(conversationId: string, afterSequence = 0): Promise<readonly DebugEventDto[]> {
+		const params = new URLSearchParams({ afterSequence: String(afterSequence) });
+		return this.request({
+			method: "GET",
+			path: `/api/control/v1/debug-conversations/${encodeURIComponent(conversationId)}/events?${params.toString()}`,
 		});
 	}
 

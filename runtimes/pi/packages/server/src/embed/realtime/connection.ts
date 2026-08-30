@@ -20,7 +20,7 @@ import {
 } from "@earendil-works/pi-protocol";
 import { WebSocket } from "ws";
 import type { ConversationId, RequestId, TurnId } from "../../publishing/domain/ids.ts";
-import { newConversationEventId, newRequestId, parseId, toPublicId } from "../../publishing/domain/ids.ts";
+import { newConversationEventId, newRequestId, newTurnId, parseId, toPublicId } from "../../publishing/domain/ids.ts";
 import type { ConversationEventRecord, ConversationRecord } from "../../publishing/repositories.ts";
 import { createEffectOwner } from "../../runtime/effect-owner.ts";
 import type { TicketClaims } from "../auth/ws-ticket.ts";
@@ -47,6 +47,8 @@ export interface RealtimeServices {
 		readonly principal: EmbedAuthContext;
 		readonly conversationId: ConversationId;
 		readonly requestId: RequestId;
+		/** TURN-TASK：连接层预生成并注入本 Turn 的 turnId，事件不必依赖"仅一个执行中 Turn"。 */
+		readonly turnId?: TurnId;
 		readonly text: string;
 		readonly onProgress?: (progress: TranscriptProgress) => void;
 	}): Promise<TurnOutcome>;
@@ -245,6 +247,10 @@ export class EmbedRealtimeConnection {
 
 	private async runTurn(requestId: RequestId, text: string): Promise<void> {
 		const startedAt = Date.now();
+		// TURN-TASK：连接层预生成 turnId 并注入，使本 Turn 的所有 realtime 事件
+		// （message/tool/turn.*）都带同一 turnId，并与持久事件一致；各并发 Turn
+		// 各持自己的 turnId，不依赖"当前连接只有一个执行中 Turn"。
+		const turnId: TurnId = newTurnId();
 		const report = (result: "completed" | "failed"): void => {
 			if (this.observability !== undefined) this.observability.onTurnResult(result, Date.now() - startedAt);
 		};
@@ -252,8 +258,9 @@ export class EmbedRealtimeConnection {
 			principal: this.principal,
 			conversationId: this.conversationId,
 			requestId,
+			turnId,
 			text,
-			onProgress: (progress) => this.forwardProgress(progress),
+			onProgress: (progress) => this.forwardProgress(turnId, progress),
 		});
 		if (this.closed) return;
 		if (this.cancellationRequested) {
@@ -261,35 +268,35 @@ export class EmbedRealtimeConnection {
 			return;
 		}
 		if (!outcome.ok) {
-			this.send({ type: "turn.failed", ...this.eventBase(0), error: outcome.message });
+			this.send({ type: "turn.failed", ...this.eventBase(0, turnId), error: outcome.message });
 			report("failed");
 			return;
 		}
 		if (outcome.assistantSequence === null) {
-			this.send({ type: "turn.failed", ...this.eventBase(0), error: "turn produced no completion" });
+			this.send({ type: "turn.failed", ...this.eventBase(0, turnId), error: "turn produced no completion" });
 			report("failed");
 			return;
 		}
 		// TASK-033：引用展示 —— 有引用先发 citation.updated（瞬时事件，sequence 0）。
 		if (outcome.citations.length > 0) {
-			this.send({ type: "citation.updated", ...this.eventBase(0), citations: outcome.citations });
+			this.send({ type: "citation.updated", ...this.eventBase(0, turnId), citations: outcome.citations });
 		}
 		// completed 来自持久事件；真实增量已在 Runtime 生成期间转发。
 		this.send({
 			type: "message.completed",
-			...this.eventBase(outcome.assistantSequence),
+			...this.eventBase(outcome.assistantSequence, turnId),
 			text: outcome.outputText,
 			...(outcome.thinkingText ? { thinking: outcome.thinkingText } : {}),
 		});
 		report("completed");
 	}
 
-	private forwardProgress(progress: TranscriptProgress): void {
+	private forwardProgress(turnId: TurnId, progress: TranscriptProgress): void {
 		if (this.closed) return;
 		if (progress.type === "assistant_delta" && progress.kind !== "toolCall") {
 			this.send({
 				type: "message.delta",
-				...this.eventBase(0),
+				...this.eventBase(0, turnId),
 				messageId: progress.messageId,
 				contentIndex: progress.contentIndex,
 				kind: progress.kind,
@@ -298,7 +305,7 @@ export class EmbedRealtimeConnection {
 			return;
 		}
 		if (progress.type === "item_started" && progress.item.role === "tool") {
-			this.send({ type: "tool.started", ...this.eventBase(0), tool: progress.item.toolName });
+			this.send({ type: "tool.started", ...this.eventBase(0, turnId), tool: progress.item.toolName });
 			return;
 		}
 		if (
@@ -308,7 +315,7 @@ export class EmbedRealtimeConnection {
 		) {
 			this.send({
 				type: "tool.completed",
-				...this.eventBase(0),
+				...this.eventBase(0, turnId),
 				tool: progress.item.toolName,
 				ok: progress.item.status === "complete",
 			});
@@ -361,7 +368,10 @@ export class EmbedRealtimeConnection {
 		});
 	}
 
-	private eventBase(sequence: number): {
+	private eventBase(
+		sequence: number,
+		turnId: string | null = null,
+	): {
 		conversationId: string;
 		sequence: number;
 		turnId: string | null;
@@ -371,7 +381,7 @@ export class EmbedRealtimeConnection {
 		return {
 			conversationId: this.publicConversationId,
 			sequence,
-			turnId: null,
+			turnId,
 			eventId: newConversationEventId(),
 			timestamp: new Date().toISOString(),
 		};

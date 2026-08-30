@@ -30,6 +30,31 @@ export interface PiServerOptions {
 	sessionEventLogRetentionMs?: number;
 	/** Upload/attachment store backing `attach_upload` / `remove_attachment`. */
 	attachments?: AttachmentStore;
+	/**
+	 * Default ownership stamp used by `attach_upload` / `remove_attachment` to
+	 * enforce cross-tenant / cross-principal attach hardening. The admin web
+	 * WS plane has a single tenant + principal per server; production embed
+	 * plane passes the connection's authenticated principal instead.
+	 */
+	attachmentOwner?: {
+		readonly tenantId: import("./publishing/domain/ids.ts").TenantId;
+		readonly principalId: import("./publishing/domain/ids.ts").PrincipalId;
+	};
+	/**
+	 * Debug Conversation hook: when a broadcast `attachment_snapshot` /
+	 * `attachment_removed` reaches this live session, the optional callback is
+	 * invoked so the DebugConversationService can persist the event into the
+	 * conversation's durable event stream.
+	 */
+	onAttachmentEvent?: (
+		liveId: string,
+		event:
+			| {
+					readonly type: "attachment_snapshot";
+					readonly attachment: import("@earendil-works/pi-protocol").Attachment;
+			  }
+			| { readonly type: "attachment_removed"; readonly sessionId: string; readonly attachmentId: string },
+	) => Promise<void>;
 	/** Citation index + retrieval service backing P2 source/citation flows. */
 	citations?: CitationService;
 	/** Speech proxy; when omitted, speech commands and PCM routes are unavailable. */
@@ -127,6 +152,16 @@ export interface PiSessionRuntime {
 	readonly ephemeral?: boolean;
 	snapshot(): SessionSnapshot;
 	getPhase(): SessionPhase;
+	/**
+	 * Optional hook for a runtime that owns the durable Turn identity. Called
+	 * synchronously by LiveSessionManager right before a `prompt` op so the
+	 * session's `currentTurnId` (and thus every `session_progress.turnId`) is the
+	 * runtime's real Turn id instead of a server-side random uuid. The runtime
+	 * may also use it to atomically reserve its single active Turn slot and throw
+	 * when a concurrent prompt must be rejected. Absent runtimes fall back to the
+	 * server-side random id, preserving legacy behavior.
+	 */
+	beginTurn?(): string;
 	prompt(input: PromptInput): Promise<void>;
 	steer(input: SteerInput): Promise<void>;
 	abort(): Promise<void>;

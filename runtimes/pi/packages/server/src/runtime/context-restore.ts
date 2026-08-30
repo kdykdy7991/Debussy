@@ -28,10 +28,17 @@ export const SUPPORTED_EVENT_SCHEMA_VERSIONS = [1] as const;
 export const MAX_SUPPORTED_EVENT_SCHEMA_VERSION = Math.max(...SUPPORTED_EVENT_SCHEMA_VERSIONS);
 
 /** Event types that close out a turn: no further events for this turn will recover as messages. */
-const TERMINAL_TURN_EVENTS = new Set(["turn.end", "turn.failed", "turn.interrupted"]);
+const TERMINAL_TURN_EVENTS = new Set([
+	"turn.end",
+	"turn.failed",
+	"turn.interrupted",
+	"turn/end",
+	"turn/failed",
+	"turn/interrupted",
+]);
 
 /** Event types whose payload contributes a final assistant message we should recover. */
-const FINAL_ASSISTANT_MESSAGE_TYPES = new Set(["assistant.message", "assistant.completed"]);
+const FINAL_ASSISTANT_MESSAGE_TYPES = new Set(["assistant.message", "assistant.completed", "assistant/message"]);
 
 export interface RestoredMessage {
 	readonly role: "user" | "assistant";

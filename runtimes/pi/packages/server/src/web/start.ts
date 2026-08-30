@@ -24,9 +24,14 @@ import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
 import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
 import { PiServerError } from "../errors.ts";
+import { createDebugRepositories } from "../persistence/postgres/repositories/debug.ts";
 import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
 import { type ControlPlaneHandle, composeControlPlane } from "../publishing/control/compose.ts";
 import { createAdminDebugSessionsHttpHandler } from "../publishing/control/debug-sessions-http.ts";
+import { createAdminDebugConversationHandler } from "../publishing/debug/http.ts";
+import { createDebugRealtimeBackend, DebugConversationRealtime } from "../publishing/debug/realtime.ts";
+import type { DebugSessionFactory } from "../publishing/debug/service.ts";
+import { DebugConversationService } from "../publishing/debug/service.ts";
 import { createMcpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import { createSkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import type { PiServer } from "../server.ts";
@@ -157,6 +162,9 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	let controlPlane: ControlPlaneHandle | undefined;
 	let embedPlane: EmbedPlaneHandle | undefined;
 	let debugSessions: ReturnType<typeof createAdminDebugSessionsHttpHandler> | undefined;
+	let debugConversationService: DebugConversationService | undefined;
+	let debugConversationHandler: HttpRequestHandler | undefined;
+	let debugRealtime: DebugConversationRealtime | undefined;
 	if (publishing.enabled) {
 		// 33.1/33.2: missing token / db / bootstrap config fails startup.
 		controlPlane = await composeControlPlane({
@@ -181,6 +189,26 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		// 24.2: missing pepper / access-token keys fails startup; the embed
 		// data plane reuses the control plane's Postgres connection/repos while
 		// its Agent sessions remain isolated from the admin/debug session index.
+		//
+		// Shared session factory: published/embed and Debug conversation runtimes
+		// both carry their frozen prompt + skills into an isolated per-session
+		// ResourceLoader via `resourceOverrides` (never read the host cwd).
+		const makeRuntimeSession: DebugSessionFactory = (options) =>
+			(embedBackend ?? backend).createSession({
+				id: options.id,
+				model: options.model,
+				thinkingLevel: options.thinkingLevel,
+				streamOptions: options.streamOptions,
+				customTools: options.customTools,
+				...(options.systemPrompt !== undefined || (options.skills?.length ?? 0) > 0
+					? {
+							resourceOverrides: {
+								...(options.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : {}),
+								...(options.skills && options.skills.length > 0 ? { skills: options.skills } : {}),
+							},
+						}
+					: {}),
+			});
 		embedPlane = await composeEmbedPlane({
 			publishing,
 			repositories: controlPlane.repositories,
@@ -189,28 +217,42 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				secretBox: controlPlane.mcpSecretBox,
 			}),
 			skillMaterializer,
-			createSession: (options) =>
-				(embedBackend ?? backend).createSession({
-					id: options.id,
-					model: options.model,
-					thinkingLevel: options.thinkingLevel,
-					streamOptions: options.streamOptions,
-					customTools: options.customTools,
-					// A published session carries its frozen prompt + skills so the
-					// backend can build an isolated per-session ResourceLoader.
-					...(options.systemPrompt !== undefined || (options.skills?.length ?? 0) > 0
-						? {
-								resourceOverrides: {
-									...(options.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : {}),
-									...(options.skills && options.skills.length > 0 ? { skills: options.skills } : {}),
-								},
-							}
-						: {}),
-				}),
+			createSession: makeRuntimeSession,
 			citations,
 			previewTickets: controlPlane.previewTicketService,
 			log,
 		});
+		// Phase 2A: reuse the same MCP tool factory for Debug so MCP credentials
+		// stay execute-time and tool-call semantics match the Production path.
+		const debugMcpTools = createMcpRuntimeToolFactory({
+			repositories: controlPlane.repositories,
+			secretBox: controlPlane.mcpSecretBox,
+		});
+		// Debug Conversation Phase 1: persistent, per-agent debug conversations
+		// that survive Agent revision changes. Kept physically separate from the
+		// Production conversation schema; the old ephemeral debug-session path
+		// above remains as a compatibility route.
+		const debugConversationRepos = createDebugRepositories(controlPlane.client);
+		debugConversationService = new DebugConversationService({
+			repositories: controlPlane.repositories,
+			debug: debugConversationRepos,
+			catalog: controlPlane.catalog,
+			createSession: makeRuntimeSession,
+			skillMaterializer,
+			createMcpTools: debugMcpTools,
+			tenantId: controlPlane.tenantId,
+			// Phase 1: a single admin owner per tenant reuses the control-plane
+			// tenant id as the Debug conversation owner key.
+			ownerPrincipalId: controlPlane.tenantId as unknown as import("../publishing/domain/ids.ts").PrincipalId,
+		});
+		debugConversationHandler = createAdminDebugConversationHandler({
+			service: debugConversationService,
+			isAuthorized: (request) => controlPlane!.isAuthorized(request),
+		});
+		// Phase 2 realtime (Option A): route `dconv_*` ws session ids to a stable
+		// DebugConversationAdapter so the existing Chat streaming UI can attach to
+		// a persistent Debug Conversation without a new frontend protocol.
+		debugRealtime = new DebugConversationRealtime(debugConversationService);
 	}
 
 	const httpHandlers: HttpRequestHandler[] = [
@@ -219,6 +261,17 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			webToken: options.webToken,
 			allowedOrigins: resolved.listener.allowedOrigins,
 			allowedHosts: resolved.listener.allowedHosts,
+			// Stamp ownership on every upload the admin workbench creates so
+			// cross-tenant attach hardening applies to DebugConversation path.
+			// The admin owner key reuses the tenant id (Phase 1 model).
+			...(controlPlane !== undefined
+				? {
+						owner: {
+							tenantId: controlPlane.tenantId,
+							principalId: controlPlane.tenantId as unknown as import("../publishing/domain/ids.ts").PrincipalId,
+						},
+					}
+				: {}),
 		}),
 	];
 
@@ -233,6 +286,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	});
 	httpHandlers.push(...voiceHandlers);
 	if (debugSessions !== undefined) httpHandlers.push(debugSessions.handler);
+	if (debugConversationHandler !== undefined) httpHandlers.push(debugConversationHandler);
 	if (controlPlane !== undefined) httpHandlers.push(controlPlane.handler);
 	if (embedPlane !== undefined) {
 		httpHandlers.push(
@@ -244,12 +298,42 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	}
 	const httpHandler = composeHttpHandlers(httpHandlers);
 
-	const server = createWebSocketServer(backend, {
+	const wsBackend = debugRealtime === undefined ? backend : createDebugRealtimeBackend(backend, debugRealtime);
+	const server = createWebSocketServer(wsBackend, {
 		...resolved.listener,
 		// TASK-025：embed Realtime upgrade（ticket 校验）接管非主路径 upgrade。
 		...(embedPlane?.realtimeUpgrade !== undefined ? { onUnhandledUpgrade: embedPlane.realtimeUpgrade } : {}),
 		httpHandler,
 		attachments,
+		// Cross-tenant attach hardening: every WS attach_upload goes through
+		// assertOwnership against the admin tenant/principal.
+		...(controlPlane !== undefined
+			? {
+					attachmentOwner: {
+						tenantId: controlPlane.tenantId,
+						principalId: controlPlane.tenantId as unknown as import("../publishing/domain/ids.ts").PrincipalId,
+					},
+				}
+			: {}),
+		// Debug Conversation hook: persist attachment_* events to
+		// debug_conversation_events so reconnect rebuilds attachments.
+		onAttachmentEvent: async (liveId, event) => {
+			if (debugConversationService === undefined) return;
+			const conversationId = DebugConversationRealtime.parseConversationId(liveId);
+			if (conversationId === null) return;
+			if (event.type === "attachment_snapshot") {
+				await debugConversationService.persistAttachmentEvent(
+					conversationId,
+					"attachment_snapshot",
+					event.attachment,
+				);
+			} else {
+				await debugConversationService.persistAttachmentEvent(conversationId, "attachment_removed", {
+					sessionId: event.sessionId,
+					attachmentId: event.attachmentId,
+				});
+			}
+		},
 		citations,
 		speech,
 		liveSpeech,
@@ -289,6 +373,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 					await debugSessions.close();
 				} catch (error) {
 					log(`error during debugSessions.close: ${formatError(error)}`);
+				}
+			}
+			if (debugConversationService !== undefined) {
+				try {
+					await debugConversationService.close();
+				} catch (error) {
+					log(`error during debugConversationService.close: ${formatError(error)}`);
 				}
 			}
 			if (controlPlane !== undefined) {

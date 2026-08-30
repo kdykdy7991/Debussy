@@ -19,6 +19,7 @@ import type { PublishingConfig } from "../config.ts";
 import { parseIdOrThrow, type TenantId } from "../domain/ids.ts";
 import { McpSecretBox } from "../mcp/secret-box.ts";
 import { PreviewTicketService } from "../preview-ticket.ts";
+import type { CapabilityCatalog } from "../runtime-spec/compiler.ts";
 import { buildCapabilityCatalog } from "./catalog.ts";
 import { createControlHttpHandler } from "./http.ts";
 import { createLlmConfigStore } from "./llm-config.ts";
@@ -33,6 +34,8 @@ export interface ControlPlaneHandle {
 	readonly client: PostgresClient;
 	/** Shared scoped repositories (also reused by embed plane). */
 	readonly repositories: PublishingRepositories;
+	/** Capability whitelist used to compile RuntimeSpecs (shared with embed). */
+	readonly catalog: CapabilityCatalog;
 	/** Preview ticket service (WB-005), shared so embed exchange can consume tickets. */
 	readonly previewTicketService: PreviewTicketService;
 	readonly mcpSecretBox: McpSecretBox | undefined;
@@ -145,6 +148,7 @@ export async function composeControlPlane(options: {
 		controlService,
 		client,
 		repositories,
+		catalog,
 		previewTicketService,
 		mcpSecretBox,
 		tenantId,

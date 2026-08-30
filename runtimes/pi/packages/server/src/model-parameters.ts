@@ -114,3 +114,66 @@ export function withConversationEffort(
 		},
 	};
 }
+
+/** 冻结能力的运行时默认档位（不可关闭思考的模型必须有显式档位）。 */
+export function capabilityDefaultEffort(
+	parameterCapabilities: ModelParameterCapabilities | undefined,
+): ReasoningEffort | undefined {
+	const reasoning = parameterCapabilities?.reasoning;
+	if (reasoning === undefined || !reasoning.supported) return undefined;
+	if (reasoning.defaultEffort !== undefined) return reasoning.defaultEffort;
+	if (!reasoning.toggle) return reasoning.efforts[0];
+	return undefined;
+}
+
+/** 从 `params` 读取合法 legacy thinkingLevel；缺失/非法返回 undefined。 */
+export function legacyThinkingLevelFrom(params: AgentModelParameters | undefined): ThinkingLevel | undefined {
+	if (params === undefined || typeof params !== "object" || params === null) return undefined;
+	const raw = (params as Record<string, unknown>).thinkingLevel;
+	if (typeof raw !== "string" || !LEGACY_THINKING_LEVELS.has(raw as ThinkingLevel)) return undefined;
+	return raw as ThinkingLevel;
+}
+
+const LEGACY_THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Effective model options with the single Production precedence:
+ *
+ *   explicit `params.reasoning.{enabled,effort}`
+ *     → legacy `params.thinkingLevel`
+ *     → model capability `defaultEffort` (non-toggle models fall back to efforts[0])
+ *     → off/none
+ *
+ * Production and Debug conversations share this one resolver so a given Agent
+ * Revision + model + config yields the same reasoning behaviour in both.
+ */
+export function resolveEffectiveModelOptions(input: {
+	readonly params: AgentModelParameters | undefined;
+	readonly modelId: string;
+	readonly parameterCapabilities?: ModelParameterCapabilities;
+	readonly conversationEffort?: ReasoningEffort | null;
+}): {
+	readonly thinkingLevel?: ThinkingLevel;
+	readonly streamOptions: Pick<
+		SimpleStreamOptions,
+		"temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets"
+	>;
+} {
+	const base = input.params ?? {};
+	let resolved = resolveModelStreamOptions(
+		withConversationEffort(base, input.conversationEffort ?? null),
+		input.modelId,
+	);
+	const legacy = legacyThinkingLevelFrom(input.params);
+	if (resolved.thinkingLevel === undefined && legacy === undefined) {
+		const fallbackEffort = capabilityDefaultEffort(input.parameterCapabilities);
+		if (fallbackEffort !== undefined) {
+			resolved = resolveModelStreamOptions(withConversationEffort(base, fallbackEffort), input.modelId);
+		}
+	}
+	const thinkingLevel = resolved.thinkingLevel ?? legacy;
+	return {
+		...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+		streamOptions: resolved.streamOptions,
+	};
+}

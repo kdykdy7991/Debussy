@@ -272,3 +272,54 @@ describe("restoreContext", () => {
 		expect(result.observedLogLevel).toBe("full");
 	});
 });
+
+// Production and the Debug Conversation service persist SLASH event types
+// ("user/message", "assistant/message", "turn/end", "turn/failed"). The
+// restorer must recognise these forms so assistant text actually re-enters the
+// next Turn's history (TASK regression: previously only dot forms were read).
+describe("restoreContext — slash event forms (persisted vocabulary)", () => {
+	const slashUser = (turnId: string, text: string, sequence: number): ConversationEventRecord =>
+		event({ eventType: "user/message", turnId: turnId as never, payload: { text }, sequence });
+	const slashAssistant = (turnId: string, text: string, sequence: number): ConversationEventRecord =>
+		event({ eventType: "assistant/message", turnId: turnId as never, payload: { text }, sequence });
+
+	test("slash user/message + assistant/message + turn/end restore user/assistant history", () => {
+		const result = restoreContext(
+			[
+				slashUser("t1", "hi", 1),
+				slashAssistant("t1", "hello", 2),
+				event({ eventType: "turn/end", turnId: "t1" as never, payload: { ok: true }, sequence: 3 }),
+				slashUser("t2", "again", 4),
+				slashAssistant("t2", "again echo", 5),
+				event({ eventType: "turn/end", turnId: "t2" as never, payload: { ok: true }, sequence: 6 }),
+			],
+			{ maxContextTokens: 100_000 },
+			"standard",
+		);
+		// Assistant final text MUST be carried so the next Turn sees it.
+		expect(result.messages).toEqual([
+			{ role: "user", text: "hi" },
+			{ role: "assistant", text: "hello" },
+			{ role: "user", text: "again" },
+			{ role: "assistant", text: "again echo" },
+		]);
+		expect(result.interruptedTurnIds).toEqual([]);
+		expect(result.skippedEvents).toBe(0);
+	});
+
+	test("slash turn/failed ends the pending slash turn without recovery", () => {
+		const failed = restoreContext(
+			[
+				slashUser("t1", "boom", 1),
+				event({ eventType: "turn/failed", turnId: "t1" as never, payload: { error: "x" }, sequence: 2 }),
+			],
+			{ maxContextTokens: 100_000 },
+			"standard",
+		);
+		expect(failed.messages).toEqual([]);
+		// A turn that ended (failed) intentionally drops its input; it is not
+		// recovered and not marked as "interrupted" (that marker is reserved for
+		// a pending turn with no terminal event at the end of the stream).
+		expect(failed.interruptedTurnIds).toEqual([]);
+	});
+});

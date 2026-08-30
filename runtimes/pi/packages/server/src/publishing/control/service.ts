@@ -151,7 +151,7 @@ import {
 } from "../runtime-spec/compiler.ts";
 import { canonicalJson, sha256Hex } from "../runtime-spec/hash.ts";
 import { PLATFORM_LIMITS, parseRuntimeSpec, type RuntimeSpec } from "../runtime-spec/schema.ts";
-import type { CustomLlmProviderView, LlmConfigStore } from "./llm-config.ts";
+import type { CustomLlmProviderView, LlmConfigStore, LlmModelSpecInput } from "./llm-config.ts";
 import { parseSkillArtifact, SkillImportRejected } from "./skill-import.ts";
 
 /** Cursor-paginated query result shared by the console query API (ADMIN-002). */
@@ -3267,7 +3267,7 @@ export class ControlService {
 		readonly name: string;
 		readonly baseUrl: string;
 		readonly api: CustomLlmApi;
-		readonly models: readonly string[];
+		readonly models: readonly LlmModelSpecInput[];
 		readonly apiKey?: string;
 	}): Promise<ControlResult<{ readonly provider: CustomLlmProviderView }>> {
 		if (this.llm === undefined) {
@@ -3292,6 +3292,7 @@ export class ControlService {
 
 	/** Best-effort connectivity/auth probe against a custom LLM endpoint. */
 	async testLlmProvider(input: {
+		readonly providerId?: string;
 		readonly baseUrl: string;
 		readonly api: CustomLlmApi;
 		readonly apiKey?: string;

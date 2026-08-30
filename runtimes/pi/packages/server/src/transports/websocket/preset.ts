@@ -28,6 +28,8 @@ export function createWebSocketServer(backend: PiSessionBackend, options: WebSoc
 		sessionEventLogMaxEvents: options.sessionEventLogMaxEvents,
 		sessionEventLogRetentionMs: options.sessionEventLogRetentionMs,
 		attachments: options.attachments,
+		attachmentOwner: options.attachmentOwner,
+		onAttachmentEvent: options.onAttachmentEvent,
 		citations: options.citations,
 		speech: options.speech,
 		liveSpeech: options.liveSpeech,

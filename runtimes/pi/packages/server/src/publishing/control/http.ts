@@ -49,6 +49,7 @@ import type {
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
 import type { AccessMode } from "../domain/states.ts";
 import type { IdempotencyScope, PublishedAppRecord, PublishingRepositories } from "../repositories.ts";
+import type { LlmModelSpecInput } from "./llm-config.ts";
 import type { ControlService, CurrentAgentDefinitionSource } from "./service.ts";
 import { ConversationExportNotFound } from "./service.ts";
 import { secureEqual } from "./token.ts";
@@ -1297,7 +1298,7 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 					name: parsed.name as string,
 					baseUrl: parsed.baseUrl as string,
 					api: parsed.api as CustomLlmApi,
-					models: (parsed.models as unknown[]).map(String),
+					models: parsed.models as readonly LlmModelSpecInput[],
 					apiKey: parsed.apiKey as string | undefined,
 				});
 				if (!result.ok) return serviceError(result.error, requestId);
@@ -1321,11 +1322,13 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			operation: "llm-providers.test",
 			handler: async ({ requestId, body }) => {
 				const parsed = parseBody(body, {
+					providerId: ["string", "undefined"],
 					baseUrl: "string",
 					api: "string",
 					apiKey: ["string", "undefined"],
 				});
 				const result = await service.testLlmProvider({
+					providerId: parsed.providerId as string | undefined,
 					baseUrl: parsed.baseUrl as string,
 					api: parsed.api as CustomLlmApi,
 					apiKey: parsed.apiKey as string | undefined,

@@ -15,16 +15,14 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { ModelRef, ReasoningEffort, ThinkingLevel } from "@earendil-works/pi-protocol";
-import { resolveModelStreamOptions, withConversationEffort } from "../model-parameters.ts";
+import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
+import { resolveEffectiveModelOptions } from "../model-parameters.ts";
 import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import type { SkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { MaterializedSkill, PiSessionRuntime } from "../types.ts";
 import { ConversationRuntime } from "./conversation-runtime.ts";
 import type { ScopeContext } from "./scope-context.ts";
-
-const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 /** 传给底层会话工厂的创建参数（源自 RuntimeSpec + Scope）。 */
 export interface RuntimeSessionOptions {
@@ -61,24 +59,15 @@ export function createPiRuntimeAdapter(deps: {
 		async open(spec, scope) {
 			const rejection = chatOnlyRejection(spec);
 			if (rejection !== null) return { ok: false, reason: rejection };
-			// 会话覆盖 > Revision 配置 > 冻结 capability 默认：先解析显式配置，
-			// 仅在它和兼容字段都没有给出档位时才补 capability fallback。
-			const base = spec.agent.model.params ?? {};
-			let resolved = resolveModelStreamOptions(
-				withConversationEffort(base, scope.conversationEffort ?? null),
-				spec.agent.model.modelId,
-			);
-			const legacyThinkingLevel = thinkingLevelFrom(spec);
-			if (resolved.thinkingLevel === undefined && legacyThinkingLevel === undefined) {
-				const fallbackEffort = capabilityDefaultEffort(spec);
-				if (fallbackEffort !== undefined) {
-					resolved = resolveModelStreamOptions(
-						withConversationEffort(base, fallbackEffort),
-						spec.agent.model.modelId,
-					);
-				}
-			}
-			const thinkingLevel = resolved.thinkingLevel ?? legacyThinkingLevel;
+			// 会话覆盖 > Revision 配置 > legacy thinkingLevel > 冻结 capability
+			// 默认：全部收敛到共享 resolver（Production 与 Debug 同一规则）。
+			const resolved = resolveEffectiveModelOptions({
+				params: spec.agent.model.params,
+				modelId: spec.agent.model.modelId,
+				parameterCapabilities: spec.agent.model.parameterCapabilities,
+				conversationEffort: scope.conversationEffort ?? null,
+			});
+			const thinkingLevel = resolved.thinkingLevel;
 			const customTools = deps.createMcpTools === undefined ? [] : await deps.createMcpTools(spec, scope);
 			// 物化冻结 Skill 到运行时目录，并把 systemPrompt/Skill 一并交给会话工厂，
 			// 让发布会话通过独立 ResourceLoader（skillsOverride）只看到本版本快照。
@@ -100,20 +89,6 @@ export function createPiRuntimeAdapter(deps: {
 	};
 }
 
-/**
- * 冻结能力的运行时默认值。
- *
- * 可关闭模型没有显式默认时仍交给 provider；不可关闭模型则必须选择一个冻结
- * 档位，否则会出现“发布配置声明支持思考，实际请求却没有启用思考”的漂移。
- */
-function capabilityDefaultEffort(spec: RuntimeSpec): ReasoningEffort | undefined {
-	const reasoning = spec.agent.model.parameterCapabilities?.reasoning;
-	if (reasoning === undefined || !reasoning.supported) return undefined;
-	if (reasoning.defaultEffort !== undefined) return reasoning.defaultEffort;
-	if (!reasoning.toggle) return reasoning.efforts[0];
-	return undefined;
-}
-
 /** MVP chat-only 白名单校验；返回 null 表示允许。 */
 function chatOnlyRejection(spec: RuntimeSpec): string | null {
 	if (spec.runtimePolicy.profile !== "chat-only") {
@@ -126,13 +101,4 @@ function chatOnlyRejection(spec: RuntimeSpec): string | null {
 		return "knowledge bases are disabled in the chat-only MVP";
 	}
 	return null;
-}
-
-/** 从 `agent.model.params` 读取合法 thinkingLevel；缺失/非法返回 undefined。 */
-function thinkingLevelFrom(spec: RuntimeSpec): ThinkingLevel | undefined {
-	const params = spec.agent.model.params;
-	if (params === undefined || typeof params !== "object" || params === null) return undefined;
-	const raw = (params as Record<string, unknown>).thinkingLevel;
-	if (typeof raw !== "string" || !THINKING_LEVELS.has(raw as ThinkingLevel)) return undefined;
-	return raw as ThinkingLevel;
 }

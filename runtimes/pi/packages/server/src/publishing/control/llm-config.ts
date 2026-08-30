@@ -36,6 +36,14 @@ export interface CustomLlmProviderView {
 	apiKeyConfigured: boolean;
 }
 
+export type LlmModelSpecInput =
+	| string
+	| {
+			id: string;
+			reasoning?: boolean;
+			thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
+	  };
+
 export interface LlmConfigStore {
 	list(): Promise<CustomLlmProviderView[]>;
 	upsert(input: {
@@ -43,7 +51,7 @@ export interface LlmConfigStore {
 		name: string;
 		baseUrl: string;
 		api: CustomLlmApi;
-		models: readonly string[];
+		models: readonly LlmModelSpecInput[];
 		apiKey?: string;
 	}): Promise<CustomLlmProviderView>;
 	remove(id: string): Promise<boolean>;
@@ -60,6 +68,7 @@ export interface LlmConfigStore {
 		}[]
 	>;
 	test(input: {
+		providerId?: string;
 		baseUrl: string;
 		api: CustomLlmApi;
 		apiKey?: string;
@@ -92,7 +101,7 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 		name: string;
 		baseUrl: string;
 		api: CustomLlmApi;
-		models: readonly string[];
+		models: readonly LlmModelSpecInput[];
 		apiKey?: string;
 	}): Promise<CustomLlmProviderView> {
 		validateId(input.id);
@@ -101,7 +110,7 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 		if (!KNOWN_APIS.includes(input.api)) {
 			throw new Error(`api must be one of ${KNOWN_APIS.join(" | ")}`);
 		}
-		const models = normalizeModelIds(input.models);
+		const models = normalizeModels(input.models);
 
 		const file = readConfig();
 		const existing = file.providers?.[input.id] as ModelsJsonProviderEntry | undefined;
@@ -110,7 +119,27 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 			name,
 			baseUrl,
 			api: input.api,
-			models: models.map((id) => ({ ...existing?.models?.find((model) => model.id === id), id })),
+			models: models.map((spec) => {
+				const prev = existing?.models?.find((model) => model.id === spec.id);
+				let mergedMap: Record<string, string | null> | undefined;
+				if (spec.thinkingLevelMap && Object.keys(spec.thinkingLevelMap).length) {
+					// Merge into the existing map: a string sets a level's effort,
+					// a null removes that level so the runtime falls back to the
+					// same-name effort. Emit even when the result is empty to fully
+					// clear a previously saved mapping.
+					mergedMap = { ...(prev?.thinkingLevelMap ?? {}) };
+					for (const [level, value] of Object.entries(spec.thinkingLevelMap)) {
+						if (value === null) delete mergedMap[level];
+						else if (typeof value === "string") mergedMap[level] = value;
+					}
+				}
+				return {
+					...(prev ?? {}),
+					id: spec.id,
+					...(spec.reasoning !== undefined ? { reasoning: spec.reasoning } : {}),
+					...(mergedMap !== undefined ? { thinkingLevelMap: mergedMap } : {}),
+				};
+			}),
 		};
 		// Preserve the existing provider and per-model capabilities unless the caller replaces them.
 		if (input.apiKey !== undefined) {
@@ -182,6 +211,7 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 	}
 
 	async function test(input: {
+		providerId?: string;
 		baseUrl: string;
 		api: CustomLlmApi;
 		apiKey?: string;
@@ -190,6 +220,10 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 		if (!KNOWN_APIS.includes(input.api)) {
 			return { ok: false, error: `api must be one of ${KNOWN_APIS.join(" | ")}` };
 		}
+		// When the caller edits an already-saved provider, it does not re-send
+		// the stored key (the form keeps the field blank). Fall back to the
+		// persisted key so「测试连接」verifies the live config instead of 401ing.
+		const apiKey = input.apiKey ?? readConfig()?.providers?.[input.providerId ?? ""]?.apiKey;
 		try {
 			const modelsUrl = `${baseUrl.replace(/\/+$/, "")}/models`;
 			const controller = new AbortController();
@@ -197,15 +231,24 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 			try {
 				const response = await fetch(modelsUrl, {
 					signal: controller.signal,
-					headers: input.apiKey ? { Authorization: `Bearer ${resolveApiKey(input.apiKey)}` } : undefined,
+					headers: apiKey ? { Authorization: `Bearer ${resolveApiKey(apiKey)}` } : undefined,
 				});
 				if (!response.ok) {
 					return { ok: false, error: `endpoint responded with HTTP ${response.status}` };
 				}
 				const body = (await response.json().catch(() => null)) as {
 					models?: readonly { id?: unknown }[];
+					data?: readonly { id?: unknown }[];
 				} | null;
-				const advertised = body?.models
+				// Some gateways return the OpenAI standard `{"object":"list","data":[…]}`
+				// shape; others use a `models` array. Accept both so the advertised
+				// model list is populated either way.
+				const entries = Array.isArray(body?.models)
+					? body.models
+					: Array.isArray(body?.data)
+						? body.data
+						: undefined;
+				const advertised = entries
 					?.map((model) => (typeof model.id === "string" ? model.id : undefined))
 					.filter((id): id is string => id !== undefined);
 				return advertised !== undefined ? { ok: true, advertisedModels: advertised } : { ok: true };
@@ -295,21 +338,45 @@ function requireHttpUrl(value: string, field: string): string {
 	return url.toString().replace(/\/+$/, "");
 }
 
-function normalizeModelIds(models: readonly string[]): readonly string[] {
+function normalizeModels(models: readonly LlmModelSpecInput[]): readonly {
+	id: string;
+	reasoning?: boolean;
+	thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
+}[] {
 	if (!Array.isArray(models) || models.length === 0) {
 		throw new Error("models must be a non-empty array of model ids");
 	}
 	const seen = new Set<string>();
-	const out: string[] = [];
+	const out: {
+		id: string;
+		reasoning?: boolean;
+		thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
+	}[] = [];
 	for (const raw of models) {
-		if (typeof raw !== "string" || raw.trim() === "") {
+		const entry = typeof raw === "string" ? { id: raw } : raw;
+		if (typeof entry?.id !== "string" || entry.id.trim() === "") {
 			throw new Error("models must be a non-empty array of model ids");
 		}
-		const id = raw.trim();
-		if (!seen.has(id)) {
-			seen.add(id);
-			out.push(id);
+		const id = entry.id.trim();
+		if (seen.has(id)) continue;
+		seen.add(id);
+		const thinkingLevelMap: Partial<Record<"low" | "medium" | "high", string | null>> = {};
+		if (entry.thinkingLevelMap && typeof entry.thinkingLevelMap === "object") {
+			for (const level of ["low", "medium", "high"] as const) {
+				const value = entry.thinkingLevelMap[level];
+				if (value === null) {
+					// Explicit clear: signal the merge to drop a previously saved level.
+					thinkingLevelMap[level] = null;
+				} else if (typeof value === "string" && value.trim() !== "") {
+					thinkingLevelMap[level] = value.trim();
+				}
+			}
 		}
+		out.push({
+			id,
+			...(typeof entry.reasoning === "boolean" ? { reasoning: entry.reasoning } : {}),
+			...(Object.keys(thinkingLevelMap).length ? { thinkingLevelMap } : {}),
+		});
 	}
 	return out;
 }
