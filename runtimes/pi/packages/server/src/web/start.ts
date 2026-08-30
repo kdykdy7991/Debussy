@@ -241,6 +241,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			skillMaterializer,
 			createMcpTools: debugMcpTools,
 			tenantId: controlPlane.tenantId,
+			citations,
 			// Phase 1: a single admin owner per tenant reuses the control-plane
 			// tenant id as the Debug conversation owner key.
 			ownerPrincipalId: controlPlane.tenantId as unknown as import("../publishing/domain/ids.ts").PrincipalId,

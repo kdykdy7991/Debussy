@@ -309,6 +309,12 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 			revision: this.revisionCounter,
 			transcript: [...this.snapshotValue.transcript, this.assistantItem(turnId, result)],
 		};
+		// Surface the Turn's full citations to the Debug UI through the Pi Session
+		// protocol (`citation_snapshot`); LiveSessionManager forwards the event to
+		// the connection verbatim (same vocabulary as internal retrieval turns).
+		if (result.citations !== undefined && result.citations.length > 0) {
+			this.emit({ type: "citation_snapshot", turnId, citations: [...result.citations] });
+		}
 		this.emit({ type: "snapshot" });
 	}
 

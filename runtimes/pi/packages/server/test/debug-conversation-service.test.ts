@@ -8,9 +8,15 @@
  *  - history carryover across a revision change (user + assistant text only)
  *  - Turn event persistence (turn/start with actualPublishedAppVersionId=null)
  */
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Attachment, Citation } from "@earendil-works/pi-protocol";
 import { describe, expect, it } from "vitest";
-import { DebugConversationService } from "../src/publishing/debug/service.ts";
+import { attachmentStoreReader, CitationService, conversationRetrievalEnabled } from "../src/citations/service.ts";
+import { CitationStore } from "../src/citations/store.ts";
 import { DebugConversationRealtime } from "../src/publishing/debug/realtime.ts";
+import { DebugConversationService } from "../src/publishing/debug/service.ts";
 import type {
 	DebugConversationEventInput,
 	DebugConversationEventRecord,
@@ -29,6 +35,7 @@ import {
 import type { PublishingRepositories } from "../src/publishing/repositories.ts";
 import type { CapabilityCatalog } from "../src/publishing/runtime-spec/compiler.ts";
 import type { PiSessionRuntime, PromptInput } from "../src/types.ts";
+import { AttachmentStore } from "../src/uploads/store.ts";
 
 const TENANT_ID = "11111111-1111-7111-8111-111111111111" as TenantId;
 const OWNER = "22222222-2222-7222-8222-222222222222" as PrincipalId;
@@ -468,5 +475,169 @@ describe("DebugConversationService (Phase 1)", () => {
 		// Same conversation id (public form), same attachment after rebuild.
 		expect(adapter.snapshot().id).toBe(toPublicId("DebugConversationId", conv.debugConversationId));
 		expect(adapter.snapshot().attachments?.[0]?.id).toBe("upload-A");
+	});
+});
+
+interface RetrievalHarness {
+	service: DebugConversationService;
+	capture: Capture;
+	attachments: AttachmentStore;
+	citations: CitationService;
+}
+
+async function makeRetrievalHarness(): Promise<RetrievalHarness> {
+	const dir = mkdtempSync(join(tmpdir(), "pi-debug-retrieval-"));
+	const attachments = new AttachmentStore(join(dir, "uploads"));
+	await attachments.init();
+	const citationStore = new CitationStore(join(dir, "citations"));
+	await citationStore.init();
+	const citations = new CitationService({ store: citationStore, readContent: attachmentStoreReader(attachments) });
+	const capture: Capture = { prompts: [], created: 0 };
+	const publishingRepos = {
+		agentDefinitions: { getLatest: async () => revisionRecord({ revision: 1, model: MODEL_A }) },
+		skills: { listBindings: async () => [], get: async () => undefined, getRevision: async () => undefined },
+		mcpServers: {
+			listBindings: async () => [],
+			get: async () => undefined,
+			getRevision: async () => undefined,
+			listTools: async () => [],
+		},
+	} as unknown as PublishingRepositories;
+	const service = new DebugConversationService({
+		repositories: publishingRepos,
+		debug: createFakeDebugRepos(),
+		catalog: CATALOG,
+		createSession: async (sessionOpts) => {
+			capture.created += 1;
+			return fakeSession(capture)(sessionOpts);
+		},
+		tenantId: TENANT_ID,
+		ownerPrincipalId: OWNER,
+		citations,
+	});
+	return { service, capture, attachments, citations };
+}
+
+/** Stage + adopt a text attachment already session-bound and index its Source. */
+async function seedSource(
+	harness: RetrievalHarness,
+	publicConversationId: string,
+	id: string,
+	name: string,
+	content: string,
+): Promise<Attachment> {
+	mkdirSync(join(harness.attachments.root, id), { recursive: true });
+	const staged = join(harness.attachments.root, id, "file.txt");
+	writeFileSync(staged, content, "utf-8");
+	const attachment: Attachment = {
+		id,
+		sessionId: publicConversationId,
+		name,
+		mediaType: "text/plain",
+		size: content.length,
+		sha256: "abc",
+		status: "ready",
+		createdAt: Date.now(),
+	};
+	await harness.attachments.adopt(attachment, staged);
+	await harness.citations.ensureSource(attachment);
+	return attachment;
+}
+
+describe("DebugConversationService retrieval (Phase 2D read path)", () => {
+	it("indexes an attached text Source under the dconv session and retrieves it into the model Turn", async () => {
+		const harness = await makeRetrievalHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const publicId = toPublicId("DebugConversationId", conv.debugConversationId);
+		await seedSource(
+			harness,
+			publicId,
+			"att-shared",
+			"guide.txt",
+			"The deployment registration code is BANANA42 and must stay secret.",
+		);
+
+		// Source lives under the dconv public session id (reset-provable via store).
+		expect(harness.citations.listSourcesBySession(publicId).some((s) => s.status === "ready")).toBe(true);
+
+		const t1 = await harness.service.executeTurn(
+			conv.debugConversationId,
+			"what is the registration code?",
+			newTurnId(),
+		);
+		expect(t1.ok).toBe(true);
+		const prompt = harness.capture.prompts.at(-1)!;
+		expect(prompt.retrieval?.citations.length ?? 0).toBeGreaterThan(0);
+		expect(prompt.retrieval?.context).toContain("BANANA42");
+		expect(prompt.retrieval?.reference).toContain("guide.txt");
+	});
+
+	it("retrieves conversation Sources even when the Turn carries no attachmentIds", async () => {
+		const harness = await makeRetrievalHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const publicId = toPublicId("DebugConversationId", conv.debugConversationId);
+		await seedSource(harness, publicId, "att-shared2", "keys.txt", "The vault key is TWILIGHT-77.");
+		await harness.service.executeTurn(conv.debugConversationId, "what is the vault key?", newTurnId());
+		const t2 = await harness.service.executeTurn(conv.debugConversationId, "what is the vault key?", newTurnId(), {
+			attachmentIds: [],
+		});
+		expect(t2.ok).toBe(true);
+		expect(harness.capture.prompts.at(-1)!.retrieval?.citations.length ?? 0).toBeGreaterThan(0);
+	});
+
+	it("stops retrieving an attachment's Source once removed", async () => {
+		const harness = await makeRetrievalHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const publicId = toPublicId("DebugConversationId", conv.debugConversationId);
+		const attachment = await seedSource(harness, publicId, "att-gone", "old.txt", "The old token is DEPRECATED-9.");
+		await harness.service.executeTurn(conv.debugConversationId, "what is the token?", newTurnId());
+		expect(harness.capture.prompts.at(-1)!.retrieval?.citations.length ?? 0).toBeGreaterThan(0);
+		await harness.citations.markSourceRemoved(attachment.id);
+		const t2 = await harness.service.executeTurn(conv.debugConversationId, "what is the token?", newTurnId());
+		expect(t2.ok).toBe(true);
+		// Removed Source => no citation reaches the model (history context is still wrapped, but citations are empty).
+		expect(harness.capture.prompts.at(-1)!.retrieval?.citations.length ?? 0).toBe(0);
+	});
+
+	it("never retrieves another conversation's Sources (cross-dconv isolation)", async () => {
+		const harness = await makeRetrievalHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const other = await harness.service.createNew(AGENT_ID);
+		await seedSource(
+			harness,
+			toPublicId("DebugConversationId", other.debugConversationId),
+			"att-other",
+			"private.txt",
+			"The boss password is PRIVATE-42.",
+		);
+		const t1 = await harness.service.executeTurn(conv.debugConversationId, "what is the boss password?", newTurnId());
+		expect(t1.ok).toBe(true);
+		expect(harness.capture.prompts.at(-1)!.retrieval).toBeUndefined();
+	});
+
+	it("respects the production retrieval gap: uploads capability disabled => no retrieval", async () => {
+		expect(conversationRetrievalEnabled({ capabilities: { uploads: { enabled: true } } } as never)).toBe(true);
+		expect(conversationRetrievalEnabled({ capabilities: { uploads: { enabled: false } } } as never)).toBe(false);
+	});
+
+	it("executes a realtime Turn carrying citations so the adapter can emit citation_snapshot", async () => {
+		const harness = await makeRetrievalHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const publicId = toPublicId("DebugConversationId", conv.debugConversationId);
+		await seedSource(
+			harness,
+			publicId,
+			"att-rt",
+			"guide.txt",
+			"The registration code is BANANA42 and must stay secret.",
+		);
+		await harness.service.beginTurn(conv.debugConversationId);
+		const result = await harness.service.executeTurnRealtime(conv.debugConversationId, "registration code?", {
+			inputTurnId: newTurnId(),
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.citations?.length ?? 0).toBeGreaterThan(0);
+		expect((result.citations ?? []).some((citation) => citation.title === "guide.txt")).toBe(true);
 	});
 });

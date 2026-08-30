@@ -144,7 +144,12 @@ export interface MaterializedSkill {
 export type PiSessionRuntimeEvent =
 	| { type: "snapshot" }
 	| { type: "progress"; progress: TranscriptProgress }
-	| { type: "error"; error: PiServerError };
+	| { type: "error"; error: PiServerError }
+	| {
+			type: "citation_snapshot";
+			turnId: string;
+			citations: readonly Citation[];
+	  };
 
 /** One acquired durable session. Conflicting operations must reject rather than queue. */
 export interface PiSessionRuntime {

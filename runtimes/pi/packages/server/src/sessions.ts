@@ -496,6 +496,21 @@ export class LiveSessionManager {
 			live.transientSnapshot = applyProgress(live.transientSnapshot ?? live.runtime.snapshot(), event.progress);
 			const envelope: EventEnvelope = { type: "event", event: progress };
 			for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
+		} else if (event.type === "citation_snapshot") {
+			// Debug-Conversation read path: the Adapter surfaces the Turn's full
+			// citations as a runtime event; forward it to the connection with the
+			// same `citation_snapshot` vocabulary `runOperation` uses for internal
+			// retrieval turns.
+			const envelope: EventEnvelope = {
+				type: "event",
+				event: {
+					type: "citation_snapshot",
+					sessionId: live.id,
+					turnId: event.turnId,
+					citations: [...event.citations],
+				},
+			};
+			for (const connection of live.connections) void this.options.sendMessage(connection, envelope);
 		} else {
 			live.transientSnapshot = mergeRuntimeSnapshot(live.transientSnapshot, live.runtime.snapshot());
 			void this.broadcastSnapshot(live).catch((error: unknown) => this.options.reportError(error));

@@ -23,6 +23,7 @@
 import type { Attachment, Source } from "@earendil-works/pi-protocol";
 import {
 	type CitationService,
+	conversationRetrievalEnabled,
 	emptyRetrievalResult,
 	isTextMediaType,
 	type RetrievalResult,
@@ -52,7 +53,7 @@ export class ConversationCitationService {
 	 * （MVP 引用来源 = 会话内上传文件）。纯函数便于测试与 gate 断言。
 	 */
 	citationsEnabled(spec: RuntimeSpec): boolean {
-		return spec.capabilities.uploads.enabled;
+		return conversationRetrievalEnabled(spec);
 	}
 
 	/** 索引一个刚 ready 的会话附件（文本类型才建 source；幂等，可安全并发）。 */

@@ -25,6 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Attachment, Citation, Source, SourceChunk } from "@earendil-works/pi-protocol";
+import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { AttachmentStore } from "../uploads/store.ts";
 import { type ChunkingOptions, chunkText, readTextBuffer, toSourceChunks } from "./chunker.ts";
 import type { CitationStore } from "./store.ts";
@@ -90,6 +91,18 @@ export interface RetrievalResult {
 
 /** Invoked whenever a Source record changes so the session layer can broadcast. */
 export type SourceChangeListener = (source: Source) => void;
+
+/**
+ * Single source of truth for the retrieval capability gate (MVP parity).
+ * Retrieval is enabled only when the uploads capability is enabled; uploads
+ * disabled means no ready attachments can build a Source, so a Turn never
+ * triggers retrieval. Used by BOTH the Production embed flow
+ * (`ConversationCitationService.citationsEnabled`) and the Debug conversation
+ * read path so Debug cannot bypass the Production retrieval policy.
+ */
+export function conversationRetrievalEnabled(spec: RuntimeSpec): boolean {
+	return spec.capabilities.uploads.enabled;
+}
 
 /**
  * 会话级引用作用域（TASK-032）：引用资源按 Conversation/Owner 隔离。

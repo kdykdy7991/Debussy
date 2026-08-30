@@ -11,7 +11,14 @@
  * History is restored from the Debug event stream via the shared
  * `restoreContext` (user + assistant text only; never tool/reasoning).
  */
-import type { ModelRef, ReasoningEffort, ToolTranscriptItem, TranscriptProgress } from "@earendil-works/pi-protocol";
+import type {
+	Citation,
+	ModelRef,
+	ReasoningEffort,
+	ToolTranscriptItem,
+	TranscriptProgress,
+} from "@earendil-works/pi-protocol";
+import { type CitationService, conversationRetrievalEnabled } from "../../citations/service.ts";
 import { resolveEffectiveModelOptions } from "../../model-parameters.ts";
 import { type RestoredContext, restoreContext } from "../../runtime/context-restore.ts";
 import type { ConversationRuntimeEvent } from "../../runtime/conversation-runtime.ts";
@@ -19,7 +26,7 @@ import { ConversationRuntime } from "../../runtime/conversation-runtime.ts";
 import type { RuntimeSessionOptions } from "../../runtime/pi-runtime-adapter.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import { lastAssistantResult, lastAssistantResultAnyStatus } from "../../runtime/turn-executor.ts";
-import type { MaterializedSkill, PiSessionRuntime, ResolvedAttachmentInput } from "../../types.ts";
+import type { MaterializedSkill, PiSessionRuntime, ResolvedAttachmentInput, RetrievalInput } from "../../types.ts";
 import {
 	type AgentDefinitionId,
 	type DebugConversationId,
@@ -64,6 +71,15 @@ export interface DebugConversationServiceOptions {
 	readonly tenantId: TenantId;
 	/** The admin owner identity owning Debug conversations. */
 	readonly ownerPrincipalId: PrincipalId;
+	/**
+	 * Shared process-level CitationService (same instance as the internal and
+	 * embed flows). Debug Sources are keyed by `dconv_<uuid>`; the read path
+	 * enumerates this conversation's ready Sources and reuses
+	 * `retrieveForConversation` under the Production retrieval policy. Optional
+	 * so unit harnesses that never attach/retrieve need no store; the production
+	 * Debug service always wires the shared instance (web/start.ts).
+	 */
+	readonly citations?: CitationService;
 }
 
 /** Cached Debug Runtime entry, keyed by `debugConversationId`. */
@@ -104,6 +120,12 @@ export interface DebugRealtimeTurnResult {
 	readonly rejected?: boolean;
 	/** Snapshot metadata for the frozen spec that ran this Turn (absent pre-execution failures). */
 	readonly model?: ModelRef;
+	/**
+	 * Full citations retrieved for this Turn (when retrieval context was actually
+	 * produced under the Production policy). The Adapter surfaces these to the
+	 * Debug UI via the Pi Session `citation_snapshot` event; nothing else here.
+	 */
+	readonly citations?: readonly Citation[];
 }
 
 export interface DebugRealtimeTurnOptions {
@@ -132,6 +154,7 @@ export class DebugConversationService {
 	private readonly createMcpTools: McpRuntimeToolFactory | undefined;
 	private readonly tenantId: TenantId;
 	private readonly ownerPrincipalId: PrincipalId;
+	private readonly citations: CitationService | undefined;
 
 	/** Runtime cache: `Map<debugConversationId, RuntimeEntry>` (Phase 1, in-memory). */
 	private readonly runtimes = new Map<DebugConversationId, DebugRuntimeEntry>();
@@ -151,6 +174,7 @@ export class DebugConversationService {
 		this.createMcpTools = options.createMcpTools;
 		this.tenantId = options.tenantId;
 		this.ownerPrincipalId = options.ownerPrincipalId;
+		this.citations = options.citations;
 	}
 
 	/** Most recent `active` Debug conversation for (tenant, owner, agent), if any. */
@@ -450,9 +474,10 @@ export class DebugConversationService {
 			}
 
 			try {
+				const retrieval = await this.buildRetrieval(conversationId, spec, text, turnId);
 				await runtime.prompt(text, {
 					history,
-					retrieval: undefined,
+					retrieval,
 					...(options.attachmentIds && options.attachmentIds.length > 0
 						? { attachmentIds: [...options.attachmentIds] }
 						: {}),
@@ -493,6 +518,22 @@ export class DebugConversationService {
 							...(output.thinkingText ? { thinking: output.thinkingText } : {}),
 						},
 					},
+					// Production-equivalent citation persistence: metadata +
+					// reference only (never the excerpt cards), so reconnect keeps
+					// the citation footprint without a full-card restore.
+					...(retrieval !== undefined && retrieval.citations.length > 0
+						? [
+								{
+									eventType: "citation/updated",
+									turnId,
+									payload: {
+										reference: retrieval.reference,
+										count: retrieval.citations.length,
+										turnId,
+									},
+								},
+							]
+						: []),
 					{
 						eventType: "turn/end",
 						turnId,
@@ -505,6 +546,9 @@ export class DebugConversationService {
 					turnId,
 					outputText: output.outputText,
 					...(output.thinkingText ? { thinkingText: output.thinkingText } : {}),
+					...(retrieval !== undefined && retrieval.citations.length > 0
+						? { citations: [...retrieval.citations] }
+						: {}),
 					model,
 				};
 			} catch (error) {
@@ -543,6 +587,42 @@ export class DebugConversationService {
 			this.activeTurns.delete(conversationId);
 			resolveDone?.();
 		}
+	}
+
+	/**
+	 * Conversation-scoped retrieval for a Debug Turn (Phase 2D read path).
+	 * Mirrors the Production retrieval policy (`prepareRetrieval`): gated by
+	 * `capabilities.uploads.enabled`, enumerates only THIS conversation's READY
+	 * Sources (keyed by public dconv id from the shared CitationStore), reuses
+	 * `retrieveForConversation` so ranking / topK / context budget / reference /
+	 * citation shaping are identical to Production, and returns `undefined` when
+	 * no Source matches — so a Turn without retrieval context is never served an
+	 * empty retrieval block.
+	 */
+	private async buildRetrieval(
+		conversationId: DebugConversationId,
+		spec: RuntimeSpec,
+		query: string,
+		turnId: TurnId,
+	): Promise<RetrievalInput | undefined> {
+		if (this.citations === undefined || !conversationRetrievalEnabled(spec)) return undefined;
+		const publicConversationId = toPublicId("DebugConversationId", conversationId);
+		const sourceIds = this.citations
+			.listSourcesBySession(publicConversationId)
+			.filter((source) => source.status === "ready")
+			.map((source) => source.id);
+		if (sourceIds.length === 0) return undefined;
+		const result = await this.citations.retrieveForConversation(
+			{
+				tenantId: this.tenantId,
+				publishedAppId: "",
+				principalId: this.ownerPrincipalId,
+				conversationId: publicConversationId,
+			},
+			{ sourceIds, query, turnId },
+		);
+		if (result.citations.length === 0) return undefined;
+		return { context: result.context, reference: result.reference, citations: result.citations };
 	}
 
 	/**
@@ -750,9 +830,10 @@ export class DebugConversationService {
 				runtimeSpecHash,
 				agentRevision,
 			);
+			const retrieval = await this.buildRetrieval(conversationId, spec, text, turnId);
 			await runtime.prompt(text, {
 				history,
-				retrieval: undefined,
+				retrieval,
 				...(options.attachmentIds && options.attachmentIds.length > 0
 					? { attachmentIds: [...options.attachmentIds] }
 					: {}),
