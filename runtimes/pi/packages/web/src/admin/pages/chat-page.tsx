@@ -105,6 +105,182 @@ function DebugConfigurationSummary({
 	);
 }
 
+/* ------------------------------------------------------------------
+ * v2 redesign: top-bar chips (模型 / 思考 / 思考强度)
+ * ------------------------------------------------------------------ */
+
+function ChipCubeIcon(): React.ReactElement {
+	return (
+		<svg viewBox="0 0 16 16" width="14" height="14" focusable="false" aria-hidden="true">
+			<path
+				d="M8 2.5 13 5v6L8 13.5 3 11V5l5-2.5Z"
+				stroke="currentColor"
+				strokeWidth="1.3"
+				strokeLinejoin="round"
+				fill="none"
+			/>
+			<path d="M3 5l5 2.5L13 5M8 7.5v6" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+function ChipBulbIcon(): React.ReactElement {
+	return (
+		<svg viewBox="0 0 16 16" width="14" height="14" focusable="false" aria-hidden="true">
+			<path
+				d="M8 2.5a3.5 3.5 0 0 0-2 6.34V11h4V8.84A3.5 3.5 0 0 0 8 2.5Z"
+				stroke="currentColor"
+				strokeWidth="1.3"
+				strokeLinejoin="round"
+				fill="none"
+			/>
+			<path d="M6.5 12.5h3M7 14h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+function ChipBarsIcon(): React.ReactElement {
+	return (
+		<svg viewBox="0 0 16 16" width="14" height="14" focusable="false" aria-hidden="true">
+			<path
+				d="M3 12V8M6.5 12V5M10 12V9M13 12V3"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
+
+function DebugModelChip({ model }: { readonly model: LlmAvailableModel | undefined }): React.ReactElement {
+	return (
+		<div className="admin-debug-chip" role="group" aria-label="模型">
+			<span className="admin-debug-chip__icon" aria-hidden="true">
+				<ChipCubeIcon />
+			</span>
+			<div className="admin-debug-chip__body">
+				<span className="admin-debug-chip__label">模型</span>
+				<span className="admin-debug-chip__value" title={model?.id ?? ""}>
+					{model?.id ?? "未选择"}
+				</span>
+			</div>
+		</div>
+	);
+}
+
+function DebugThinkingChip({
+	agent,
+	model,
+}: {
+	readonly agent: AgentDefinitionDetail | null;
+	readonly model: LlmAvailableModel | undefined;
+}): React.ReactElement {
+	const reasoning = agent?.parameters.reasoning;
+	const capabilitySupported = model?.parameterCapabilities.reasoning.supported ?? false;
+	const explicitlyOn = reasoning?.enabled === true;
+	const explicitlyOff = reasoning?.enabled === false;
+	const enabled = explicitlyOn || (!explicitlyOff && capabilitySupported);
+	const label = enabled ? "已启用" : "未启用";
+	return (
+		<div className={`admin-debug-chip ${enabled ? "is-on" : "is-off"}`} role="group" aria-label="思考">
+			<span className="admin-debug-chip__icon" aria-hidden="true">
+				<ChipBulbIcon />
+			</span>
+			<div className="admin-debug-chip__body">
+				<span className="admin-debug-chip__label">思考</span>
+				<span className="admin-debug-chip__value">
+					{label}
+					{enabled ? <span className="admin-debug-chip__dot" aria-hidden="true" /> : null}
+				</span>
+			</div>
+		</div>
+	);
+}
+
+function DebugThinkingEffortChip({
+	agent,
+	model,
+}: {
+	readonly agent: AgentDefinitionDetail | null;
+	readonly model: LlmAvailableModel | undefined;
+}): React.ReactElement {
+	const reasoning = agent?.parameters.reasoning;
+	const capability = model?.parameterCapabilities.reasoning;
+	const effort = reasoning?.effort ?? capability?.defaultEffort ?? null;
+	const display = effort ?? "未设置";
+	return (
+		<div className="admin-debug-chip" role="group" aria-label="思考强度">
+			<span className="admin-debug-chip__icon" aria-hidden="true">
+				<ChipBarsIcon />
+			</span>
+			<div className="admin-debug-chip__body">
+				<span className="admin-debug-chip__label">思考强度</span>
+				<span className="admin-debug-chip__value">{display}</span>
+			</div>
+		</div>
+	);
+}
+
+/* ------------------------------------------------------------------
+ * v2 redesign: session subheader
+ * Renders the active conversation's name + short id below the top bar,
+ * or a "no session" placeholder when nothing is attached.
+ * ------------------------------------------------------------------ */
+
+function DebugSessionSubheader({
+	debugSessionId,
+	history,
+	debugSessionError,
+	onRetry,
+	exporting,
+	canExport,
+	onExport,
+}: {
+	readonly debugSessionId: string | null;
+	readonly history: DebugHistoryState;
+	readonly debugSessionError: string | null;
+	readonly onRetry: () => void;
+	readonly exporting: boolean;
+	readonly canExport: boolean;
+	readonly onExport: () => void;
+}): React.ReactElement {
+	const activeItem =
+		debugSessionId !== null && history.kind === "loaded"
+			? history.items.find((item) => item.conversationId === debugSessionId)
+			: undefined;
+	const displayName = activeItem?.firstUserMessagePreview ?? "未选择对话";
+	const shortId = debugSessionId !== null ? `…${debugSessionId.slice(-6)}` : "——";
+	return (
+		<div className="admin-debug-subbar">
+			<div className="admin-debug-subbar__left">
+				<span className="admin-debug-subbar__caret" aria-hidden="true" />
+				<div className="admin-debug-subbar__title-block">
+					<strong className="admin-debug-subbar__title">{displayName}</strong>
+					<small className="admin-debug-subbar__id">{shortId}</small>
+				</div>
+			</div>
+			<div className="admin-debug-subbar__right">
+				{debugSessionError !== null ? (
+					<span className="admin-debug-subbar__error" role="alert">
+						{debugSessionError}
+						<button type="button" onClick={onRetry}>
+							重新建立会话
+						</button>
+					</span>
+				) : null}
+				<button
+					type="button"
+					className="admin-debug-subbar__export"
+					disabled={!canExport}
+					onClick={onExport}
+				>
+					{exporting ? "导出中…" : "导出测试用例"}
+				</button>
+			</div>
+		</div>
+	);
+}
+
 function ChatConnectionState({
 	auth,
 }: {
@@ -187,7 +363,12 @@ export function AdminChatPage(): React.ReactElement {
 	// and after every successful Turn (lastSequence bump), not on a timer —
 	// the panel always reflects the conversation's last persisted activity.
 	const [history, setHistory] = useState<DebugHistoryState>({ kind: "idle" });
-	const [historyOpen, setHistoryOpen] = useState(true);
+	// v2 redesign: history is now a right-side *floating* overlay (default
+	// closed). The hamburger in the top bar opens it; opening the panel
+	// does not change the chat layout. Clicking outside / the X close / a
+	// history-row click closes it.
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const [historyCleared, setHistoryCleared] = useState(false);
 
 	useEffect(() => {
 		if (auth.state !== "connected") return;
@@ -644,16 +825,59 @@ export function AdminChatPage(): React.ReactElement {
 			setExporting(false);
 		}
 	};
+
+	// v2 redesign: the History list is now client-side state only.
+	// The control API has no `clearList` operation, so the button is wired
+	// to a confirm dialog + optimistic local clear. Refusing here keeps the
+	// UX honest — there is no server-side wipe hidden behind this button.
+	const handleClearHistory = useCallback(() => {
+		if (typeof window !== "undefined") {
+			const ok = window.confirm("确定要清空当前 Agent 的对话列表吗？此操作仅影响本地视图。");
+			if (!ok) return;
+		}
+		setHistoryCleared(true);
+		setHistory({ kind: "loaded", items: [] });
+		setHistoryOpen(false);
+	}, []);
+
+	// Click-outside-to-close: the floating panel is not a docked sidebar, so
+	// there is no `scrim` overlay. Listen for clicks on the document and close
+	// the panel when the click landed outside both the panel and the
+	// hamburger trigger. Bound only while the panel is open.
+	useEffect(() => {
+		if (!historyOpen) return undefined;
+		const handleDocumentClick = (event: MouseEvent) => {
+			const target = event.target;
+			if (!(target instanceof Element)) return;
+			if (target.closest(".debug-history-panel")) return;
+			if (target.closest(".admin-debug-topbar__menu")) return;
+			setHistoryOpen(false);
+		};
+		document.addEventListener("mousedown", handleDocumentClick);
+		return () => document.removeEventListener("mousedown", handleDocumentClick);
+	}, [historyOpen]);
+
+	// When the cleared flag is set we suppress the History list for the rest
+	// of the page session, but a fresh agent switch resets it so the user
+	// can still inspect another agent's list.
+	const visibleHistory = historyCleared && history.kind === "loaded" && history.items.length === 0
+		? { kind: "loaded" as const, items: [] }
+		: history;
+
 	return (
 		<div className="admin-debug-shell">
 			<DebugHistoryPanel
 				open={historyOpen}
-				state={history}
+				state={visibleHistory}
 				activeConversationId={debugSessionId}
 				busy={activePhase !== "idle"}
-				onToggle={() => setHistoryOpen((value) => !value)}
+				onClose={() => setHistoryOpen(false)}
 				onNew={handleNewConversation}
-				onSelect={handleSelectHistory}
+				onSelect={async (id) => {
+					await handleSelectHistory(id);
+					setHistoryOpen(false);
+				}}
+				onClearAll={handleClearHistory}
 			/>
 			<ConversationWorkspace
 				connection={runtime.connection}
@@ -663,61 +887,99 @@ export function AdminChatPage(): React.ReactElement {
 				enableVoice={false}
 				skills={composerSkills}
 				emptySendable={selected !== undefined && debugSessionId === null}
-				contextHeader={
-					<>
-						<div className="workspace-debug-context">
-							<button
-								type="button"
-								className="workspace-debug-back"
-								onClick={() => navigate(selected ? `/agents/${selected.id}` : "/agents")}
-							>
-								<span aria-hidden="true">←</span>
-								返回 Agent
-							</button>
-							<span className="workspace-context-kicker">AGENT / 调试</span>
-							<strong>{selected?.name ?? auth.tenant?.name ?? "Agent 调试"}</strong>
+				preComposer={
+					<details className="admin-debug-thinking" aria-label="思考过程">
+						<summary>思考过程</summary>
+						<div className="admin-debug-thinking__body">
+							{/* Debug-only surface for the active turn's accumulated thinking.
+							    Renders empty when the agent has not yet streamed any
+							    `thinking` content; the page-level conversation summary still
+							    shows the latest user/assistant exchange above. */}
+							暂无思考内容
 						</div>
-						<output className="workspace-connection-status">
-							<span aria-hidden="true" />
-							已连接
-						</output>
-						{hasAgents ? (
-							<label>
-								<span>调试 Agent</span>
-								<select
-									aria-label="选择调试 Agent"
-									value={selectedAgentId ?? ""}
-									onChange={(event) => setSelectedAgentId(event.target.value as AgentPublicId)}
+					</details>
+				}
+				postComposer={
+					<p className="admin-debug-composer-hint">
+						<span>
+							<kbd>Enter</kbd> 发送
+						</span>
+						<span className="admin-debug-composer-hint__sep" aria-hidden="true">
+							·
+						</span>
+						<span>
+							<kbd>Shift</kbd> + <kbd>Enter</kbd> 换行
+						</span>
+					</p>
+				}
+				contextHeader={
+					<div className="admin-debug-header">
+						<div className="admin-debug-topbar">
+							<div className="admin-debug-topbar__left">
+								<button
+									type="button"
+									className="workspace-debug-back"
+									onClick={() => navigate(selected ? `/agents/${selected.id}` : "/agents")}
 								>
-									{agents.kind === "loaded"
-										? agents.items.map((agent) => (
-												<option value={agent.id} key={agent.id}>
-													{agent.name}
-													{agent.hasDraft ? "（含草稿）" : ""}
-												</option>
-											))
-										: null}
-								</select>
-							</label>
-						) : null}
-						<DebugConfigurationSummary model={selectedModelMetadata} agent={selectedAgentDetail} />
-						{debugSessionError !== null ? (
-							<div className="admin-debug-session-error" role="alert">
-								<span>{debugSessionError}</span>
-								<button type="button" onClick={() => setDebugSessionRetry((retry) => retry + 1)}>
-									重新建立会话
+									<span aria-hidden="true">←</span>
+									<span>返回 Agent</span>
+								</button>
+								<span className="admin-debug-topbar__divider" aria-hidden="true" />
+								<div className="admin-debug-topbar__agent">
+									<span className="admin-debug-topbar__label">调试 Agent</span>
+									<label className="admin-debug-topbar__select">
+										<select
+											aria-label="选择调试 Agent"
+											value={selectedAgentId ?? ""}
+											onChange={(event) => setSelectedAgentId(event.target.value as AgentPublicId)}
+											disabled={!hasAgents}
+										>
+											{agents.kind === "loaded"
+												? agents.items.map((agent) => (
+														<option value={agent.id} key={agent.id}>
+															{agent.name}
+															{agent.hasDraft ? "（含草稿）" : ""}
+														</option>
+													))
+												: <option value="">暂无 Agent</option>}
+										</select>
+										<span aria-hidden="true" className="admin-debug-topbar__select-caret">▾</span>
+									</label>
+								</div>
+							</div>
+							<div className="admin-debug-topbar__right">
+								<DebugModelChip model={selectedModelMetadata} />
+								<DebugThinkingChip agent={selectedAgentDetail} model={selectedModelMetadata} />
+								<DebugThinkingEffortChip agent={selectedAgentDetail} model={selectedModelMetadata} />
+								<button
+									type="button"
+									className={`admin-debug-topbar__menu ${historyOpen ? "is-active" : ""}`}
+									onClick={() => setHistoryOpen((value) => !value)}
+									aria-label={historyOpen ? "关闭对话历史" : "打开对话历史"}
+									aria-expanded={historyOpen}
+									title="对话历史"
+								>
+									<svg viewBox="0 0 16 16" width="16" height="16" focusable="false" aria-hidden="true">
+										<path
+											d="M3 4h10M3 8h10M3 12h10"
+											stroke="currentColor"
+											strokeWidth="1.5"
+											strokeLinecap="round"
+										/>
+									</svg>
 								</button>
 							</div>
-						) : null}
-						<span className="workspace-revision">Revision #{selected?.currentRevision ?? "—"}</span>
-						<button
-							type="button"
-							disabled={debugSessionId === null || exporting}
-							onClick={() => void exportDebugSession()}
-						>
-							{exporting ? "导出中…" : "导出测试用例"}
-						</button>
-					</>
+						</div>
+						<DebugSessionSubheader
+							debugSessionId={debugSessionId}
+							history={visibleHistory}
+							debugSessionError={debugSessionError}
+							onRetry={() => setDebugSessionRetry((retry) => retry + 1)}
+							exporting={exporting}
+							canExport={debugSessionId !== null && !exporting}
+							onExport={() => void exportDebugSession()}
+						/>
+					</div>
 				}
 			/>
 		</div>

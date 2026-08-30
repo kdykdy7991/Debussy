@@ -33,6 +33,18 @@ export interface AppProps {
 	enableVoice?: boolean;
 	enableUploads?: boolean;
 	showSidebar?: boolean;
+	/**
+	 * Render-only slot inserted directly above the composer dock.
+	 * Used by the admin debug page to mount the collapsible "思考过程"
+	 * details row without giving the page direct control of the composer.
+	 */
+	preComposer?: ReactNode;
+	/**
+	 * Render-only slot inserted directly below the composer form.
+	 * Used by the admin debug page to show the "Enter 发送,
+	 * Shift + Enter 换行" hint centered under the composer.
+	 */
+	postComposer?: ReactNode;
 	/** 已绑定 Skill（发布版本能力，review doc §4.6）：支持 `/skill:` 补全。 */
 	skills?: readonly { name: string; description?: string }[];
 	/**
@@ -61,6 +73,8 @@ export function ConversationWorkspace({
 	enableVoice = true,
 	enableUploads = true,
 	showSidebar = true,
+	preComposer,
+	postComposer,
 	skills,
 	emptySendable = false,
 }: AppProps) {
@@ -445,35 +459,36 @@ export function ConversationWorkspace({
 						reaction={agentReaction}
 					/>
 				) : null}
+				{preComposer}
+				<ConversationComposer
+					active={active}
+					connected={connected}
+					running={running}
+					canSend={canSend}
+					emptySendable={variant === "admin" && emptySendable}
+					message={message}
+					sessions={sessionSnapshot}
+					composerRef={composerRef}
+					fileInputRef={fileInputRef}
+					voice={enableVoice ? speech?.voice : undefined}
+					voiceEnabled={live.enabled}
+					voiceAvailable={live.available}
+					uploadsEnabled={enableUploads}
+					skills={skills}
+					onSkillPick={(name) => setMessage(`/skill:${name} `)}
+					onVoiceChange={live.setEnabled}
+					onSubmit={submitMessage}
+					onMessageChange={handleMessageChange}
+					onMessageKeyDown={handleMessageKeyDown}
+					onMessageFocus={() => setComposerFocused(true)}
+					onMessageBlur={() => setComposerFocused(false)}
+					onFilesSelected={handleFilesSelected}
+					onDismissUpload={(localId) => sessions.dismissUpload(localId)}
+					onRemoveAttachment={removeAttachment}
+					onAbort={abort}
+				/>
+				{postComposer}
 			</main>
-
-			<ConversationComposer
-				active={active}
-				connected={connected}
-				running={running}
-				canSend={canSend}
-				emptySendable={variant === "admin" && emptySendable}
-				message={message}
-				sessions={sessionSnapshot}
-				composerRef={composerRef}
-				fileInputRef={fileInputRef}
-				voice={enableVoice ? speech?.voice : undefined}
-				voiceEnabled={live.enabled}
-				voiceAvailable={live.available}
-				uploadsEnabled={enableUploads}
-				skills={skills}
-				onSkillPick={(name) => setMessage(`/skill:${name} `)}
-				onVoiceChange={live.setEnabled}
-				onSubmit={submitMessage}
-				onMessageChange={handleMessageChange}
-				onMessageKeyDown={handleMessageKeyDown}
-				onMessageFocus={() => setComposerFocused(true)}
-				onMessageBlur={() => setComposerFocused(false)}
-				onFilesSelected={handleFilesSelected}
-				onDismissUpload={(localId) => sessions.dismissUpload(localId)}
-				onRemoveAttachment={removeAttachment}
-				onAbort={abort}
-			/>
 
 			<button
 				className={`scrim ${sidebarOpen ? "show" : ""}`}
