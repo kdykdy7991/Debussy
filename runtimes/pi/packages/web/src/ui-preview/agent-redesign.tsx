@@ -103,6 +103,8 @@ export interface AgentCatalogEntry {
 	readonly currentRevision: number;
 	readonly enabled?: boolean;
 	readonly toolCount?: number;
+	/** MCP server 当前 revision 冻结的工具名 —— 新增绑定时作为默认 allowlist。 */
+	readonly toolNames?: readonly string[];
 }
 
 export interface AgentPublishData {
@@ -709,9 +711,7 @@ function AgentListView({
 		return items.filter((item) => {
 			if (status !== "all" && item.status !== status) return false;
 			if (k === "") return true;
-			return (
-				item.name.toLowerCase().includes(k) || item.description.toLowerCase().includes(k)
-			);
+			return item.name.toLowerCase().includes(k) || item.description.toLowerCase().includes(k);
 		});
 	}, [items, keyword, status]);
 	const filterActive = keyword.trim() !== "" || status !== "all";
@@ -929,9 +929,7 @@ export function AgentDetailPreview({
 	const [draftSkills, setDraftSkills] = useState<readonly AgentResource[]>(skills);
 	const [draftMcpServers, setDraftMcpServers] = useState<readonly AgentResource[]>(mcpServers);
 	const [pickerOpen, setPickerOpen] = useState<"skill" | "mcp" | null>(null);
-	const bindingKey = `${draftSkills
-		.map((item) => `${item.id}@${item.revision ?? 0}`)
-		.join(",")}|${draftMcpServers
+	const bindingKey = `${draftSkills.map((item) => `${item.id}@${item.revision ?? 0}`).join(",")}|${draftMcpServers
 		.map((item) => `${item.id}@${item.revision ?? 0}`)
 		.join(",")}`;
 	const [savedSnapshot, setSavedSnapshot] = useState(() =>
@@ -1034,7 +1032,7 @@ export function AgentDetailPreview({
 						<Icon name="edit" />
 					</button>
 					{identityEditable ? <span className="ard-tag">编辑</span> : null}
-				{hasDraft ? <span className="ard-tag is-draft-tag">含草稿</span> : null}
+					{hasDraft ? <span className="ard-tag is-draft-tag">含草稿</span> : null}
 					<span className={dirty ? "is-dirty" : ""}>
 						<Icon name="check" />
 						{dirty ? "未保存" : "已保存"}
@@ -1313,6 +1311,7 @@ export function AgentDetailPreview({
 												revision: entry.currentRevision,
 												enabled: entry.enabled ?? true,
 												toolCount: entry.toolCount,
+												toolNames: entry.toolNames ?? [],
 											},
 										]);
 										setPickerOpen(null);
@@ -1402,10 +1401,9 @@ function ResourceRow({
 	readonly kind: "skill" | "mcp";
 	readonly onRemove?: () => void;
 }): React.ReactElement {
-	const detail: string = [
-		item.description,
-		item.toolCount === undefined ? undefined : `工具 ${item.toolCount} 个`,
-	].filter((part): part is string => part !== undefined && part !== "").join(" · ");
+	const detail: string = [item.description, item.toolCount === undefined ? undefined : `工具 ${item.toolCount} 个`]
+		.filter((part): part is string => part !== undefined && part !== "")
+		.join(" · ");
 	return (
 		<div className="ard-resource-item">
 			<span className="ard-resource-icon" aria-hidden="true">
@@ -1424,12 +1422,7 @@ function ResourceRow({
 				{kind === "mcp" ? (item.enabled ? "已连接" : "未连接") : item.enabled ? "已启用" : "未启用"}
 			</span>
 			{onRemove === undefined ? null : (
-				<button
-					type="button"
-					className="ard-resource-remove"
-					aria-label={`移除 ${item.name}`}
-					onClick={onRemove}
-				>
+				<button type="button" className="ard-resource-remove" aria-label={`移除 ${item.name}`} onClick={onRemove}>
 					移除
 				</button>
 			)}
@@ -1472,13 +1465,7 @@ function ResourcePicker({
 				<p className="ard-picker-empty">{emptyLabel}</p>
 			) : (
 				options.map((entry) => (
-					<button
-						key={entry.id}
-						type="button"
-						role="option"
-						aria-selected="false"
-						onClick={() => onPick(entry)}
-					>
+					<button key={entry.id} type="button" role="option" aria-selected="false" onClick={() => onPick(entry)}>
 						<span>{entry.name}</span>
 						<small>v{entry.currentRevision}</small>
 					</button>
@@ -1544,8 +1531,7 @@ function PublishInstancesCard({ instances }: { readonly instances: readonly Publ
 			) : (
 				<div className="ard-instance-list">
 					{instances.map((item) => {
-						const notEmpty = (part: string | undefined): part is string =>
-							part !== undefined && part !== "";
+						const notEmpty = (part: string | undefined): part is string => part !== undefined && part !== "";
 						const audienceLine = [item.audience, item.domain].filter(notEmpty).join(" · ");
 						const versionLine = [item.version, item.publishedAt].filter(notEmpty).join(" · ");
 						return (
@@ -1569,9 +1555,7 @@ function PublishInstancesCard({ instances }: { readonly instances: readonly Publ
 					})}
 				</div>
 			)}
-			{instances.length === 0 ? null : (
-				<div className="ard-side-link">共 {instances.length} 个关联应用</div>
-			)}
+			{instances.length === 0 ? null : <div className="ard-side-link">共 {instances.length} 个关联应用</div>}
 		</section>
 	);
 }

@@ -10,6 +10,15 @@ import type {
 	SkillSummary,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+/**
+ * MCP catalog 条目。`toolNames` 记录该 server 当前 revision 冻结的工具名,
+ * 供 agent 编辑器在新增绑定时作为默认 allowlist(服务端要求绑定 allowlist 必须非空)。
+ */
+interface McpCatalogServer extends McpServerSummary {
+	readonly toolNames?: readonly string[];
+}
+
 import {
 	type AgentDetailData,
 	AgentDetailPreview,
@@ -87,7 +96,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	const [revisions, setRevisions] = useState<RevisionsState>({ kind: "loading" });
 	const [apps, setApps] = useState<AppsState>({ kind: "loading" });
 	const [skillCatalog, setSkillCatalog] = useState<CatalogState<SkillSummary>>({ kind: "loading" });
-	const [mcpCatalog, setMcpCatalog] = useState<CatalogState<McpServerSummary>>({ kind: "loading" });
+	const [mcpCatalog, setMcpCatalog] = useState<CatalogState<McpCatalogServer>>({ kind: "loading" });
 
 	const load = useCallback(() => {
 		setState({ kind: "loading" });
@@ -138,10 +147,26 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 
 	useEffect(() => {
 		setMcpCatalog({ kind: "loading" });
-		void mcpApi.list(100).then(
-			(result) => setMcpCatalog({ kind: "loaded", items: result.items }),
-			(error: unknown) => setMcpCatalog({ kind: "error", message: errorMessage(error) }),
-		);
+		void mcpApi
+			.list(100)
+			.then(async (result) => {
+				// 服务端会给绑定非空 allowlist,且发布时校验 allowlist 与冻结快照一致;
+				// 因此这里补拉每个 server 当前 revision 的工具名,供新增绑定时使用。
+				const items: McpCatalogServer[] = await Promise.all(
+					result.items.map(async (item) => {
+						if (item.status !== "enabled") return item;
+						try {
+							const detail = await mcpApi.get(item.id);
+							const current = detail.revisions.find((rev) => rev.revision === detail.currentRevision);
+							return { ...item, toolNames: current?.tools.map((tool) => tool.name) ?? [] };
+						} catch {
+							return item;
+						}
+					}),
+				);
+				setMcpCatalog({ kind: "loaded", items });
+			})
+			.catch((error: unknown) => setMcpCatalog({ kind: "error", message: errorMessage(error) }));
 	}, [mcpApi]);
 	if (state.kind === "loading") {
 		return (
@@ -256,6 +281,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 			id: ref.skillId,
 			name: catalog?.name ?? ref.skillId,
 			version: `v${ref.revision}`,
+			revision: ref.revision,
 			enabled: catalog?.enabled ?? false,
 			outdated: catalog !== undefined && ref.revision < catalog.currentRevision,
 		};
@@ -267,8 +293,10 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 			id: ref.mcpServerId,
 			name: catalog?.name ?? ref.mcpServerId,
 			version: `v${ref.revision}`,
+			revision: ref.revision,
 			enabled: catalog?.status === "enabled",
 			toolCount: ref.toolNames.length,
+			toolNames: ref.toolNames,
 			outdated: catalog !== undefined && ref.revision < catalog.currentRevision,
 		};
 	});
@@ -313,6 +341,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 							currentRevision: item.currentRevision,
 							enabled: item.status === "enabled",
 							toolCount: item.toolCount,
+							toolNames: item.toolNames,
 						}))
 					: undefined
 			}
