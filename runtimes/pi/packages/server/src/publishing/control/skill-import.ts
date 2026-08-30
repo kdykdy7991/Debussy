@@ -76,6 +76,18 @@ function extension(path: string): string {
 	return dot < 0 ? "" : name.slice(dot);
 }
 
+/**
+ * macOS `Archive Utility` metadata that some users' ZIPs carry and that has no
+ * skill content: AppleDouble resource forks (`__MACOSX/._*`, bare `._*`) and
+ * `.DS_Store` folder metadata. These are skipped rather than rejecting the
+ * whole import.
+ */
+function isMacArchiveMetadata(path: string): boolean {
+	const name = basename(path);
+	if (name.startsWith("._") || name === ".DS_Store") return true;
+	return path.split("/").some((segment) => segment === "__MACOSX");
+}
+
 function validateUtf8(bytes: Uint8Array, label: string): string {
 	try {
 		return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -112,6 +124,7 @@ export function expandSkillArtifact(filename: string, bytes: Uint8Array): Readon
 			try {
 				if (file.name.endsWith("/")) return;
 				const path = safeArchivePath(file.name);
+				if (isMacArchiveMetadata(path)) return;
 				fileCount += 1;
 				if (fileCount > SKILL_IMPORT_LIMITS.maxFiles) {
 					throw new SkillImportRejected("SKILL_IMPORT_REJECTED", "archive contains too many files");

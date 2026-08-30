@@ -41,6 +41,17 @@ describe("Skill artifact import", () => {
 		await expect(parseSkillArtifact("unsafe.zip", archive)).rejects.toBeInstanceOf(SkillImportRejected);
 	});
 
+	test("tolerates macOS archive metadata alongside the Skill", async () => {
+		const archive = zipSync({
+			"contract-review/SKILL.md": strToU8(VALID_SKILL),
+			"__MACOSX/._SKILL.md": strToU8("AppleDouble"),
+			"__MACOSX/contract-review/._SKILL.md": strToU8("AppleDouble"),
+			".DS_Store": strToU8("x"),
+		});
+		const parsed = await parseSkillArtifact("mac.zip", archive);
+		expect(parsed.name).toBe("contract-review");
+	});
+
 	test("rejects ZIP compression bombs before expanding them", async () => {
 		const archive = zipSync({
 			"skill/SKILL.md": strToU8(VALID_SKILL),
