@@ -236,6 +236,7 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			// built-in coding tools. Sandbox policy, rather than tool suppression,
 			// will constrain filesystem and process access for published sessions.
 			...(options.customTools !== undefined ? { customTools: [...options.customTools] } : {}),
+			...(options.allowedToolNames !== undefined ? { allowedToolNames: [...options.allowedToolNames] } : {}),
 			sessionStartEvent: {
 				type: "session_start",
 				reason: "new",

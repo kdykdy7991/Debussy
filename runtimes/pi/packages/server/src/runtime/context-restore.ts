@@ -90,11 +90,14 @@ export function restoreContext(
 			skippedEvents += 1;
 			continue;
 		}
-		const payload = (event.payload ?? {}) as { text?: unknown; reason?: unknown };
+		const payload = (event.payload ?? {}) as { text?: unknown; reason?: unknown; status?: unknown };
 		if (event.eventType === "user.message" || event.eventType === "user/message") {
 			pending = { turnId: event.turnId, text: typeof payload.text === "string" ? payload.text : "" };
 		} else if (FINAL_ASSISTANT_MESSAGE_TYPES.has(event.eventType)) {
 			const text = typeof payload.text === "string" ? payload.text : "";
+			// Interrupted assistant output is a durable audit/UI fact, not a
+			// completed model-history pair. Preserve the existing restore semantics.
+			if (payload.status === "interrupted") continue;
 			if (pending !== null) {
 				messages.push({ role: "user", text: pending.text });
 				messages.push({ role: "assistant", text });

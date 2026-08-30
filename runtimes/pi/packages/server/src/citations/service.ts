@@ -223,6 +223,13 @@ export class CitationService {
 		return updated;
 	}
 
+	/** Remove all retrieval data owned by one Debug session (sources, chunks, turn citations). GC hook. */
+	async deleteSessionData(sessionId: string): Promise<void> {
+		const sources = this.#store.listSourcesBySession(sessionId);
+		for (const source of sources) await this.#store.removeSourceRecord(source.id);
+		await this.#store.removeTurnCitations(sessionId);
+	}
+
 	/** Load the session's last stored citations (for reconnect/restart recovery). */
 	async loadLatestCitations(sessionId: string): Promise<Citation[]> {
 		return this.#store.loadTurnCitations(sessionId)?.citations ?? [];

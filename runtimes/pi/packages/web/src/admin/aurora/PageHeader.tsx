@@ -18,12 +18,7 @@ export interface AuroraPageHeaderProps {
 	readonly actions?: ReactNode;
 }
 
-export function AuroraPageHeader({
-	title,
-	titleId,
-	meta,
-	actions,
-}: AuroraPageHeaderProps): React.ReactElement | null {
+export function AuroraPageHeader({ title, titleId, meta, actions }: AuroraPageHeaderProps): React.ReactElement | null {
 	if (!title && !actions) return null;
 	if (!title) {
 		return <div className={styles.actionsRow}>{actions}</div>;

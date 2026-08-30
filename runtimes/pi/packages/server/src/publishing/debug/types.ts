@@ -27,6 +27,18 @@ export interface DebugConversationRecord {
 	readonly lastEventSequence: number;
 	readonly createdAt: Date;
 	readonly lastActiveAt: Date;
+	/** Set only by the Phase 2F expire step; NULL while active. */
+	readonly deletedAt: Date | null;
+}
+
+/**
+ * Scope for GC lifecycle operations. Physical deletion, soft expiry and the
+ * deleted-list scan are always confined to one (tenant, owner) so a GC pass can
+ * never touch another tenant's or another owner's conversations.
+ */
+export interface DebugConversationGcScope {
+	readonly tenantId: TenantId;
+	readonly ownerPrincipalId: PrincipalId;
 }
 
 /** Scope for conversation reads: tenant + owner + (nullable) agent. */
@@ -36,10 +48,38 @@ export interface DebugConversationScope {
 	readonly agentId: AgentDefinitionId | null;
 }
 
-/** Scope for a single conversation's reads: tenant + conversation id. */
+/** Scope for a single conversation: tenant + owner + conversation id. */
 export interface DebugConversationRef {
 	readonly tenantId: TenantId;
+	readonly ownerPrincipalId: PrincipalId;
 	readonly debugConversationId: DebugConversationId;
+}
+
+/**
+ * Phase 2E: parameters for the per-agent History list. The list is always
+ * scoped to `(tenant, owner, agent)` and orders by `last_active_at DESC, id DESC`
+ * so the most recently active conversation sits on top. Pagination is not part
+ * of the MVP — the limit is hard-capped at 100 by the service layer and the
+ * History panel renders a finite, scrollable window.
+ */
+export interface DebugConversationListParams {
+	readonly tenantId: TenantId;
+	readonly ownerPrincipalId: PrincipalId;
+	readonly agentId: AgentDefinitionId | null;
+	readonly limit: number;
+}
+
+/**
+ * Phase 2E: per-row projection for the History list. The first-user-message
+ * preview is joined in the same query (LATERAL on `debug_conversation_events`)
+ * so the list endpoint stays a single round trip — no N+1 follow-up calls.
+ * `null` preview means the conversation exists but has not yet recorded any
+ * `user/message` event (e.g. an empty binding created by lazy-create that has
+ * never sent).
+ */
+export interface DebugConversationListItem {
+	readonly conversation: DebugConversationRecord;
+	readonly firstUserMessagePreview: string | null;
 }
 
 /** Append-only Debug event row; shape aligned with the Production event log. */
@@ -80,6 +120,31 @@ export interface DebugConversationRepository {
 	getByRef(scope: DebugConversationRef): Promise<DebugConversationRecord | undefined>;
 	/** Discard writer: mark a conversation deleted (reserved for Phase 2 GC). */
 	setStatus(scope: DebugConversationRef, status: "deleted"): Promise<boolean>;
+	/**
+	 * Phase 2E: list active conversations for the (owner, agent) scope, ordered
+	 * by most recent activity, with the first `user/message` event's payload
+	 * text joined in the SAME query (no N+1). The repository implementation
+	 * uses a LATERAL subquery to keep the preview extraction in one round
+	 * trip. `limit` is the only pagination knob in the MVP; the service layer
+	 * clamps it to a sane upper bound.
+	 */
+	listByScope(params: DebugConversationListParams): Promise<readonly DebugConversationListItem[]>;
+	/**
+	 * Soft-delete every `active` conversation for the (tenant, owner) scope whose
+	 * `last_active_at` is older than `cutoff`: `status='deleted'` + `deleted_at`.
+	 * The conditional UPDATE is atomic against a concurrent `append` (turn/start)
+	 * on the same row — exactly one of the two wins at the DB level. Returns the
+	 * conversation ids that were expired.
+	 */
+	expireActiveBefore(scope: DebugConversationGcScope, cutoff: Date): Promise<readonly DebugConversationId[]>;
+	/** Soft-deleted conversations for the scope whose `deleted_at` is older than `cutoff`. */
+	listDeletedBefore(scope: DebugConversationGcScope, cutoff: Date): Promise<readonly DebugConversationRecord[]>;
+	/**
+	 * Physically remove one soft-deleted conversation: its `debug_conversation_events`
+	 * rows then its parent row, in one transaction. Idempotent: no-op when the
+	 * conversation is gone or no longer scoped.
+	 */
+	deletePhysical(scope: DebugConversationRef, conversationId: DebugConversationId): Promise<boolean>;
 }
 
 export interface DebugConversationEventRepository {

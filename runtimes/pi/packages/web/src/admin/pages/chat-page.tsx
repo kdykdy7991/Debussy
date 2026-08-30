@@ -5,20 +5,20 @@ import type {
 	AgentPublicId,
 	LlmAvailableModel,
 	ModelRef,
-	ThinkingLevel,
 } from "@earendil-works/pi-protocol";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationWorkspace } from "../../app.tsx";
 import { PiConnectionController } from "../../lib/connection-controller.ts";
 import { LazyDebugSessionController, MutableEnsureAttachedRef } from "../../lib/lazy-debug-session-controller.ts";
 import type { SessionController } from "../../lib/session-controller.ts";
 import { createUploader } from "../../lib/uploader.ts";
 import { createWebSocketTransportFactory } from "../../lib/websocket-transport.ts";
-import { productReasoningEfforts } from "../agents/reasoning-efforts.ts";
-import { AgentApi, AgentApiError } from "../api/agent-api.ts";
+import { AgentApi, AgentApiError, type DebugConversationListItem } from "../api/agent-api.ts";
 import { LlmApi } from "../api/llm-api.ts";
 import { SkillApi } from "../api/skill-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { DebugHistoryPanel, type DebugHistoryState } from "../components/debug-history-panel.tsx";
+import { navigate } from "../router.ts";
 
 interface AgentOption {
 	readonly id: AgentPublicId;
@@ -71,55 +71,37 @@ function describeDebugSessionError(error: unknown): string {
 	return error instanceof Error ? error.message : "调试会话建立失败";
 }
 
-function ThinkingControl({
+function DebugConfigurationSummary({
 	model,
-	sessions,
-	defaultEffort,
+	agent,
 }: {
-	readonly model: LlmAvailableModel;
-	readonly sessions: SessionController;
-	readonly defaultEffort?: ThinkingLevel;
+	readonly model: LlmAvailableModel | undefined;
+	readonly agent: AgentDefinitionDetail | null;
 }) {
-	const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot);
-	const active = snapshot.activeSession;
-	const efforts = productReasoningEfforts(model.parameterCapabilities.reasoning.efforts);
-	if (efforts.length === 0) return null;
-	const enabled = active?.thinkingLevel !== "off";
-	const selectedEffort = efforts.some((effort) => effort.value === active?.thinkingLevel)
-		? active?.thinkingLevel
-		: defaultEffort && efforts.some((effort) => effort.value === defaultEffort)
-			? defaultEffort
-			: (model.parameterCapabilities.reasoning.defaultEffort ?? efforts[0]?.value ?? "");
+	const reasoning = agent?.parameters.reasoning;
+	const capability = model?.parameterCapabilities.reasoning;
+	const enabledLabel =
+		reasoning?.enabled === true ? "已开启" : reasoning?.enabled === false ? "已关闭" : "跟随模型默认";
+	const effortLabel = reasoning?.effort ?? capability?.defaultEffort ?? "模型默认";
 	return (
-		<>
-			<label className="admin-thinking-switch">
-				<span>深度思考</span>
-				<input
-					type="checkbox"
-					checked={enabled}
-					disabled={!active || active.phase !== "idle"}
-					onChange={(event) =>
-						void sessions.setThinking(event.currentTarget.checked ? (selectedEffort as ThinkingLevel) : "off")
-					}
-				/>
-				<i aria-hidden="true" />
-			</label>
-			<label>
-				<span>思考强度</span>
-				<select
-					aria-label="思考强度"
-					value={selectedEffort}
-					disabled={!active || active.phase !== "idle" || !enabled}
-					onChange={(event) => void sessions.setThinking(event.currentTarget.value as ThinkingLevel)}
-				>
-					{efforts.map((effort) => (
-						<option key={effort.value} value={effort.value}>
-							{effort.label}
-						</option>
-					))}
-				</select>
-			</label>
-		</>
+		<dl className="debug-config-summary" aria-label="Agent Revision 调试配置">
+			<div>
+				<dt>模型</dt>
+				<dd>{model?.name ?? agent?.modelId ?? "未配置"}</dd>
+			</div>
+			{capability?.supported ? (
+				<>
+					<div>
+						<dt>深度思考</dt>
+						<dd>{enabledLabel}</dd>
+					</div>
+					<div>
+						<dt>思考强度</dt>
+						<dd>{effortLabel}</dd>
+					</div>
+				</>
+			) : null}
+		</dl>
 	);
 }
 
@@ -175,6 +157,14 @@ export function AdminChatPage(): React.ReactElement {
 	// collapses double-clicks / rapid sends into ONE create promise per page.
 	const debugBootstrapRef = useRef(new MutableEnsureAttachedRef());
 	const debugCreateGuardRef = useRef<Promise<void> | null>(null);
+	// Phase 2E explicit-new flag. Set when the user clicks "New Conversation";
+	// cleared when (a) the user picks an existing conversation from the
+	// History list, (b) the agent changes, or (c) the bootstrap successfully
+	// creates + attaches a brand-new conversation. While true, the bootstrap
+	// skips `resumeDebugConversation` and goes directly to
+	// `createDebugConversation` so the next send never resurrects the
+	// previously-active conversation.
+	const explicitNewRef = useRef<boolean>(false);
 	const [agents, setAgents] = useState<AgentListState>({ kind: "loading" });
 	const [models, setModels] = useState<ModelsState>({ kind: "loading" });
 	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null);
@@ -193,6 +183,11 @@ export function AdminChatPage(): React.ReactElement {
 		string,
 		{ readonly name: string; readonly enabled: boolean }
 	> | null>(null);
+	// Phase 2E: History panel state. The list is re-fetched on agent change
+	// and after every successful Turn (lastSequence bump), not on a timer —
+	// the panel always reflects the conversation's last persisted activity.
+	const [history, setHistory] = useState<DebugHistoryState>({ kind: "idle" });
+	const [historyOpen, setHistoryOpen] = useState(true);
 
 	useEffect(() => {
 		if (auth.state !== "connected") return;
@@ -360,6 +355,12 @@ export function AdminChatPage(): React.ReactElement {
 		) {
 			return undefined;
 		}
+		// Phase 2E: explicit-new is scoped to the currently selected agent.
+		// When the user switches agents the flag has no meaning for the new
+		// agent's conversation list, so we clear it here. The effect below
+		// will then either resume the new agent's recent conversation or
+		// stay empty — never silently resurrect the previous agent's row.
+		explicitNewRef.current = false;
 		let cancelled = false;
 		void (async () => {
 			setDebugSessionError(null);
@@ -410,6 +411,13 @@ export function AdminChatPage(): React.ReactElement {
 	// before EVERY send. It is a no-op once a conversation is attached; when a
 	// bound Agent still has no DebugConversation, the first real message creates
 	// + attaches it (and only then) before the send proceeds.
+	//
+	// Phase 2E explicit-new: when the user clicks "New Conversation", the
+	// previous DB row remains `active` for the agent. Without this branch the
+	// first send after "New" would silently re-attach the just-cleared
+	// conversation. We instead skip `resumeDebugConversation` and go directly
+	// to `createDebugConversation`, then clear the explicit-new flag so
+	// subsequent sends on the new conversation resume normally.
 	useEffect(() => {
 		const selectedAgent =
 			agents.kind === "loaded" && selectedAgentId !== null
@@ -425,14 +433,27 @@ export function AdminChatPage(): React.ReactElement {
 			const guard = (async () => {
 				setDebugSessionError(null);
 				await runtime?.connection.connect();
-				const resumed = await agentApiRef.resumeDebugConversation(selectedAgent.id);
-				const convId =
-					resumed.conversation !== null
-						? resumed.conversation.conversationId
-						: (await agentApiRef.createDebugConversation(selectedAgent.id)).conversation.conversationId;
+				let convId: string;
+				if (explicitNewRef.current) {
+					// explicit-new: do NOT resume the previous conversation, even
+					// though the DB still has it as `active`. The user's intent
+					// is to start fresh.
+					const created = await agentApiRef.createDebugConversation(selectedAgent.id);
+					convId = created.conversation.conversationId;
+				} else {
+					const resumed = await agentApiRef.resumeDebugConversation(selectedAgent.id);
+					convId =
+						resumed.conversation !== null
+							? resumed.conversation.conversationId
+							: (await agentApiRef.createDebugConversation(selectedAgent.id)).conversation.conversationId;
+				}
 				await runtime?.sessions.openDebugSession(convId);
 				debugSessionIdRef.current = convId;
 				setDebugSessionId(convId);
+				// The bootstrap has now attached a conversation; the explicit-new
+				// flag's job is done. If the user wants ANOTHER new conversation
+				// they have to click the button again.
+				explicitNewRef.current = false;
 			})().catch((error: unknown) => {
 				if (debugSessionIdRef.current === null) setDebugSessionError(describeDebugSessionError(error));
 				throw error;
@@ -445,6 +466,129 @@ export function AdminChatPage(): React.ReactElement {
 			}
 		};
 	}, [agentApiRef, runtime, agents, selectedAgentId]);
+
+	// Phase 2E: History refresh. Two triggers:
+	//   1. `selectedAgentId` change — load the new agent's conversation list.
+	//   2. A turn just completed in the bound conversation — the new
+	//      `lastActiveAt` should bubble that conversation to the top of the
+	//      list. The cleanest signal is the `activeSession.phase` transition
+	//      from "turn" to "idle"; we use a ref to remember the previous phase
+	//      so the effect does not re-fire on every event inside a turn.
+	const prevPhaseRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (selectedAgentId === null) {
+			setHistory({ kind: "idle" });
+			return;
+		}
+		let cancelled = false;
+		setHistory((current) =>
+			current.kind === "loaded" ? { kind: "loaded", items: current.items } : { kind: "loading" },
+		);
+		void agentApiRef.listDebugConversations(selectedAgentId, 50).then(
+			(result: { readonly items: readonly DebugConversationListItem[] }) => {
+				if (!cancelled) setHistory({ kind: "loaded", items: result.items });
+			},
+			(error: unknown) => {
+				if (cancelled) return;
+				setHistory({
+					kind: "error",
+					message: error instanceof AgentApiError ? error.message : "加载历史会话失败",
+				});
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [agentApiRef, selectedAgentId, debugSessionId]);
+
+	// Phase 2E: refetch the history list when the bound conversation finishes
+	// a turn. We only fire on the `turn -> idle` phase transition so the
+	// streaming deltas inside a turn never trigger a refetch. The previous
+	// phase is captured in a ref because the effect should not depend on the
+	// entire active session (which would re-run on every streaming event).
+	useEffect(() => {
+		if (runtime === null) return;
+		const unsubscribe = runtime.sessions.subscribe(() => {
+			const next = runtime.sessions.getSnapshot().activeSession;
+			const phase = next?.phase ?? null;
+			const previous = prevPhaseRef.current;
+			prevPhaseRef.current = phase;
+			if (phase === "idle" && previous === "turn" && selectedAgentId !== null) {
+				void agentApiRef
+					.listDebugConversations(selectedAgentId, 50)
+					.then((result) => {
+						setHistory({ kind: "loaded", items: result.items });
+					})
+					.catch((error: unknown) => {
+						setHistory({
+							kind: "error",
+							message: error instanceof AgentApiError ? error.message : "加载历史会话失败",
+						});
+					});
+			}
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, [agentApiRef, runtime, selectedAgentId]);
+
+	// Phase 2E: "New Conversation" handler. Does NOT call any backend API:
+	//   - No `createDebugConversation` (the first send does that via the
+	//     explicit-new bootstrap branch).
+	//   - No delete of the prior conversation (DB row stays `active` and
+	//     History still shows it).
+	// It releases the current WS handle, clears the page-level binding, and
+	// sets `explicitNewRef` so the next send goes through `createNew` instead
+	// of `resume`.
+	//
+	// `activePhase` is mirrored into React state via a subscription effect so
+	// we do not invoke `useSyncExternalStore` conditionally (rules of hooks).
+	const [activePhase, setActivePhase] = useState<string>("idle");
+	useEffect(() => {
+		if (runtime === null) return undefined;
+		setActivePhase(runtime.sessions.getSnapshot().activeSession?.phase ?? "idle");
+		return runtime.sessions.subscribe(() => {
+			setActivePhase(runtime.sessions.getSnapshot().activeSession?.phase ?? "idle");
+		});
+	}, [runtime]);
+	const handleNewConversation = useCallback(() => {
+		if (runtime === null) return;
+		if (activePhase !== "idle") return; // never drop a turn in flight
+		void runtime.sessions
+			.resetActive()
+			.then(() => {
+				debugSessionIdRef.current = null;
+				debugSessionKeyRef.current = null;
+				explicitNewRef.current = true;
+				setDebugSessionId(null);
+			})
+			.catch(() => {
+				// resetActive only fails on the inner handle dispose; the local
+				// state still needs to reflect the user's intent, so we apply
+				// it here even if the WS tear-down rejected.
+				debugSessionIdRef.current = null;
+				debugSessionKeyRef.current = null;
+				explicitNewRef.current = true;
+				setDebugSessionId(null);
+			});
+	}, [runtime, activePhase]);
+
+	// Phase 2E: History item click. Resets the explicit-new flag (the user
+	// just made a deliberate choice between existing conversations) and binds
+	// the picked conversation. The SessionController handles the previous
+	// handle disposal via #activate.
+	const handleSelectHistory = useCallback(
+		async (conversationId: string) => {
+			if (runtime === null) return;
+			if (activePhase !== "idle") return;
+			if (debugSessionIdRef.current === conversationId) return;
+			explicitNewRef.current = false;
+			await runtime.sessions.openDebugSession(conversationId);
+			debugSessionIdRef.current = conversationId;
+			setDebugSessionId(conversationId);
+		},
+		[runtime, activePhase],
+	);
 
 	useEffect(
 		() => () => {
@@ -501,89 +645,81 @@ export function AdminChatPage(): React.ReactElement {
 		}
 	};
 	return (
-		<ConversationWorkspace
-			connection={runtime.connection}
-			sessions={runtime.sessions}
-			variant="admin"
-			enableVoice={false}
-			skills={composerSkills}
-			emptySendable={selected !== undefined && debugSessionId === null}
-			contextHeader={
-				<>
-					<div>
-						<span className="workspace-context-kicker">ADMIN DEBUG SESSION</span>
-						<strong>{auth.tenant?.name ?? "当前租户"}</strong>
-					</div>
-					<output className="workspace-connection-status">
-						<span aria-hidden="true" />
-						已连接
-					</output>
-					{hasAgents ? (
-						<label>
-							<span>调试 Agent</span>
-							<select
-								aria-label="选择调试 Agent"
-								value={selectedAgentId ?? ""}
-								onChange={(event) => setSelectedAgentId(event.target.value as AgentPublicId)}
+		<div className="admin-debug-shell">
+			<DebugHistoryPanel
+				open={historyOpen}
+				state={history}
+				activeConversationId={debugSessionId}
+				busy={activePhase !== "idle"}
+				onToggle={() => setHistoryOpen((value) => !value)}
+				onNew={handleNewConversation}
+				onSelect={handleSelectHistory}
+			/>
+			<ConversationWorkspace
+				connection={runtime.connection}
+				sessions={runtime.sessions}
+				variant="admin"
+				showSidebar={false}
+				enableVoice={false}
+				skills={composerSkills}
+				emptySendable={selected !== undefined && debugSessionId === null}
+				contextHeader={
+					<>
+						<div className="workspace-debug-context">
+							<button
+								type="button"
+								className="workspace-debug-back"
+								onClick={() => navigate(selected ? `/agents/${selected.id}` : "/agents")}
 							>
-								{agents.kind === "loaded"
-									? agents.items.map((agent) => (
-											<option value={agent.id} key={agent.id}>
-												{agent.name}
-												{agent.hasDraft ? "（含草稿）" : ""}
-											</option>
-										))
-									: null}
-							</select>
-						</label>
-					) : null}
-					<label>
-						<span>模型</span>
-						<select
-							aria-label="选择模型"
-							value={selectedModel ? `${selectedModel.provider}/${selectedModel.id}` : ""}
-							onChange={(event) => {
-								const raw = event.target.value;
-								const slash = raw.indexOf("/");
-								if (slash > 0 && raw.length > slash + 1) {
-									setSelectedModel({ provider: raw.slice(0, slash), id: raw.slice(slash + 1) });
-								}
-							}}
-						>
-							{models.kind === "loaded"
-								? models.items.map((model) => (
-										<option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-											{model.name}
-										</option>
-									))
-								: null}
-						</select>
-					</label>
-					{debugSessionError !== null ? (
-						<div className="admin-debug-session-error" role="alert">
-							<span>{debugSessionError}</span>
-							<button type="button" onClick={() => setDebugSessionRetry((retry) => retry + 1)}>
-								重新建立会话
+								<span aria-hidden="true">←</span>
+								返回 Agent
 							</button>
+							<span className="workspace-context-kicker">AGENT / 调试</span>
+							<strong>{selected?.name ?? auth.tenant?.name ?? "Agent 调试"}</strong>
 						</div>
-					) : null}
-					{selectedModelMetadata ? (
-						<ThinkingControl
-							model={selectedModelMetadata}
-							sessions={runtime.sessions}
-							defaultEffort={selectedAgentDetail?.parameters.reasoning?.effort as ThinkingLevel | undefined}
-						/>
-					) : null}
-					<span className="workspace-revision">Revision #{selected?.currentRevision ?? "—"}</span>
-					<button
-						type="button"
-						disabled={debugSessionId === null || exporting}
-						onClick={() => void exportDebugSession()}
-					>
-						{exporting ? "导出中…" : "导出测试用例"}
-					</button>
-				</>
-			}
-		/>
+						<output className="workspace-connection-status">
+							<span aria-hidden="true" />
+							已连接
+						</output>
+						{hasAgents ? (
+							<label>
+								<span>调试 Agent</span>
+								<select
+									aria-label="选择调试 Agent"
+									value={selectedAgentId ?? ""}
+									onChange={(event) => setSelectedAgentId(event.target.value as AgentPublicId)}
+								>
+									{agents.kind === "loaded"
+										? agents.items.map((agent) => (
+												<option value={agent.id} key={agent.id}>
+													{agent.name}
+													{agent.hasDraft ? "（含草稿）" : ""}
+												</option>
+											))
+										: null}
+								</select>
+							</label>
+						) : null}
+						<DebugConfigurationSummary model={selectedModelMetadata} agent={selectedAgentDetail} />
+						{debugSessionError !== null ? (
+							<div className="admin-debug-session-error" role="alert">
+								<span>{debugSessionError}</span>
+								<button type="button" onClick={() => setDebugSessionRetry((retry) => retry + 1)}>
+									重新建立会话
+								</button>
+							</div>
+						) : null}
+						<span className="workspace-revision">Revision #{selected?.currentRevision ?? "—"}</span>
+						<button
+							type="button"
+							disabled={debugSessionId === null || exporting}
+							onClick={() => void exportDebugSession()}
+						>
+							{exporting ? "导出中…" : "导出测试用例"}
+						</button>
+					</>
+				}
+			/>
+		</div>
 	);
 }

@@ -295,6 +295,39 @@ describe("SessionController", () => {
 		vi.useRealTimers();
 	});
 
+	it("returns to idle and auto-aborts when assistant progress ends in an error", async () => {
+		const running = { ...SESSION, phase: "turn" as const, revision: 2 } satisfies SessionSnapshot;
+		const observed = createObservedHandle(running);
+		const abort = vi.fn<() => Promise<SessionSnapshot>>().mockResolvedValue({ ...running, phase: "idle" });
+		Object.assign(observed.handle, { abort });
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(running.id);
+		const failedItem = {
+			id: "assistant-timeout",
+			role: "assistant",
+			content: [{ type: "text", text: "" }],
+			model: SESSION.model,
+			timestamp: 3,
+			status: "error",
+			stopReason: "error",
+			errorMessage: "Request timed out.",
+		} satisfies AssistantTranscriptItem;
+
+		observed.emitEvent({
+			type: "session_progress",
+			sessionId: running.id,
+			turnId: "turn-timeout",
+			sequence: 1,
+			progress: { type: "item_finished", item: failedItem },
+		});
+
+		expect(controller.getSnapshot().activeSession?.phase).toBe("idle");
+		expect(controller.getSnapshot().activeSession?.transcript).toContainEqual(failedItem);
+		expect(abort).toHaveBeenCalledOnce();
+	});
+
 	it("flushes a semantic streaming chunk at punctuation", async () => {
 		vi.useFakeTimers();
 		const observed = createObservedHandle(SESSION);
@@ -711,5 +744,73 @@ describe("SessionController citation merge (Phase 2D)", () => {
 		const items = controller.getSnapshot().activeSession?.transcript ?? [];
 		expect(items[0] && "citations" in items[0] ? items[0].citations : undefined).toHaveLength(1);
 		expect(items[1] && "citations" in items[1] ? items[1].citations : undefined).toBeUndefined();
+	});
+
+	it("clears citation state when switching conversations", async () => {
+		const first = createObservedHandle(SESSION);
+		const secondSnapshot = { ...snapshotWith(assistantItem("ast:turn-1")), id: "conversation-b" };
+		const second = createObservedHandle(secondSnapshot);
+		const client = createClient();
+		client.attachSession.mockResolvedValueOnce(first.handle).mockResolvedValueOnce(second.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+		citationEvent(first, "turn-1", citation("turn-1", "src-a", "guide.txt"));
+		await controller.selectSession(secondSnapshot.id);
+		const item = controller.getSnapshot().activeSession?.transcript[0];
+		expect(item && "citations" in item ? item.citations : undefined).toBeUndefined();
+	});
+});
+
+describe("SessionController.resetActive (Phase 2E)", () => {
+	it("disposes the active handle and clears the active session WITHOUT killing the controller", async () => {
+		const client = createClient();
+		client.attachSession.mockResolvedValue(createHandle(SESSION));
+		const controller = new SessionController(client, createUploadClient());
+
+		await controller.openDebugSession(SESSION.id);
+		const snapshotBefore = controller.getSnapshot();
+		expect(snapshotBefore.activeSessionId).toBe(SESSION.id);
+		expect(snapshotBefore.activeSession).toBeDefined();
+		// Capture the dispose spy for the active handle.
+		const beforeHandle = (controller as unknown as { activeHandle: { dispose: Mock } }).activeHandle;
+
+		await controller.resetActive();
+
+		expect(beforeHandle.dispose).toHaveBeenCalledOnce();
+		const snapshotAfter = controller.getSnapshot();
+		expect(snapshotAfter.activeSessionId).toBeUndefined();
+		expect(snapshotAfter.activeSession).toBeUndefined();
+		// Controller itself is still alive: a subsequent openDebugSession can
+		// attach a fresh handle.
+		client.attachSession.mockClear();
+		client.attachSession.mockResolvedValue(createHandle({ ...SESSION, id: "next" }));
+		await controller.openDebugSession("next");
+		expect(client.attachSession).toHaveBeenCalledWith("next");
+		expect(controller.getSnapshot().activeSessionId).toBe("next");
+	});
+
+	it("is a no-op (but does not throw) when there is no active handle", async () => {
+		const client = createClient();
+		const controller = new SessionController(client, createUploadClient());
+		await expect(controller.resetActive()).resolves.toBeUndefined();
+		expect(controller.getSnapshot().activeSessionId).toBeUndefined();
+	});
+
+	it("guards in-flight prompt writes when a reset races with a send", async () => {
+		const observed = createObservedHandle(SESSION);
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.openDebugSession(SESSION.id);
+
+		// Begin a prompt (it sets `submitting: true`), then resetActive. The
+		// reset must leave `submitting: false` on the snapshot so the composer
+		// does not stay locked.
+		const sendPromise = controller.send("hello world").catch(() => {});
+		await controller.resetActive();
+		const snapshot = controller.getSnapshot();
+		expect(snapshot.submitting).toBe(false);
+		expect(snapshot.activeSession).toBeUndefined();
+		await sendPromise;
 	});
 });

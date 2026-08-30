@@ -118,6 +118,8 @@ export interface CreateSessionOptions {
 	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets">;
 	/** Frozen external Tool definitions (MCP), added alongside Pi's built-in coding tools. */
 	customTools?: readonly ToolDefinition[];
+	/** Exact built-in coding Tool allowlist for this frozen Agent revision. */
+	allowedToolNames?: readonly string[];
 	/**
 	 * Per-session resource overrides for published-app sessions. When present,
 	 * the backend builds an independent ResourceLoader (no local skill/ext/

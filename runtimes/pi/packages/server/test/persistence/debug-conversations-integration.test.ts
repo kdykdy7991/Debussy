@@ -23,6 +23,7 @@ import {
 	fromPublicId,
 	newAgentDefinitionId,
 	newDebugConversationId,
+	newPrincipalId,
 	newTurnId,
 	type PrincipalId,
 	type TenantId,
@@ -169,9 +170,10 @@ describe.skipIf(!pgUp)("DebugConversation Phase 1 — real Postgres", () => {
 			lastEventSequence: 0,
 			createdAt: new Date(),
 			lastActiveAt: new Date(),
+			deletedAt: null,
 		});
 
-		const ref = { tenantId: TENANT_ID, debugConversationId: convId };
+		const ref = { tenantId: TENANT_ID, ownerPrincipalId: OWNER, debugConversationId: convId };
 		const e1 = await debug.events.append(ref, convId, {
 			eventType: "turn/start",
 			turnId: t1,
@@ -215,10 +217,14 @@ describe.skipIf(!pgUp)("DebugConversation Phase 1 — real Postgres", () => {
 		// Append to a conversation that does not exist -> no event, no bump.
 		const ghost = newDebugConversationId();
 		expect(
-			await debug.events.append({ tenantId: TENANT_ID, debugConversationId: ghost }, ghost, {
-				eventType: "user/message",
-				payload: { text: "ghost" },
-			}),
+			await debug.events.append(
+				{ tenantId: TENANT_ID, ownerPrincipalId: OWNER, debugConversationId: ghost },
+				ghost,
+				{
+					eventType: "user/message",
+					payload: { text: "ghost" },
+				},
+			),
 		).toBeUndefined();
 
 		// FK is enforced: an event cannot reference a non-existent conversation.
@@ -235,6 +241,35 @@ describe.skipIf(!pgUp)("DebugConversation Phase 1 — real Postgres", () => {
 		expect(await debug.conversations.setStatus(ref, "deleted")).toBe(true);
 	});
 
+	it("fails closed for the same tenant with a different owner", async () => {
+		const convId = newDebugConversationId();
+		await debug.conversations.insert({
+			debugConversationId: convId,
+			tenantId: TENANT_ID,
+			agentId: AGENT_ID,
+			ownerPrincipalId: OWNER,
+			status: "active",
+			lastEventSequence: 0,
+			createdAt: new Date(),
+			lastActiveAt: new Date(),
+			deletedAt: null,
+		});
+		const foreignRef = {
+			tenantId: TENANT_ID,
+			ownerPrincipalId: newPrincipalId(),
+			debugConversationId: convId,
+		};
+		expect(await debug.conversations.getByRef(foreignRef)).toBeUndefined();
+		expect(await debug.events.list(foreignRef, { limit: 100 })).toEqual([]);
+		expect(
+			await debug.events.append(foreignRef, convId, {
+				eventType: "user/message",
+				turnId: newTurnId(),
+				payload: { text: "forbidden" },
+			}),
+		).toBeUndefined();
+	});
+
 	it("cross-runtime recovery: a fresh service instance recovers Turn1/Turn2 history from the DB", async () => {
 		const capture = { prompts: [] as PromptInput[], created: 0 };
 		const svcA = makeService(debug, capture);
@@ -245,7 +280,7 @@ describe.skipIf(!pgUp)("DebugConversation Phase 1 — real Postgres", () => {
 		const t2 = await svcA.executeTurn(conv.debugConversationId, "TurnTwo", newTurnId());
 		expect(t1.ok).toBe(true);
 		expect(t2.ok).toBe(true);
-		expect(capture.created).toBe(1); // svcA reused its single cached Runtime.
+		expect(capture.created).toBe(2); // Phase 2F: headless releases its Runtime per Turn, so t2 opened a fresh session.
 
 		// "Process restart": a NEW service instance with an empty runtime cache
 		// resumes the same conversation.
@@ -254,7 +289,7 @@ describe.skipIf(!pgUp)("DebugConversation Phase 1 — real Postgres", () => {
 
 		const t3 = await svcB.executeTurn(conv.debugConversationId, "TurnThree", newTurnId());
 		expect(t3.ok).toBe(true);
-		expect(capture.created).toBe(2); // svcB opened a FRESH session (empty cache).
+		expect(capture.created).toBe(3); // svcB opened a FRESH session (empty cache) for t3.
 
 		const prompt = capture.prompts[2]!;
 		expect(prompt.text).toBe("TurnThree");

@@ -55,6 +55,22 @@ export interface DebugConversationDto {
 	readonly lastEventSequence: number;
 }
 
+/**
+ * Phase 2E: per-row projection for the History panel. The server joins the
+ * first `user/message` payload text in a single LATERAL query so this list
+ * endpoint never follows up with N event-list round trips.
+ * `firstUserMessagePreview` is `null` for an empty conversation that has not
+ * yet recorded any user message (e.g. a lazy-create binding with no sends).
+ */
+export interface DebugConversationListItem {
+	readonly conversationId: string;
+	readonly agentId: AgentPublicId | null;
+	readonly status: "active" | "deleted";
+	readonly lastActiveAt: string;
+	readonly lastEventSequence: number;
+	readonly firstUserMessagePreview: string | null;
+}
+
 /** Debug Conversation event DTO returned by the control API (Phase 1). */
 export interface DebugEventDto {
 	readonly eventId: string;
@@ -233,6 +249,27 @@ export class AgentApi {
 		readonly events: readonly DebugEventDto[];
 	}> {
 		const params = new URLSearchParams({ agentId });
+		// Phase 2E: resume moved from the base path to a dedicated sub-path so
+		// the History list (`GET /debug-conversations`) and resume
+		// (`GET /debug-conversations/recent`) never share query semantics.
+		return this.request({
+			method: "GET",
+			path: `/api/control/v1/debug-conversations/recent?${params.toString()}`,
+		});
+	}
+
+	/**
+	 * Phase 2E: History list for the (agent, current owner) scope, ordered
+	 * by most recent activity. The server returns the first user-message
+	 * preview joined in a single round trip; this method is therefore a
+	 * single GET, no N+1.
+	 */
+	listDebugConversations(
+		agentId: AgentPublicId,
+		limit?: number,
+	): Promise<{ readonly items: readonly DebugConversationListItem[] }> {
+		const params = new URLSearchParams({ agentId });
+		if (limit !== undefined) params.set("limit", String(limit));
 		return this.request({
 			method: "GET",
 			path: `/api/control/v1/debug-conversations?${params.toString()}`,

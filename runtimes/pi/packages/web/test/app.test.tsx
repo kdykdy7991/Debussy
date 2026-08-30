@@ -2,6 +2,7 @@ import type { SessionSnapshot } from "@earendil-works/pi-protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App } from "../src/app.tsx";
+import { hasTerminalOrphanedTurn } from "../src/conversation/ai-message-flow.tsx";
 import type { SpeechControllerSource } from "../src/features/voice/types.ts";
 import type { PiConnectionSnapshot, PiConnectionStore } from "../src/lib/connection-controller.ts";
 import type { SessionBrowserSnapshot, SessionBrowserStore } from "../src/lib/session-controller.ts";
@@ -350,6 +351,30 @@ describe("App AI kit assistant failure states", () => {
 		});
 	}
 
+	it("treats an idle user-only Turn as failed instead of permanently loading", () => {
+		const active = {
+			id: "session-orphaned",
+			cwd: "/workspace",
+			createdAt: 1,
+			updatedAt: 2,
+			phase: "idle",
+			model: { provider: "oneapi", id: "qwen" },
+			thinkingLevel: "off",
+			attached: true,
+			locked: false,
+			revision: 2,
+			lastSequence: 0,
+			transcript: [
+				{ id: "user-timeout", role: "user", content: [{ type: "text", text: "触发超时" }], timestamp: 1 },
+			],
+			queuedSteer: [],
+			queuedSteerCount: 0,
+		} satisfies SessionSnapshot;
+
+		expect(hasTerminalOrphanedTurn(active)).toBe(true);
+		expect(hasTerminalOrphanedTurn({ ...active, phase: "turn" })).toBe(false);
+	});
+
 	it("shows a fallback failure notice when the LLM errors out without producing text", () => {
 		const activeSession = {
 			id: "session-err",
@@ -380,7 +405,10 @@ describe("App AI kit assistant failure states", () => {
 			queuedSteerCount: 0,
 		} satisfies SessionSnapshot;
 		const markup = renderToStaticMarkup(
-			<App connection={createConnection({ state: "connected", error: undefined })} sessions={sessionsWith(activeSession)} />,
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={sessionsWith(activeSession)}
+			/>,
 		);
 
 		expect(markup).toContain("ai-turn-failure is-error");
@@ -421,7 +449,10 @@ describe("App AI kit assistant failure states", () => {
 			queuedSteerCount: 0,
 		} satisfies SessionSnapshot;
 		const markup = renderToStaticMarkup(
-			<App connection={createConnection({ state: "connected", error: undefined })} sessions={sessionsWith(activeSession)} />,
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={sessionsWith(activeSession)}
+			/>,
 		);
 
 		expect(markup).toContain("ai-turn-failure is-error");
@@ -458,7 +489,10 @@ describe("App AI kit assistant failure states", () => {
 			queuedSteerCount: 0,
 		} satisfies SessionSnapshot;
 		const markup = renderToStaticMarkup(
-			<App connection={createConnection({ state: "connected", error: undefined })} sessions={sessionsWith(activeSession)} />,
+			<App
+				connection={createConnection({ state: "connected", error: undefined })}
+				sessions={sessionsWith(activeSession)}
+			/>,
 		);
 
 		expect(markup).toContain("ai-turn-failure is-aborted");
@@ -470,20 +504,13 @@ describe("App AI kit assistant failure states", () => {
 		expect(markup).toContain("assistant-output-copy");
 	});
 
-	it("keeps Stop button visible when phase is stuck at 'turn' after an error", () => {
-		// Regression: in real LLM-timeout flows the runtime may briefly stay
-		// in `phase: "turn"` while the post-run hook / compaction settles.
-		// The composer must keep showing Stop (the user can still cancel)
-		// and the assistant card must still surface the error. (The agent
-		// avatar's "failed" state can't be asserted in a static render
-		// because the 800ms `waking` timer always wins first — we cover
-		// the avatar state via the dedicated pure-function test below.)
+	it("does not show Stop after an assistant error has become terminal", () => {
 		const activeSession = {
 			id: "session-stuck",
 			cwd: "/workspace",
 			createdAt: 1,
 			updatedAt: 2,
-			phase: "turn" as const,
+			phase: "idle" as const,
 			model: { provider: "oneapi", id: "qwen" },
 			thinkingLevel: "off",
 			attached: true,
@@ -513,9 +540,9 @@ describe("App AI kit assistant failure states", () => {
 			/>,
 		);
 
-		// 1. composer 仍然在 running 状态（Stop 按钮可见，不是 Send）
-		expect(markup).toContain("stop-button");
-		expect(markup).not.toContain("send-button");
+		// Terminal timeout/error restores normal composer controls automatically.
+		expect(markup).not.toContain("stop-button");
+		expect(markup).toContain("send-button");
 		// 2. assistant 卡片仍然显示 error（确保错误信息没被吞）
 		expect(markup).toContain("assistant-output-card is-error");
 		expect(markup).toContain("ai-turn-failure is-error");

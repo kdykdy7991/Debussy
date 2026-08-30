@@ -299,6 +299,10 @@ function sessionProgressTurnIds(client: ProtocolTestClient): string[] {
 }
 
 const DEBUG_BASE = "/api/control/v1/debug-conversations";
+// Phase 2E: resume moved from the base path to a dedicated sub-path so the
+// History list (`GET ${DEBUG_BASE}`) and resume (`GET ${DEBUG_BASE}/recent`)
+// never share query semantics. Phase 1 e2e tests are updated here.
+const DEBUG_RESUME = `${DEBUG_BASE}/recent`;
 
 describe.skipIf(!pgUp)("DebugConversations realtime WS E2E (real server + PG)", () => {
 	let client: PostgresClient;
@@ -324,7 +328,7 @@ describe.skipIf(!pgUp)("DebugConversations realtime WS E2E (real server + PG)", 
 	async function resumeConversation(
 		agentPublic: string,
 	): Promise<{ convPublic: string; convId: DebugConversationId } | null> {
-		const res = await httpJson(`${httpBase}${DEBUG_BASE}?agentId=${agentPublic}`);
+		const res = await httpJson(`${httpBase}${DEBUG_RESUME}?agentId=${agentPublic}`);
 		const conv = (res.body as { data: { conversation: { conversationId: string } | null } }).data.conversation;
 		if (conv === null) return null;
 		return { convPublic: conv.conversationId, convId: internalConvId(conv.conversationId) };

@@ -14,7 +14,7 @@
 import type {
 	Citation,
 	ModelRef,
-	ReasoningEffort,
+	ThinkingLevel,
 	ToolTranscriptItem,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
@@ -27,6 +27,7 @@ import type { RuntimeSessionOptions } from "../../runtime/pi-runtime-adapter.ts"
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import { lastAssistantResult, lastAssistantResultAnyStatus } from "../../runtime/turn-executor.ts";
 import type { MaterializedSkill, PiSessionRuntime, ResolvedAttachmentInput, RetrievalInput } from "../../types.ts";
+import type { AttachmentStore } from "../../uploads/store.ts";
 import {
 	type AgentDefinitionId,
 	type DebugConversationId,
@@ -80,6 +81,14 @@ export interface DebugConversationServiceOptions {
 	 * Debug service always wires the shared instance (web/start.ts).
 	 */
 	readonly citations?: CitationService;
+	/**
+	 * Shared AttachmentStore (same instance as internal/embed). Used by Phase
+	 * 2F physical GC to drop a deleted conversation's uploaded records/files.
+	 * Optional so unit harnesses need no store.
+	 */
+	readonly attachments?: AttachmentStore;
+	/** Error sink for GC/background failures. Defaults to no-op. */
+	readonly reportError?: (error: Error) => void;
 }
 
 /** Cached Debug Runtime entry, keyed by `debugConversationId`. */
@@ -87,8 +96,35 @@ export interface DebugRuntimeEntry {
 	readonly runtime: ConversationRuntime;
 	readonly runtimeSpecHash: string;
 	readonly resolvedRevision: number;
-	/** Open-time baked effort override; null when not used (Phase 1). */
-	readonly conversationEffort: ReasoningEffort | null;
+	/** Session-level override selected in the realtime Debug UI. */
+	readonly thinkingLevelOverride: ThinkingLevel | null;
+}
+
+/** Phase 2E: History list row, surface shape for the admin History panel. */
+export interface DebugConversationHistoryItem {
+	readonly conversationId: string;
+	readonly agentId: string | null;
+	readonly status: DebugConversationRecord["status"];
+	readonly lastActiveAt: string;
+	readonly lastEventSequence: number;
+	/**
+	 * First `user/message` event's `text` payload, truncated to 60 chars on a
+	 * single line. `null` when the conversation has no user message yet
+	 * (e.g. an empty binding created by lazy-create that has not sent). This
+	 * is raw first-message display, NOT auto-generated title synthesis —
+	 * Phase 2E explicitly defers title generation.
+	 */
+	readonly firstUserMessagePreview: string | null;
+}
+
+const DEBUG_HISTORY_PREVIEW_MAX_CHARS = 60;
+const DEBUG_HISTORY_DEFAULT_LIMIT = 50;
+const DEBUG_HISTORY_HARD_LIMIT = 100;
+
+function truncatePreview(text: string): string {
+	const singleLine = text.replace(/\s+/g, " ").trim();
+	if (singleLine.length <= DEBUG_HISTORY_PREVIEW_MAX_CHARS) return singleLine;
+	return `${singleLine.slice(0, DEBUG_HISTORY_PREVIEW_MAX_CHARS - 1)}…`;
 }
 
 export type DebugTurnResult =
@@ -136,6 +172,8 @@ export interface DebugRealtimeTurnOptions {
 	readonly attachments?: readonly ResolvedAttachmentInput[];
 	/** Stable attachment ids from the same Debug conversation; surfaced to the runtime as prompt-time input. */
 	readonly attachmentIds?: readonly string[];
+	/** Session-level Debug UI override; null means use the Agent revision default. */
+	readonly thinkingLevelOverride?: ThinkingLevel | null;
 }
 
 /** One actively-running Realtime Turn, so the abort command can reach the inner agent. */
@@ -155,6 +193,8 @@ export class DebugConversationService {
 	private readonly tenantId: TenantId;
 	private readonly ownerPrincipalId: PrincipalId;
 	private readonly citations: CitationService | undefined;
+	private readonly attachments: AttachmentStore | undefined;
+	private readonly reportError: (error: Error) => void;
 
 	/** Runtime cache: `Map<debugConversationId, RuntimeEntry>` (Phase 1, in-memory). */
 	private readonly runtimes = new Map<DebugConversationId, DebugRuntimeEntry>();
@@ -164,6 +204,12 @@ export class DebugConversationService {
 	private readonly reservedTurn = new Map<DebugConversationId, TurnId>();
 	/** Currently-running Realtime Turn per conversation, for the abort command. */
 	private readonly activeTurns = new Map<DebugConversationId, ActiveDebugTurn>();
+	/**
+	 * Conversations currently pinned by a live realtime adapter (a WS is open).
+	 * The headless `executeTurn` path must NOT release a runtime a realtime
+	 * adapter still owns — that disposal is driven by the LiveSession lifecycle.
+	 */
+	private readonly realtimeOwned = new Set<DebugConversationId>();
 
 	constructor(options: DebugConversationServiceOptions) {
 		this.repositories = options.repositories;
@@ -175,6 +221,8 @@ export class DebugConversationService {
 		this.tenantId = options.tenantId;
 		this.ownerPrincipalId = options.ownerPrincipalId;
 		this.citations = options.citations;
+		this.attachments = options.attachments;
+		this.reportError = options.reportError ?? (() => {});
 	}
 
 	/** Most recent `active` Debug conversation for (tenant, owner, agent), if any. */
@@ -184,6 +232,42 @@ export class DebugConversationService {
 			ownerPrincipalId: this.ownerPrincipalId,
 			agentId,
 		});
+	}
+
+	/**
+	 * Phase 2E: History list for the (owner, agent) scope, ordered by most
+	 * recent activity. The repository call joins the first user-message
+	 * preview in a single round trip (LATERAL subquery) so this method does
+	 * NOT issue N follow-up `events.list` calls.
+	 *
+	 * Returns public DTOs ready for the History panel; `lastActiveAt` is
+	 * serialised to ISO string so the client never has to know about the
+	 * repository's `Date` type.
+	 *
+	 * Out of scope: title generation, search, archive, pin, folder — those
+	 * are deferred per Phase 2E.
+	 */
+	async listHistory(
+		agentId: AgentDefinitionId | null,
+		limit?: number,
+	): Promise<readonly DebugConversationHistoryItem[]> {
+		const requested = limit ?? DEBUG_HISTORY_DEFAULT_LIMIT;
+		const clamped = Math.min(Math.max(requested, 1), DEBUG_HISTORY_HARD_LIMIT);
+		const rows = await this.debug.conversations.listByScope({
+			tenantId: this.tenantId,
+			ownerPrincipalId: this.ownerPrincipalId,
+			agentId,
+			limit: clamped,
+		});
+		return rows.map((row) => ({
+			conversationId: toPublicId("DebugConversationId", row.conversation.debugConversationId),
+			agentId: row.conversation.agentId === null ? null : toPublicId("AgentDefinitionId", row.conversation.agentId),
+			status: row.conversation.status,
+			lastActiveAt: row.conversation.lastActiveAt.toISOString(),
+			lastEventSequence: row.conversation.lastEventSequence,
+			firstUserMessagePreview:
+				row.firstUserMessagePreview === null ? null : truncatePreview(row.firstUserMessagePreview),
+		}));
 	}
 
 	/** Insert a brand-new active Debug conversation for (owner, agent). */
@@ -198,6 +282,7 @@ export class DebugConversationService {
 			lastEventSequence: 0,
 			createdAt: now,
 			lastActiveAt: now,
+			deletedAt: null,
 		};
 		await this.debug.conversations.insert(record);
 		return record;
@@ -205,7 +290,7 @@ export class DebugConversationService {
 
 	/** Fetch a conversation by its id (scoped to the tenant). */
 	async get(conversationId: DebugConversationId): Promise<DebugConversationRecord | undefined> {
-		return this.debug.conversations.getByRef({ tenantId: this.tenantId, debugConversationId: conversationId });
+		return this.debug.conversations.getByRef(this.conversationRef(conversationId));
 	}
 
 	/** Fetch a conversation that belongs to this tenant AND this service's owner. */
@@ -220,10 +305,7 @@ export class DebugConversationService {
 		conversationId: DebugConversationId,
 		afterSequence = 0,
 	): Promise<readonly DebugConversationEventRecord[]> {
-		return this.debug.events.list(
-			{ tenantId: this.tenantId, debugConversationId: conversationId },
-			{ limit: 10_000, afterSequence },
-		);
+		return this.debug.events.list(this.conversationRef(conversationId), { limit: 10_000, afterSequence });
 	}
 
 	/** Close every cached Runtime (used at shutdown / after tests). */
@@ -318,10 +400,7 @@ export class DebugConversationService {
 		text: string,
 		options: DebugRealtimeTurnOptions,
 	): Promise<DebugRealtimeTurnResult> {
-		const conversation = await this.debug.conversations.getByRef({
-			tenantId: this.tenantId,
-			debugConversationId: conversationId,
-		});
+		const conversation = await this.debug.conversations.getByRef(this.conversationRef(conversationId));
 		if (conversation === undefined || conversation.status !== "active") {
 			return {
 				ok: false,
@@ -363,19 +442,20 @@ export class DebugConversationService {
 		// Effective thinkingLevel for THIS Turn (same resolver as Production):
 		// recorded on turn/start so the reasoning behaviour of any Debug Turn is
 		// auditable from the event stream.
-		const effectiveThinkingLevel = resolveEffectiveModelOptions({
+		const revisionThinkingLevel = resolveEffectiveModelOptions({
 			params: spec.agent.model.params,
 			modelId: spec.agent.model.modelId,
 			parameterCapabilities: spec.agent.model.parameterCapabilities,
 			conversationEffort: null,
 		}).thinkingLevel;
+		const effectiveThinkingLevel = options.thinkingLevelOverride ?? revisionThinkingLevel;
 
 		// History restored from the Debug event stream before this Turn's events
 		// are written so it excludes the in-flight user message.
-		const events = await this.debug.events.list(
-			{ tenantId: this.tenantId, debugConversationId: conversationId },
-			{ limit: 10_000, afterSequence: 0 },
-		);
+		const events = await this.debug.events.list(this.conversationRef(conversationId), {
+			limit: 10_000,
+			afterSequence: 0,
+		});
 		const history: RestoredContext = restoreContext(
 			events as unknown as readonly ConversationEventRecord[],
 			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
@@ -400,7 +480,10 @@ export class DebugConversationService {
 			{
 				eventType: "user/message",
 				turnId,
-				payload: { text: text.length > 64 * 1024 ? text.slice(0, 64 * 1024) : text },
+				payload: {
+					text: text.length > 64 * 1024 ? text.slice(0, 64 * 1024) : text,
+					attachmentIds: [...(options.attachmentIds ?? [])],
+				},
 			},
 		]);
 		if (persisted === false) {
@@ -422,12 +505,14 @@ export class DebugConversationService {
 		});
 
 		try {
+			const directAttachments = this.resolveDirectAttachments(conversationId, options);
 			const runtime = await this.ensureRuntime(
 				conversationId,
 				conversation.agentId,
 				spec,
 				runtimeSpecHash,
 				agentRevision,
+				options.thinkingLevelOverride ?? null,
 			);
 			this.activeTurns.set(conversationId, {
 				turnId,
@@ -446,32 +531,30 @@ export class DebugConversationService {
 			// per-Turn tool ordering. A parallel `Promise.all` would let PG
 			// commit the terminal event first when the pool is busy.
 			let persistChain: Promise<void> = Promise.resolve();
-			if (onProgress !== undefined) {
-				unsub = runtime.subscribe((event: ConversationRuntimeEvent) => {
-					if (event.event.type !== "progress") return;
-					const progress = event.event.progress;
-					// 1) Realtime UI: forward through rekey/unkey rules (see
-					//    forwardStream).
-					this.forwardStream(progress, turnId, onProgress);
-					// 2) Persistence: mirror Production `tool/call | tool/result |
-					//    tool/error` vocabulary for `role:"tool"` items, scoped to
-					//    the same turnId. Same single progress stream drives both
-					//    realtime + persistence — no second listener, no second
-					//    execution.
-					if (
-						progress.type === "item_started" ||
-						progress.type === "item_updated" ||
-						progress.type === "item_finished"
-					) {
-						if (progress.item.role === "tool") {
-							const toolItem = progress.item as ToolTranscriptItem;
-							persistChain = persistChain.then(() =>
-								this.persistToolProgress(conversationId, turnId, spec, progress.type, toolItem),
-							);
-						}
+			unsub = runtime.subscribe((event: ConversationRuntimeEvent) => {
+				if (event.event.type !== "progress") return;
+				const progress = event.event.progress;
+				// 1) Realtime UI: forward through rekey/unkey rules (see
+				//    forwardStream).
+				if (onProgress !== undefined) this.forwardStream(progress, turnId, onProgress);
+				// 2) Persistence: mirror Production `tool/call | tool/result |
+				//    tool/error` vocabulary for `role:"tool"` items, scoped to
+				//    the same turnId. Same single progress stream drives both
+				//    realtime + persistence — no second listener, no second
+				//    execution.
+				if (
+					progress.type === "item_started" ||
+					progress.type === "item_updated" ||
+					progress.type === "item_finished"
+				) {
+					if (progress.item.role === "tool") {
+						const toolItem = progress.item as ToolTranscriptItem;
+						persistChain = persistChain.then(() =>
+							this.persistToolProgress(conversationId, turnId, spec, progress.type, toolItem),
+						);
 					}
-				});
-			}
+				}
+			});
 
 			try {
 				const retrieval = await this.buildRetrieval(conversationId, spec, text, turnId);
@@ -481,9 +564,7 @@ export class DebugConversationService {
 					...(options.attachmentIds && options.attachmentIds.length > 0
 						? { attachmentIds: [...options.attachmentIds] }
 						: {}),
-					...(options.attachments && options.attachments.length > 0
-						? { attachments: [...options.attachments] }
-						: {}),
+					...(directAttachments.length > 0 ? { attachments: directAttachments } : {}),
 				});
 				// Drain tool-event persistence BEFORE writing the Turn terminal
 				// so the event stream is strictly ordered (tool/call/result
@@ -497,6 +578,19 @@ export class DebugConversationService {
 					// aborted item which retains its content.
 					const partial = lastAssistantResultAnyStatus(runtime.snapshot());
 					await this.appendAll(conversationId, [
+						...(partial.outputText || partial.thinkingText
+							? [
+									{
+										eventType: "assistant/message",
+										turnId,
+										payload: {
+											text: partial.outputText,
+											...(partial.thinkingText ? { thinking: partial.thinkingText } : {}),
+											status: "interrupted",
+										},
+									},
+								]
+							: []),
 						{ eventType: "turn/interrupted", turnId, payload: { aborted: true } },
 					]);
 					return {
@@ -557,6 +651,19 @@ export class DebugConversationService {
 					// Cancel during a provider error: keep streamed content.
 					const partial = lastAssistantResultAnyStatus(runtime.snapshot());
 					await this.appendAll(conversationId, [
+						...(partial.outputText || partial.thinkingText
+							? [
+									{
+										eventType: "assistant/message",
+										turnId,
+										payload: {
+											text: partial.outputText,
+											...(partial.thinkingText ? { thinking: partial.thinkingText } : {}),
+											status: "interrupted",
+										},
+									},
+								]
+							: []),
 						{ eventType: "turn/interrupted", turnId, payload: { aborted: true, error: message } },
 					]);
 					return {
@@ -583,10 +690,50 @@ export class DebugConversationService {
 				// path (already drained on the happy path).
 				await persistChain.catch(() => {});
 			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			await this.appendAll(conversationId, [{ eventType: "turn/failed", turnId, payload: { error: message } }]);
+			return {
+				ok: false,
+				terminal: "failed",
+				turnId,
+				outputText: "",
+				error: `Debug Turn failed: ${message}`,
+				model,
+			};
 		} finally {
 			this.activeTurns.delete(conversationId);
 			resolveDone?.();
 		}
+	}
+
+	private resolveDirectAttachments(
+		conversationId: DebugConversationId,
+		options: DebugRealtimeTurnOptions,
+	): readonly ResolvedAttachmentInput[] {
+		const ids = options.attachmentIds ?? [];
+		if (ids.length === 0 || this.attachments === undefined) return options.attachments ?? [];
+		const publicConversationId = toPublicId("DebugConversationId", conversationId);
+		return ids.map((id) => {
+			this.attachments!.assertOwnership(id, {
+				tenantId: this.tenantId,
+				principalId: this.ownerPrincipalId,
+			});
+			const record = this.attachments!.get(id);
+			if (
+				record === undefined ||
+				record.attachment.sessionId !== publicConversationId ||
+				record.attachment.status !== "ready"
+			) {
+				throw new Error(`Attachment is not ready and owned by this Debug conversation: ${id}`);
+			}
+			return {
+				id,
+				name: record.attachment.name,
+				mediaType: record.attachment.mediaType,
+				path: this.attachments!.filePath(id),
+			};
+		});
 	}
 
 	/**
@@ -728,6 +875,89 @@ export class DebugConversationService {
 		await existing.runtime.close().catch(() => {});
 	}
 
+	/** Mark a conversation as pinned by a live realtime adapter. */
+	markRealtimeOwned(conversationId: DebugConversationId): void {
+		this.realtimeOwned.add(conversationId);
+	}
+
+	/** Release the realtime pin (adapter disposed / WS fully closed). */
+	unmarkRealtimeOwned(conversationId: DebugConversationId): void {
+		this.realtimeOwned.delete(conversationId);
+	}
+
+	/**
+	 * Close a cached runtime only when nothing else owns it. The headless path
+	 * calls this after each Turn; it stands down if a realtime adapter still
+	 * pins the conversation or a realtime Turn is in flight.
+	 */
+	async releaseRuntimeIfUnpinned(conversationId: DebugConversationId): Promise<void> {
+		if (this.realtimeOwned.has(conversationId) || this.activeTurns.has(conversationId)) return;
+		await this.releaseRuntime(conversationId);
+	}
+
+	/**
+	 * Phase 2F: soft-delete (expire) every `active` Debug conversation for this
+	 * service's (tenant, owner) scope whose last activity is older than `cutoff`.
+	 * Atomic against a concurrent `append` — the conditional UPDATE on the row
+	 * means exactly one of expire / turn-start wins (see repo). Returns the
+	 * conversations that were expired. Callers (startup / periodic sweep) must
+	 * pass a `cutoff` of `now - slidingTtl`.
+	 */
+	async expireIdleSessions(cutoff: Date): Promise<readonly DebugConversationId[]> {
+		return this.debug.conversations.expireActiveBefore(
+			{ tenantId: this.tenantId, ownerPrincipalId: this.ownerPrincipalId },
+			cutoff,
+		);
+	}
+
+	/**
+	 * Phase 2F physical GC: purge soft-deleted conversations past their grace
+	 * window, including their runtime, AttachmentStore records/files and
+	 * CitationStore sources/chunks/turn-data, in an idempotent, re-runnable
+	 * order (external resources have no PG FK, so the canonical row is deleted
+	 * only last). Returns the number of conversations physically removed.
+	 */
+	async gcPhysical(cutoff: Date): Promise<number> {
+		const candidates = await this.debug.conversations.listDeletedBefore(
+			{ tenantId: this.tenantId, ownerPrincipalId: this.ownerPrincipalId },
+			cutoff,
+		);
+		let removed = 0;
+		for (const record of candidates) {
+			if (await this.gcOne(record)) removed += 1;
+		}
+		return removed;
+	}
+
+	private async gcOne(record: DebugConversationRecord): Promise<boolean> {
+		const { debugConversationId } = record;
+		const publicId = DebugConversationService.publicConversationId(debugConversationId);
+		try {
+			// 1) Release the owning runtime (if a WS holds it, dispose first).
+			await this.releaseRuntime(debugConversationId);
+			// 2) Capture + clean attachments bound to this session (record + files).
+			if (this.attachments !== undefined) {
+				for (const attachment of this.attachments.listBySession(publicId)) {
+					await this.attachments.remove(attachment.id);
+				}
+			}
+			// 3) Clean retrieval data owned by this session.
+			if (this.citations !== undefined) {
+				await this.citations.deleteSessionData(publicId);
+			}
+			// 4) Remove the DB events + canonical row last.
+			return await this.debug.conversations.deletePhysical(
+				this.conversationRef(debugConversationId),
+				debugConversationId,
+			);
+		} catch (error) {
+			// Never let one conversation abort the sweep; the row stays deleted
+			// (grace window) and the next pass retries.
+			this.reportError?.(error instanceof Error ? error : new Error(String(error)));
+			return false;
+		}
+	}
+
 	/** Execute one Turn against an existing Debug conversation (lazy revision resolve). */
 	async executeTurn(
 		conversationId: DebugConversationId,
@@ -741,132 +971,25 @@ export class DebugConversationService {
 		if (this.running.has(conversationId)) return { ok: false, error: "another Turn is already running" };
 		this.running.add(conversationId);
 		try {
-			return await this.runTurn(conversationId, text, inputTurnId, options);
-		} finally {
-			this.running.delete(conversationId);
-		}
-	}
-
-	private async runTurn(
-		conversationId: DebugConversationId,
-		text: string,
-		inputTurnId?: TurnId,
-		options: {
-			readonly attachmentIds?: readonly string[];
-			readonly attachments?: readonly ResolvedAttachmentInput[];
-		} = {},
-	): Promise<DebugTurnResult> {
-		const conversation = await this.debug.conversations.getByRef({
-			tenantId: this.tenantId,
-			debugConversationId: conversationId,
-		});
-		if (conversation === undefined || conversation.status !== "active") {
-			return { ok: false, error: "Debug conversation is unavailable" };
-		}
-		if (conversation.agentId === null) return { ok: false, error: "Debug conversation has no bound agent" };
-
-		// 3/4/5. Resolve current agent revision + compile RuntimeSpec + hash.
-		const compiled = await compileDebugAgentRevision(
-			this.compileDeps(),
-			{ tenantId: this.tenantId },
-			conversation.agentId,
-		);
-		if (!compiled.ok) return { ok: false, error: compiled.error };
-		const { spec, runtimeSpecHash, agentRevision } = compiled;
-
-		// 9. Restore history from the Debug event stream (user+assistant text
-		// only), read BEFORE this turn's events are written so history excludes
-		// the in-flight user message.
-		const events = await this.debug.events.list(
-			{ tenantId: this.tenantId, debugConversationId: conversationId },
-			{ limit: 10_000, afterSequence: 0 },
-		);
-		const history: RestoredContext = restoreContext(
-			events as unknown as readonly ConversationEventRecord[],
-			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
-			spec.contextPolicy.logLevel,
-		);
-
-		const turnId = inputTurnId ?? newTurnId();
-		// Effective thinkingLevel for THIS Turn (same resolver as Production).
-		const effectiveThinkingLevel = resolveEffectiveModelOptions({
-			params: spec.agent.model.params,
-			modelId: spec.agent.model.modelId,
-			parameterCapabilities: spec.agent.model.parameterCapabilities,
-			conversationEffort: null,
-		}).thinkingLevel;
-		// 12. Persist turn bookkeeping BEFORE execution so a mid-turn crash (or a
-		// session-open failure) never loses turn/start or the user input.
-		const persisted = await this.appendAll(conversationId, [
-			{
-				eventType: "turn/start",
-				turnId,
-				payload: {
-					turnId,
-					model: spec.agent.model.modelId,
-					...(effectiveThinkingLevel !== undefined ? { thinkingLevel: effectiveThinkingLevel } : {}),
-					runtimeSpecHash,
-					agentRevisionId: agentRevision,
-					actualPublishedAppVersionId: null,
-					resolutionSource: "followLatest",
-				},
-			},
-			{
-				eventType: "user/message",
-				turnId,
-				payload: { text: text.length > 64 * 1024 ? text.slice(0, 64 * 1024) : text },
-			},
-		]);
-		if (persisted === false) return { ok: false, error: "failed to persist Debug turn start" };
-
-		// 6/7/8/11. Acquire the Debug Runtime (rebuilding only when the spec
-		// changed) and execute the Turn. Everything below runs under try so a
-		// failure persists turn/failed and never a fake turn/end.
-		try {
-			const runtime = await this.ensureRuntime(
-				conversationId,
-				conversation.agentId,
-				spec,
-				runtimeSpecHash,
-				agentRevision,
-			);
-			const retrieval = await this.buildRetrieval(conversationId, spec, text, turnId);
-			await runtime.prompt(text, {
-				history,
-				retrieval,
-				...(options.attachmentIds && options.attachmentIds.length > 0
-					? { attachmentIds: [...options.attachmentIds] }
-					: {}),
-				...(options.attachments && options.attachments.length > 0 ? { attachments: [...options.attachments] } : {}),
+			const result = await this.runTurnRealtime(conversationId, text, {
+				...(inputTurnId !== undefined ? { inputTurnId } : {}),
+				...options,
 			});
-			const output = lastAssistantResult(runtime.snapshot());
-			await this.appendAll(conversationId, [
-				{
-					eventType: "assistant/message",
-					turnId,
-					payload: {
-						text: output.outputText,
-						...(output.thinkingText ? { thinking: output.thinkingText } : {}),
-					},
-				},
-				{
-					eventType: "turn/end",
-					turnId,
-					payload: { ok: true, ...(output.usage ? { usage: output.usage } : {}) },
-				},
-			]);
+			if (!result.ok) return { ok: false, error: result.error ?? "Debug Turn failed" };
+			const conversation = await this.getOwned(conversationId);
+			if (conversation === undefined) return { ok: false, error: "Debug conversation is unavailable" };
 			return {
 				ok: true,
 				conversation,
-				turnId,
-				outputText: output.outputText,
-				...(output.thinkingText ? { thinkingText: output.thinkingText } : {}),
-				...(output.usage ? { usage: output.usage } : {}),
+				turnId: result.turnId,
+				outputText: result.outputText,
+				...(result.thinkingText ? { thinkingText: result.thinkingText } : {}),
 			};
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			await this.appendAll(conversationId, [{ eventType: "turn/failed", turnId, payload: { error: message } }]);
-			return { ok: false, error: `Debug Turn failed: ${message}` };
+		} finally {
+			this.running.delete(conversationId);
+			// Headless runtime is process-cache ownership only: no LiveSession/
+			// realtime drives its disposal, so release it once the Turn finishes.
+			await this.releaseRuntimeIfUnpinned(conversationId);
 		}
 	}
 
@@ -883,13 +1006,14 @@ export class DebugConversationService {
 		spec: RuntimeSpec,
 		runtimeSpecHash: string,
 		resolvedRevision: number,
+		thinkingLevelOverride: ThinkingLevel | null,
 	): Promise<ConversationRuntime> {
 		const existing = this.runtimes.get(conversationId);
 		if (
 			existing !== undefined &&
 			existing.runtimeSpecHash === runtimeSpecHash &&
 			existing.resolvedRevision === resolvedRevision &&
-			existing.conversationEffort === null
+			existing.thinkingLevelOverride === thinkingLevelOverride
 		) {
 			return existing.runtime;
 		}
@@ -897,7 +1021,14 @@ export class DebugConversationService {
 			await existing.runtime.close().catch(() => {});
 			this.runtimes.delete(conversationId);
 		}
-		const created = await this.openRuntime(conversationId, agentId, spec, runtimeSpecHash, resolvedRevision);
+		const created = await this.openRuntime(
+			conversationId,
+			agentId,
+			spec,
+			runtimeSpecHash,
+			resolvedRevision,
+			thinkingLevelOverride,
+		);
 		this.runtimes.set(conversationId, created);
 		return created.runtime;
 	}
@@ -908,6 +1039,7 @@ export class DebugConversationService {
 		spec: RuntimeSpec,
 		runtimeSpecHash: string,
 		resolvedRevision: number,
+		thinkingLevelOverride: ThinkingLevel | null,
 	): Promise<DebugRuntimeEntry> {
 		const skills: readonly MaterializedSkill[] =
 			this.skillMaterializer === undefined
@@ -923,6 +1055,7 @@ export class DebugConversationService {
 			parameterCapabilities: spec.agent.model.parameterCapabilities,
 			conversationEffort: null,
 		});
+		const effectiveThinkingLevel = thinkingLevelOverride ?? resolved.thinkingLevel;
 		const scope: ScopeContext = {
 			tenantId: this.tenantId,
 			publishedAppId: conversationId as unknown as ScopeContext["publishedAppId"],
@@ -944,17 +1077,23 @@ export class DebugConversationService {
 		// RuntimeSpec, the runtimeSpecHash, this conversation row, or any
 		// persisted tool event.
 		const customTools = this.createMcpTools === undefined ? [] : await this.createMcpTools(spec, scope);
+		const allowedBuiltinToolNames = spec.capabilities.tools.map((tool) => {
+			const entry = this.catalog.tools.find((candidate) => candidate.id === tool.id);
+			if (entry === undefined) throw new Error(`RuntimeSpec contains an unknown builtin Tool id: ${tool.id}`);
+			return entry.name;
+		});
 		const session = await this.createSession({
 			id: conversationId,
 			model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
-			...(resolved.thinkingLevel !== undefined ? { thinkingLevel: resolved.thinkingLevel } : {}),
+			...(effectiveThinkingLevel !== undefined ? { thinkingLevel: effectiveThinkingLevel } : {}),
 			streamOptions: resolved.streamOptions,
 			...(customTools.length > 0 ? { customTools } : {}),
+			allowedToolNames: [...allowedBuiltinToolNames, ...customTools.map((tool) => tool.name)],
 			systemPrompt: spec.agent.systemPrompt,
 			...(skills.length > 0 ? { skills } : {}),
 		});
 		const runtime = new ConversationRuntime({ scope, spec, session });
-		return { runtime, runtimeSpecHash, resolvedRevision, conversationEffort: null };
+		return { runtime, runtimeSpecHash, resolvedRevision, thinkingLevelOverride };
 	}
 
 	/**
@@ -976,16 +1115,24 @@ export class DebugConversationService {
 		return { repositories: this.repositories, catalog: this.catalog };
 	}
 
+	private conversationRef(conversationId: DebugConversationId) {
+		return {
+			tenantId: this.tenantId,
+			ownerPrincipalId: this.ownerPrincipalId,
+			debugConversationId: conversationId,
+		};
+	}
+
 	private async appendAll(
 		conversationId: DebugConversationId,
 		events: readonly { readonly eventType: string; readonly turnId?: TurnId; readonly payload: unknown }[],
 	): Promise<boolean> {
 		for (const event of events) {
-			const appended = await this.debug.events.append(
-				{ tenantId: this.tenantId, debugConversationId: conversationId },
-				conversationId,
-				{ eventType: event.eventType, turnId: event.turnId ?? null, payload: event.payload },
-			);
+			const appended = await this.debug.events.append(this.conversationRef(conversationId), conversationId, {
+				eventType: event.eventType,
+				turnId: event.turnId ?? null,
+				payload: event.payload,
+			});
 			if (appended === undefined) return false;
 		}
 		return true;

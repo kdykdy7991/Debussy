@@ -628,11 +628,7 @@ export function AdminConversationsIndexView(): React.ReactElement {
 										/>
 									</div>
 									<div className={styles.rangeActions}>
-										<button
-											type="button"
-											className={styles.rangeGhost}
-											onClick={() => setRangeOpen(false)}
-										>
+										<button type="button" className={styles.rangeGhost} onClick={() => setRangeOpen(false)}>
 											取消
 										</button>
 										<button type="button" className={styles.rangeApply} onClick={commitCustomRange}>

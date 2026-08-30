@@ -13,7 +13,7 @@
  * 路径只使用 `path` 字段（去掉 `?query` 与 `#hash`），route id 解析在
  * `parseRoute` 中按最长前缀匹配；空路径 / `/` 走 Agent 列表（Chat 入口
  * 已从侧边栏移除，新的默认工作台落点是 Agent 列表）；`/chat` 仍保留
- * 直达路由，方便 Agent 详情/调试页"打开管理台 Chat"按钮跳转；
+ * 直达路由，作为 Agent 模块下的上下文调试页（不单列侧边栏入口）；
  * 未知路径回落到 Agent 列表。
  */
 
@@ -64,8 +64,8 @@ export function parseRoute(path: string): AdminRoute {
 	if (path === "" || path === "/" || path === r.conversation) {
 		return { id: "agents", path: r.agents, params: {} };
 	}
-	// 保留 `/chat` 直达路由，给 Agent 详情/调试页的"打开管理台 Chat"
-	// 按钮一个稳定的着陆点。侧边栏不显示 Chat 项，用户不会主动走到这。
+	// 保留 `/chat` 直达路由，给 Agent 详情页的“调试”操作一个稳定着陆点。
+	// 侧边栏不显示 Chat 项；Shell 会继续高亮 Agent，表明页面归属。
 	if (path === "/chat") {
 		return { id: "chat", path: "/chat", params: {} };
 	}

@@ -45,6 +45,7 @@ import {
 	type DebugConversationId,
 	fromPublicId,
 	newAgentDefinitionId,
+	newTurnId,
 	type PrincipalId,
 	type TenantId,
 	toPublicId,
@@ -899,5 +900,19 @@ describe.skipIf(!pgUp)("DebugConversation Phase 2A — Tool/MCP realtime + persi
 			expect(payload).not.toHaveProperty("content");
 			expect(payload).not.toHaveProperty("output");
 		}
+	});
+
+	it("G. headless execution uses the same tool lifecycle persistence core as realtime", async () => {
+		const { agentPublic } = freshAgent();
+		const { convId } = await createConversation(agentPublic);
+		stack.capture.toolPlans.push({ name: "read", output: [{ type: "text", text: "HEADLESS" }] });
+		const result = await stack.service.executeTurn(convId, "headless tool", newTurnId());
+		expect(result.ok).toBe(true);
+		const events = await stack.service.listEvents(convId);
+		expect(
+			events
+				.filter((event) => event.eventType === "tool/call" || event.eventType === "tool/result")
+				.map((event) => event.eventType),
+		).toEqual(["tool/call", "tool/result"]);
 	});
 });

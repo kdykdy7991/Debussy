@@ -295,6 +295,38 @@ describe("CodingAgentPiSessionBackend", () => {
 		await runtime.dispose();
 	});
 
+	test("frozen Tool allowlist removes a builtin while retaining current MCP tools", async () => {
+		const { backend } = await makeHarness();
+		const mcpTool: ToolDefinition = {
+			name: "mcp_search",
+			label: "MCP Search",
+			description: "Search through MCP.",
+			parameters: { type: "object", properties: {} },
+			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: null }),
+		};
+		const v1 = await backend.createSession({
+			id: "debug-tools-v1",
+			model: { provider: "faux", id: "faux-1" },
+			allowedToolNames: ["read", "write", "mcp_search"],
+			customTools: [mcpTool],
+		});
+		const v1Tools = (v1 as unknown as { session: { _toolRegistry: Map<string, unknown> } }).session._toolRegistry;
+		expect([...v1Tools.keys()].sort()).toEqual(["mcp_search", "read", "write"]);
+		await v1.dispose();
+
+		const v2 = await backend.createSession({
+			id: "debug-tools-v2",
+			model: { provider: "faux", id: "faux-1" },
+			allowedToolNames: ["read", "mcp_search"],
+			customTools: [mcpTool],
+		});
+		const v2Tools = (v2 as unknown as { session: { _toolRegistry: Map<string, unknown> } }).session._toolRegistry;
+		expect(v2Tools.has("read")).toBe(true);
+		expect(v2Tools.has("mcp_search")).toBe(true);
+		expect(v2Tools.has("write")).toBe(false);
+		await v2.dispose();
+	});
+
 	test("listSessions returns one row when legacy files reuse the same assigned id", async () => {
 		const { backend, faux } = await makeHarness();
 		faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);

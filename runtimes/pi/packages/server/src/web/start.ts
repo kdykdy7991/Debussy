@@ -165,6 +165,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	let debugConversationService: DebugConversationService | undefined;
 	let debugConversationHandler: HttpRequestHandler | undefined;
 	let debugRealtime: DebugConversationRealtime | undefined;
+	let debugSweepTimer: ReturnType<typeof setInterval> | undefined;
 	if (publishing.enabled) {
 		// 33.1/33.2: missing token / db / bootstrap config fails startup.
 		controlPlane = await composeControlPlane({
@@ -200,6 +201,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				thinkingLevel: options.thinkingLevel,
 				streamOptions: options.streamOptions,
 				customTools: options.customTools,
+				allowedToolNames: options.allowedToolNames,
 				...(options.systemPrompt !== undefined || (options.skills?.length ?? 0) > 0
 					? {
 							resourceOverrides: {
@@ -242,10 +244,33 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			createMcpTools: debugMcpTools,
 			tenantId: controlPlane.tenantId,
 			citations,
+			attachments,
+			reportError: (error) => console.error("[debug-gc]", error),
 			// Phase 1: a single admin owner per tenant reuses the control-plane
 			// tenant id as the Debug conversation owner key.
 			ownerPrincipalId: controlPlane.tenantId as unknown as import("../publishing/domain/ids.ts").PrincipalId,
 		});
+		// Phase 2F lifecycle sweep: recover rows that expired while the server
+		// was down (older than the sliding TTL), then purge soft-deleted rows
+		// past their physical-GC grace window.
+		const sweepCutoff = () => new Date(Date.now() - resolved.lifecycle.debugConversationTtlMs);
+		await debugConversationService
+			.expireIdleSessions(sweepCutoff())
+			.catch((error: unknown) => console.error("[debug-gc] startup expire failed", error));
+		await debugConversationService
+			.gcPhysical(new Date(Date.now() - resolved.lifecycle.debugConversationGcGraceMs))
+			.catch((error: unknown) => console.error("[debug-gc] startup gc failed", error));
+		// Periodic background sweep so long-idle servers converge without a
+		// restart. Unref'd so it never blocks process exit.
+		debugSweepTimer = setInterval(() => {
+			void debugConversationService!
+				.expireIdleSessions(sweepCutoff())
+				.catch((error: unknown) => console.error("[debug-gc] periodic expire failed", error));
+			void debugConversationService!
+				.gcPhysical(new Date(Date.now() - resolved.lifecycle.debugConversationGcGraceMs))
+				.catch((error: unknown) => console.error("[debug-gc] periodic gc failed", error));
+		}, resolved.lifecycle.debugConversationSweepIntervalMs);
+		debugSweepTimer.unref();
 		debugConversationHandler = createAdminDebugConversationHandler({
 			service: debugConversationService,
 			isAuthorized: (request) => controlPlane!.isAuthorized(request),
@@ -382,6 +407,10 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				} catch (error) {
 					log(`error during debugConversationService.close: ${formatError(error)}`);
 				}
+				if (debugSweepTimer !== undefined) {
+					clearInterval(debugSweepTimer);
+					debugSweepTimer = undefined;
+				}
 			}
 			if (controlPlane !== undefined) {
 				try {
@@ -418,6 +447,14 @@ interface ResolvedOptions {
 	agentDir: string;
 	sessionDir: string;
 	allowedCwds: readonly string[];
+	lifecycle: DebugLifecycleSettings;
+}
+
+/** Phase 2F: DebugConversation sliding-TTL lifecycle knobs. */
+interface DebugLifecycleSettings {
+	readonly debugConversationTtlMs: number;
+	readonly debugConversationGcGraceMs: number;
+	readonly debugConversationSweepIntervalMs: number;
 }
 
 /** @internal Exported for configuration regression tests. */
@@ -486,7 +523,26 @@ export function resolveOptions(options: StartWebServerOptions): ResolvedOptions 
 		agentDir,
 		sessionDir,
 		allowedCwds,
+		lifecycle: resolveDebugLifecycle(),
 	};
+}
+
+/** Debug lifecycle defaults + env overrides: TTL, physical-GC grace, sweep cadence. */
+function resolveDebugLifecycle(): DebugLifecycleSettings {
+	const ttlDays = positiveIntFromEnv(process.env.PI_DEBUG_CONVERSATION_TTL_DAYS, 30);
+	const graceDays = positiveIntFromEnv(process.env.PI_DEBUG_CONVERSATION_GC_GRACE_DAYS, 7);
+	const sweepMs = positiveIntFromEnv(process.env.PI_DEBUG_CONVERSATION_SWEEP_SECONDS, 3600) * 1_000;
+	return {
+		debugConversationTtlMs: ttlDays * 24 * 60 * 60 * 1_000,
+		debugConversationGcGraceMs: graceDays * 24 * 60 * 60 * 1_000,
+		debugConversationSweepIntervalMs: sweepMs,
+	};
+}
+
+function positiveIntFromEnv(value: string | undefined, fallback: number): number {
+	if (value === undefined) return fallback;
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function createUpgradeAuthorization(

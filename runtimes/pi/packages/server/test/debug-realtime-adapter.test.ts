@@ -23,6 +23,7 @@ import {
 	type AgentDefinitionId,
 	fromPublicId,
 	newAgentDefinitionId,
+	newTurnId,
 	type PrincipalId,
 	type TenantId,
 } from "../src/publishing/domain/ids.ts";
@@ -62,6 +63,7 @@ const AGENT_ID = (fromPublicId("AgentDefinitionId", `agent_${newAgentDefinitionI
 
 interface Capture {
 	created: number;
+	createdThinkingLevels: Array<string | undefined>;
 	prompts: PromptInput[];
 	blockOnPrompt: boolean;
 	/** When true the fake streams a `thinking` delta and finishes with a thinking part. */
@@ -75,6 +77,7 @@ interface FakeSession extends PiSessionRuntime {
 function makeSessionFactory(capture: Capture): (opts: unknown) => Promise<FakeSession> {
 	return async (opts: unknown) => {
 		capture.created += 1;
+		capture.createdThinkingLevels.push((opts as { thinkingLevel?: string }).thinkingLevel);
 		const id = (opts as { id: string }).id;
 		const items: Array<Record<string, unknown>> = [];
 		const listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
@@ -202,6 +205,12 @@ function makeDebugRepos(): DebugRepositories {
 				(rec as { status: string }).status = status;
 				return true;
 			},
+			// Phase 2E: minimal listByScope mirror. The realtime adapter test
+			// does not exercise the History list, but the interface change in
+			// `DebugConversationRepository` requires the method to be present.
+			async listByScope() {
+				return [];
+			},
 		},
 		events: {
 			async append(_scope, conversationId, input) {
@@ -299,7 +308,13 @@ function makeService(
 	ownerPrincipalId: PrincipalId,
 	capture?: Capture,
 ): { service: DebugConversationService; realtime: DebugConversationRealtime; capture: Capture } {
-	const cap = capture ?? { created: 0, prompts: [], blockOnPrompt: false, emitThinking: false };
+	const cap = capture ?? {
+		created: 0,
+		createdThinkingLevels: [],
+		prompts: [],
+		blockOnPrompt: false,
+		emitThinking: false,
+	};
 	const service = new DebugConversationService({
 		repositories: publishing.repositories,
 		debug: repos,
@@ -374,7 +389,7 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 
 		// Single terminal: interrupted only, no end/failed.
 		const events = await service.listEvents(conv.debugConversationId);
-		expect(eventTypes(events)).toEqual(["turn/start", "user/message", "turn/interrupted"]);
+		expect(eventTypes(events)).toEqual(["turn/start", "user/message", "assistant/message", "turn/interrupted"]);
 		const terminals = events.filter((e) => ["turn/end", "turn/failed", "turn/interrupted"].includes(e.eventType));
 		expect(terminals.length).toBe(1);
 		expect(terminals[0]!.eventType).toBe("turn/interrupted");
@@ -536,8 +551,12 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 		await expect(otherTenant.acquire(conv.debugConversationId)).rejects.toThrow();
 
 		// A different owner within the same tenant cannot resolve it either.
-		const { realtime: otherOwner } = makeService(repos, publishing, TENANT_A, OWNER_B);
+		const { service: otherOwnerService, realtime: otherOwner } = makeService(repos, publishing, TENANT_A, OWNER_B);
 		await expect(otherOwner.acquire(conv.debugConversationId)).rejects.toThrow();
+		expect(await otherOwnerService.listEvents(conv.debugConversationId)).toEqual([]);
+		expect(await otherOwnerService.executeTurn(conv.debugConversationId, "forbidden", newTurnId())).toMatchObject({
+			ok: false,
+		});
 	});
 
 	it("P2B-A. thinking delta reaches the adapter subscriber (kind=thinking)", async () => {
@@ -603,10 +622,26 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 
 		// turn/interrupted is the single terminal; no assistant/message + turn/end.
 		const events = await service.listEvents(conv.debugConversationId);
-		expect(events.map((e) => e.eventType)).toEqual(["turn/start", "user/message", "turn/interrupted"]);
+		expect(events.map((e) => e.eventType)).toEqual([
+			"turn/start",
+			"user/message",
+			"assistant/message",
+			"turn/interrupted",
+		]);
 		const terminals = events.filter((e) => ["turn/end", "turn/failed", "turn/interrupted"].includes(e.eventType));
 		expect(terminals.length).toBe(1);
 		expect(terminals[0]!.eventType).toBe("turn/interrupted");
+
+		// Runtime/cache loss rebuilds the same interrupted partial from durable events.
+		await adapter.dispose();
+		const rebuilt = await realtime.acquire(conv.debugConversationId);
+		const recovered = rebuilt.snapshot().transcript.find((item) => item.role === "assistant");
+		expect(recovered?.status).toBe("aborted");
+		expect(recovered?.content.find((part) => part.type === "thinking")).toMatchObject({
+			type: "thinking",
+			thinking: "considered",
+		});
+		expect(recovered?.content.find((part) => part.type === "text")).toBeTruthy();
 	});
 
 	it("P2B-F. next Turn after abort streams normally", async () => {
@@ -654,6 +689,25 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 		const second = turnStarts[1]!.payload as { thinkingLevel?: string };
 		expect(first.thinkingLevel).toBe("high");
 		expect(second.thinkingLevel).toBe("off");
+	});
+
+	it("applies the realtime Debug thinking override to the next Turn", async () => {
+		const repos = makeDebugRepos();
+		const publishing = makePublishing([
+			{ revision: 1, model: MODEL_A, params: { reasoning: { enabled: true, effort: "medium" } } },
+		]);
+		const { service, realtime, capture } = makeService(repos, publishing, TENANT_A, OWNER_A);
+		const conv = await service.createNew(AGENT_ID);
+		const adapter = await realtime.acquire(conv.debugConversationId);
+
+		await adapter.setThinking("high");
+		expect(adapter.snapshot().thinkingLevel).toBe("high");
+		await adapter.prompt({ text: "use high" });
+
+		expect(capture.createdThinkingLevels).toEqual(["high"]);
+		const events = await service.listEvents(conv.debugConversationId);
+		const turnStart = events.find((event) => event.eventType === "turn/start");
+		expect((turnStart?.payload as { thinkingLevel?: string }).thinkingLevel).toBe("high");
 	});
 
 	it("P2C-A. attachmentIds forwarded from Composer through adapter.prompt to the inner runtime.prompt input", async () => {

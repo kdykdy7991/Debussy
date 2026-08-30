@@ -420,9 +420,7 @@ describe("PiServer Unix integration", () => {
 			},
 		};
 		runtime.emitProgress(itemStarted);
-		await client.next(
-			(message) => message.type === "event" && message.event.type === "session_progress",
-		);
+		await client.next((message) => message.type === "event" && message.event.type === "session_progress");
 
 		// 2. The LLM errors out. Server pushes `item_finished` with
 		//    status="error"; `applyProgress` again sets phase="turn".
@@ -440,9 +438,7 @@ describe("PiServer Unix integration", () => {
 			},
 		};
 		runtime.emitProgress(itemFinished);
-		await client.next(
-			(message) => message.type === "event" && message.event.type === "session_progress",
-		);
+		await client.next((message) => message.type === "event" && message.event.type === "session_progress");
 
 		// 3. Operation's `finally` block fires — runtime is now idle, and the
 		//    server emits a snapshot. The snapshot MUST report phase="idle"

@@ -103,6 +103,8 @@ export class SessionController implements SessionBrowserStore {
 	#uploadSequence = 0;
 	#pendingProgress: Extract<TranscriptProgress, { type: "assistant_delta" }>[] = [];
 	#progressTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Assistant error ids already auto-aborted; guards duplicate terminal events. */
+	#autoAbortedMessageIds = new Set<string>();
 	/**
 	 * Citations per Turn (`turnId -> citations`), sourced from the Debug read
 	 * path's realtime `citation_snapshot` event. Kept authoritative at the
@@ -167,6 +169,43 @@ export class SessionController implements SessionBrowserStore {
 	async selectSession(sessionId: string): Promise<void> {
 		if (this.#activeHandle?.id === sessionId && this.#activeHandle.active) return;
 		await this.#activate(() => this.#client.attachSession(sessionId));
+	}
+
+	/**
+	 * Phase 2E: release the active handle and reset the snapshot to an
+	 * unattached state WITHOUT disposing the controller. Used by the Admin
+	 * Debug "New Conversation" button: clear the current binding, keep the
+	 * WS connection alive, and let the next send lazily create + attach a
+	 * brand-new conversation. The upload state (pending-attach chips) is
+	 * preserved so a file selected before clicking "New" can still ride the
+	 * first send — that is the same lazy-attach behaviour the controller
+	 * already documents.
+	 *
+	 * Bumps `#operation` so any in-flight prompt that outlives this release
+	 * cannot write back into the empty snapshot (mirrors the
+	 * `#runSessionAction` operation-generation guard).
+	 */
+	async resetActive(): Promise<void> {
+		this.#operation += 1;
+		this.#clearPendingProgress();
+		this.#autoAbortedMessageIds.clear();
+		this.#citationsByTurn.clear();
+		const previous = this.#activeHandle;
+		this.#unsubscribeActive?.();
+		this.#unsubscribeActive = undefined;
+		this.#unsubscribeActiveEvents?.();
+		this.#unsubscribeActiveEvents = undefined;
+		this.#activeHandle = undefined;
+		// Keep the controller's other surface intact: `sessions` (the live
+		// list of summaries), `loading`, the upload chips, and the
+		// listeners set all stay; only `activeSession*` is cleared.
+		this.#setSnapshot({
+			...this.#snapshot,
+			activeSessionId: undefined,
+			activeSession: undefined,
+			submitting: false,
+		});
+		await previous?.dispose();
 	}
 
 	async send(text: string, options?: SessionPromptPayload): Promise<SessionSendResult> {
@@ -338,6 +377,7 @@ export class SessionController implements SessionBrowserStore {
 	async dispose(): Promise<void> {
 		this.#operation += 1;
 		this.#clearPendingProgress();
+		this.#citationsByTurn.clear();
 		this.#unsubscribeClient();
 		this.#listeners.clear();
 		const handle = this.#activeHandle;
@@ -352,6 +392,7 @@ export class SessionController implements SessionBrowserStore {
 	async #activate(acquire: () => Promise<PiSessionHandle>): Promise<void> {
 		const operation = ++this.#operation;
 		this.#clearPendingProgress();
+		this.#citationsByTurn.clear();
 		this.#setSnapshot({ ...this.#snapshot, loading: true, error: undefined });
 		try {
 			const previous = this.#activeHandle;
@@ -479,6 +520,19 @@ export class SessionController implements SessionBrowserStore {
 			sessions: upsertSession(this.#snapshot.sessions, session),
 			activeSession: session,
 		});
+		const progress = event.progress;
+		if (
+			progress.type === "item_finished" &&
+			progress.item.role === "assistant" &&
+			progress.item.status === "error" &&
+			!this.#autoAbortedMessageIds.has(progress.item.id)
+		) {
+			this.#autoAbortedMessageIds.add(progress.item.id);
+			// An assistant error is a terminal Turn outcome. Abort is idempotent
+			// and releases a provider/post-run path that may still be hanging after
+			// a timeout; the UI has already moved to idle via applyTranscriptProgress.
+			void this.#activeHandle?.abort().catch(() => {});
+		}
 	}
 
 	#flushPendingProgress(): void {
@@ -613,9 +667,13 @@ function applyTranscriptProgress(session: SessionSnapshot, progress: TranscriptP
 		});
 		return changed ? { ...session, phase: "turn", transcript } : session;
 	}
+	const terminalAssistant =
+		progress.type === "item_finished" &&
+		progress.item.role === "assistant" &&
+		(progress.item.status === "error" || progress.item.status === "aborted");
 	return {
 		...session,
-		phase: "turn",
+		phase: terminalAssistant ? "idle" : "turn",
 		transcript: upsertTranscriptItem(session.transcript, progress.item),
 	};
 }

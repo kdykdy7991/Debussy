@@ -12,6 +12,9 @@ import { computeDebugPayloadBytes } from "../../../publishing/debug/payload.ts";
 import type {
 	DebugConversationEventListParams,
 	DebugConversationEventRecord,
+	DebugConversationEventRepository,
+	DebugConversationListItem,
+	DebugConversationListParams,
 	DebugConversationRecord,
 	DebugConversationRef,
 	DebugConversationRepository,
@@ -38,6 +41,7 @@ function rowToConversation(row: Record<string, unknown>): DebugConversationRecor
 		lastEventSequence: Number(row.last_event_sequence),
 		createdAt: row.created_at as Date,
 		lastActiveAt: row.last_active_at as Date,
+		deletedAt: (row.deleted_at as Date | null) ?? null,
 	};
 }
 
@@ -59,8 +63,8 @@ export function createDebugConversationRepository(client: PostgresClient): Debug
 		async insert(record) {
 			await client.run(
 				`insert into debug_conversations
-				 (id, tenant_id, agent_id, owner_principal_id, status, last_event_sequence, created_at, last_active_at)
-				 values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				 (id, tenant_id, agent_id, owner_principal_id, status, last_event_sequence, created_at, last_active_at, deleted_at)
+				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 				record.debugConversationId,
 				record.tenantId,
 				record.agentId,
@@ -69,6 +73,7 @@ export function createDebugConversationRepository(client: PostgresClient): Debug
 				record.lastEventSequence,
 				record.createdAt,
 				record.lastActiveAt,
+				record.deletedAt,
 			);
 		},
 		async getRecentActive(scope: DebugConversationScope) {
@@ -87,23 +92,124 @@ export function createDebugConversationRepository(client: PostgresClient): Debug
 		async getByRef(scope: DebugConversationRef) {
 			const rows = await client.run(
 				`select * from debug_conversations
-				 where id = $1 and tenant_id = $2
-				 limit 1`,
+					 where id = $1 and tenant_id = $2 and owner_principal_id = $3
+					 limit 1`,
 				scope.debugConversationId,
 				scope.tenantId,
+				scope.ownerPrincipalId,
 			);
 			return rows.length === 1 ? rowToConversation(rows[0]!) : undefined;
 		},
 		async setStatus(scope: DebugConversationRef, status) {
 			const rows = await client.run(
 				`update debug_conversations set status = $3
-				 where id = $1 and tenant_id = $2 and status = 'active'
-				 returning id`,
+					 where id = $1 and tenant_id = $2 and owner_principal_id = $4 and status = 'active'
+					 returning id`,
 				scope.debugConversationId,
 				scope.tenantId,
 				status,
+				scope.ownerPrincipalId,
 			);
 			return rows.length === 1;
+		},
+		// Phase 2E: History list. Single round trip with a LATERAL subquery
+		// joining the first `user/message` event's payload->>'text' as the
+		// preview. `IS NOT DISTINCT FROM` keeps the scope correct for both
+		// agent-bound and null-agent conversations (the service only ever calls
+		// this with a real agentId in 2E, but the predicate matches the other
+		// debug reads).
+		async listByScope(params: DebugConversationListParams) {
+			const limit = Math.min(Math.max(params.limit, 1), 100);
+			const rows = await client.run(
+				`select c.id, c.tenant_id, c.agent_id, c.owner_principal_id,
+				        c.status, c.last_event_sequence, c.created_at, c.last_active_at,
+				        first_user.text as first_user_text
+				   from debug_conversations c
+				   left join lateral (
+				     select (e.payload ->> 'text') as text
+				       from debug_conversation_events e
+				      where e.debug_conversation_id = c.id
+				        and e.event_type = 'user/message'
+				      order by e.sequence asc
+				      limit 1
+				   ) first_user on true
+				  where c.tenant_id = $1
+				    and c.owner_principal_id = $2
+				    and c.agent_id is not distinct from $3
+				    and c.status = 'active'
+				  order by c.last_active_at desc, c.id desc
+				  limit $4`,
+				params.tenantId,
+				params.ownerPrincipalId,
+				params.agentId,
+				limit,
+			);
+			return rows.map((row) => {
+				const previewRaw = row.first_user_text;
+				const preview = typeof previewRaw === "string" && previewRaw.length > 0 ? previewRaw : null;
+				return {
+					conversation: rowToConversation(row),
+					firstUserMessagePreview: preview,
+				} satisfies DebugConversationListItem;
+			});
+		},
+		async expireActiveBefore(scope, cutoff) {
+			const rows = await client.run(
+				`update debug_conversations
+				    set status = 'deleted', deleted_at = now()
+				  where tenant_id = $1
+				    and owner_principal_id = $2
+				    and status = 'active'
+				    and last_active_at < $3
+				  returning id`,
+				scope.tenantId,
+				scope.ownerPrincipalId,
+				cutoff,
+			);
+			return rows.map((row) => row.id as DebugConversationId);
+		},
+		async listDeletedBefore(scope, cutoff) {
+			const rows = await client.run(
+				`select * from debug_conversations
+				  where tenant_id = $1
+				    and owner_principal_id = $2
+				    and status = 'deleted'
+				    and deleted_at is not null
+				    and deleted_at < $3
+				  order by deleted_at asc
+				  limit 10_000`,
+				scope.tenantId,
+				scope.ownerPrincipalId,
+				cutoff,
+			);
+			return rows.map((row) => rowToConversation(row));
+		},
+		async deletePhysical(scope, conversationId) {
+			return client.transaction(async (tx) => {
+				const gone = await txRows(
+					tx,
+					`delete from debug_conversation_events
+					  where debug_conversation_id = $1
+					    and exists (
+					      select 1 from debug_conversations c
+						       where c.id = $1 and c.tenant_id = $2 and c.owner_principal_id = $3
+					    )`,
+					conversationId,
+					scope.tenantId,
+					scope.ownerPrincipalId,
+				);
+				const removed = await txRows(
+					tx,
+					`delete from debug_conversations
+						  where id = $1 and tenant_id = $2 and owner_principal_id = $3
+					  returning id`,
+					conversationId,
+					scope.tenantId,
+					scope.ownerPrincipalId,
+				);
+				void gone;
+				return removed.length === 1;
+			});
 		},
 	};
 }
@@ -120,10 +226,11 @@ export function createDebugConversationEventRepository(client: PostgresClient): 
 					tx,
 					`update debug_conversations
 					 set last_event_sequence = last_event_sequence + 1, last_active_at = now()
-					 where id = $1 and tenant_id = $2 and status = 'active'
+						 where id = $1 and tenant_id = $2 and owner_principal_id = $3 and status = 'active'
 					 returning last_event_sequence`,
 					conversationId,
 					scope.tenantId,
+					scope.ownerPrincipalId,
 				);
 				if (bumped.length !== 1) return undefined;
 				const sequence = Number(bumped[0]!.last_event_sequence);
@@ -159,14 +266,15 @@ export function createDebugConversationEventRepository(client: PostgresClient): 
 			const rows = await client.run(
 				`select e.* from debug_conversation_events e
 				 join debug_conversations c on c.id = e.debug_conversation_id
-				 where e.debug_conversation_id = $1 and c.tenant_id = $2
-				   and e.sequence > $3
+					 where e.debug_conversation_id = $1 and c.tenant_id = $2
+					   and c.owner_principal_id = $5 and e.sequence > $3
 				 order by e.sequence asc
 				 limit $4`,
 				scope.debugConversationId,
 				scope.tenantId,
 				params.afterSequence ?? 0,
 				limit,
+				scope.ownerPrincipalId,
 			);
 			return rows.map((row) => rowToEvent(row));
 		},

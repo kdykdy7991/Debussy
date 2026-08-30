@@ -1,12 +1,19 @@
 /**
- * Debug Conversation control HTTP handler (Phase 1, admin workbench).
+ * Debug Conversation control HTTP handler (Phase 1 + 2E, admin workbench).
  *
  * Routes (all behind control-plane admin auth):
  *
- *   GET  /api/control/v1/debug-conversations?agentId=<public>  resume most recent active
- *   POST /api/control/v1/debug-conversations { agentId }       create a NEW active conversation
- *   GET  /api/control/v1/debug-conversations/{id}/events       list events (reload restore)
+ *   GET  /api/control/v1/debug-conversations?agentId=<id>&limit=<n>
+ *                                                                  list active history
+ *   GET  /api/control/v1/debug-conversations/recent?agentId=<id>  resume most recent active
+ *   POST /api/control/v1/debug-conversations { agentId }          create a NEW active conversation
+ *   GET  /api/control/v1/debug-conversations/{id}/events          list events (reload restore)
  *   POST /api/control/v1/debug-conversations/{id}/messages { text, turnId? }  execute a turn
+ *
+ * Phase 2E convention: the base collection path is `GET` = list (matches the
+ * production `GET /api/control/v1/conversations` style); the singular "resume
+ * most recent" is its own sub-path so the two never collide on query-param
+ * heuristics.
  *
  * Revision is resolved server-side per Turn (`followLatest`); the client never
  * submits a revision number, so changing an Agent revision keeps the same
@@ -22,6 +29,7 @@ import type { DebugConversationService } from "./service.ts";
 import type { DebugConversationEventRecord, DebugConversationRecord } from "./types.ts";
 
 const BASE = "/api/control/v1/debug-conversations";
+const RECENT_PATTERN = /^\/api\/control\/v1\/debug-conversations\/recent$/;
 const MESSAGE_PATTERN = /^\/api\/control\/v1\/debug-conversations\/([^/]+)\/messages$/;
 const EVENTS_PATTERN = /^\/api\/control\/v1\/debug-conversations\/([^/]+)\/events$/;
 const MAX_BODY_BYTES = 128 * 1024;
@@ -42,7 +50,22 @@ export function createAdminDebugConversationHandler(options: {
 		}
 		try {
 			const query = queryAgentId(request);
+			// Phase 2E: GET on the base path is the History list (collection
+			// semantics, matching `GET /api/control/v1/conversations`).
 			if (request.method === "GET" && pathname === BASE) {
+				const agentId = parseAgentId(query);
+				if (agentId === null) {
+					return badRequest(response, requestId, "agentId is required for debug conversation list");
+				}
+				const limit = queryLimit(request);
+				const items = await service.listHistory(agentId, limit);
+				jsonBody(response, 200, { data: { items }, requestId });
+				return true;
+			}
+			// Phase 2E: resume-most-recent moved to a dedicated sub-path so the
+			// list endpoint and the resume endpoint never share query semantics.
+			const recentMatch = pathname.match(RECENT_PATTERN);
+			if (request.method === "GET" && recentMatch !== null) {
 				const agentId = parseAgentId(query);
 				const conversation = agentId === null ? undefined : await service.resume(agentId);
 				const events = conversation === undefined ? [] : await service.listEvents(conversation.debugConversationId);
@@ -77,7 +100,13 @@ export function createAdminDebugConversationHandler(options: {
 					typeof body.value.turnId === "string" && body.value.turnId.length > 0
 						? (parseId("TurnId", body.value.turnId) ?? undefined)
 						: undefined;
-				const result = await service.executeTurn(conversationId, text, turnId);
+				const attachmentIds = Array.isArray(body.value.attachmentIds)
+					? body.value.attachmentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+					: undefined;
+				if (Array.isArray(body.value.attachmentIds) && attachmentIds?.length !== body.value.attachmentIds.length) {
+					return invalid(response, requestId);
+				}
+				const result = await service.executeTurn(conversationId, text, turnId, { attachmentIds });
 				if (!result.ok) {
 					jsonBody(response, 422, errorEnvelope("DEBUG_TURN_FAILED", result.error, requestId, false));
 					return true;
@@ -134,6 +163,20 @@ function queryAgentId(request: IncomingMessage): string | null {
 	return url?.searchParams.get("agentId") ?? null;
 }
 
+/**
+ * Phase 2E: optional `?limit=N` on the History list. The service layer
+ * re-clamps the value; this parser only returns `undefined` for absent /
+ * non-integer / negative input so the service picks the default.
+ */
+function queryLimit(request: IncomingMessage): number | undefined {
+	const url = safeUrl(request.url);
+	const raw = url?.searchParams.get("limit");
+	if (raw === null || raw === undefined || raw === "") return undefined;
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed < 1) return undefined;
+	return parsed;
+}
+
 function queryAfterSequence(request: IncomingMessage): number {
 	const url = safeUrl(request.url);
 	const raw = url?.searchParams.get("afterSequence");
@@ -179,6 +222,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function invalid(response: Parameters<HttpRequestHandler>[1], requestId: string): true {
 	jsonBody(response, 400, errorEnvelope("INVALID_REQUEST", "Invalid debug conversation request", requestId, false));
+	return true;
+}
+
+function badRequest(response: Parameters<HttpRequestHandler>[1], requestId: string, message: string): true {
+	jsonBody(response, 400, errorEnvelope("INVALID_REQUEST", message, requestId, false));
 	return true;
 }
 

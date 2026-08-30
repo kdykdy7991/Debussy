@@ -77,6 +77,16 @@ function groupTurns(transcript: readonly TranscriptItem[]): TurnUnit[] {
 	return units;
 }
 
+/**
+ * A settled session whose last user Turn has no assistant item is not loading:
+ * the provider failed before producing its first assistant event (timeout,
+ * disconnect, or early rejection). This state survives transcript reloads.
+ */
+export function hasTerminalOrphanedTurn(active: SessionSnapshot): boolean {
+	const currentTurn = groupTurns(active.transcript).at(-1);
+	return active.phase === "idle" && currentTurn?.user !== undefined && currentTurn.assistant === undefined;
+}
+
 export function AiMessageFlow({
 	active,
 	speech,
@@ -155,8 +165,11 @@ export function ActiveAgentPresence({
 		const timer = window.setTimeout(() => setShowCompleted(false), 1000);
 		return () => window.clearTimeout(timer);
 	}, [showCompleted]);
-	const waitingForAssistant = currentTurn?.user !== undefined && assistant === undefined;
-	const lastAssistantFailed = assistant?.status === "error" || assistant?.status === "aborted";
+	const terminalOrphanedTurn = hasTerminalOrphanedTurn(active);
+	const waitingForAssistant =
+		active.phase !== "idle" && currentTurn?.user !== undefined && assistant === undefined;
+	const lastAssistantFailed =
+		assistant?.status === "error" || assistant?.status === "aborted" || terminalOrphanedTurn;
 	const state = waking
 		? "waking"
 		: reaction

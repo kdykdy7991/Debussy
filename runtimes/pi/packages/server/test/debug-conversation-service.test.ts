@@ -74,11 +74,25 @@ function createFakeDebugRepos(): DebugRepositories {
 	const byId = new Map<string, DebugConversationRecord>();
 	const eventsByConv = new Map<string, DebugConversationEventRecord[]>();
 	const eventCounters = new Map<string, number>();
+	// Monotonically-advancing clock so the Phase 2E History list test can
+	// distinguish per-event `lastActiveAt` ticks on fast machines where
+	// `Date.now()` would otherwise return the same millisecond for the
+	// entire turn. Each `append` (and each `createNew`) advances this by
+	// 1ms; the assertion in the test is "newest first", not "real time".
+	let tick = 0;
+	const nextTick = (): Date => {
+		tick += 1;
+		return new Date(Date.now() + tick);
+	};
 	return {
 		conversations: {
 			async insert(record: DebugConversationRecord) {
 				byId.set(record.debugConversationId, record);
 				eventCounters.set(record.debugConversationId, 0);
+				// Stagger the `lastActiveAt` so the History-list ordering test
+				// can distinguish "older" from "newer" without depending on
+				// wall-clock millisecond precision.
+				(record as { lastActiveAt: Date }).lastActiveAt = nextTick();
 			},
 			async getRecentActive(scope) {
 				let best: DebugConversationRecord | undefined;
@@ -103,12 +117,93 @@ function createFakeDebugRepos(): DebugRepositories {
 				rec.status = status;
 				return true;
 			},
+			// Phase 2E in-memory mirror of the PG LATERAL preview join. Orders
+			// by `lastActiveAt DESC, id DESC` and returns the first
+			// `user/message` payload's `text` field as the preview.
+			async listByScope(params) {
+				const limit = Math.min(Math.max(params.limit, 1), 100);
+				const all = [...byId.values()].filter(
+					(rec) =>
+						rec.tenantId === params.tenantId &&
+						rec.ownerPrincipalId === params.ownerPrincipalId &&
+						rec.agentId === params.agentId &&
+						rec.status === "active",
+				);
+				all.sort((a, b) => {
+					if (a.lastActiveAt > b.lastActiveAt) return -1;
+					if (a.lastActiveAt < b.lastActiveAt) return 1;
+					return a.debugConversationId < b.debugConversationId ? -1 : 1;
+				});
+				const sliced = all.slice(0, limit);
+				return sliced.map((conversation) => {
+					const events = eventsByConv.get(conversation.debugConversationId) ?? [];
+					const firstUser = events.find((e) => e.eventType === "user/message");
+					const payload = firstUser?.payload as { text?: unknown } | undefined;
+					const text = typeof payload?.text === "string" ? payload.text : null;
+					return {
+						conversation,
+						firstUserMessagePreview: text !== null && text.length > 0 ? text : null,
+					};
+				});
+			},
+			// Phase 2F in-memory mirror of the PG conditional-UPDATE expire: only
+			// `active` conversations older than `cutoff` are soft-deleted.
+			async expireActiveBefore(scope, cutoff) {
+				const expired: Array<DebugConversationRecord["debugConversationId"]> = [];
+				for (const rec of byId.values()) {
+					if (
+						rec.tenantId === scope.tenantId &&
+						rec.ownerPrincipalId === scope.ownerPrincipalId &&
+						rec.status === "active" &&
+						rec.lastActiveAt < cutoff
+					) {
+						(rec as { status: DebugConversationRecord["status"] }).status = "deleted";
+						(rec as { deletedAt: Date | null }).deletedAt = new Date();
+						expired.push(rec.debugConversationId);
+					}
+				}
+				return expired;
+			},
+			async listDeletedBefore(scope, cutoff) {
+				return [...byId.values()].filter(
+					(rec) =>
+						rec.tenantId === scope.tenantId &&
+						rec.ownerPrincipalId === scope.ownerPrincipalId &&
+						rec.status === "deleted" &&
+						rec.deletedAt !== null &&
+						rec.deletedAt < cutoff,
+				);
+			},
+			async deletePhysical(scope, conversationId) {
+				eventsByConv.delete(conversationId);
+				return byId.delete(conversationId);
+			},
 		},
 		events: {
 			async append(_scope, conversationId, input: DebugConversationEventInput) {
+				// Phase 2F: mirror PG's atomic `status='active'` guard on the
+				// conditional UPDATE — a soft-deleted conversation can no longer
+				// append (so a Turn on it is rejected at persistence time).
+				const guard = byId.get(conversationId);
+				if (guard !== undefined && guard.status !== "active") return undefined;
 				if (!eventCounters.has(conversationId)) eventCounters.set(conversationId, 0);
 				const next = (eventCounters.get(conversationId) ?? 0) + 1;
 				eventCounters.set(conversationId, next);
+				// Mirror the PG atomic-sequence machine: every event append
+				// bumps `last_event_sequence` AND `last_active_at` on the
+				// conversation row. The Phase 2E History list sorts by
+				// `lastActiveAt DESC`, so the fake must surface a real,
+				// monotonically-advancing timestamp or the ordering test
+				// cannot tell c from a.
+				const record = byId.get(conversationId);
+				if (record !== undefined) {
+					(record as { lastEventSequence: number; lastActiveAt: Date }).lastEventSequence = next;
+					// Monotonic clock: each `append` advances the fake's
+					// internal tick so the History list can order turns
+					// deterministically even when the test wall clock has
+					// not moved between events.
+					(record as { lastEventSequence: number; lastActiveAt: Date }).lastActiveAt = nextTick();
+				}
 				const event: DebugConversationEventRecord = {
 					eventId: `devt_${next}` as DebugConversationEventRecord["eventId"],
 					debugConversationId: conversationId,
@@ -135,6 +230,7 @@ function createFakeDebugRepos(): DebugRepositories {
 interface Harness {
 	service: DebugConversationService;
 	capture: Capture;
+	repos: DebugRepositories;
 	advanceRevision(): void;
 	nextTurnId(): ReturnType<typeof newTurnId>;
 }
@@ -149,6 +245,7 @@ function makeHarness(
 ): Harness {
 	let cursor = 0;
 	const capture: Capture = { prompts: [], created: 0 };
+	const repos = createFakeDebugRepos();
 	const publishingRepos = {
 		agentDefinitions: {
 			getLatest: async () => revisionRecord(revisions[cursor]!),
@@ -168,7 +265,7 @@ function makeHarness(
 
 	const service = new DebugConversationService({
 		repositories: publishingRepos,
-		debug: createFakeDebugRepos(),
+		debug: repos,
 		catalog: CATALOG,
 		createSession: (sessionOpts) => {
 			if (opts?.openError !== undefined) throw new Error(opts.openError);
@@ -182,6 +279,7 @@ function makeHarness(
 	return {
 		service,
 		capture,
+		repos,
 		advanceRevision: () => {
 			cursor += 1;
 		},
@@ -261,7 +359,7 @@ describe("DebugConversationService (Phase 1)", () => {
 		expect((turnStart?.payload as { resolutionSource: unknown }).resolutionSource).toBe("followLatest");
 	});
 
-	it("reuses the Runtime on identical spec and rebuilds + carries history on a revision change", async () => {
+	it("rebuilds the Runtime per headless Turn (release-after-2F) and carries history on a revision change", async () => {
 		const { service, capture, advanceRevision, nextTurnId } = makeHarness([
 			{ revision: 1, model: MODEL_A },
 			{ revision: 2, model: MODEL_B },
@@ -269,25 +367,30 @@ describe("DebugConversationService (Phase 1)", () => {
 
 		const conv = await service.createNew(AGENT_ID);
 
+		// Phase 2F: the headless path releases its Runtime after each Turn, so a
+		// fresh session is created per Turn. Continuity is NOT lost — history is
+		// rebuilt from the DB event stream via `restoreContext` on every Turn.
 		// Turn 1 @ rev 1
 		const t1 = await service.executeTurn(conv.debugConversationId, "TurnOne", nextTurnId());
 		expect(t1.ok).toBe(true);
 		expect(capture.created).toBe(1);
 
-		// Turn 2 @ same revision: Runtime reused, history carried.
+		// Turn 2 @ same revision, runtime released after Turn 1: rebuilt, but the
+		// rev-1 history is still injected from events.
 		const t2 = await service.executeTurn(conv.debugConversationId, "TurnTwo", nextTurnId());
 		expect(t2.ok).toBe(true);
-		expect(capture.created).toBe(1);
+		expect(capture.created).toBe(2);
 		const turn2Prompt = capture.prompts[1]!;
 		expect(turn2Prompt.text).toBe("TurnTwo");
 		expect(turn2Prompt.retrieval?.context).toContain("TurnOne");
 		expect(turn2Prompt.retrieval?.context).toContain("echo:TurnOne");
 
-		// Revision change: next Turn rebuilds the Runtime but keeps THIS conversation.
+		// Revision change: next Turn rebuilds the Runtime (already fresh) and
+		// keeps THIS conversation.
 		advanceRevision();
 		const t3 = await service.executeTurn(conv.debugConversationId, "TurnThree", nextTurnId());
 		expect(t3.ok).toBe(true);
-		expect(capture.created).toBe(2);
+		expect(capture.created).toBe(3);
 		const turn3Prompt = capture.prompts[2]!;
 		expect(turn3Prompt.text).toBe("TurnThree");
 		// History from rev-1 turns is still injected (user + assistant text only).
@@ -518,6 +621,41 @@ async function makeRetrievalHarness(): Promise<RetrievalHarness> {
 	return { service, capture, attachments, citations };
 }
 
+/** Like makeRetrievalHarness but also injects the AttachmentStore for GC cleanup. */
+async function makeLifecycleHarness(): Promise<RetrievalHarness> {
+	const dir = mkdtempSync(join(tmpdir(), "pi-debug-lifecycle-"));
+	const attachments = new AttachmentStore(join(dir, "uploads"));
+	await attachments.init();
+	const citationStore = new CitationStore(join(dir, "citations"));
+	await citationStore.init();
+	const citations = new CitationService({ store: citationStore, readContent: attachmentStoreReader(attachments) });
+	const capture: Capture = { prompts: [], created: 0 };
+	const publishingRepos = {
+		agentDefinitions: { getLatest: async () => revisionRecord({ revision: 1, model: MODEL_A }) },
+		skills: { listBindings: async () => [], get: async () => undefined, getRevision: async () => undefined },
+		mcpServers: {
+			listBindings: async () => [],
+			get: async () => undefined,
+			getRevision: async () => undefined,
+			listTools: async () => [],
+		},
+	} as unknown as PublishingRepositories;
+	const service = new DebugConversationService({
+		repositories: publishingRepos,
+		debug: createFakeDebugRepos(),
+		catalog: CATALOG,
+		createSession: async (sessionOpts) => {
+			capture.created += 1;
+			return fakeSession(capture)(sessionOpts);
+		},
+		tenantId: TENANT_ID,
+		ownerPrincipalId: OWNER,
+		citations,
+		attachments,
+	});
+	return { service, capture, attachments, citations };
+}
+
 /** Stage + adopt a text attachment already session-bound and index its Source. */
 async function seedSource(
 	harness: RetrievalHarness,
@@ -570,6 +708,11 @@ describe("DebugConversationService retrieval (Phase 2D read path)", () => {
 		expect(prompt.retrieval?.citations.length ?? 0).toBeGreaterThan(0);
 		expect(prompt.retrieval?.context).toContain("BANANA42");
 		expect(prompt.retrieval?.reference).toContain("guide.txt");
+		expect(
+			(await harness.service.listEvents(conv.debugConversationId)).some(
+				(event) => event.eventType === "citation/updated" && event.turnId === (t1.ok ? t1.turnId : undefined),
+			),
+		).toBe(true);
 	});
 
 	it("retrieves conversation Sources even when the Turn carries no attachmentIds", async () => {
@@ -639,5 +782,223 @@ describe("DebugConversationService retrieval (Phase 2D read path)", () => {
 		if (!result.ok) return;
 		expect(result.citations?.length ?? 0).toBeGreaterThan(0);
 		expect((result.citations ?? []).some((citation) => citation.title === "guide.txt")).toBe(true);
+	});
+});
+
+describe("DebugConversationService.listHistory (Phase 2E)", () => {
+	it("returns active conversations ordered by most recent activity, with the first user message preview joined in one round trip", async () => {
+		const { service, nextTurnId } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		// Three conversations: A is oldest, C is newest. Each gets a single
+		// Turn whose `user/message` payload is the first-user-message preview.
+		const a = await service.createNew(AGENT_ID);
+		const b = await service.createNew(AGENT_ID);
+		const c = await service.createNew(AGENT_ID);
+		for (const [conv, text] of [
+			[a, "first prompt of A — long content " + "x".repeat(120)],
+			[b, "first prompt of B"],
+			[c, "first prompt of C"],
+		] as const) {
+			const r = await service.executeTurn(conv.debugConversationId, text, nextTurnId());
+			expect(r.ok).toBe(true);
+		}
+		const items = await service.listHistory(AGENT_ID);
+		// Newest first.
+		expect(items.map((item) => item.conversationId)).toEqual([
+			toPublicId("DebugConversationId", c.debugConversationId),
+			toPublicId("DebugConversationId", b.debugConversationId),
+			toPublicId("DebugConversationId", a.debugConversationId),
+		]);
+		// Preview is the FIRST `user/message` payload, truncated to ≤ 60 chars
+		// with an ellipsis when longer. No N+1 follow-up: a single repository
+		// call already includes the preview.
+		const aItem = items.find(
+			(item) => item.conversationId === toPublicId("DebugConversationId", a.debugConversationId),
+		)!;
+		expect(aItem.firstUserMessagePreview).toMatch(/^first prompt of A/);
+		expect(aItem.firstUserMessagePreview?.length).toBeLessThanOrEqual(60);
+		expect(aItem.firstUserMessagePreview?.endsWith("…")).toBe(true);
+		// A conversation with no user message yet (empty binding) surfaces
+		// `firstUserMessagePreview: null`, NOT an empty string.
+		const empty = await service.createNew(AGENT_ID);
+		const itemsAfter = await service.listHistory(AGENT_ID);
+		const emptyItem = itemsAfter.find(
+			(item) => item.conversationId === toPublicId("DebugConversationId", empty.debugConversationId),
+		)!;
+		expect(emptyItem.firstUserMessagePreview).toBeNull();
+	});
+
+	it("clamps the requested limit to the hard cap and respects the requested floor", async () => {
+		const { service } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		for (let i = 0; i < 3; i += 1) await service.createNew(AGENT_ID);
+		// Default limit returns up to 50.
+		expect((await service.listHistory(AGENT_ID)).length).toBe(3);
+		// Explicit small limit.
+		expect((await service.listHistory(AGENT_ID, 1)).length).toBe(1);
+		// 0 / negative fall back to 1 (the service floor).
+		expect((await service.listHistory(AGENT_ID, 0)).length).toBe(1);
+		// Over the cap (100) is clamped, not rejected.
+		expect((await service.listHistory(AGENT_ID, 99999)).length).toBe(3);
+	});
+
+	it("scopes the list to (tenant, owner, agentId) — a different agent is invisible", async () => {
+		const { service } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const otherAgent = newAgentDefinitionId();
+		await service.createNew(AGENT_ID);
+		await service.createNew(otherAgent);
+		const items = await service.listHistory(AGENT_ID);
+		expect(items.length).toBe(1);
+		expect(items[0]!.agentId).toBe(toPublicId("AgentDefinitionId", AGENT_ID));
+	});
+});
+
+describe("DebugConversationService lifecycle (Phase 2F)", () => {
+	it("soft-deletes only idle conversations and drops them from History", async () => {
+		const { service } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const idle = await service.createNew(AGENT_ID);
+		const recent = await service.createNew(AGENT_ID);
+		// A real Turn bumps `lastActiveAt`, keeping `recent` above the cutoff.
+		const turn = await service.executeTurn(recent.debugConversationId, "keep me", newTurnId());
+		expect(turn.ok).toBe(true);
+		const cutoff = new Date(idle.lastActiveAt.getTime() + 1);
+		const expired = await service.expireIdleSessions(cutoff);
+		expect(expired).toEqual([idle.debugConversationId]);
+		const history = await service.listHistory(AGENT_ID);
+		expect(history.map((item) => item.conversationId)).not.toContain(
+			toPublicId("DebugConversationId", idle.debugConversationId),
+		);
+		expect(history.map((item) => item.conversationId)).toContain(
+			toPublicId("DebugConversationId", recent.debugConversationId),
+		);
+	});
+
+	it("rejects a Turn on a soft-deleted conversation (expired Send behaviour)", async () => {
+		const { service } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const conv = await service.createNew(AGENT_ID);
+		const [expired] = await service.expireIdleSessions(new Date(conv.lastActiveAt.getTime() + 1));
+		expect(expired).toBe(conv.debugConversationId);
+		const r = await service.executeTurn(conv.debugConversationId, "hello", newTurnId());
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toMatch(/unavailable/i);
+	});
+
+	it("an appended Turn makes the conversation survive a cutoff it would otherwise have failed (append-then-expire wins)", async () => {
+		const { service } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const conv = await service.createNew(AGENT_ID);
+		const cutoff = new Date(conv.lastActiveAt.getTime() + 1);
+		const turn = await service.executeTurn(conv.debugConversationId, "active now", newTurnId());
+		expect(turn.ok).toBe(true);
+		const expired = await service.expireIdleSessions(cutoff);
+		expect(expired).toEqual([]);
+	});
+
+	it("a soft-deleted conversation cannot append (write-side atomic guard)", async () => {
+		const { service, capture, repos } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const conv = await service.createNew(AGENT_ID);
+		await service.expireIdleSessions(new Date(conv.lastActiveAt.getTime() + 1));
+		// Direct append (bypasses the read-side status check) must fail: the
+		// repo only appends to `status='active'` rows, mirroring PG.
+		const appended = await repos.events.append(
+			{ tenantId: TENANT_ID, ownerPrincipalId: OWNER, debugConversationId: conv.debugConversationId },
+			conv.debugConversationId,
+			{ eventType: "turn/start", turnId: newTurnId(), payload: {} },
+		);
+		expect(appended).toBeUndefined();
+		expect(capture.created).toBe(0);
+	});
+
+	it("physical GC removes the row, its events, attachments and citation data, idempotently", async () => {
+		const harness = await makeLifecycleHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const publicId = toPublicId("DebugConversationId", conv.debugConversationId);
+		const attachment = await seedSource(harness, publicId, "att-gc", "gc.txt", "indexed content for gc");
+		expect(harness.attachments.listBySession(publicId)).toHaveLength(1);
+		expect(harness.citations.listSourcesBySession(publicId)).toHaveLength(1);
+		expect(harness.citations.store.loadTurnCitations(publicId) ?? undefined).toBeUndefined();
+		await harness.citations.persistCitations(publicId, "turn-gc", [
+			{
+				id: "cit-1",
+				sessionId: publicId,
+				turnId: "turn-gc",
+				sourceId: attachment.id,
+				chunkId: `chunk-${attachment.id}`,
+				ordinal: 0,
+				title: "gc.txt",
+				excerpt: "x",
+			},
+		]);
+
+		await harness.service.expireIdleSessions(new Date(conv.lastActiveAt.getTime() + 1));
+		// Grace window expired (deleted_at is ~now; cutoff is +1s).
+		const removed = await harness.service.gcPhysical(new Date(Date.now() + 1_000));
+		expect(removed).toBeGreaterThan(0);
+
+		// External resources are gone with the canonical row.
+		expect(await harness.service.get(conv.debugConversationId)).toBeUndefined();
+		expect(harness.attachments.listBySession(publicId)).toHaveLength(0);
+		expect(harness.citations.listSourcesBySession(publicId)).toHaveLength(0);
+		expect(harness.citations.store.loadTurnCitations(publicId) ?? undefined).toBeUndefined();
+
+		// Re-runnable: a second pass finds nothing to purge.
+		const again = await harness.service.gcPhysical(new Date(Date.now() + 1_000));
+		expect(again).toBe(0);
+	});
+
+	it("physical GC retains the deleted parent when external cleanup fails, then retries successfully", async () => {
+		const harness = await makeLifecycleHarness();
+		const conv = await harness.service.createNew(AGENT_ID);
+		const publicId = toPublicId("DebugConversationId", conv.debugConversationId);
+		await seedSource(harness, publicId, "att-gc-retry", "retry.txt", "retry content");
+		await harness.service.expireIdleSessions(new Date(conv.lastActiveAt.getTime() + 1));
+
+		const originalRemove = harness.attachments.remove.bind(harness.attachments);
+		let failOnce = true;
+		harness.attachments.remove = async (id: string) => {
+			if (failOnce) {
+				failOnce = false;
+				throw new Error("injected attachment cleanup failure");
+			}
+			return originalRemove(id);
+		};
+
+		expect(await harness.service.gcPhysical(new Date(Date.now() + 1_000))).toBe(0);
+		expect(await harness.service.get(conv.debugConversationId)).toBeDefined();
+		expect(harness.attachments.listBySession(publicId)).toHaveLength(1);
+
+		expect(await harness.service.gcPhysical(new Date(Date.now() + 1_000))).toBe(1);
+		expect(await harness.service.get(conv.debugConversationId)).toBeUndefined();
+		expect(harness.attachments.listBySession(publicId)).toHaveLength(0);
+		expect(harness.citations.listSourcesBySession(publicId)).toHaveLength(0);
+	});
+
+	it("headless executeTurn releases the runtime after each Turn (no runtime accumulation)", async () => {
+		const { service, capture } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const conv = await service.createNew(AGENT_ID);
+		const first = await service.executeTurn(conv.debugConversationId, "one", newTurnId());
+		expect(first.ok).toBe(true);
+		const second = await service.executeTurn(conv.debugConversationId, "two", newTurnId());
+		expect(second.ok).toBe(true);
+		// If the runtime were leaked for headless turns, the second Turn would
+		// reuse it (1 session creation). Releasing after each Turn therefore
+		// yields a fresh session per Turn.
+		expect(capture.created).toBe(2);
+	});
+
+	it("persists direct attachmentIds as a per-Turn user/message fact", async () => {
+		const { service } = makeHarness([{ revision: 1, model: MODEL_A }]);
+		const conv = await service.createNew(AGENT_ID);
+		for (const attachmentIds of [["A"], [], ["A"]]) {
+			const result = await service.executeTurn(conv.debugConversationId, "attachment turn", newTurnId(), {
+				attachmentIds,
+			});
+			expect(result.ok).toBe(true);
+		}
+		const userEvents = (await service.listEvents(conv.debugConversationId)).filter(
+			(event) => event.eventType === "user/message",
+		);
+		expect(userEvents.map((event) => (event.payload as { attachmentIds: string[] }).attachmentIds)).toEqual([
+			["A"],
+			[],
+			["A"],
+		]);
 	});
 });

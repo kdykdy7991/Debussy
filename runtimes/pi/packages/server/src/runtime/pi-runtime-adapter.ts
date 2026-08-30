@@ -32,6 +32,7 @@ export interface RuntimeSessionOptions {
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly streamOptions?: import("@earendil-works/pi-ai").SimpleStreamOptions;
 	readonly customTools?: readonly ToolDefinition[];
+	readonly allowedToolNames?: readonly string[];
 	/** 冻结的发布版本 system prompt（创建会话时写入独立 ResourceLoader）。 */
 	readonly systemPrompt?: string;
 	/** 已物化的冻结 Skill（经 skillsOverride 注入独立 ResourceLoader）。 */

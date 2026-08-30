@@ -167,6 +167,12 @@ export class CitationStore {
 		const record = this.#turnCitations.get(sessionId);
 		return record ? { turnId: record.turnId, citations: record.citations } : undefined;
 	}
+
+	/** Remove a session's latest-turn citation record and its file (GC). Idempotent. */
+	async removeTurnCitations(sessionId: string): Promise<void> {
+		this.#turnCitations.delete(sessionId);
+		await rm(join(this.#root, "turns", `${sessionId}.json`), { force: true }).catch(() => {});
+	}
 }
 
 async function atomicWrite(path: string, value: unknown): Promise<void> {

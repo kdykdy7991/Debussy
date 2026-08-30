@@ -76,9 +76,10 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 			return "user-conversations";
 		case "settings":
 			return "settings";
-		// 「Chat」已从侧边栏移除：路由仍可直达，但不再有对应导航项高亮
+		// 调试是 Agent 的上下文子页，不单列导航入口；进入后仍高亮 Agent，
+		// 避免页面看起来脱离工作台信息架构。
 		case "chat":
-			return null;
+			return "agents";
 		default: {
 			const exhaustive: never = route.id;
 			return exhaustive;

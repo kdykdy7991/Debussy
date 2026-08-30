@@ -108,14 +108,14 @@ function buildDebugSnapshot(
 				role: "user",
 				content: [{ type: "text", text: payload.text ?? "" }],
 				timestamp: eventTime,
-			});
+			} as TranscriptItem);
 		} else if (event.eventType === "assistant/message") {
 			transcript.push({
 				id: `ast:${turnId}`,
 				role: "assistant",
 				model: modelRef(lastModelId),
-				status: "complete",
-				stopReason: "stop",
+				status: payload.status === "interrupted" ? "aborted" : "complete",
+				stopReason: payload.status === "interrupted" ? "aborted" : "stop",
 				content: [
 					...(typeof payload.thinking === "string" && payload.thinking !== ""
 						? [{ type: "thinking" as const, thinking: payload.thinking }]
@@ -125,7 +125,7 @@ function buildDebugSnapshot(
 						: []),
 				],
 				timestamp: eventTime,
-			});
+			} as TranscriptItem);
 		} else if (event.eventType === "tool/call") {
 			const toolCallId = payload.toolCallId ?? "";
 			if (toolCallId === "") continue;
@@ -221,6 +221,7 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 	private phase: SessionPhase = "idle";
 	private readonly listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
 	private revisionCounter = 0;
+	private thinkingLevelOverride: ThinkingLevel | null = null;
 	private closed = false;
 	private closedPromise: Promise<void> | undefined;
 
@@ -246,6 +247,9 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 		const events = await service.listEvents(conversation.debugConversationId);
 		const snapshot = buildDebugSnapshot(conversation, events);
 		const publicId = toPublicId("DebugConversationId", conversation.debugConversationId);
+		// Pin the conversation so the headless path never releases a runtime a
+		// live realtime adapter owns. Released in `dispose()`.
+		service.markRealtimeOwned(conversation.debugConversationId);
 		return new DebugConversationRuntimeAdapter(
 			service,
 			conversation.debugConversationId,
@@ -289,6 +293,7 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 			...(input.attachmentIds && input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
 			...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
 			onProgress: (progress) => this.emit({ type: "progress", progress }),
+			thinkingLevelOverride: this.thinkingLevelOverride,
 		});
 
 		this.phase = "idle";
@@ -340,8 +345,17 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 		// Model is resolved per-Turn from the Agent revision; not mutable here.
 	}
 
-	async setThinking(): Promise<void> {
-		// Phase 2 effort mapping is out of scope; not mutable here.
+	async setThinking(thinkingLevel: ThinkingLevel): Promise<void> {
+		if (this.closed) throw new Error("Debug conversation realtime adapter is closed");
+		if (this.phase !== "idle") throw new PiServerError("busy", "Cannot change thinking while a Turn is running");
+		this.thinkingLevelOverride = thinkingLevel;
+		this.revisionCounter += 1;
+		this.snapshotValue = {
+			...this.snapshotValue,
+			thinkingLevel,
+			revision: this.revisionCounter,
+		};
+		this.emit({ type: "snapshot" });
 	}
 
 	subscribe(listener: (event: PiSessionRuntimeEvent) => void): () => void {
@@ -356,6 +370,7 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 		this.closed = true;
 		this.closedPromise = (async () => {
 			try {
+				this.service.unmarkRealtimeOwned(this.conversationId);
 				await this.service.releaseRuntime(this.conversationId);
 			} finally {
 				this.onReleased();
