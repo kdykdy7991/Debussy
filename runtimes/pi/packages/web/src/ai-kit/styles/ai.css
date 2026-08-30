@@ -78,6 +78,54 @@
 	background: var(--ai-bg-inset);
 }
 
+.ai-turn-citations {
+	margin-top: var(--ai-space-md);
+	padding-top: var(--ai-space-md);
+	border-top: 1px solid var(--ai-border-soft);
+}
+
+.ai-turn-citations-label {
+	display: block;
+	margin-bottom: var(--ai-space-sm);
+	font: var(--ai-font-caption);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ai-text-muted);
+}
+
+.ai-turn-citations-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ai-space-sm);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.ai-turn-citation {
+	padding: var(--ai-space-sm) var(--ai-space-md);
+	border: 1px solid var(--ai-border-soft);
+	border-radius: var(--ai-radius-sm);
+	background: var(--ai-bg-surface);
+}
+
+.ai-turn-citation-title {
+	display: block;
+	font: var(--ai-font-sans);
+	font-weight: 600;
+	color: var(--ai-text);
+}
+
+.ai-turn-citation-excerpt {
+	margin: var(--ai-space-xs) 0 0;
+	font: var(--ai-font-sans);
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--ai-text-secondary);
+}
+
 .ai-turn-failure {
 	margin-top: var(--ai-space-md);
 	padding: var(--ai-space-sm) var(--ai-space-md);

@@ -127,6 +127,23 @@ export const UserTranscriptItemSchema = StrictObject({
 	content: Type.Array(UserContentSchema),
 	timestamp: TimestampSchema,
 });
+export const CitationSchema = StrictObject({
+	id: IdSchema,
+	sessionId: IdSchema,
+	turnId: IdSchema,
+	sourceId: IdSchema,
+	chunkId: IdSchema,
+	ordinal: Type.Integer({ minimum: 0 }),
+	/** Display title (source file name), safe for client rendering. */
+	title: Type.String({ minLength: 1 }),
+	/** Excerpt copied from the stored chunk; never client-supplied. */
+	excerpt: Type.String(),
+	startLine: Type.Optional(Type.Integer({ minimum: 1 })),
+	endLine: Type.Optional(Type.Integer({ minimum: 1 })),
+	score: Type.Optional(Type.Number({ minimum: 0 })),
+});
+export type Citation = Static<typeof CitationSchema>;
+
 const AssistantTranscriptItemProperties = {
 	id: IdSchema,
 	role: Type.Literal("assistant"),
@@ -135,6 +152,12 @@ const AssistantTranscriptItemProperties = {
 	responseModel: Type.Optional(Type.String({ minLength: 1 })),
 	usage: Type.Optional(UsageSchema),
 	timestamp: TimestampSchema,
+	/**
+	 * Citations the assistant Turn actually used. Optional: the Debug read path
+	 * surfaces them on the client (realtime `citation_snapshot` merged by
+	 * `turnId`); embed never sets them here.
+	 */
+	citations: Type.Optional(Type.Array(CitationSchema)),
 } as const;
 const StreamingAssistantTranscriptItemSchema = StrictObject({
 	...AssistantTranscriptItemProperties,
@@ -340,28 +363,6 @@ export const SourceChunkSchema = StrictObject({
 	tokenEstimate: Type.Optional(Type.Integer({ minimum: 0 })),
 });
 export type SourceChunk = Static<typeof SourceChunkSchema>;
-
-/**
- * The set of source fragments a single agent turn actually used. A Citation is
- * metadata over stored chunks — `excerpt` always originates server-side and
- * clients can never submit it.
- */
-export const CitationSchema = StrictObject({
-	id: IdSchema,
-	sessionId: IdSchema,
-	turnId: IdSchema,
-	sourceId: IdSchema,
-	chunkId: IdSchema,
-	ordinal: Type.Integer({ minimum: 0 }),
-	/** Display title (source file name), safe for client rendering. */
-	title: Type.String({ minLength: 1 }),
-	/** Excerpt copied from the stored chunk; never client-supplied. */
-	excerpt: Type.String(),
-	startLine: Type.Optional(Type.Integer({ minimum: 1 })),
-	endLine: Type.Optional(Type.Integer({ minimum: 1 })),
-	score: Type.Optional(Type.Number({ minimum: 0 })),
-});
-export type Citation = Static<typeof CitationSchema>;
 
 export const SessionSnapshotSchema = StrictObject({
 	...SessionSummaryProperties,

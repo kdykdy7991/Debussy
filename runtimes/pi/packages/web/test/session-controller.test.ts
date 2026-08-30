@@ -1,5 +1,11 @@
 import type { PiSessionHandle } from "@earendil-works/pi-client";
-import type { AssistantTranscriptItem, Attachment, ServerEvent, SessionSnapshot } from "@earendil-works/pi-protocol";
+import type {
+	AssistantTranscriptItem,
+	Attachment,
+	Citation,
+	ServerEvent,
+	SessionSnapshot,
+} from "@earendil-works/pi-protocol";
 import { describe, expect, it, type Mock, vi } from "vitest";
 import { type PiSessionClient, SessionController } from "../src/lib/session-controller.ts";
 import type { PiUploadClient } from "../src/lib/uploader.ts";
@@ -506,7 +512,12 @@ describe("SessionController", () => {
 					}),
 			);
 		const first = { ...createHandle(SESSION), prompt };
-		const secondSnapshot = { ...SESSION, id: "session-2", name: "第二段对话", phase: "idle" } satisfies SessionSnapshot;
+		const secondSnapshot = {
+			...SESSION,
+			id: "session-2",
+			name: "第二段对话",
+			phase: "idle",
+		} satisfies SessionSnapshot;
 		const client = createClient();
 		client.attachSession.mockResolvedValueOnce(first).mockResolvedValueOnce(createHandle(secondSnapshot));
 		const controller = new SessionController(client, createUploadClient());
@@ -604,4 +615,101 @@ it("reports failed uploads without attaching them", async () => {
 	expect(controller.getSnapshot().uploads).toEqual([
 		expect.objectContaining({ name: "big.txt", status: "failed", error: "payload_too_large" }),
 	]);
+});
+
+describe("SessionController citation merge (Phase 2D)", () => {
+	function citation(turnId: string, sourceId: string, title: string): Citation {
+		return {
+			id: `cit-${sourceId}`,
+			sessionId: SESSION.id,
+			turnId,
+			sourceId,
+			chunkId: `chunk-${sourceId}`,
+			ordinal: 0,
+			title,
+			excerpt: `excerpt from ${title}`,
+		};
+	}
+
+	function assistantItem(id: string): AssistantTranscriptItem {
+		return {
+			id,
+			role: "assistant",
+			content: [{ type: "text", text: "answer" }],
+			model: SESSION.model,
+			timestamp: 3,
+			status: "complete",
+			stopReason: "stop",
+		};
+	}
+
+	function snapshotWith(...items: AssistantTranscriptItem[]): SessionSnapshot {
+		return { ...SESSION, revision: 2, transcript: items } satisfies SessionSnapshot;
+	}
+
+	async function activate(): Promise<{
+		observed: ReturnType<typeof createObservedHandle>;
+		controller: SessionController;
+	}> {
+		const observed = createObservedHandle(SESSION);
+		const client = createClient();
+		client.attachSession.mockResolvedValue(observed.handle);
+		const controller = new SessionController(client, createUploadClient());
+		await controller.selectSession(SESSION.id);
+		return { observed, controller };
+	}
+
+	function citationEvent(
+		observed: ReturnType<typeof createObservedHandle>,
+		turnId: string,
+		...cits: Citation[]
+	): void {
+		observed.emitEvent({ type: "citation_snapshot", sessionId: SESSION.id, turnId, citations: cits });
+	}
+
+	it("merges a turn's citations onto its assistant message when the event arrives after the final message", async () => {
+		const { observed, controller } = await activate();
+		observed.emit(snapshotWith(assistantItem("ast:turn-1")));
+		citationEvent(observed, "turn-1", citation("turn-1", "src-a", "guide.txt"));
+		const item = controller.getSnapshot().activeSession?.transcript[0];
+		expect(item?.role).toBe("assistant");
+		expect(item && "citations" in item ? item.citations : undefined).toEqual([
+			citation("turn-1", "src-a", "guide.txt"),
+		]);
+	});
+
+	it("merges citations onto the assistant message when the event arrives before the final message", async () => {
+		const { observed, controller } = await activate();
+		citationEvent(observed, "turn-1", citation("turn-1", "src-a", "guide.txt"));
+		// No assistant message yet: citation stays pending, nothing attached.
+		expect(controller.getSnapshot().activeSession?.transcript).toHaveLength(0);
+		observed.emit(snapshotWith(assistantItem("ast:turn-1")));
+		const item = controller.getSnapshot().activeSession?.transcript[0];
+		expect(item && "citations" in item ? item.citations : undefined).toEqual([
+			citation("turn-1", "src-a", "guide.txt"),
+		]);
+	});
+
+	it("keeps each turn's citations bound to its own assistant message (no cross-turn)", async () => {
+		const { observed, controller } = await activate();
+		citationEvent(observed, "turn-1", citation("turn-1", "src-a", "guide.txt"));
+		citationEvent(observed, "turn-2", citation("turn-2", "src-b", "keys.txt"));
+		observed.emit(snapshotWith(assistantItem("ast:turn-1"), assistantItem("ast:turn-2")));
+		const [t1, t2] = controller.getSnapshot().activeSession?.transcript ?? [];
+		expect(t1 && "citations" in t1 ? t1.citations : undefined).toHaveLength(1);
+		expect(t2 && "citations" in t2 ? t2.citations : undefined).toHaveLength(1);
+		expect(t1 && "citations" in t1 ? (t1.citations as Citation[])[0]!.sourceId : undefined).toBe("src-a");
+		expect(t2 && "citations" in t2 ? (t2.citations as Citation[])[0]!.sourceId : undefined).toBe("src-b");
+	});
+
+	it("does not inherit the previous turn's citations when a turn has none", async () => {
+		const { observed, controller } = await activate();
+		citationEvent(observed, "turn-1", citation("turn-1", "src-a", "guide.txt"));
+		observed.emit(snapshotWith(assistantItem("ast:turn-1")));
+		// Turn 2 has no citation_snapshot: its assistant message must stay citation-free.
+		observed.emit({ ...snapshotWith(assistantItem("ast:turn-1"), assistantItem("ast:turn-2")), revision: 3 });
+		const items = controller.getSnapshot().activeSession?.transcript ?? [];
+		expect(items[0] && "citations" in items[0] ? items[0].citations : undefined).toHaveLength(1);
+		expect(items[1] && "citations" in items[1] ? items[1].citations : undefined).toBeUndefined();
+	});
 });

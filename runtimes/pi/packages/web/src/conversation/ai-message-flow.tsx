@@ -13,6 +13,7 @@
  */
 import type {
 	AssistantTranscriptItem,
+	Citation,
 	SessionSnapshot,
 	ToolTranscriptItem,
 	TranscriptItem,
@@ -251,6 +252,16 @@ function UserBrief({ item }: { item: UserTranscriptItem }): React.ReactElement {
 	);
 }
 
+/** Pure presentation of one retrieved Source fragment used by an assistant Turn. */
+function CitationBlock({ citation }: { citation: Citation }): React.ReactElement {
+	return (
+		<li className="ai-turn-citation">
+			<span className="ai-turn-citation-title">{citation.title}</span>
+			<p className="ai-turn-citation-excerpt">{citation.excerpt}</p>
+		</li>
+	);
+}
+
 function AssistantTurn({
 	item,
 	rail,
@@ -276,11 +287,7 @@ function AssistantTurn({
 	const thinkingBlock = item.content.find((content) => content.type === "thinking");
 	const hasCopyableText = textBlocks.some((block) => block.text.trim().length > 0);
 	const plain = textBlocks.length <= 1 && textBlocks.join("").length <= 120 && thinkingBlock === undefined;
-	const cardClass = cx(
-		"assistant-output-card",
-		errored && "is-error",
-		aborted && "is-aborted",
-	);
+	const cardClass = cx("assistant-output-card", errored && "is-error", aborted && "is-aborted");
 	return (
 		<AssistantResponse rail={rail}>
 			<div className={cardClass}>
@@ -328,14 +335,23 @@ function AssistantTurn({
 					) : null}
 				</div>
 
+				{item.citations && item.citations.length > 0 ? (
+					<div className="ai-turn-citations">
+						<span className="ai-turn-citations-label">引用</span>
+						<ul className="ai-turn-citations-list">
+							{item.citations.map((citation) => (
+								<CitationBlock key={citation.sourceId} citation={citation} />
+							))}
+						</ul>
+					</div>
+				) : null}
+
 				{errored || aborted ? (
 					<div
 						className={`ai-turn-failure ${errored ? "is-error" : "is-aborted"}`}
 						role={errored ? "alert" : "status"}
 					>
-						<span className="ai-turn-failure-label">
-							{errored ? "本次响应未完成" : "本次响应已中止"}
-						</span>
+						<span className="ai-turn-failure-label">{errored ? "本次响应未完成" : "本次响应已中止"}</span>
 						<p className="ai-turn-failure-message">
 							{(item.errorMessage ?? "").trim() || (errored ? "模型调用失败，请稍后重试。" : "响应被中止。")}
 						</p>

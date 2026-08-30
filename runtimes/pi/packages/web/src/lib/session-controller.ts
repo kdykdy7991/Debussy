@@ -1,5 +1,6 @@
 import type { CreateSessionOptions, PiSessionHandle } from "@earendil-works/pi-client";
 import type {
+	Citation,
 	LiveSpeechJob,
 	LiveSpeechRequest,
 	ModelRef,
@@ -102,6 +103,13 @@ export class SessionController implements SessionBrowserStore {
 	#uploadSequence = 0;
 	#pendingProgress: Extract<TranscriptProgress, { type: "assistant_delta" }>[] = [];
 	#progressTimer: ReturnType<typeof setTimeout> | undefined;
+	/**
+	 * Citations per Turn (`turnId -> citations`), sourced from the Debug read
+	 * path's realtime `citation_snapshot` event. Kept authoritative at the
+	 * controller so a later `session_snapshot` broadcast (whose server items
+	 * never carry citations) does not drop a merged block.
+	 */
+	#citationsByTurn = new Map<string, readonly Citation[]>();
 	#snapshot: SessionBrowserSnapshot;
 
 	constructor(client: PiSessionClient, uploads: PiUploadClient) {
@@ -319,10 +327,11 @@ export class SessionController implements SessionBrowserStore {
 
 	#applySessionUpdate(session: SessionSnapshot): void {
 		if (this.#activeHandle?.id !== session.id) return;
+		const merged = this.#withCitations(session);
 		this.#setSnapshot({
 			...this.#snapshot,
-			sessions: upsertSession(this.#snapshot.sessions, session),
-			activeSession: session,
+			sessions: upsertSession(this.#snapshot.sessions, merged),
+			activeSession: merged,
 		});
 	}
 
@@ -372,15 +381,28 @@ export class SessionController implements SessionBrowserStore {
 			this.#unsubscribeActive = handle.subscribe((session) => {
 				if (this.#activeHandle !== handle) return;
 				this.#clearPendingProgress();
+				const merged = this.#withCitations(session);
 				this.#setSnapshot({
 					...this.#snapshot,
-					sessions: upsertSession(this.#snapshot.sessions, session),
-					activeSession: session,
+					sessions: upsertSession(this.#snapshot.sessions, merged),
+					activeSession: merged,
 				});
 			});
 			this.#unsubscribeActiveEvents = handle.onEvent((event) => {
-				if (this.#activeHandle !== handle || event.type !== "session_progress") return;
-				this.#applyProgress(event);
+				if (this.#activeHandle !== handle) return;
+				if (event.type === "session_progress") {
+					this.#applyProgress(event);
+					return;
+				}
+				// Debug read path: the Turn's full citations arrive via the
+				// internal Pi Session `citation_snapshot` event. Bound strictly by
+				// `turnId` and merged once that Turn's assistant message exists
+				// (or kept pending and merged as soon as it streams in) — never
+				// attached to a "latest message".
+				if (event.type === "citation_snapshot") {
+					this.#citationsByTurn.set(event.turnId, [...event.citations]);
+					this.#applyCitations();
+				}
 			});
 		} catch (error) {
 			if (operation !== this.#operation) return;
@@ -450,7 +472,7 @@ export class SessionController implements SessionBrowserStore {
 		this.#flushPendingProgress();
 		const flushedSession = this.#snapshot.activeSession;
 		if (!flushedSession || flushedSession.id !== event.sessionId) return;
-		const session = applyTranscriptProgress(flushedSession, event.progress);
+		const session = this.#withCitations(applyTranscriptProgress(flushedSession, event.progress));
 		if (session === flushedSession) return;
 		this.#setSnapshot({
 			...this.#snapshot,
@@ -467,13 +489,35 @@ export class SessionController implements SessionBrowserStore {
 		this.#pendingProgress = [];
 		const activeSession = this.#snapshot.activeSession;
 		if (!activeSession) return;
-		const session = pending.reduce(applyTranscriptProgress, activeSession);
+		const session = this.#withCitations(pending.reduce(applyTranscriptProgress, activeSession));
 		if (session === activeSession) return;
 		this.#setSnapshot({
 			...this.#snapshot,
 			sessions: upsertSession(this.#snapshot.sessions, session),
 			activeSession: session,
 		});
+	}
+
+	/**
+	 * Re-merge any Turn-bound citations into the active transcript. Idempotent:
+	 * a Turn with no `citation_snapshot` has no map entry and inherits nothing.
+	 */
+	#applyCitations(): void {
+		if (this.#citationsByTurn.size === 0) return;
+		const activeSession = this.#snapshot.activeSession;
+		if (!activeSession) return;
+		const merged = this.#withCitations(activeSession);
+		if (merged === activeSession) return;
+		this.#setSnapshot({
+			...this.#snapshot,
+			sessions: upsertSession(this.#snapshot.sessions, merged),
+			activeSession: merged,
+		});
+	}
+
+	/** Bind an arbitrary session snapshot to the controller's live citations. */
+	#withCitations(session: SessionSnapshot): SessionSnapshot {
+		return this.#citationsByTurn.size === 0 ? session : mergeCitations(session, this.#citationsByTurn);
 	}
 
 	#clearPendingProgress(): void {
@@ -514,6 +558,27 @@ export class SessionController implements SessionBrowserStore {
 		this.#snapshot = snapshot;
 		for (const listener of this.#listeners) listener();
 	}
+}
+
+function mergeCitations(
+	session: SessionSnapshot,
+	citationsByTurn: ReadonlyMap<string, readonly Citation[]>,
+): SessionSnapshot {
+	if (citationsByTurn.size === 0) return session;
+	let changed = false;
+	const transcript = session.transcript.map((item) => {
+		if (item.role !== "assistant") return item;
+		const turnId = assistantTurnId(item.id);
+		const citations = turnId !== null ? citationsByTurn.get(turnId) : undefined;
+		if (citations === undefined) return item;
+		changed = true;
+		return { ...item, citations: [...citations] };
+	});
+	return changed ? { ...session, transcript } : session;
+}
+
+function assistantTurnId(id: string): string | null {
+	return id.startsWith("ast:") ? id.slice("ast:".length) : null;
 }
 
 function applyTranscriptProgress(session: SessionSnapshot, progress: TranscriptProgress): SessionSnapshot {
