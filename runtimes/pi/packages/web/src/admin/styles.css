@@ -1771,6 +1771,13 @@ button {
 	background-image: none;
 }
 
+.admin-debug-shell .admin-debug-topbar__select {
+	min-height: 40px;
+	padding: 6px 26px 6px 12px;
+	border-color: var(--color-border-default);
+	border-radius: 10px;
+}
+
 .admin-debug-shell .workspace-debug-back {
 	align-self: center;
 	min-height: 36px;
@@ -1881,8 +1888,6 @@ button {
 	.admin-debug-topbar__select {
 		width: fit-content;
 		min-width: 0;
-		padding-top: 8px;
-		padding-bottom: 8px;
 	}
 
 	.admin-debug-topbar__select select {
