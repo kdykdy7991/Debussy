@@ -205,8 +205,9 @@ describe("Admin shell CSS layout (WB-002)", () => {
 
 	it("matches the debug Agent select frame to the model chips", () => {
 		expect(css).toMatch(
-			/\.admin-debug-shell\s+\.admin-debug-topbar__select\s*{[^}]*min-height:\s*40px;[^}]*border-color:\s*var\(--color-border-default\);[^}]*border-radius:\s*10px/,
+			/\.admin-debug-shell\s+\.admin-debug-topbar__select\s*{[^}]*height:\s*44px;[^}]*min-height:\s*44px;[^}]*border-color:\s*var\(--color-border-default\);[^}]*border-radius:\s*10px/,
 		);
+		expect(css).toMatch(/\.admin-debug-shell\s+\.admin-debug-chip\s*{[^}]*height:\s*44px;[^}]*min-height:\s*44px/);
 	});
 
 	it("styles the debug back action as a button without a divider", () => {

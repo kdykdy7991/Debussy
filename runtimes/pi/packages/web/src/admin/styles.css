@@ -1772,10 +1772,16 @@ button {
 }
 
 .admin-debug-shell .admin-debug-topbar__select {
-	min-height: 40px;
+	height: 44px;
+	min-height: 44px;
 	padding: 6px 26px 6px 12px;
 	border-color: var(--color-border-default);
 	border-radius: 10px;
+}
+
+.admin-debug-shell .admin-debug-chip {
+	height: 44px;
+	min-height: 44px;
 }
 
 .admin-debug-shell .workspace-debug-back {
