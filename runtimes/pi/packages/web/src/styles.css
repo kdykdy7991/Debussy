@@ -1779,6 +1779,9 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
  * lives next to the assistant answer (per the design). */
 .admin-debug-shell .active-agent-presence {
 	position: static;
+	align-self: flex-start;
+	justify-items: start;
+	place-items: start;
 	margin: -10px 0 22px 44px; /* indent to align with answer text */
 	padding: 0;
 	background: transparent;
