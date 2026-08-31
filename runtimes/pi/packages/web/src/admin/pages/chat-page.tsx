@@ -67,10 +67,6 @@ function debugSessionKeyFor(args: { readonly agentId: AgentPublicId | null; read
 	return `agent:${args.agentId}`;
 }
 
-function describeDebugSessionError(error: unknown): string {
-	return error instanceof Error ? error.message : "调试会话建立失败";
-}
-
 function DebugConfigurationSummary({
 	model,
 	agent,
@@ -221,66 +217,6 @@ function DebugThinkingEffortChip({
 	);
 }
 
-/* ------------------------------------------------------------------
- * v2 redesign: session subheader
- * Renders the active conversation's name + short id below the top bar,
- * or a "no session" placeholder when nothing is attached.
- * ------------------------------------------------------------------ */
-
-function DebugSessionSubheader({
-	debugSessionId,
-	history,
-	debugSessionError,
-	onRetry,
-	exporting,
-	canExport,
-	onExport,
-}: {
-	readonly debugSessionId: string | null;
-	readonly history: DebugHistoryState;
-	readonly debugSessionError: string | null;
-	readonly onRetry: () => void;
-	readonly exporting: boolean;
-	readonly canExport: boolean;
-	readonly onExport: () => void;
-}): React.ReactElement {
-	const activeItem =
-		debugSessionId !== null && history.kind === "loaded"
-			? history.items.find((item) => item.conversationId === debugSessionId)
-			: undefined;
-	const displayName = activeItem?.firstUserMessagePreview ?? "未选择对话";
-	const shortId = debugSessionId !== null ? `…${debugSessionId.slice(-6)}` : "——";
-	return (
-		<div className="admin-debug-subbar">
-			<div className="admin-debug-subbar__left">
-				<span className="admin-debug-subbar__caret" aria-hidden="true" />
-				<div className="admin-debug-subbar__title-block">
-					<strong className="admin-debug-subbar__title">{displayName}</strong>
-					<small className="admin-debug-subbar__id">{shortId}</small>
-				</div>
-			</div>
-			<div className="admin-debug-subbar__right">
-				{debugSessionError !== null ? (
-					<span className="admin-debug-subbar__error" role="alert">
-						{debugSessionError}
-						<button type="button" onClick={onRetry}>
-							重新建立会话
-						</button>
-					</span>
-				) : null}
-				<button
-					type="button"
-					className="admin-debug-subbar__export"
-					disabled={!canExport}
-					onClick={onExport}
-				>
-					{exporting ? "导出中…" : "导出测试用例"}
-				</button>
-			</div>
-		</div>
-	);
-}
-
 function ChatConnectionState({
 	auth,
 }: {
@@ -348,11 +284,6 @@ export function AdminChatPage(): React.ReactElement {
 	const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDefinitionDetail | null>(null);
 	const [runtime, setRuntime] = useState<ChatRuntime | null>(null);
 	const [debugSessionId, setDebugSessionId] = useState<string | null>(null);
-	// Session-establishment failure surfaced in the context header with a
-	// retry button (previously these failures were swallowed by `.catch`).
-	const [debugSessionError, setDebugSessionError] = useState<string | null>(null);
-	const [debugSessionRetry, setDebugSessionRetry] = useState(0);
-	const [exporting, setExporting] = useState(false);
 	// skillId -> { name, enabled } for resolving bound Skill references into the
 	// Composer's `/skill:` completion list (Agent detail only carries skillIds).
 	const [skillLookup, setSkillLookup] = useState<Map<
@@ -507,9 +438,6 @@ export function AdminChatPage(): React.ReactElement {
 	}, [auth.state]);
 
 	useEffect(() => {
-		// The "重新建立会话" button bumps `debugSessionRetry` solely to re-run this
-		// effect (re-resolve the conversation); the value itself is not used.
-		void debugSessionRetry;
 		if (runtime === null) return;
 		const selectedAgent =
 			agents.kind === "loaded" && selectedAgentId !== null
@@ -544,7 +472,6 @@ export function AdminChatPage(): React.ReactElement {
 		explicitNewRef.current = false;
 		let cancelled = false;
 		void (async () => {
-			setDebugSessionError(null);
 			await runtime.connection.connect();
 			if (cancelled) return;
 			if (selectedAgent === undefined) {
@@ -579,14 +506,11 @@ export function AdminChatPage(): React.ReactElement {
 					setDebugSessionId(null);
 				}
 			}
-		})().catch((error: unknown) => {
-			// 不再静默吞掉：会话建立失败必须在界面上可见，并允许重试。
-			if (!cancelled) setDebugSessionError(describeDebugSessionError(error));
-		});
+		})().catch(() => {});
 		return () => {
 			cancelled = true;
 		};
-	}, [agentApiRef, runtime, agents, selectedAgentId, selectedModel, debugSessionRetry]);
+	}, [agentApiRef, runtime, agents, selectedAgentId, selectedModel]);
 
 	// Strict lazy-create bootstrap: the LazyDebugSessionController invokes this
 	// before EVERY send. It is a no-op once a conversation is attached; when a
@@ -612,7 +536,6 @@ export function AdminChatPage(): React.ReactElement {
 				return;
 			}
 			const guard = (async () => {
-				setDebugSessionError(null);
 				await runtime?.connection.connect();
 				let convId: string;
 				if (explicitNewRef.current) {
@@ -635,10 +558,7 @@ export function AdminChatPage(): React.ReactElement {
 				// flag's job is done. If the user wants ANOTHER new conversation
 				// they have to click the button again.
 				explicitNewRef.current = false;
-			})().catch((error: unknown) => {
-				if (debugSessionIdRef.current === null) setDebugSessionError(describeDebugSessionError(error));
-				throw error;
-			});
+			})();
 			debugCreateGuardRef.current = guard;
 			try {
 				await guard;
@@ -781,51 +701,6 @@ export function AdminChatPage(): React.ReactElement {
 		[],
 	);
 
-	if (auth.state !== "connected") {
-		return <ChatConnectionState auth={auth} />;
-	}
-	if (runtime === null) {
-		return <output className="admin-chat-loading">正在准备管理员调试工作区…</output>;
-	}
-
-	const hasAgents = agents.kind === "loaded" && agents.items.length > 0;
-	const selected = hasAgents
-		? (agents.items.find((agent) => agent.id === selectedAgentId) ?? agents.items[0])
-		: undefined;
-	const selectedModelMetadata =
-		models.kind === "loaded"
-			? models.items.find((model) => model.provider === selectedModel?.provider && model.id === selectedModel?.id)
-			: undefined;
-	// Resolve the agent's bound Skill references to names so `/skill:` completion
-	// shows them. Only enabled skills are surfaced (runtime ignores disabled ones).
-	const composerSkills =
-		selectedAgentDetail?.skills !== undefined && skillLookup !== null
-			? selectedAgentDetail.skills
-					.map((binding) => skillLookup.get(binding.skillId))
-					.filter(
-						(skill): skill is { readonly name: string; readonly enabled: boolean } => skill?.enabled ?? false,
-					)
-					.map((skill) => ({ name: skill.name }))
-			: undefined;
-	const exportDebugSession = async () => {
-		const sessionId = debugSessionIdRef.current;
-		if (sessionId === null || exporting) return;
-		setExporting(true);
-		try {
-			const payload = sessionId.startsWith("dconv_")
-				? { conversationId: sessionId, events: await agentApiRef.listDebugConversationEvents(sessionId) }
-				: await agentApiRef.exportDebugSession(sessionId);
-			const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
-			const link = document.createElement("a");
-			link.href = url;
-			link.download = `agent-debug-${sessionId}.json`;
-			link.click();
-			URL.revokeObjectURL(url);
-		} finally {
-			setExporting(false);
-		}
-	};
-
 	// v2 redesign: the History list is now client-side state only.
 	// The control API has no `clearList` operation, so the button is wired
 	// to a confirm dialog + optimistic local clear. Refusing here keeps the
@@ -857,6 +732,32 @@ export function AdminChatPage(): React.ReactElement {
 		return () => document.removeEventListener("mousedown", handleDocumentClick);
 	}, [historyOpen]);
 
+	if (auth.state !== "connected") {
+		return <ChatConnectionState auth={auth} />;
+	}
+	if (runtime === null) {
+		return <output className="admin-chat-loading">正在准备管理员调试工作区…</output>;
+	}
+
+	const hasAgents = agents.kind === "loaded" && agents.items.length > 0;
+	const selected = hasAgents
+		? (agents.items.find((agent) => agent.id === selectedAgentId) ?? agents.items[0])
+		: undefined;
+	const selectedModelMetadata =
+		models.kind === "loaded"
+			? models.items.find((model) => model.provider === selectedModel?.provider && model.id === selectedModel?.id)
+			: undefined;
+	// Resolve the agent's bound Skill references to names so `/skill:` completion
+	// shows them. Only enabled skills are surfaced (runtime ignores disabled ones).
+	const composerSkills =
+		selectedAgentDetail?.skills !== undefined && skillLookup !== null
+			? selectedAgentDetail.skills
+					.map((binding) => skillLookup.get(binding.skillId))
+					.filter(
+						(skill): skill is { readonly name: string; readonly enabled: boolean } => skill?.enabled ?? false,
+					)
+					.map((skill) => ({ name: skill.name }))
+			: undefined;
 	// When the cleared flag is set we suppress the History list for the rest
 	// of the page session, but a fresh agent switch resets it so the user
 	// can still inspect another agent's list.
@@ -970,15 +871,6 @@ export function AdminChatPage(): React.ReactElement {
 								</button>
 							</div>
 						</div>
-						<DebugSessionSubheader
-							debugSessionId={debugSessionId}
-							history={visibleHistory}
-							debugSessionError={debugSessionError}
-							onRetry={() => setDebugSessionRetry((retry) => retry + 1)}
-							exporting={exporting}
-							canExport={debugSessionId !== null && !exporting}
-							onExport={() => void exportDebugSession()}
-						/>
 					</div>
 				}
 			/>

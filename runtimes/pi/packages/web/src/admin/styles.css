@@ -1764,3 +1764,136 @@ button {
 	padding-right: 16px;
 	background-image: none;
 }
+
+/* ==========================================================================
+   Agent 调试页宽屏适配
+   - 1200px 以下继续使用现有紧凑布局
+   - 中/宽桌面随视口扩大消息区与输入区
+   - 超宽屏设置阅读上限，避免正文行长失控
+   ========================================================================== */
+.admin-debug-shell {
+	--admin-debug-content-width: 1600px;
+	--admin-debug-composer-width: 1280px;
+}
+
+/* AdminChatPage 的直接子节点是 ConversationWorkspace。父节点为 flex 时，
+ * 子节点默认不会占满主轴剩余空间，页面会按内部内容的固有宽度收缩成窄栏。 */
+.admin-debug-shell > .conversation-workspace {
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+}
+
+/* Base styles give every direct context-header child `margin-right: auto`,
+ * which shrink-wraps the two-row debug header and leaves unused space on the
+ * right. The debug header is the full header surface, so it must stretch. */
+.admin-debug-shell .workspace-context-header > .admin-debug-header {
+	width: 100%;
+	margin-right: 0;
+}
+
+.admin-debug-shell .conversation-article,
+.admin-debug-shell .message-flow {
+	width: 100%;
+	max-width: var(--admin-debug-content-width);
+}
+
+.admin-debug-shell .message-flow {
+	padding-right: clamp(24px, 4vw, 72px);
+	padding-left: clamp(24px, 4vw, 72px);
+}
+
+.admin-debug-shell .editorial-composer {
+	width: 100%;
+	max-width: var(--admin-debug-composer-width);
+}
+
+.admin-debug-shell .admin-debug-thinking {
+	width: min(calc(100% - 48px), var(--admin-debug-composer-width));
+	max-width: none;
+}
+
+.admin-debug-shell .composer-dock {
+	padding-right: clamp(24px, 4vw, 72px);
+	padding-left: clamp(24px, 4vw, 72px);
+}
+
+.admin-debug-shell .ai-user-bubble {
+	max-width: min(46%, 560px);
+}
+
+@media (min-width: 1200px) {
+	.admin-debug-topbar {
+		min-height: 72px;
+		padding-right: clamp(28px, 3vw, 56px);
+		padding-left: clamp(28px, 3vw, 56px);
+	}
+
+	.admin-debug-topbar__left {
+		flex: 1 1 auto;
+		gap: clamp(16px, 1.5vw, 28px);
+	}
+
+	.admin-debug-topbar__agent {
+		min-width: 0;
+		flex: 1 1 360px;
+		max-width: 520px;
+		flex-direction: row;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.admin-debug-topbar__label {
+		flex: 0 0 auto;
+		font-size: 11px;
+		white-space: nowrap;
+	}
+
+	.admin-debug-topbar__select {
+		width: 100%;
+		min-width: 240px;
+		padding-top: 8px;
+		padding-bottom: 8px;
+	}
+
+	.admin-debug-topbar__select select {
+		width: 100%;
+		max-width: none;
+	}
+
+	.admin-debug-topbar__right {
+		min-width: 0;
+		flex: 1 1 520px;
+		justify-content: flex-end;
+		gap: clamp(10px, 1vw, 16px);
+	}
+
+	.admin-debug-chip {
+		min-width: 0;
+		max-width: none;
+		flex: 1 1 160px;
+		padding: 8px 14px;
+	}
+
+	.admin-debug-chip:first-child {
+		max-width: none;
+		flex-basis: 200px;
+	}
+
+	.admin-debug-chip__value {
+		max-width: 100%;
+	}
+
+}
+
+@media (min-width: 1920px) {
+	.admin-debug-shell {
+		--admin-debug-panel-width: 360px;
+		--admin-debug-panel-right: 32px;
+	}
+
+	.admin-debug-topbar {
+		padding-right: 32px;
+		padding-left: 32px;
+	}
+}

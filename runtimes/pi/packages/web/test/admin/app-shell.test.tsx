@@ -172,4 +172,21 @@ describe("Admin shell CSS layout (WB-002)", () => {
 		// v5：无 topbar 后 chat 路由的 main 直接 100vh，不再减去 topbar 高度。
 		expect(css).toMatch(/\.admin-shell\[data-route="chat"\]\s*\.admin-shell__main\s*{[^}]*overflow:\s*hidden/);
 	});
+
+	it("expands the Agent debug workspace fluidly on wide screens", () => {
+		expect(css).toMatch(/--admin-debug-content-width:\s*1600px/);
+		expect(css).toMatch(/--admin-debug-composer-width:\s*1280px/);
+		expect(css).toMatch(
+			/\.admin-debug-shell\s*>\s*\.conversation-workspace\s*{[^}]*flex:\s*1 1 auto;[^}]*width:\s*100%;[^}]*min-width:\s*0/,
+		);
+		expect(css).toMatch(
+			/\.admin-debug-shell\s+\.workspace-context-header\s*>\s*\.admin-debug-header\s*{[^}]*width:\s*100%;[^}]*margin-right:\s*0/,
+		);
+		expect(css).toMatch(
+			/\.admin-debug-shell\s+\.editorial-composer\s*{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*var\(--admin-debug-composer-width\)/,
+		);
+		expect(css).toMatch(/\.admin-debug-topbar__agent\s*{[^}]*flex:\s*1 1 360px;[^}]*max-width:\s*520px/);
+		expect(css).toMatch(/\.admin-debug-topbar__right\s*{[^}]*flex:\s*1 1 520px/);
+		expect(css).toMatch(/\.admin-debug-chip\s*{[^}]*flex:\s*1 1 160px/);
+	});
 });
