@@ -266,6 +266,8 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 					id: app.appId,
 					name: app.name,
 					status: app.status === "active" ? "online" : "paused",
+					publicAppId: app.publicAppId,
+					currentVersionId: app.currentVersionId ?? undefined,
 				}))
 			: [];
 	const updatedAtLabel = new Date(state.detail.updatedAt).toLocaleString("zh-CN", { hour12: false });
@@ -321,6 +323,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 				onBack={() => navigate("/agents")}
 				onTest={() => navigate(`/chat?agentId=${agentId}`)}
 				onPublish={() => setPublishDrawerMode("open")}
+				onOpenPublishedApp={(appId) => navigate(`/apps/${appId}`)}
 				onDirtyChange={handleDirtyChange}
 				createdAt={updatedAtLabel}
 				createdBy={state.detail.updatedBy}

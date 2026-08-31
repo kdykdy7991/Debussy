@@ -1541,6 +1541,9 @@
 	display: flex;
 	flex-direction: column;
 }
+.ard-publish-instances {
+	position: relative;
+}
 .ard-instance-item {
 	display: flex;
 	align-items: center;
@@ -1610,6 +1613,91 @@
 	width: 13px;
 	height: 13px;
 	flex: none;
+}
+.ard-instance-popover {
+	position: absolute;
+	z-index: 20;
+	top: 42px;
+	right: calc(100% + 10px);
+	width: min(320px, calc(100vw - 48px));
+	padding: 16px;
+	border: 1px solid var(--ard-line);
+	border-radius: 10px;
+	background: #fff;
+	box-shadow: 0 12px 32px rgb(15 23 42 / 14%);
+}
+.ard-instance-popover-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+.ard-instance-popover-head strong {
+	font-size: 14px;
+	color: var(--ard-ink);
+}
+.ard-instance-popover-head button {
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--ard-muted);
+	font-size: 20px;
+	cursor: pointer;
+}
+.ard-instance-popover-head button:hover {
+	background: var(--ard-row-hover);
+	color: var(--ard-ink);
+}
+.ard-instance-popover dl {
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+	margin: 0;
+}
+.ard-instance-popover dl > div {
+	display: grid;
+	grid-template-columns: 92px minmax(0, 1fr);
+	gap: 10px;
+	font-size: 12px;
+}
+.ard-instance-popover dt {
+	color: var(--ard-muted);
+}
+.ard-instance-popover dd {
+	margin: 0;
+	color: var(--ard-ink);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	overflow-wrap: anywhere;
+}
+.ard-instance-popover-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	width: 100%;
+	height: 34px;
+	margin-top: 14px;
+	border: 1px solid var(--ard-line);
+	border-radius: 7px;
+	background: #fff;
+	color: var(--ard-ink);
+	cursor: pointer;
+}
+.ard-instance-popover-action:hover {
+	background: var(--ard-row-hover);
+}
+.ard-instance-popover-action svg {
+	width: 12px;
+	height: 12px;
+}
+@media (max-width: 900px) {
+	.ard-instance-popover {
+		right: 0;
+	}
 }
 
 /* Quick info table */

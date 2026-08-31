@@ -66,6 +66,8 @@ export interface PublishInstance {
 	readonly id: string;
 	readonly name: string;
 	readonly status: "online" | "paused";
+	readonly publicAppId?: string;
+	readonly currentVersionId?: string;
 	readonly audience?: string;
 	readonly domain?: string;
 	/** Control API 只给 versionId，没有可读版本号，缺失时省略该行。 */
@@ -861,6 +863,7 @@ export function AgentDetailPreview({
 	onBack,
 	onTest,
 	onPublish,
+	onOpenPublishedApp,
 	embedded = false,
 	data = PREVIEW_DETAIL,
 	publishData = PREVIEW_PUBLISH,
@@ -888,6 +891,7 @@ export function AgentDetailPreview({
 	readonly onBack: () => void;
 	readonly onTest?: () => void;
 	readonly onPublish?: () => void;
+	readonly onOpenPublishedApp?: (appId: string) => void;
 	readonly embedded?: boolean;
 	readonly data?: AgentDetailData;
 	readonly publishData?: AgentPublishData;
@@ -1376,7 +1380,7 @@ export function AgentDetailPreview({
 
 				<aside className="ard-side" aria-label="发布信息">
 					<PublishStatusCard publishData={publishData} onPublish={onPublish} />
-					<PublishInstancesCard instances={publishData.instances} />
+					<PublishInstancesCard instances={publishData.instances} onOpenApp={onOpenPublishedApp} />
 					<QuickInfoCard
 						modelName={selectedModel?.name ?? (model === "" ? "未选择" : model)}
 						reasoningEnabled={reasoning}
@@ -1518,16 +1522,36 @@ function PublishStatusCard({
 	);
 }
 
-function PublishInstancesCard({ instances }: { readonly instances: readonly PublishInstance[] }): React.ReactElement {
+function PublishInstancesCard({
+	instances,
+	onOpenApp,
+}: {
+	readonly instances: readonly PublishInstance[];
+	readonly onOpenApp?: (appId: string) => void;
+}): React.ReactElement {
+	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const cardRef = useRef<HTMLElement | null>(null);
+	const selected = instances.find((item) => item.id === selectedId);
+
+	useEffect(() => {
+		if (selectedId === null) return;
+		const closeOnOutsideClick = (event: MouseEvent): void => {
+			if (cardRef.current?.contains(event.target as Node) === false) setSelectedId(null);
+		};
+		const closeOnEscape = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") setSelectedId(null);
+		};
+		document.addEventListener("mousedown", closeOnOutsideClick);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("mousedown", closeOnOutsideClick);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, [selectedId]);
+
 	return (
-		<section className="ard-side-card" aria-label="发布实例">
-			<div className="ard-side-head">
-				<h3>发布实例</h3>
-				<button type="button" className="ard-mini-btn">
-					<Icon name="plus" />
-					新建发布
-				</button>
-			</div>
+		<section ref={cardRef} className="ard-side-card ard-publish-instances" aria-label="发布实例">
+			<h3>发布实例</h3>
 			{instances.length === 0 ? (
 				<p className="ard-side-empty">还没有应用使用这个 Agent</p>
 			) : (
@@ -1537,7 +1561,13 @@ function PublishInstancesCard({ instances }: { readonly instances: readonly Publ
 						const audienceLine = [item.audience, item.domain].filter(notEmpty).join(" · ");
 						const versionLine = [item.version, item.publishedAt].filter(notEmpty).join(" · ");
 						return (
-							<button type="button" className="ard-instance-item" key={item.id}>
+							<button
+								type="button"
+								className="ard-instance-item"
+								key={item.id}
+								aria-expanded={selectedId === item.id}
+								onClick={() => setSelectedId((current) => (current === item.id ? null : item.id))}
+							>
 								<span className="ard-instance-icon" aria-hidden="true">
 									<Icon name="publish" />
 								</span>
@@ -1558,6 +1588,36 @@ function PublishInstancesCard({ instances }: { readonly instances: readonly Publ
 				</div>
 			)}
 			{instances.length === 0 ? null : <div className="ard-side-link">共 {instances.length} 个关联应用</div>}
+			{selected === undefined ? null : (
+				<div className="ard-instance-popover" role="dialog" aria-label={`${selected.name} 应用详情`}>
+					<div className="ard-instance-popover-head">
+						<strong>{selected.name}</strong>
+						<button type="button" aria-label="关闭应用详情" onClick={() => setSelectedId(null)}>
+							×
+						</button>
+					</div>
+					<dl>
+						<div>
+							<dt>状态</dt>
+							<dd>{selected.status === "online" ? "已上线" : "已暂停"}</dd>
+						</div>
+						<div>
+							<dt>Public App ID</dt>
+							<dd>{selected.publicAppId ?? "—"}</dd>
+						</div>
+						<div>
+							<dt>当前版本 ID</dt>
+							<dd>{selected.currentVersionId ?? "尚未激活"}</dd>
+						</div>
+					</dl>
+					{onOpenApp === undefined ? null : (
+						<button type="button" className="ard-instance-popover-action" onClick={() => onOpenApp(selected.id)}>
+							进入应用详情
+							<Icon name="chevron" />
+						</button>
+					)}
+				</div>
+			)}
 		</section>
 	);
 }

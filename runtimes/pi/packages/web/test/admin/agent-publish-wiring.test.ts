@@ -34,6 +34,14 @@ describe("redesigned Agent publish wiring", () => {
 		expect(publishDrawerSource).not.toContain("应用版本已创建，尚未激活");
 	});
 
+	it("shows associated app details without a duplicate create action", () => {
+		expect(detailSource).not.toContain("新建发布");
+		expect(detailSource).toContain('role="dialog" aria-label={`${selected.name} 应用详情`}');
+		expect(detailSource).toContain("Public App ID");
+		expect(detailSource).toContain("当前版本 ID");
+		expect(pageSource).toContain("onOpenPublishedApp={(appId) => navigate(`/apps/${appId}`)}");
+	});
+
 	it("does not label direct toolIds as all available tools", () => {
 		expect(pageSource).not.toContain("toolsCount={state.detail.toolIds.length}");
 		expect(detailSource).not.toContain("<dt>可用工具</dt>");
