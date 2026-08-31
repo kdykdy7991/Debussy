@@ -837,7 +837,6 @@ export function AdminChatPage(): React.ReactElement {
 							</div>
 							<div className="admin-debug-topbar__right">
 								<div className="admin-debug-topbar__agent">
-									<span className="admin-debug-topbar__label">调试 Agent</span>
 									<label className="admin-debug-topbar__select">
 										<select
 											aria-label="选择调试 Agent"
@@ -854,7 +853,21 @@ export function AdminChatPage(): React.ReactElement {
 													))
 												: <option value="">暂无 Agent</option>}
 										</select>
-										<span aria-hidden="true" className="admin-debug-topbar__select-caret">▾</span>
+										<svg
+											className="admin-debug-topbar__select-caret"
+											viewBox="0 0 16 16"
+											focusable="false"
+											aria-hidden="true"
+										>
+											<path
+												d="m4.5 6 3.5 3.5L11.5 6"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="1.5"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											/>
+										</svg>
 									</label>
 								</div>
 								<DebugModelChip model={selectedModelMetadata} />

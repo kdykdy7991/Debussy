@@ -1879,12 +1879,6 @@ button {
 		gap: 12px;
 	}
 
-	.admin-debug-topbar__label {
-		flex: 0 0 auto;
-		font-size: 11px;
-		white-space: nowrap;
-	}
-
 	.admin-debug-topbar__select {
 		width: fit-content;
 		min-width: 0;

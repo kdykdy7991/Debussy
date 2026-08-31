@@ -1503,11 +1503,6 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	gap: 2px;
 	min-width: 0;
 }
-.admin-debug-topbar__label {
-	font: 500 10px var(--font-sans);
-	color: var(--color-text-tertiary);
-	letter-spacing: 0.04em;
-}
 .admin-debug-topbar__select {
 	position: relative;
 	display: inline-flex;
@@ -1543,9 +1538,10 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	position: absolute;
 	right: 10px;
 	top: 50%;
+	width: 16px;
+	height: 16px;
 	transform: translateY(-50%);
 	color: var(--color-text-tertiary);
-	font-size: 10px;
 	pointer-events: none;
 }
 
