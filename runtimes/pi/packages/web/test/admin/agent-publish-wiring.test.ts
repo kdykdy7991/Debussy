@@ -22,4 +22,9 @@ describe("redesigned Agent publish wiring", () => {
 			/onPublished=\{\(\) => \{[\s\S]*?load\(\);[\s\S]*?loadRevisions\(\);[\s\S]*?loadApps\(\);/,
 		);
 	});
+
+	it("does not label direct toolIds as all available tools", () => {
+		expect(pageSource).not.toContain("toolsCount={state.detail.toolIds.length}");
+		expect(detailSource).not.toContain("<dt>可用工具</dt>");
+	});
 });

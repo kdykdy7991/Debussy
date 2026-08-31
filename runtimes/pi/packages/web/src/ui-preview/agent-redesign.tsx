@@ -869,7 +869,6 @@ export function AgentDetailPreview({
 	createdAt,
 	createdBy,
 	agentId,
-	toolsCount,
 	saveEnabled = true,
 	identityEditable = true,
 	modelEditable = true,
@@ -897,7 +896,6 @@ export function AgentDetailPreview({
 	readonly createdAt?: string;
 	readonly createdBy?: string;
 	readonly agentId?: string;
-	readonly toolsCount?: number;
 	readonly saveEnabled?: boolean;
 	readonly identityEditable?: boolean;
 	readonly modelEditable?: boolean;
@@ -1385,7 +1383,6 @@ export function AgentDetailPreview({
 						effort={effort}
 						skillsCount={skills.length}
 						mcpCount={mcpServers.length}
-						toolsCount={toolsCount}
 						attachments={attachments}
 						avatar={avatar}
 						liveSpeech={speech}
@@ -1571,7 +1568,6 @@ function QuickInfoCard({
 	effort,
 	skillsCount,
 	mcpCount,
-	toolsCount,
 	attachments,
 	avatar,
 	liveSpeech,
@@ -1581,7 +1577,6 @@ function QuickInfoCard({
 	readonly effort: ReasoningEffort | undefined;
 	readonly skillsCount: number;
 	readonly mcpCount: number;
-	readonly toolsCount?: number;
 	readonly attachments: boolean;
 	readonly avatar: boolean;
 	readonly liveSpeech: boolean;
@@ -1610,10 +1605,6 @@ function QuickInfoCard({
 				<div>
 					<dt>关联 MCP Server</dt>
 					<dd>{mcpCount}</dd>
-				</div>
-				<div>
-					<dt>可用工具</dt>
-					<dd>{toolsCount ?? "—"}</dd>
 				</div>
 				<div>
 					<dt>允许附件</dt>

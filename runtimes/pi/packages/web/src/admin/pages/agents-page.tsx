@@ -325,7 +325,6 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 				createdAt={updatedAtLabel}
 				createdBy={state.detail.updatedBy}
 				agentId={state.detail.id}
-				toolsCount={state.detail.toolIds.length}
 				publishData={publishData}
 				skills={skillItems}
 				mcpServers={mcpItems}
