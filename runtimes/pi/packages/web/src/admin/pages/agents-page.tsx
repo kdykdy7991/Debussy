@@ -35,6 +35,7 @@ import { newIdempotencyKey } from "../api/idempotency.ts";
 import { LlmApi } from "../api/llm-api.ts";
 import { McpApi } from "../api/mcp-api.ts";
 import { SkillApi } from "../api/skill-api.ts";
+import { PublishDrawer } from "../apps/publish-drawer.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import type { AdminRoute } from "../router.ts";
 import { navigate } from "../router.ts";
@@ -97,6 +98,9 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	const [apps, setApps] = useState<AppsState>({ kind: "loading" });
 	const [skillCatalog, setSkillCatalog] = useState<CatalogState<SkillSummary>>({ kind: "loading" });
 	const [mcpCatalog, setMcpCatalog] = useState<CatalogState<McpCatalogServer>>({ kind: "loading" });
+	const [publishDrawerMode, setPublishDrawerMode] = useState<"closed" | "open">("closed");
+	const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+	const handleDirtyChange = useCallback((dirty: boolean) => setHasUnsavedChanges(dirty), []);
 
 	const load = useCallback(() => {
 		setState({ kind: "loading" });
@@ -302,51 +306,67 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	});
 
 	return (
-		<AgentDetailPreview
-			key={`${agentId}:${currentRevision}`}
-			embedded
-			data={data}
-			saveEnabled
-			identityEditable
-			modelEditable={models.kind === "loaded"}
-			models={models.kind === "loaded" ? models.items : undefined}
-			modelsLoading={models.kind === "loading"}
-			modelsError={models.kind === "error" ? models.message : undefined}
-			onSave={saveDraft}
-			onBack={() => navigate("/agents")}
-			onTest={() => navigate(`/chat?agentId=${agentId}`)}
-			createdAt={updatedAtLabel}
-			createdBy={state.detail.updatedBy}
-			agentId={state.detail.id}
-			toolsCount={state.detail.toolIds.length}
-			publishData={publishData}
-			skills={skillItems}
-			mcpServers={mcpItems}
-			resourcesLoading={skillCatalog.kind === "loading" || mcpCatalog.kind === "loading"}
-			skillCatalog={
-				skillCatalog.kind === "loaded"
-					? skillCatalog.items.map((item) => ({
-							id: item.id,
-							name: item.name,
-							currentRevision: item.currentRevision,
-							enabled: item.enabled,
-						}))
-					: undefined
-			}
-			mcpCatalog={
-				mcpCatalog.kind === "loaded"
-					? mcpCatalog.items.map((item) => ({
-							id: item.id,
-							name: item.name,
-							currentRevision: item.currentRevision,
-							enabled: item.status === "enabled",
-							toolCount: item.toolCount,
-							toolNames: item.toolNames,
-						}))
-					: undefined
-			}
-			hasDraft={state.detail.hasDraft}
-		/>
+		<>
+			<AgentDetailPreview
+				key={`${agentId}:${currentRevision}`}
+				embedded
+				data={data}
+				saveEnabled
+				identityEditable
+				modelEditable={models.kind === "loaded"}
+				models={models.kind === "loaded" ? models.items : undefined}
+				modelsLoading={models.kind === "loading"}
+				modelsError={models.kind === "error" ? models.message : undefined}
+				onSave={saveDraft}
+				onBack={() => navigate("/agents")}
+				onTest={() => navigate(`/chat?agentId=${agentId}`)}
+				onPublish={() => setPublishDrawerMode("open")}
+				onDirtyChange={handleDirtyChange}
+				createdAt={updatedAtLabel}
+				createdBy={state.detail.updatedBy}
+				agentId={state.detail.id}
+				toolsCount={state.detail.toolIds.length}
+				publishData={publishData}
+				skills={skillItems}
+				mcpServers={mcpItems}
+				resourcesLoading={skillCatalog.kind === "loading" || mcpCatalog.kind === "loading"}
+				skillCatalog={
+					skillCatalog.kind === "loaded"
+						? skillCatalog.items.map((item) => ({
+								id: item.id,
+								name: item.name,
+								currentRevision: item.currentRevision,
+								enabled: item.enabled,
+							}))
+						: undefined
+				}
+				mcpCatalog={
+					mcpCatalog.kind === "loaded"
+						? mcpCatalog.items.map((item) => ({
+								id: item.id,
+								name: item.name,
+								currentRevision: item.currentRevision,
+								enabled: item.status === "enabled",
+								toolCount: item.toolCount,
+								toolNames: item.toolNames,
+							}))
+						: undefined
+				}
+				hasDraft={state.detail.hasDraft}
+			/>
+			<PublishDrawer
+				agentId={agentId}
+				hasDraft={hasUnsavedChanges}
+				mode={publishDrawerMode}
+				onClose={() => setPublishDrawerMode("closed")}
+				onPublished={() => {
+					setPublishDrawerMode("closed");
+					load();
+					loadRevisions();
+					loadApps();
+				}}
+			/>
+		</>
 	);
 }
 

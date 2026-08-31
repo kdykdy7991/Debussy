@@ -877,6 +877,7 @@ export function AgentDetailPreview({
 	modelsLoading = false,
 	modelsError,
 	onSave,
+	onDirtyChange,
 	extensionPanel,
 	externallyDirty = false,
 	onDiscardExternal,
@@ -904,6 +905,7 @@ export function AgentDetailPreview({
 	readonly modelsLoading?: boolean;
 	readonly modelsError?: string;
 	readonly onSave?: (draft: AgentEditableDraft) => Promise<void>;
+	readonly onDirtyChange?: (dirty: boolean) => void;
 	readonly extensionPanel?: ReactNode;
 	readonly externallyDirty?: boolean;
 	readonly onDiscardExternal?: () => void;
@@ -964,6 +966,9 @@ export function AgentDetailPreview({
 	});
 	const formDirty = savedSnapshot !== "" && snapshot !== savedSnapshot;
 	const dirty = formDirty || externallyDirty;
+	useEffect(() => {
+		onDirtyChange?.(dirty);
+	}, [dirty, onDirtyChange]);
 	const selectedModel = models?.find((item) => item.id === model);
 	const reasoningCapability = selectedModel?.parameterCapabilities.reasoning;
 	const effortOptions = reasoningCapability?.efforts ?? (effort === undefined ? [] : [effort]);
