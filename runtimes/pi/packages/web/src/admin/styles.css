@@ -1788,6 +1788,12 @@ button {
 	color: var(--color-text-primary);
 }
 
+.admin-debug-shell .workspace-debug-back svg {
+	width: 18px;
+	height: 18px;
+	flex: 0 0 auto;
+}
+
 /* ==========================================================================
    Agent 调试页宽屏适配
    - 1200px 以下继续使用现有紧凑布局

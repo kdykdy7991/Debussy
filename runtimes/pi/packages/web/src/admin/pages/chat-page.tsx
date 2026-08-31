@@ -822,7 +822,16 @@ export function AdminChatPage(): React.ReactElement {
 									className="workspace-debug-back"
 									onClick={() => navigate(selected ? `/agents/${selected.id}` : "/agents")}
 								>
-									<span aria-hidden="true">←</span>
+									<svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
+										<path
+											d="M16.25 10H3.75m0 0 5-5m-5 5 5 5"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="1.6"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										/>
+									</svg>
 									<span>返回 Agent</span>
 								</button>
 								<div className="admin-debug-topbar__agent">
