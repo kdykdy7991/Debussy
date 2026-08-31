@@ -184,10 +184,6 @@ export function AgentDesignTab({
 						<dd>{selectedModel?.provider ?? "—"}</dd>
 					</div>
 					<div>
-						<dt>工具</dt>
-						<dd>{draft.toolIds.length} 个</dd>
-					</div>
-					<div>
 						<dt>知识库</dt>
 						<dd>{draft.knowledgeBaseIds.length} 个</dd>
 					</div>

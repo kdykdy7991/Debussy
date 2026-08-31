@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 describe("redesigned Agent publish wiring", () => {
 	const pageSource = readFileSync(resolve(__dirname, "../../src/admin/pages/agents-page.tsx"), "utf8");
 	const detailSource = readFileSync(resolve(__dirname, "../../src/ui-preview/agent-redesign.tsx"), "utf8");
+	const legacyDesignSource = readFileSync(resolve(__dirname, "../../src/admin/agents/agent-design-tab.tsx"), "utf8");
+	const revisionSource = readFileSync(resolve(__dirname, "../../src/admin/agents/revision-list.tsx"), "utf8");
+	const publishDrawerSource = readFileSync(resolve(__dirname, "../../src/admin/apps/publish-drawer.tsx"), "utf8");
 
 	it("opens the existing PublishDrawer from the Agent detail publish action", () => {
 		expect(pageSource).toContain('onPublish={() => setPublishDrawerMode("open")}');
@@ -26,5 +29,8 @@ describe("redesigned Agent publish wiring", () => {
 	it("does not label direct toolIds as all available tools", () => {
 		expect(pageSource).not.toContain("toolsCount={state.detail.toolIds.length}");
 		expect(detailSource).not.toContain("<dt>可用工具</dt>");
+		expect(legacyDesignSource).not.toContain("draft.toolIds.length");
+		expect(revisionSource).not.toContain("snapshot.toolIds.join");
+		expect(publishDrawerSource).not.toContain("snapshot.toolIds.length");
 	});
 });

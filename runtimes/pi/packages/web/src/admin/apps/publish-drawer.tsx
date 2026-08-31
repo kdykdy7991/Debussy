@@ -507,17 +507,6 @@ function ConfigSummary({ revision }: { revision: AgentDefinitionRevision }): Rea
 				</dd>
 				<dt>新建对话 / 侧边栏</dt>
 				<dd>{snapshot.capabilities.newConversations === false ? "关闭" : "启用"}</dd>
-				<dt>工具</dt>
-				<dd>
-					{snapshot.toolIds.length === 0 ? (
-						"未引用"
-					) : (
-						<span>
-							已引用 {snapshot.toolIds.length} 项
-							<span className={styles.diffSummary__muted}>（抽屉内不展示名称）</span>
-						</span>
-					)}
-				</dd>
 				<dt>知识库</dt>
 				<dd>
 					{snapshot.knowledgeBaseIds.length === 0 ? (

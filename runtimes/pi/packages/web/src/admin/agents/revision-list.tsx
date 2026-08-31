@@ -313,8 +313,6 @@ function SnapshotView({ snapshot }: { snapshot: AgentConfigSnapshot }): React.Re
 					</span>
 				)}
 			</dd>
-			<dt>工具</dt>
-			<dd>{snapshot.toolIds.length === 0 ? "—" : snapshot.toolIds.join(", ")}</dd>
 			<dt>知识库</dt>
 			<dd>{snapshot.knowledgeBaseIds.length === 0 ? "—" : snapshot.knowledgeBaseIds.join(", ")}</dd>
 			<dt>能力</dt>
