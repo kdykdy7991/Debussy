@@ -169,4 +169,41 @@ export interface DebugConversationEventRepository {
 export interface DebugRepositories {
 	readonly conversations: DebugConversationRepository;
 	readonly events: DebugConversationEventRepository;
+	readonly summaries: DebugConversationSummaryRepository;
+}
+
+/**
+ * Phase-3 (Debussy): durable summary for a Debug Conversation, stored in its own
+ * physical table so Administrators can never pollute the Production summary
+ * stream. Mirrors the Production summary semantics: `throughSequence` is the
+ * Debussy event sequence of the last complete Turn collapsed and the row is
+ * CONTEXT-ONLY (never carries tool transcripts); `previousSummaryId` links a
+ * chain so compaction never re-scans history an earlier summary already covered.
+ */
+export interface DebugConversationSummaryRecord {
+	readonly id: string;
+	readonly tenantId: TenantId;
+	readonly ownerPrincipalId: PrincipalId;
+	readonly debugConversationId: DebugConversationId;
+	readonly throughSequence: number;
+	readonly modelId: string;
+	readonly sourceEventCount: number;
+	readonly sourceBytes: number;
+	readonly body: unknown;
+	readonly createdAt: Date;
+	readonly previousSummaryId?: string;
+	readonly tokensBefore?: number;
+}
+
+/** Head-summary lookup (resume/restore) + append for a Debug Conversation. */
+export interface DebugConversationSummaryRepository {
+	/** The most recent summary for a Debug conversation (or undefined). */
+	getLatest(
+		ref: DebugConversationRef,
+	): Promise<DebugConversationSummaryRecord | undefined>;
+	/** Persist a new summary (returns true when inserted). */
+	insert(
+		ref: DebugConversationRef,
+		record: DebugConversationSummaryRecord,
+	): Promise<boolean>;
 }

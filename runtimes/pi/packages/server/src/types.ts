@@ -87,6 +87,33 @@ export interface RetrievalInput {
 	citations: readonly Citation[];
 }
 
+/**
+ * Structured native transcript blocks delivered to a fresh runtime so the
+ * next prompt's model request contains real `assistant toolCall` +
+ * `toolResult` turns (not flattened text). Produced by the server's
+ * structured Context restore from the durable Postgres event log.
+ */
+export type TranscriptContentBlock =
+	| { readonly type: "text"; readonly text: string }
+	| { readonly type: "image"; readonly data: string; readonly mimeType: string }
+	| {
+			readonly type: "toolCall";
+			readonly toolCallId: string;
+			readonly toolName: string;
+			readonly input?: unknown;
+	  };
+
+export type TranscriptMessage =
+	| { readonly role: "user"; readonly content: readonly TranscriptContentBlock[] }
+	| { readonly role: "assistant"; readonly content: readonly TranscriptContentBlock[] }
+	| {
+			readonly role: "toolResult";
+			readonly toolCallId: string;
+			readonly toolName: string;
+			readonly isError: boolean;
+			readonly content: readonly TranscriptContentBlock[];
+	  };
+
 export interface PromptInput {
 	text: string;
 	/** Frozen PublishedAppVersion prompt, including bound Skill instructions. */
@@ -94,6 +121,8 @@ export interface PromptInput {
 	attachmentIds?: string[];
 	attachments?: ResolvedAttachmentInput[];
 	retrieval?: RetrievalInput;
+	/** Structured native history to seed into the session before this prompt. */
+	transcript?: readonly TranscriptMessage[];
 }
 
 export interface SteerInput {

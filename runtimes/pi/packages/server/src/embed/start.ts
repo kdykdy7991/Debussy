@@ -265,6 +265,9 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 		repositories: options.repositories,
 		turnExecutor: managedTurnExecutor(runtimeManager),
 		...(conversationCitations !== undefined ? { citations: conversationCitations } : {}),
+		// Phase-3: after Debussy persists a compaction, evict the cached runtime
+		// so the next Turn rebuilds an equivalent Working Context from Postgres.
+		onCompacted: (conversationId) => runtimeManager.reset(conversationId),
 	});
 	// TASK-030/031：附件对象存储 + 总量配额；未配置 store 时 uploads 端点
 	// 503（不静默退化为磁盘）。

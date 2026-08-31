@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
@@ -18,6 +18,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { CodingAgentPiSessionBackend } from "../src/coding-agent/index.ts";
+import { CodingAgentPiSessionRuntime } from "../src/coding-agent/runtime.ts";
 import type { PiServer } from "../src/index.ts";
 import { connectWebSocketTestClient, type ProtocolTestClient } from "../src/testing/index.ts";
 import { createWebSocketServer } from "../src/transports/websocket/index.ts";
@@ -166,8 +167,29 @@ describe("CodingAgentPiSessionBackend", () => {
 		expect(fauxModels.map((m) => m.id).sort()).toEqual(["faux-1", "faux-2"]);
 	});
 
-	test("ephemeral sessions are not written to the session index", async () => {
-		const { backend } = await makeHarness();
+	test("non-ephemeral (Admin/Coding Chat) sessions still write a JSONL session file", async () => {
+		const { backend, root, faux } = await makeHarness();
+		const runtime = await backend.createSession({
+			id: "admin-persist",
+			model: { provider: "faux", id: "faux-1" },
+		});
+		// Admin/Coding Chat keep the persistent SessionManager: it is persisted and
+		// a real JSONL file is written once history flushes.
+		expect((runtime as unknown as CodingAgentPiSessionRuntime).session.sessionManager.isPersisted()).toBe(true);
+		faux.setResponses([fauxAssistantMessage("ack")]);
+		await runtime.prompt({ text: "hello" });
+		const jsonl = readdirSync(join(root, "sessions")).filter((f) => f.endsWith(".jsonl"));
+		expect(jsonl).toHaveLength(1);
+		expect(jsonl[0]).toContain("admin-persist");
+		await runtime.dispose();
+		// The durable JSONL makes the session reopenable via openSession.
+		const reopened = await backend.openSession("admin-persist");
+		expect((reopened as unknown as CodingAgentPiSessionRuntime).session.sessionManager.isPersisted()).toBe(true);
+		await reopened.dispose();
+	});
+
+	test("ephemeral (Conversation) sessions are in-memory: no JSONL written, not reopenable", async () => {
+		const { backend, root } = await makeHarness();
 		const runtime = await backend.createSession({
 			id: "debug-ephemeral",
 			model: { provider: "faux", id: "faux-1" },
@@ -175,6 +197,13 @@ describe("CodingAgentPiSessionBackend", () => {
 		});
 
 		expect((await backend.listSessions()).map((session) => session.id)).not.toContain("debug-ephemeral");
+		// The underlying AgentSession carries an in-memory SessionManager:
+		// it is not persisted and has no session file path, so no JSONL exists.
+		const sessionManager = (runtime as unknown as CodingAgentPiSessionRuntime).session.sessionManager;
+		expect(sessionManager.isPersisted()).toBe(false);
+		expect(sessionManager.getSessionFile()).toBeFalsy();
+		// No JSONL file is created anywhere in the session directory.
+		expect(readdirSync(join(root, "sessions")).filter((f) => f.endsWith(".jsonl"))).toEqual([]);
 		await runtime.dispose();
 		await expect(backend.openSession("debug-ephemeral")).rejects.toThrow(/Unknown session/);
 	});

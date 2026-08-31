@@ -37,6 +37,8 @@ function rowToRecord(row: Record<string, unknown>): ConversationSummaryRecord {
 		sourceBytes: Number(row.source_bytes),
 		body: row.body,
 		createdAt: row.created_at as Date,
+		previousSummaryId: (row.previous_summary_id ?? undefined) as ConversationSummaryId | undefined,
+		tokensBefore: row.tokens_before === null || row.tokens_before === undefined ? undefined : Number(row.tokens_before),
 	};
 }
 
@@ -47,8 +49,9 @@ export function createConversationSummaryRepository(client: PostgresClient): Con
 				await client.run(
 					`insert into conversation_summaries
 					 (id, tenant_id, published_app_id, owner_principal_id, conversation_id,
-					  through_sequence, model_id, source_event_count, source_bytes, body, created_at)
-					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+					  through_sequence, model_id, source_event_count, source_bytes, body, created_at,
+					  previous_summary_id, tokens_before)
+					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 					record.id,
 					scope.tenantId,
 					scope.publishedAppId,
@@ -60,6 +63,8 @@ export function createConversationSummaryRepository(client: PostgresClient): Con
 					record.sourceBytes,
 					record.body as SqlParameter,
 					record.createdAt,
+					record.previousSummaryId ?? null,
+					record.tokensBefore ?? null,
 				);
 				return { outcome: "inserted" as const };
 			} catch (error) {

@@ -252,6 +252,7 @@ export {
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
 export {
+	type CompactionMode,
 	type CompactionSettings,
 	type DefaultProjectTrust,
 	type ImageSettings,

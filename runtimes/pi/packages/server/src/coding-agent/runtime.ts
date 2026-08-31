@@ -21,6 +21,7 @@ import type {
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
+import { toAgentMessages } from "./history-mapper.ts";
 import type {
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
@@ -87,7 +88,21 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	}
 
 	async prompt(input: PromptInput): Promise<void> {
-		await this.runOperation(() => {
+		// Structured history (if any) is injected into the native session before
+		// this turn so the model request contains real assistant(toolCall) +
+		// toolResult turns rather than flattened retrieval text.
+		let preSeed: Promise<void> = Promise.resolve();
+		if (input.transcript && input.transcript.length > 0) {
+			const model = this.agentSession.model;
+			const messages = toAgentMessages(input.transcript, {
+				provider: model?.provider,
+				model: model?.id,
+				now: Date.now(),
+			});
+			preSeed = this.agentSession.injectTranscript(messages as never);
+		}
+		await this.runOperation(async () => {
+			await preSeed;
 			const attachments = this.attachmentOptions(input.attachments);
 			const contextBlocks = this.contextBlocks(input.retrieval);
 			return this.agentSession.prompt(input.text, {

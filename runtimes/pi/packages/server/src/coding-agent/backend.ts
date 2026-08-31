@@ -242,7 +242,14 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 				reason: "new",
 			},
 		});
-		const wrapper = this.registerLive(options.id, result.session, options.ephemeral === true);
+		const session = result.session;
+		// Phase-3 (Debussy): ephemeral Published/Debug sessions gate Pi's automatic
+		// THRESHOLD compaction so Pi never auto-compacts the Working Context
+		// behind Debussy (overflow recovery stays on as the emergency fallback).
+		if (options.ephemeral === true) {
+			session.settingsManager.setRuntimeCompactionMode("overflow-only");
+		}
+		const wrapper = this.registerLive(options.id, session, options.ephemeral === true);
 		if (sessionFile !== undefined) this.sessionFileById.set(options.id, sessionFile);
 		return wrapper;
 	}

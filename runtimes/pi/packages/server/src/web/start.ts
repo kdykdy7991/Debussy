@@ -195,6 +195,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		// Shared session factory: published/embed and Debug conversation runtimes
 		// both carry their frozen prompt + skills into an isolated per-session
 		// ResourceLoader via `resourceOverrides` (never read the host cwd).
+		//
+		// Phase 2: Postgres is the only durable truth for these conversations, so
+		// the Pi SessionManager is created IN MEMORY — no new JSONL transcript is
+		// written, and nothing is read back from disk. Restart/runtime eviction
+		// rebuilds the conversation purely from Postgres -> structured transcript
+		// -> injectTranscript. Admin / Coding Chat do NOT pass through this
+		// factory and keep their persistent JSONL SessionManager unchanged.
 		const makeRuntimeSession: DebugSessionFactory = (options) =>
 			(embedBackend ?? backend).createSession({
 				id: options.id,
@@ -203,6 +210,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				streamOptions: options.streamOptions,
 				customTools: options.customTools,
 				allowedToolNames: options.allowedToolNames,
+				ephemeral: true,
 				...(options.systemPrompt !== undefined || (options.skills?.length ?? 0) > 0
 					? {
 							resourceOverrides: {

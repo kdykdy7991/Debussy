@@ -37,6 +37,16 @@ export class ConversationRuntime {
 	private readonly listeners = new Set<(event: ConversationRuntimeEvent) => void>();
 	private closed = false;
 	private closePromise: Promise<void> | undefined;
+	/**
+	 * Postgres-native hydration is RUN-ONCE per runtime lifetime. The in-memory
+	 * Pi session is the live state across the runtime's turns; Postgres is only
+	 * the durable source for (re)building a fresh session. Every turn passes the
+	 * full restored `history`, so a cached runtime must not re-inject it —
+	 * otherwise each subsequent turn duplicates all prior turns into the model
+	 * context. A fresh runtime (just-created / after eviction / after restart)
+	 * hydrates exactly once with the full history it is given.
+	 */
+	private hydrated = false;
 
 	constructor(options: ConversationRuntimeOptions) {
 		this.scope = options.scope;
@@ -91,17 +101,29 @@ export class ConversationRuntime {
 		const retrieval = options?.retrieval;
 		const attachmentIds = options?.attachmentIds;
 		const attachments = options?.attachments;
-		const hasHistory = history !== undefined && history.messages.length > 0;
+		// Phase-1/2: on a FRESH runtime the restored history is hydrated once as
+		// structured native turns (assistant toolCall / toolResult), NOT flattened
+		// into retrieval text. On a cached runtime (this.hydrated already true)
+		// the in-memory session already holds prior turns, so the per-turn full
+		// `history` is deliberately ignored for injection to avoid duplication.
+		const hydrate = !this.hydrated;
+		this.hydrated = true;
+		const structuredHistory =
+			hydrate && history !== undefined && history.transcript && history.transcript.length > 0
+				? history.transcript
+				: undefined;
+		const hasHistory = hydrate && history !== undefined && history.messages.length > 0;
 		const hasAttachments =
 			(attachmentIds !== undefined && attachmentIds.length > 0) ||
 			(attachments !== undefined && attachments.length > 0);
-		if (!hasHistory && retrieval === undefined && !hasAttachments) {
+		if (structuredHistory === undefined && retrieval === undefined && !hasAttachments) {
 			await this.session.prompt({ text });
 			return;
 		}
 		const contextParts: string[] = [];
 		const referenceParts: string[] = [];
-		if (hasHistory) {
+		// Only fall back to flat text when there is no structured transcript.
+		if (structuredHistory === undefined && hasHistory) {
 			contextParts.push(historyToContextText(history.messages));
 			referenceParts.push(historyToReference(history.messages));
 		}
@@ -111,6 +133,7 @@ export class ConversationRuntime {
 		}
 		await this.session.prompt({
 			text,
+			...(structuredHistory !== undefined ? { transcript: structuredHistory } : {}),
 			...(hasAttachments
 				? {
 						...(attachmentIds !== undefined && attachmentIds.length > 0

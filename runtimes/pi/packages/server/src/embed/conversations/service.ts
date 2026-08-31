@@ -64,9 +64,18 @@ import type {
 } from "../../publishing/repositories.ts";
 import { canonicalJson, sha256Hex } from "../../publishing/runtime-spec/hash.ts";
 import { parseRuntimeSpec, type RuntimeSpec } from "../../publishing/runtime-spec/schema.ts";
-import { type RestoredContext, restoreContext } from "../../runtime/context-restore.ts";
+import {
+	buildSummaryRestoredMessage,
+	mergeRestored,
+	type RestoredContext,
+	restoreContext,
+} from "../../runtime/context-restore.ts";
+import { runDebussyCompaction } from "../../runtime/debussy-compaction.ts";
+import { createConversationEventCompactionStore } from "../../runtime/debussy-compaction-stores.ts";
+import { replayAllAfter } from "../../runtime/replay.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import { buildSummary } from "../../runtime/summary-builder.ts";
+import { toToolProgressEvent } from "../../runtime/tool-event-payload.ts";
 import type { TurnExecutor } from "../../runtime/turn-executor.ts";
 import type { RetrievalInput } from "../../types.ts";
 import type { ConversationCitationService } from "../citations/service.ts";
@@ -85,6 +94,13 @@ export interface ConversationServiceOptions {
 	 * （RuntimeSpec 的 uploads 能力同时控制上传与引用）。
 	 */
 	readonly citations?: ConversationCitationService;
+	/**
+	 * Phase-3: invoked after Debussy persisted a new compacted summary. The
+	 * wiring closes the cached runtime so the NEXT Turn re-seeds an in-memory
+	 * Pi session from Postgres — guaranteeing the in-memory session is never a
+	 * divergent second copy of context state.
+	 */
+	readonly onCompacted?: (conversationId: ConversationId) => Promise<void>;
 }
 
 export interface CreateConversationInput {
@@ -147,6 +163,7 @@ export class ConversationService {
 	private readonly repos: PublishingRepositories;
 	private readonly turnExecutor: TurnExecutor;
 	private readonly citations: ConversationCitationService | undefined;
+	private readonly onCompacted: ((conversationId: ConversationId) => Promise<void>) | undefined;
 	/** 进程内单写者守卫：同一 Conversation 同时最多一个 Turn（PD-13）。 */
 	private readonly runningTurns = new Set<ConversationId>();
 
@@ -154,6 +171,7 @@ export class ConversationService {
 		this.repos = options.repositories;
 		this.turnExecutor = options.turnExecutor;
 		this.citations = options.citations;
+		this.onCompacted = options.onCompacted;
 	}
 
 	/**
@@ -480,36 +498,14 @@ export class ConversationService {
 		progressType: "item_started" | "item_updated" | "item_finished",
 		item: ToolTranscriptItem,
 	): Promise<void> {
-		const base = {
-			toolCallId: item.toolCallId,
-			toolName: item.toolName,
-			toolType: deriveToolType(spec, item.toolName),
-		};
-		if (progressType === "item_started") {
-			// 运行态启动：落 tool/call（仅当 item 仍为 running）。
-			if (item.status !== "running") return;
-			await this.safeAppend(scope, conversationId, {
-				eventType: "tool/call",
-				turnId,
-				payload: { ...base, status: "running", startedAt: item.timestamp },
-			});
-			return;
-		}
 		if (progressType === "item_updated") return;
-		// item_finished：complete -> tool/result；error -> tool/error。
-		if (item.status === "complete") {
-			await this.safeAppend(scope, conversationId, {
-				eventType: "tool/result",
-				turnId,
-				payload: { ...base, status: "complete", finishedAt: item.timestamp },
-			});
-		} else if (item.status === "error") {
-			await this.safeAppend(scope, conversationId, {
-				eventType: "tool/error",
-				turnId,
-				payload: { ...base, status: "error", error: deriveToolError(item), finishedAt: item.timestamp },
-			});
-		}
+		const event = toToolProgressEvent(spec, progressType, item);
+		if (event === null) return;
+		await this.safeAppend(scope, conversationId, {
+			eventType: event.eventType,
+			turnId,
+			payload: event.payload,
+		});
 	}
 
 	/** 读取持久事件并恢复上下文（TASK-022）；in-flight turn 收敛为 interrupted。 */
@@ -521,13 +517,15 @@ export class ConversationService {
 		// WB-007 + WB-008: pass the configured log level so restoreContext
 		// can report dropped chunks accurately. When a summary exists, we
 		// only replay events after `throughSequence` so the rebuilt context
-		// window is bounded (spec §12.1).
+		// window is bounded (spec §12.1). Replay is cursor-paginated so a
+		// post-summary window larger than one repository page is never
+		// silently truncated.
 		const summary = await this.repos.summaries.getLatest(scope, conversationId);
 		const afterSequence = summary?.throughSequence ?? 0;
-		const events = await this.repos.events.list(scope, conversationId, {
-			limit: 10_000,
+		const events = await replayAllAfter(
+			(after, limit) => this.repos.events.list(scope, conversationId, { limit, afterSequence: after }),
 			afterSequence,
-		});
+		);
 		const restored = restoreContext(
 			events,
 			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
@@ -535,25 +533,14 @@ export class ConversationService {
 		);
 		// Prepend the summary body as a synthetic system-style message so the
 		// next Turn sees the condensed history without burning tokens on the
-		// raw events we've already collapsed.
+		// raw events we've already collapsed. The summary text becomes the head
+		// of the structured transcript; events after it stay structured.
 		if (summary !== undefined) {
-			const summaryMessage = {
-				messages: [
-					{
-						role: "user" as const,
-						text: `[prior conversation summary through sequence ${summary.throughSequence}]\n${(summary.body as { text?: string }).text ?? ""}`,
-					},
-					{
-						role: "assistant" as const,
-						text: `Understood. I will continue from summary ${summary.id}.`,
-					},
-				],
-				interruptedTurnIds: [] as string[],
-				skippedEvents: 0,
-				droppedChunks: 0,
-				errorEventCount: 0,
-				observedLogLevel: spec.contextPolicy.logLevel,
-			};
+			const summaryMessage = buildSummaryRestoredMessage(
+				(summary.body as { text?: string }).text ?? "",
+				summary.throughSequence,
+				spec.contextPolicy.logLevel,
+			);
 			return mergeRestored(summaryMessage, restored);
 		}
 		for (const turnId of restored.interruptedTurnIds) {
@@ -788,6 +775,18 @@ export class ConversationService {
 						...(turnMetrics ? { metrics: turnMetrics } : {}),
 					},
 				});
+				// Debussy-owned compaction (Phase-3): when the Working Context
+				// (head summary + structured events after it) has grown past the
+				// unified budget, persist a new chained summary at a complete-Turn
+				// boundary and reset the cached runtime so the next Turn rebuilds
+				// an equivalent Working Context from Postgres only.
+				const compaction = await runDebussyCompaction(
+					createConversationEventCompactionStore(this.repos, scope, input.conversationId),
+					spec,
+				);
+				if (compaction.compacted && this.onCompacted !== undefined) {
+					await this.onCompacted(input.conversationId);
+				}
 				// WB-008: post-turn rollover check. Re-read the conversation
 				// row so the freshly-advanced counters reflect the events we
 				// just appended (turn_start..turn_end). The rollover itself
@@ -874,30 +873,6 @@ function ownerScope(principal: EmbedAuthContext) {
 		tenantId: principal.tenantId,
 		publishedAppId: principal.publishedAppId,
 		principalId: principal.principalId,
-	};
-}
-
-/** TURN-TASK：按 Tool 名推断其归属类型（skill > mcp > builtin），用于 tool 事件归属。 */
-import { deriveToolType } from "../../publishing/runtime/tool-type.ts";
-
-/** TURN-TASK：从 error tool item 的文本 content 提取错误信息；缺省给占位串。 */
-function deriveToolError(item: ToolTranscriptItem): string {
-	if (item.status !== "error") return "tool error";
-	for (const part of item.content) {
-		if (part.type === "text" && typeof part.text === "string") return part.text;
-	}
-	return "tool error";
-}
-
-/** WB-008: merge the synthetic summary header with the post-summary events. */
-function mergeRestored(summary: RestoredContext, recent: RestoredContext): RestoredContext {
-	return {
-		messages: [...summary.messages, ...recent.messages],
-		interruptedTurnIds: [...summary.interruptedTurnIds, ...recent.interruptedTurnIds],
-		skippedEvents: summary.skippedEvents + recent.skippedEvents,
-		droppedChunks: summary.droppedChunks + recent.droppedChunks,
-		errorEventCount: summary.errorEventCount + recent.errorEventCount,
-		observedLogLevel: recent.observedLogLevel === "standard" ? summary.observedLogLevel : recent.observedLogLevel,
 	};
 }
 

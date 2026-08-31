@@ -1122,6 +1122,14 @@ export interface ConversationSummaryRecord {
 	readonly sourceBytes: number;
 	readonly body: unknown;
 	readonly createdAt: Date;
+	/**
+	 * Phase-3: id of the prior summary this one was chained from. `undefined`
+	 * for the first summary. Enables incremental "previous summary + recent
+	 * events -> next summary" compaction without a full history re-scan.
+	 */
+	readonly previousSummaryId?: string;
+	/** Phase-3: cumulative compacted tokens covered by the chain before this summary. */
+	readonly tokensBefore?: number;
 }
 
 export interface ConversationSummaryRepository {

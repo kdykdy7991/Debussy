@@ -14,15 +14,24 @@
 import type { Citation, ModelRef, ToolTranscriptItem, TranscriptProgress } from "@earendil-works/pi-protocol";
 import { type CitationService, conversationRetrievalEnabled } from "../../citations/service.ts";
 import { resolveEffectiveModelOptions } from "../../model-parameters.ts";
-import { type RestoredContext, restoreContext } from "../../runtime/context-restore.ts";
+import {
+	buildSummaryRestoredMessage,
+	mergeRestored,
+	type RestoredContext,
+	restoreContext,
+} from "../../runtime/context-restore.ts";
 import type { ConversationRuntime, ConversationRuntimeEvent } from "../../runtime/conversation-runtime.ts";
+import { runDebussyCompaction } from "../../runtime/debussy-compaction.ts";
+import { createDebugConversationEventCompactionStore } from "../../runtime/debussy-compaction-stores.ts";
 import {
 	type BuiltinToolNameResolver,
 	createPiRuntimeAdapter,
 	type PiRuntimeAdapter,
 	type RuntimeSessionOptions,
 } from "../../runtime/pi-runtime-adapter.ts";
+import { replayAllAfter } from "../../runtime/replay.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
+import { toToolProgressEvent } from "../../runtime/tool-event-payload.ts";
 import { lastAssistantResult, lastAssistantResultAnyStatus } from "../../runtime/turn-executor.ts";
 import type { PiSessionRuntime, ResolvedAttachmentInput, RetrievalInput } from "../../types.ts";
 import type { AttachmentStore } from "../../uploads/store.ts";
@@ -40,7 +49,6 @@ import {
 import type { McpRuntimeToolFactory } from "../mcp/runtime-tools.ts";
 import type { ConversationEventRecord, PublishingRepositories } from "../repositories.ts";
 import type { SkillMaterializer } from "../runtime/skill-materializer.ts";
-import { deriveToolType } from "../runtime/tool-type.ts";
 import type { CapabilityCatalog } from "../runtime-spec/compiler.ts";
 import type { RuntimeSpec } from "../runtime-spec/schema.ts";
 import { compileDebugAgentRevision, type DebugCompileDeps } from "./compile.ts";
@@ -462,16 +470,33 @@ export class DebugConversationService {
 		const effectiveThinkingLevel = revisionThinkingLevel;
 
 		// History restored from the Debug event stream before this Turn's events
-		// are written so it excludes the in-flight user message.
-		const events = await this.debug.events.list(this.conversationRef(conversationId), {
-			limit: 10_000,
-			afterSequence: 0,
-		});
-		const history: RestoredContext = restoreContext(
+		// are written so it excludes the in-flight user message. Phase-3
+		// (Debussy): when a compaction summary exists we replay only the events
+		// after its throughSequence and prepend the summary, so the rebuilt
+		// Working Context is bounded and mirrors Production. Cursor-paginated
+		// replay so a post-summary window is never silently truncated.
+		const debugRef = this.conversationRef(conversationId);
+		const summary = await this.debug.summaries.getLatest(debugRef);
+		const afterSequence = summary?.throughSequence ?? 0;
+		const events = await replayAllAfter(
+			(after, limit) => this.debug.events.list(debugRef, { afterSequence: after, limit }),
+			afterSequence,
+		);
+		let history: RestoredContext = restoreContext(
 			events as unknown as readonly ConversationEventRecord[],
 			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
 			spec.contextPolicy.logLevel,
 		);
+		if (summary !== undefined) {
+			history = mergeRestored(
+				buildSummaryRestoredMessage(
+					(summary.body as { text?: string }).text ?? "",
+					summary.throughSequence,
+					spec.contextPolicy.logLevel,
+				),
+				history,
+			);
+		}
 
 		const turnId = options.inputTurnId ?? newTurnId();
 		const persisted = await this.appendAll(conversationId, [
@@ -644,6 +669,18 @@ export class DebugConversationService {
 						payload: { ok: true, ...(output.usage ? { usage: output.usage } : {}) },
 					},
 				]);
+				// Debussy-owned compaction (Phase-3): persist a chained summary at
+				// a complete-Turn boundary when the Working Context exceeds the
+				// unified budget. On compaction, evict the runtime so the next
+				// Turn rebuilds an equivalent Working Context from Postgres and
+				// there is no second, divergent in-memory context (Debug parity).
+				const compaction = await runDebussyCompaction(
+					createDebugConversationEventCompactionStore(this.debug, this.conversationRef(conversationId)),
+					spec,
+				);
+				if (compaction.compacted) {
+					await this.releaseRuntime(conversationId);
+				}
 				return {
 					ok: true,
 					terminal: "end",
@@ -821,10 +858,12 @@ export class DebugConversationService {
 	 * (item_finished,error). `item_updated` is intentionally not persisted (same
 	 * as Production).
 	 *
-	 * Payload strictly mirrors Production vocabulary — NO tool input, NO tool
-	 * output, NO truncation policy. MCP-specific audit lives in
-	 * `mcp_call_audit` (separate) and is never duplicated into the Debug event
-	 * stream.
+	 * Built entirely through the shared `toToolProgressEvent`, so Debug persists
+	 * EXACTLY what Production does: the model-generated `tool/call` arguments and
+	 * the runtime-bounded model-visible `tool/result` content — guaranteeing a
+	 * Postgres-only rebuild can reproduce the same model context on both planes.
+	 * MCP-specific audit lives in `mcp_call_audit` (separate) and is never
+	 * duplicated into the Debug event stream.
 	 */
 	private async persistToolProgress(
 		conversationId: DebugConversationId,
@@ -833,48 +872,16 @@ export class DebugConversationService {
 		progressType: "item_started" | "item_updated" | "item_finished",
 		item: ToolTranscriptItem,
 	): Promise<void> {
-		const base = {
-			toolCallId: item.toolCallId,
-			toolName: item.toolName,
-			toolType: deriveToolType(spec, item.toolName),
-		};
-		if (progressType === "item_started") {
-			if (item.status !== "running") return;
-			await this.appendAll(conversationId, [
-				{
-					eventType: "tool/call",
-					turnId,
-					payload: { ...base, status: "running", startedAt: item.timestamp },
-				},
-			]);
-			return;
-		}
 		if (progressType === "item_updated") return;
-		// item_finished.
-		if (item.status === "complete") {
-			await this.appendAll(conversationId, [
-				{
-					eventType: "tool/result",
-					turnId,
-					payload: { ...base, status: "complete", finishedAt: item.timestamp },
-				},
-			]);
-			return;
-		}
-		if (item.status === "error") {
-			await this.appendAll(conversationId, [
-				{
-					eventType: "tool/error",
-					turnId,
-					payload: {
-						...base,
-						status: "error",
-						error: deriveToolError(item),
-						finishedAt: item.timestamp,
-					},
-				},
-			]);
-		}
+		const event = toToolProgressEvent(spec, progressType, item);
+		if (event === null) return;
+		await this.appendAll(conversationId, [
+			{
+				eventType: event.eventType,
+				turnId,
+				payload: event.payload,
+			},
+		]);
 	}
 
 	/** Close + evict a cached Runtime (used when a realtime adapter is released). */
@@ -1116,13 +1123,4 @@ export class DebugConversationService {
 	static publicConversationId(conversationId: DebugConversationId): string {
 		return toPublicId("DebugConversationId", conversationId);
 	}
-}
-
-/** Mirror Production: extract error string from a tool error item's text content. */
-function deriveToolError(item: ToolTranscriptItem): string {
-	if (item.status !== "error") return "tool error";
-	for (const part of item.content) {
-		if (part.type === "text" && typeof part.text === "string") return part.text;
-	}
-	return "tool error";
 }

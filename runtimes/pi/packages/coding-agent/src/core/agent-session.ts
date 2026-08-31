@@ -1696,6 +1696,41 @@ export class AgentSession {
 	}
 
 	/**
+	 * Seed an already-created session with a reconstructed native message turn
+	 * sequence (user -> assistant[text|toolCall] -> toolResult -> assistant...)
+	 * WITHOUT starting a new LLM turn.
+	 *
+	 * Intended for structured context restore: the server rebuilds a conversation
+	 * from its durable Postgres event log after a runtime rebuild/restart, and
+	 * injects the native transcript so the next `prompt()`'s model request
+	 * contains the real tool turn structure instead of flattened text.
+	 *
+	 * Semantics (mirrors the silent `sendCustomMessage` no-turn path):
+	 * - Must run while the agent is idle (not streaming / not compacting).
+	 * - Double-writes: `agent.state.messages` (the model request source) AND
+	 *   `sessionManager.appendMessage` (durable, survives compaction/rebuild).
+	 * - Missing/zero timestamps are filled so ordering is monotonic w.r.t. the
+	 *   session's existing compaction boundary.
+	 * - Messages are normalised defensively so a bad provider field can never
+	 *   break the seeded session.
+	 */
+	async injectTranscript(messages: readonly AgentMessage[]): Promise<void> {
+		if (this._isAgentRunActive || this.isCompacting) {
+			throw new Error("Cannot inject conversation history while the agent is busy.");
+		}
+		for (const message of messages) {
+			const withTs =
+				message.timestamp && message.timestamp > 0
+					? message
+					: { ...message, timestamp: Date.now() };
+			this.agent.state.messages.push(withTs);
+			this.sessionManager.appendMessage(
+				withTs as unknown as Parameters<typeof this.sessionManager.appendMessage>[0],
+			);
+		}
+	}
+
+	/**
 	 * Clear all queued messages and return them.
 	 * Useful for restoring to editor when user aborts.
 	 * @returns Object with steering and followUp arrays
@@ -2144,6 +2179,11 @@ export class AgentSession {
 	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
+		// Phase-3 (Debussy): "overflow-only" keeps the emergency overflow recovery
+		// but disables the threshold compact so Pi never auto-compacts the
+		// Published/Debug Working Context behind Debussy's back. "disabled" turns
+		// off both.
+		if (settings.compactionMode === "disabled") return false;
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -2204,6 +2244,9 @@ export class AgentSession {
 		}
 
 		// Case 2: Threshold - context is getting large
+		// "overflow-only" skips the automatic threshold compact (Debussy owns
+		// that decision for Published/Debug); overflow recovery above stays on.
+		if (settings.compactionMode === "overflow-only") return false;
 		// For error messages or all-zero usage messages, estimate from the last valid response.
 		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
 		// responses can still compact and do not reset context accounting.

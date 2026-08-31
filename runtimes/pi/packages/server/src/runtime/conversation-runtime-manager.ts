@@ -48,6 +48,13 @@ export interface ConversationRuntimeManager {
 	release(conversationId: ConversationId): void;
 	/** 回收空闲超时的 Runtime（幂等 close + 移除）；等待全部 close 完成。 */
 	sweepIdle(now?: number): Promise<void>;
+	/**
+	 * Phase-3: immediately close + evict ONE conversation's cached runtime so
+	 * the next `acquire` rebuilds it from Postgres. Used by the Debussy
+	 * compaction owner so the in-memory session never outlives the summary it
+	 * was compressed from. Idempotent when absent.
+	 */
+	reset(conversationId: ConversationId): Promise<void>;
 	/** 节点退出 drain：关闭全部活跃 Runtime（幂等）。 */
 	drain(): Promise<void>;
 	/** drain + 关闭管理器；之后 acquire 拒绝。 */
@@ -156,6 +163,18 @@ export function createConversationRuntimeManager(
 			if (entry !== undefined) entry.lastActiveAt = now();
 		},
 		sweepIdle,
+		async reset(conversationId) {
+			const entry = active.get(conversationId);
+			if (entry === undefined) return;
+			active.delete(conversationId);
+			const pending = opening.get(conversationId);
+			if (pending !== undefined) {
+				// A pending open is racing us; drop it too so it never lands in
+				// `active` after reset. The opener will close+discard.
+				opening.delete(conversationId);
+			}
+			await entry.runtime.close().catch(onError);
+		},
 		drain,
 		async close() {
 			await drain();

@@ -21,6 +21,8 @@ import type {
 	DebugConversationEventInput,
 	DebugConversationEventRecord,
 	DebugConversationRecord,
+	DebugConversationRef,
+	DebugConversationSummaryRecord,
 	DebugRepositories,
 } from "../src/publishing/debug/types.ts";
 import {
@@ -74,6 +76,7 @@ function createFakeDebugRepos(): DebugRepositories {
 	const byId = new Map<string, DebugConversationRecord>();
 	const eventsByConv = new Map<string, DebugConversationEventRecord[]>();
 	const eventCounters = new Map<string, number>();
+	const summariesByConv = new Map<string, DebugConversationSummaryRecord[]>();
 	// Monotonically-advancing clock so the Phase 2E History list test can
 	// distinguish per-event `lastActiveAt` ticks on fast machines where
 	// `Date.now()` would otherwise return the same millisecond for the
@@ -85,6 +88,17 @@ function createFakeDebugRepos(): DebugRepositories {
 		return new Date(Date.now() + tick);
 	};
 	return {
+		summaries: {
+			async getLatest(ref: DebugConversationRef) {
+				const list = summariesByConv.get(ref.debugConversationId) ?? [];
+				return list.length === 0 ? undefined : list[list.length - 1];
+			},
+			async insert(_ref: DebugConversationRef, record: DebugConversationSummaryRecord) {
+				if (!summariesByConv.has(_ref.debugConversationId)) summariesByConv.set(_ref.debugConversationId, []);
+				summariesByConv.get(_ref.debugConversationId)!.push(record);
+				return true;
+			},
+		},
 		conversations: {
 			async insert(record: DebugConversationRecord) {
 				byId.set(record.debugConversationId, record);
@@ -337,6 +351,22 @@ function fakeSession(capture: Capture, promptError?: string): (opts: unknown) =>
 	};
 }
 
+function textOfTranscript(messages: ReadonlyArray<{ content?: ReadonlyArray<{ type: string; text?: string }>; text?: string }>): string[] {
+	const out: string[] = [];
+	for (const m of messages) {
+		if (typeof m.content === "string") {
+			out.push(m.content);
+			continue;
+		}
+		if (Array.isArray(m.content)) {
+			for (const b of m.content) if (b.type === "text" && b.text !== undefined) out.push(b.text);
+		} else if (typeof m.text === "string") {
+			out.push(m.text);
+		}
+	}
+	return out;
+}
+
 describe("DebugConversationService (Phase 1)", () => {
 	it("lazy-creates, runs a turn, persists events, and resumes the recent active conversation", async () => {
 		const { service, nextTurnId } = makeHarness([{ revision: 1, model: MODEL_A }]);
@@ -382,8 +412,12 @@ describe("DebugConversationService (Phase 1)", () => {
 		expect(capture.created).toBe(2);
 		const turn2Prompt = capture.prompts[1]!;
 		expect(turn2Prompt.text).toBe("TurnTwo");
-		expect(turn2Prompt.retrieval?.context).toContain("TurnOne");
-		expect(turn2Prompt.retrieval?.context).toContain("echo:TurnOne");
+		// Phase-1 structured restore: prior turns are now injected as a native
+		// transcript instead of flat `retrieval.context`.
+		expect(turn2Prompt.transcript?.map((m) => m.role)).toEqual(["user", "assistant"]);
+		expect(textOfTranscript(turn2Prompt.transcript!)).toEqual(
+			expect.arrayContaining([expect.stringContaining("TurnOne"), expect.stringContaining("echo:TurnOne")]),
+		);
 
 		// Revision change: next Turn rebuilds the Runtime (already fresh) and
 		// keeps THIS conversation.
@@ -393,13 +427,16 @@ describe("DebugConversationService (Phase 1)", () => {
 		expect(capture.created).toBe(3);
 		const turn3Prompt = capture.prompts[2]!;
 		expect(turn3Prompt.text).toBe("TurnThree");
-		// History from rev-1 turns is still injected (user + assistant text only).
-		expect(turn3Prompt.retrieval?.context).toContain("TurnOne");
-		expect(turn3Prompt.retrieval?.context).toContain("echo:TurnOne");
-		expect(turn3Prompt.retrieval?.context).toContain("TurnTwo");
-		expect(turn3Prompt.retrieval?.context).toContain("echo:TurnTwo");
-		// No tool/reasoning recovery.
-		expect(turn3Prompt.retrieval?.context).not.toContain("tool/");
+		// History from rev-1 turns is still injected (user + assistant text).
+		expect(turn3Prompt.transcript?.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+		const texts = textOfTranscript(turn3Prompt.transcript!);
+		expect(texts.join(" ")).toMatch(/TurnOne/);
+		expect(texts.join(" ")).toMatch(/echo:TurnOne/);
+		expect(texts.join(" ")).toMatch(/TurnTwo/);
+		expect(texts.join(" ")).toMatch(/echo:TurnTwo/);
+		// No tool events were persisted in this test, so no toolCall blocks:
+		// assistant messages carry only text.
+		expect(turn3Prompt.transcript!.some((m) => (m as { content: readonly { type: string }[] }).content.some((b) => b.type === "toolCall"))).toBe(false);
 	});
 
 	it("persists turn/start + user/message BEFORE execution and turn/failed (same turnId, no turn/end) when the model throws", async () => {

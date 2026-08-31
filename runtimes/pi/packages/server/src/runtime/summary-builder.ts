@@ -36,6 +36,30 @@ export interface BuiltSummary {
 /** Default: keep the last 8 completed turns verbatim in the summary body. */
 export const DEFAULT_SUMMARY_TURN_WINDOW = 8;
 
+/** Phase-3: hard cap on how much prior-summary text a chained body carries forward. */
+export const SUMMARY_CARRYOVER_MAX_CHARS = 4_000;
+
+/** A prior summary body threaded forward when building the next chained summary. */
+export interface ChainedSummaryBody {
+	readonly text: string;
+	readonly keyFacts: readonly string[];
+	readonly openItems: readonly string[];
+	readonly lastUserMessage: string;
+}
+
+export interface BuildSummaryOptions {
+	readonly maxTurns?: number;
+	/**
+	 * Phase-3: when present, the body is built by CARRYING the previous summary
+	 * forward ("Summary vN") and appending the complete turns seen in this
+	 * event slice ("recent events"), producing "Summary vN+1" without re-reading
+	 * the history a previous summary already covered. `throughSequence` is still
+	 * derived from THIS slice's last assistant/message (a sequence strictly
+	 * greater than the previous summary's when the slice is post-boundary).
+	 */
+	readonly previousBody?: ChainedSummaryBody;
+}
+
 /**
  * Build a deterministic summary from a slice of conversation events.
  *
@@ -48,14 +72,18 @@ export const DEFAULT_SUMMARY_TURN_WINDOW = 8;
  * - `openItems` is the list of user messages without a following assistant
  *   message in the window.
  * - `lastUserMessage` is the verbatim last user message in the window.
+ * - When `previousBody` is given, the body starts with a condensed carry-over
+ *   of the prior summary so chained summaries keep older context without
+ *   re-scanning the whole conversation.
  *
  * The function is pure / no I/O; it operates only on the supplied events.
  */
 export function buildSummary(
 	events: readonly ConversationEventRecord[],
-	options: { readonly maxTurns?: number } = {},
+	options: BuildSummaryOptions = {},
 ): BuiltSummary {
 	const maxTurns = options.maxTurns ?? DEFAULT_SUMMARY_TURN_WINDOW;
+	const prev = options.previousBody;
 	const completedTurns: Array<{ turnId: string | null; user: string; assistant: string }> = [];
 	const openUserMessages: string[] = [];
 	let lastUserMessage = "";
@@ -91,10 +119,19 @@ export function buildSummary(
 	}
 
 	const windowed = completedTurns.slice(-maxTurns);
-	const openItems = dedupe(openUserMessages).slice(-maxTurns);
-	const keyFacts = dedupe(windowed.map((turn) => turn.assistant).filter((text) => text.length > 0));
+	const newOpenItems = dedupe(openUserMessages).slice(-maxTurns);
+	const newKeyFacts = dedupe(windowed.map((turn) => turn.assistant).filter((text) => text.length > 0));
 
-	const text = renderText(windowed, openItems);
+	// Chaining: fold prior summary data forward so chained bodies accumulate
+	// context without re-scanning history covered by an earlier summary.
+	const carriedKeyFacts =
+		prev === undefined ? newKeyFacts : dedupe([...prev.keyFacts, ...newKeyFacts]).slice(-MAX_AGGREGATE_FACTS);
+	const carriedOpenItems =
+		prev === undefined ? newOpenItems : dedupe([...prev.openItems, ...newOpenItems]).slice(-maxTurns);
+	const carriedLastUser =
+		prev === undefined ? lastUserMessage : lastUserMessage !== "" ? lastUserMessage : prev.lastUserMessage;
+
+	const text = renderText(windowed, carriedOpenItems, prev);
 	const sourceEventCount = events.length;
 	const sourceBytes = events.reduce((sum, event) => sum + event.payloadBytes, 0);
 
@@ -105,9 +142,12 @@ export function buildSummary(
 		throughSequence,
 		sourceEventCount,
 		sourceBytes,
-		body: { text, keyFacts, openItems, lastUserMessage },
+		body: { text, keyFacts: carriedKeyFacts, openItems: carriedOpenItems, lastUserMessage: carriedLastUser },
 	};
 }
+
+/** Hard cap on aggregated key facts so chained summaries stay bounded. */
+const MAX_AGGREGATE_FACTS = 40;
 
 function dedupe(items: readonly string[]): string[] {
 	const seen = new Set<string>();
@@ -124,10 +164,20 @@ function dedupe(items: readonly string[]): string[] {
 function renderText(
 	turns: readonly { turnId: string | null; user: string; assistant: string }[],
 	openItems: readonly string[],
+	previousBody?: ChainedSummaryBody,
 ): string {
 	const lines: string[] = [];
 	lines.push("# Conversation summary");
 	lines.push("");
+	if (previousBody !== undefined && previousBody.text.length > 0) {
+		const carry =
+			previousBody.text.length > SUMMARY_CARRYOVER_MAX_CHARS
+				? `...${previousBody.text.slice(-SUMMARY_CARRYOVER_MAX_CHARS)}`
+				: previousBody.text;
+		lines.push("## Prior context");
+		lines.push(carry);
+		lines.push("");
+	}
 	for (const turn of turns) {
 		lines.push("user:");
 		lines.push(turn.user);

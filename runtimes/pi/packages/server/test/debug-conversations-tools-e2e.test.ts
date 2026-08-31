@@ -878,10 +878,11 @@ describe.skipIf(!pgUp)("DebugConversation Phase 2A — Tool/MCP realtime + persi
 		expect(conversation).toBeTruthy();
 	});
 
-	it("F. no tool input/output persistence: payload contains neither `input` nor `content`", async () => {
-		// Production mirror: tool events persist only {toolCallId, toolName,
-		// toolType, status, startedAt/finishedAt, error?}. No `input`, no
-		// `content`, no `output`. Assert via the persisted event stream.
+	it("F. Phase-1 tool persistence stores result content (not metadata-only)", async () => {
+		// Phase-1 supersedes the legacy "metadata-only" contract: `tool/result`
+		// events must now carry the model-visible `content`, and `tool/call`
+		// carries `input` when the runtime provides it. Assert via the persisted
+		// event stream (Production + Debug share these same persisted shapes).
 		const { agentPublic } = freshAgent();
 		const { convPublic, convId } = await createConversation(agentPublic);
 		stack.capture.toolPlans.push({ name: "read", output: [{ type: "text", text: "FOR_F_TEST" }] });
@@ -894,12 +895,13 @@ describe.skipIf(!pgUp)("DebugConversation Phase 2A — Tool/MCP realtime + persi
 			(e) => e.eventType === "tool/call" || e.eventType === "tool/result" || e.eventType === "tool/error",
 		);
 		expect(toolEvents.length).toBeGreaterThan(0);
-		for (const e of toolEvents) {
-			const payload = e.payload as Record<string, unknown>;
-			expect(payload).not.toHaveProperty("input");
-			expect(payload).not.toHaveProperty("content");
-			expect(payload).not.toHaveProperty("output");
-		}
+		// A finished tool turn must persist the model-visible result content.
+		const resultEvent = toolEvents.find((e) => e.eventType === "tool/result");
+		expect(resultEvent).toBeTruthy();
+		const content = (resultEvent!.payload as { content?: unknown[] }).content;
+		expect(content).toEqual(
+			expect.arrayContaining([expect.objectContaining({ type: "text", text: "FOR_F_TEST" })]),
+		);
 	});
 
 	it("G. headless execution uses the same tool lifecycle persistence core as realtime", async () => {

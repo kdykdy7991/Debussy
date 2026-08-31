@@ -9,10 +9,22 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
+export type CompactionMode = "auto" | "overflow-only" | "disabled";
+
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
+	/**
+	 * Runtime-only gating for the automatic threshold compaction:
+	 *  - "auto"           (default) threshold + overflow both run,
+	 *  - "overflow-only"  threshold disabled, overflow recovery stays (emergency),
+	 *  - "disabled"       nothing runs.
+	 * Never persisted; set per session (e.g. the Debussy runtime sets
+	 * "overflow-only" for Published/Debug sessions so Pi auto-compaction cannot
+	 * become a second persistent Context state).
+	 */
+	compactionMode?: CompactionMode;
 }
 
 export interface BranchSummarySettings {
@@ -290,6 +302,7 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private compactionMode: CompactionMode;
 
 	private constructor(
 		storage: SettingsStorage,
@@ -308,6 +321,7 @@ export class SettingsManager {
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.compactionMode = this.settings.compaction?.compactionMode ?? "auto";
 	}
 
 	/** Create a SettingsManager that loads from files */
@@ -783,12 +797,27 @@ export class SettingsManager {
 		return this.settings.compaction?.keepRecentTokens ?? 20000;
 	}
 
-	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number; compactionMode: CompactionMode } {
 		return {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
+			compactionMode: this.compactionMode,
 		};
+	}
+
+	/**
+	 * Set the runtime compaction mode WITHOUT writing it back to any persisted
+	 * settings store. Debussy calls this once after creating an ephemeral
+	 * Published/Debug session so Pi auto-compaction cannot become a second
+	 * persistent Context state.
+	 */
+	setRuntimeCompactionMode(mode: CompactionMode): void {
+		this.compactionMode = mode;
+	}
+
+	getCompactionMode(): CompactionMode {
+		return this.compactionMode;
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

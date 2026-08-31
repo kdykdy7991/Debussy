@@ -198,19 +198,19 @@ describe("restoreContext", () => {
 		expect(result.observedLogLevel).toBe("diagnostic");
 	});
 
-	test("WB-007: tool.* / attachment / citation events do not produce messages but count toward skipped", () => {
+	test("Phase-1: tool.* are consumed into the transcript; attachment/citation events still skip", () => {
 		const events = [
 			user("t1", "hi", 1),
 			event({
 				eventType: "tool/call",
 				turnId: "t1" as never,
-				payload: { tool: "search", input: { q: "x" } },
+				payload: { toolCallId: "tc1", toolName: "search", input: { q: "x" } },
 				sequence: 2,
 			}),
 			event({
 				eventType: "tool/result",
 				turnId: "t1" as never,
-				payload: { output: "y" },
+				payload: { toolCallId: "tc1", toolName: "search", content: [{ type: "text", text: "y" }] },
 				sequence: 3,
 			}),
 			event({
@@ -228,11 +228,18 @@ describe("restoreContext", () => {
 			assistant("t1", "answer", 6),
 		];
 		const result = restoreContext(events, { maxContextTokens: 100_000 }, "standard");
+		// Flat messages still show only the user/assistant pair (tool events never
+		// appear as flat text).
 		expect(result.messages).toEqual([
 			{ role: "user", text: "hi" },
 			{ role: "assistant", text: "answer" },
 		]);
-		expect(result.skippedEvents).toBe(4);
+		// Phase-1: tool/call + tool/result are CONSUMED into the structured
+		// transcript, so only attachment + citation count as skipped.
+		expect(result.skippedEvents).toBe(2);
+		expect(result.transcript.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		expect(result.transcript[2].role).toBe("toolResult");
+		expect(result.transcript[2].role === "toolResult" && result.transcript[2].toolCallId).toBe("tc1");
 		expect(result.observedLogLevel).toBe("standard");
 	});
 
