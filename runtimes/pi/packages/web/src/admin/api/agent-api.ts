@@ -18,6 +18,7 @@ import type {
 	AgentMcpRevisionReference,
 	AgentModelParameters,
 	AgentPublicId,
+	AgentPublishResponse,
 	AgentSkillRevisionReference,
 	CreateAgentDefinitionRequest,
 	CreateAgentDefinitionResponse,
@@ -343,6 +344,20 @@ export class AgentApi {
 
 	listAgentApps(agentId: AgentPublicId): Promise<{ readonly items: readonly AgentDefinitionAssociatedApp[] }> {
 		return this.request({ method: "GET", path: `/api/control/v1/agent-definitions/${agentId}/apps` });
+	}
+
+	/**
+	 * P2 one-click publish: freezes the Agent's CURRENT latest revision into an
+	 * activated Published Version in one backend operation. No revision /
+	 * application / version selection — the server resolves all of it.
+	 */
+	publishAgent(agentId: AgentPublicId): Promise<AgentPublishResponse> {
+		return this.request<AgentPublishResponse>({
+			method: "POST",
+			path: `/api/control/v1/agent-definitions/${agentId}/publish`,
+			body: {},
+			idempotencyKey: newIdempotencyKey({ operation: "agent.publish" }),
+		});
 	}
 
 	/**

@@ -8,35 +8,20 @@ import type {
 
 const PRODUCT_EFFORTS: readonly ReasoningEffort[] = ["low", "medium", "high"];
 
-const QWEN38_THINKING_SAMPLING = {
-	temperature: 1,
-	samplingParams: { top_p: 0.95, top_k: 20, min_p: 0, presence_penalty: 0, repetition_penalty: 1 },
-} as const;
-const QWEN38_INSTRUCTION_SAMPLING = {
-	temperature: 0.7,
-	samplingParams: { top_p: 0.8, top_k: 20, min_p: 0, presence_penalty: 1.5, repetition_penalty: 1 },
-} as const;
-
 export function modelParameterCapabilities(input: {
 	readonly id: string;
 	readonly api: string;
 	readonly reasoning: boolean;
 	readonly thinkingLevelMap?: Readonly<Record<string, unknown>>;
 }): ModelParameterCapabilities {
-	const qwen38 = isQwen38(input.id);
-	const efforts = input.reasoning || qwen38 ? PRODUCT_EFFORTS : [];
+	const efforts = input.reasoning ? PRODUCT_EFFORTS : [];
 	return {
 		reasoning: {
-			supported: input.reasoning || qwen38,
-			toggle: qwen38,
+			supported: input.reasoning,
+			toggle: input.reasoning,
 			efforts,
-			...(qwen38 ? { defaultEffort: "high" as const } : {}),
 		},
 	};
-}
-
-function isQwen38(modelId: string): boolean {
-	return /qwen[\s._-]*3[\s._-]*8/i.test(modelId);
 }
 
 export function validateModelParameters(
@@ -63,7 +48,7 @@ export function validateModelParameters(
 
 export function resolveModelStreamOptions(
 	parameters: AgentModelParameters,
-	modelId = "",
+	_modelId = "",
 ): {
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly streamOptions: Pick<
@@ -72,22 +57,14 @@ export function resolveModelStreamOptions(
 	>;
 } {
 	const reasoning = parameters.reasoning;
-	const qwen38 = isQwen38(modelId);
-	const fixedStreamOptions = qwen38
-		? reasoning?.enabled === false
-			? QWEN38_INSTRUCTION_SAMPLING
-			: QWEN38_THINKING_SAMPLING
-		: {};
-	const configuredEffort =
-		reasoning?.effort ??
-		(reasoning?.enabled === true || (qwen38 && reasoning?.enabled !== false) ? "high" : undefined);
+	const configuredEffort = reasoning?.effort ?? (reasoning?.enabled === true ? "high" : undefined);
 	return {
 		...(reasoning?.enabled === false
 			? { thinkingLevel: "off" as const }
 			: configuredEffort !== undefined
 				? { thinkingLevel: configuredEffort as ThinkingLevel }
 				: {}),
-		streamOptions: fixedStreamOptions,
+		streamOptions: {},
 	};
 }
 

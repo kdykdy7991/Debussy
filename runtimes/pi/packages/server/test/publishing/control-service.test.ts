@@ -42,7 +42,16 @@ const pgUp = await probe();
 
 const CATALOG: CapabilityCatalog = {
 	tools: [{ id: "web.search", name: "Web Search" }],
-	models: [{ provider: "skdy", modelId: "pi-chat" }],
+	models: [
+		{ provider: "skdy", modelId: "pi-chat" },
+		{
+			provider: "skdy",
+			modelId: "Qwen3.8-Agent",
+			parameterCapabilities: {
+				reasoning: { supported: true, toggle: true, efforts: ["low", "medium", "high"] },
+			},
+		},
+	],
 	knowledgeBases: [{ id: "kb-legal" }],
 };
 

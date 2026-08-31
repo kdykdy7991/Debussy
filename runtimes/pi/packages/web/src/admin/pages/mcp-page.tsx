@@ -245,7 +245,12 @@ export function AdminMcpPage(): React.ReactElement {
 												aria-label={`${item.status === "enabled" ? "停用" : "启用"} ${item.name}`}
 												aria-pressed={item.status === "enabled"}
 												disabled={detail === undefined || busy !== null}
-												style={{ padding: 0, border: 0, cursor: busy === null ? "pointer" : "wait" }}
+												style={{
+													padding: 0,
+													border: 0,
+													cursor: busy === null ? "pointer" : "wait",
+													backgroundColor: item.status === "enabled" ? "#2f9e54" : "#cbd1da",
+												}}
 												onClick={(event) => {
 													event.stopPropagation();
 													if (detail !== undefined) toggleServer(detail);

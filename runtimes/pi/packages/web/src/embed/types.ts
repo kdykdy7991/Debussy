@@ -15,6 +15,7 @@ export type {
 	ConversationDetailResponse,
 	ConversationEvent,
 	ConversationListResponse,
+	ConversationResumeResponse,
 	ConversationSummary,
 	CreateConversationResponse,
 	DeleteAttachmentResponse,

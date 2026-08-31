@@ -282,3 +282,15 @@
 		transition: none;
 	}
 }
+
+.confirmText {
+	margin: 0 0 var(--aurora-space-3);
+	line-height: 1.6;
+	color: var(--aurora-text-secondary);
+}
+
+.link {
+	color: var(--aurora-accent);
+	text-decoration: underline;
+	overflow-wrap: anywhere;
+}

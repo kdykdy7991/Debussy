@@ -118,6 +118,25 @@ export interface GetConversationInput {
 	readonly conversationId: ConversationId;
 }
 
+/**
+ * P2 public-chat resume decision (spec: 恢复旧 Conversation).
+ *   - version == current && active          → `resumed: true`   (continue same)
+ *   - active but version stale vs current   → roll forward to a NEW conversation
+ *     on the CURRENT version; the old conversation is kept untouched as history
+ *     (`previousConversationId` points at it, `resumed: false`).
+ */
+export type ResumeConversationResult =
+	| {
+			readonly resumed: true;
+			readonly conversation: ConversationRecord;
+			readonly previousConversationId: null;
+	  }
+	| {
+			readonly resumed: false;
+			readonly conversation: ConversationRecord;
+			readonly previousConversationId: ConversationId;
+	  };
+
 export interface ListEventsInput extends GetConversationInput {
 	/** 只返回 `sequence > afterSequence` 的增量事件。 */
 	readonly afterSequence?: number;
@@ -262,6 +281,63 @@ export class ConversationService {
 		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
 		if (record === undefined) return { ok: false, error: conversationNotFound() };
 		return { ok: true, data: record };
+	}
+
+	/**
+	 * P2 public-chat resume-or-roll-forward. When the requested conversation's
+	 * pinned version is still the app's CURRENT version and the conversation is
+	 * `active`, it is resumed unchanged. When the version went stale (the Agent
+	 * was republished), a brand-new conversation is created on the CURRENT
+	 * version and the old one is preserved untouched (never deleted) — resumed
+	 * renderers that follow the "latest live version" rule then never show a
+	 * stale-version conversation in the active surface. A stale conversation
+	 * that the caller owns is always the roll-forward source; a non-current,
+	 * non-owner, or suspended app surfaces the same uniform errors as create.
+	 */
+	async resumeOrRollForward(input: GetConversationInput): Promise<ConversationResult<ResumeConversationResult>> {
+		const scope = ownerScope(input.principal);
+		const record = await this.repos.conversations.get(scope, input.conversationId);
+		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		const app = await this.repos.publishedApps.get(
+			{ tenantId: record.tenantId, publishedAppId: record.publishedAppId },
+			record.publishedAppId,
+		);
+		if (app === undefined) return { ok: false, error: appNotFound() };
+		if (record.status === "active" && app.currentVersionId === record.publishedAppVersionId) {
+			return { ok: true, data: { resumed: true, conversation: record, previousConversationId: null } };
+		}
+		// Roll forward: current version must exist, be ready and the app active.
+		if (app.status !== "active") return { ok: false, error: appSuspended("App is not active") };
+		const currentVersionId = app.currentVersionId;
+		if (currentVersionId === null) return { ok: false, error: versionUnavailable() };
+		const version = await this.repos.publishedAppVersions.get(scope, currentVersionId);
+		if (version === undefined || version.status !== "ready") return { ok: false, error: versionUnavailable() };
+		const now = new Date();
+		const fresh: ConversationRecord = {
+			conversationId: newConversationId(),
+			tenantId: record.tenantId,
+			publishedAppId: record.publishedAppId,
+			publishedAppVersionId: currentVersionId,
+			ownerPrincipalId: record.ownerPrincipalId,
+			title: record.title,
+			status: "active",
+			lastEventSequence: 0,
+			eventCount: 0,
+			eventBytes: 0,
+			turnCount: 0,
+			latestSummarySequence: 0,
+			previousConversationId: null,
+			nextConversationId: null,
+			rolledOverAt: null,
+			createdAt: now,
+			updatedAt: now,
+			lastActiveAt: now,
+		};
+		await this.repos.conversations.insert(fresh);
+		return {
+			ok: true,
+			data: { resumed: false, conversation: fresh, previousConversationId: record.conversationId },
+		};
 	}
 
 	/** 恢复会话事件（sequence 升序，增量回放）。 */

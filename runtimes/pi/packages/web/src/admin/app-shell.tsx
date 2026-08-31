@@ -30,7 +30,6 @@ import { AuroraAppSidebar, type AuroraAppSidebarItem } from "./aurora/AppSidebar
 import { NavIcon } from "./aurora/nav-icons.tsx";
 import { AdminAuthProvider, useAdminAuth } from "./auth/admin-auth-context.tsx";
 import { AdminAgentsPage } from "./pages/agents-page.tsx";
-import { AdminAppsPage } from "./pages/apps-page.tsx";
 import { AdminChatPage } from "./pages/chat-page.tsx";
 import { AdminMcpPage } from "./pages/mcp-page.tsx";
 import { AdminSettingsPage } from "./pages/settings-page.tsx";
@@ -64,11 +63,6 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 			return "skills";
 		case "mcp":
 			return "mcp";
-		// 「发布」已从侧边栏移除：路由仍可直达，但不再有对应导航项高亮
-		case "apps":
-		case "app-create":
-		case "app-detail":
-			return null;
 		case "usage":
 			return "usage";
 		case "user-conversations":
@@ -98,10 +92,6 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 			return <AdminSkillsPage />;
 		case "mcp":
 			return <AdminMcpPage />;
-		case "apps":
-		case "app-create":
-		case "app-detail":
-			return <AdminAppsPage route={route} />;
 		case "usage":
 			return <AdminUsagePage />;
 		case "user-conversations":

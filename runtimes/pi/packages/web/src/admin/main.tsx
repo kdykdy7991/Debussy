@@ -6,23 +6,18 @@
  *
  * 路由：
  *
- * - `/publishing*` 旧深链接重定向到工作台路由（`legacyPublishingRedirect`
- *   负责）；重定向后由 Shell 接管
  * - `/embed/*` 不在此入口处理；管理员若误访问会被静默 fallback 到 Shell
  * - 其它路径：Admin Workbench Shell（图标栏、模块侧栏、主区、右侧抽屉）
  *
  * 不依赖 Embed 任何模块；publishing/ 与 embed/ 在源码 import 图上不交叉。
  */
 
-import { legacyPublishingRedirect } from "@earendil-works/pi-protocol";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles.css";
 import "../ai-kit/styles/index.css";
 import { AdminAppShell } from "./app-shell.tsx";
 import "./styles.css";
-import { UiPreviewAgentDesign } from "../ui-preview/agent-design.tsx";
-import "../ui-preview/agent-design.css";
 import { AgentRedesignPreview } from "../ui-preview/agent-redesign.tsx";
 
 const root = document.getElementById("root");
@@ -33,22 +28,10 @@ if (!root) {
 
 const pathname = window.location.pathname;
 const preview = new URLSearchParams(window.location.search).get("preview");
-const redirect = legacyPublishingRedirect(pathname);
-if (redirect !== null) {
-	const target = `${pathname.startsWith("/publishing/") ? "/" : ""}${redirect}`;
-	window.location.replace(target);
-} else if (pathname.startsWith("/ui-preview/agent-redesign") || preview === "agent-redesign") {
+if (pathname.startsWith("/ui-preview/agent-redesign") || preview === "agent-redesign") {
 	createRoot(root).render(
 		<StrictMode>
 			<AgentRedesignPreview />
-		</StrictMode>,
-	);
-} else if (pathname.startsWith("/ui-preview/")) {
-	// UI preview routes bypass the AppShell entirely and render standalone
-	// (no auth, no app sidebar, no project UI chrome).
-	createRoot(root).render(
-		<StrictMode>
-			<UiPreviewAgentDesign />
 		</StrictMode>,
 	);
 } else {

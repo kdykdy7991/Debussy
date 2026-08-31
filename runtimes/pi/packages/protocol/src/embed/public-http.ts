@@ -111,6 +111,20 @@ export interface ConversationListResponse {
 	readonly nextCursor: string | null;
 }
 
+/**
+ * P2 public-chat resume: response envelope for
+ * `POST /api/embed/v1/conversations/:id/resume`. The server decides:
+ *   - `resumed: true` → the same conversation is still on the CURRENT version;
+ *   - `resumed: false` → a NEW conversation was created on the CURRENT version
+ *     (`conversation` is the new one) and `previousConversationId` points at the
+ *     preserved old conversation.
+ */
+export interface ConversationResumeResponse {
+	readonly conversation: ConversationSummary;
+	readonly resumed: boolean;
+	readonly previousConversationId: string | null;
+}
+
 export interface ConversationEvent {
 	readonly id: string;
 	readonly sequence: number;

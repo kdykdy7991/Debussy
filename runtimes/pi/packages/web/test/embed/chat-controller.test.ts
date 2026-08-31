@@ -90,7 +90,13 @@ function detail(conversation: { id: string; lastEventSequence: number }, events:
 
 /** 可配置的 fetch 路由（按 pathname 分发）。 */
 function createRouter(
-	initial: { conversations?: unknown[]; details?: Map<string, unknown>; wsTickets?: boolean } = {},
+	initial: {
+		conversations?: unknown[];
+		details?: Map<string, unknown>;
+		wsTickets?: boolean;
+		/** P2: when set, `resume` rolls forward to this new conversation. */
+		rollForwardTo?: unknown;
+	} = {},
 ) {
 	const state = {
 		conversations: initial.conversations ?? [SUMMARY_1],
@@ -98,6 +104,7 @@ function createRouter(
 		wsTickets: initial.wsTickets ?? true,
 		calls: [] as { path: string; method: string; token?: string; body?: unknown }[],
 		failNext: new Map<string, { status: number; error: { code: string; message: string; retryable: boolean } }>(),
+		resumeRollForward: initial.rollForwardTo as { id: string; lastEventSequence: number } | undefined,
 	};
 	if (!state.details.has("conv_1")) state.details.set("conv_1", detail(SUMMARY_1, []));
 	if (!state.details.has("conv_2")) state.details.set("conv_2", detail(SUMMARY_2, []));
@@ -154,6 +161,20 @@ function createRouter(
 				realtimeUrl: "ws://fake/realtime",
 			});
 		}
+		if (method === "POST" && path.endsWith("/resume")) {
+			const id = path.split("/")[5]!;
+			const found = state.details.get(id) as { conversation: { id: string; lastEventSequence: number } } | undefined;
+			if (found === undefined) return jsonResponse({ error: { code: "CONVERSATION_NOT_FOUND" } }, 404);
+			if (state.resumeRollForward !== undefined) {
+				// P2: stale version → server returns a NEW conversation on the
+				// current version, preserving the old one.
+				const next = state.resumeRollForward;
+				state.details.set(next.id, detail(next, []));
+				state.conversations = [next, ...(state.conversations as unknown[])];
+				return jsonResponse({ conversation: next, resumed: false, previousConversationId: id });
+			}
+			return jsonResponse({ conversation: found.conversation, resumed: true, previousConversationId: null });
+		}
 		if (method === "POST" && path.endsWith("/uploads")) {
 			return jsonResponse(
 				{
@@ -179,9 +200,14 @@ function createRouter(
 }
 
 function makeHarness(
-	options: { conversations?: unknown[]; getToken?: () => Promise<string>; maxRetries?: number } = {},
+	options: {
+		conversations?: unknown[];
+		getToken?: () => Promise<string>;
+		maxRetries?: number;
+		rollForwardTo?: unknown;
+	} = {},
 ) {
-	const router = createRouter({ conversations: options.conversations });
+	const router = createRouter({ conversations: options.conversations, rollForwardTo: options.rollForwardTo });
 	const sockets: FakeWebSocket[] = [];
 	const api = new EmbedApi({ fetchImpl: router.fetchImpl as unknown as typeof fetch });
 	let tokenCount = 0;
@@ -236,6 +262,34 @@ describe("embed chat controller", () => {
 		expect(state.uploadsEnabled).toBe(true);
 		expect(harness.sockets).toHaveLength(1);
 		expect(harness.router.state.calls.some((call) => call.path.endsWith("/ws-ticket"))).toBe(true);
+		harness.controller.close();
+	});
+
+	test("P2 initialize rolls a stale-version conversation forward to a NEW conversation on the current version", async () => {
+		const harness = makeHarness({
+			rollForwardTo: {
+				id: "conv_new_current",
+				publishedAppVersionId: "pav_new",
+				status: "active",
+				title: "续",
+				lastEventSequence: 0,
+				createdAt: "2026-01-03T00:00:00Z",
+			},
+		});
+		await harness.controller.initialize({ uploads: true });
+		await flush();
+		const state = harness.controller.getState();
+		// The server rolled the stale conversation forward: the active surface
+		// opens the NEW current-version conversation, and the stale one stays
+		// in history (prepended list contains both).
+		expect(state.activeId).toBe("conv_new_current");
+		expect(state.conversations.some((item) => item.id === "conv_1")).toBe(true);
+		expect(state.conversations.some((item) => item.id === "conv_new_current")).toBe(true);
+		expect(
+			harness.router.state.calls.some(
+				(call) => call.method === "POST" && call.path.endsWith("/conversations/conv_1/resume"),
+			),
+		).toBe(true);
 		harness.controller.close();
 	});
 

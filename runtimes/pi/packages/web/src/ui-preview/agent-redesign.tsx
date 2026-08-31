@@ -57,24 +57,6 @@ export interface AgentEditableDraft {
 
 export type PublishStatus = "online" | "paused" | "draft";
 
-/**
- * 发布实例。audience / domain / publishedAt 在 Control API 的
- * AgentDefinitionAssociatedApp 上没有对应字段，因此都是可选的：
- * 缺失时 UI 直接省略那一行，而不是编一个值上去。
- */
-export interface PublishInstance {
-	readonly id: string;
-	readonly name: string;
-	readonly status: "online" | "paused";
-	readonly publicAppId?: string;
-	readonly currentVersionId?: string;
-	readonly audience?: string;
-	readonly domain?: string;
-	/** Control API 只给 versionId，没有可读版本号，缺失时省略该行。 */
-	readonly version?: string;
-	readonly publishedAt?: string;
-}
-
 export interface VersionHistoryItem {
 	readonly version: string;
 	readonly createdAt: string;
@@ -113,10 +95,13 @@ export interface AgentCatalogEntry {
 
 export interface AgentPublishData {
 	readonly status: PublishStatus;
+	readonly draftRevision: string;
+	readonly draftSavedAt: string;
 	readonly currentVersion: string;
 	readonly lastPublishedAt: string;
-	readonly instances: readonly PublishInstance[];
 	readonly versionHistory: readonly VersionHistoryItem[];
+	/** P2: public embed/chat link shown on the status card. */
+	readonly externalLink?: string;
 }
 
 const PREVIEW_DETAIL: AgentDetailData = {
@@ -135,37 +120,11 @@ const PREVIEW_DETAIL: AgentDetailData = {
 
 const PREVIEW_PUBLISH: AgentPublishData = {
 	status: "online",
-	currentVersion: "v3",
+	draftRevision: "Revision 3",
+	draftSavedAt: "2026-08-28 12:30",
+	currentVersion: "Revision 3",
 	lastPublishedAt: "2026-08-28 12:30",
-	instances: [
-		{
-			id: "inst_1",
-			name: "官网客服",
-			status: "online",
-			audience: "匿名访问",
-			domain: "example.com",
-			version: "v3",
-			publishedAt: "10 分钟前",
-		},
-		{
-			id: "inst_2",
-			name: "内部员工助手",
-			status: "online",
-			audience: "登录用户",
-			domain: "internal.example.com",
-			version: "v2",
-			publishedAt: "2 天前",
-		},
-		{
-			id: "inst_3",
-			name: "Partner Portal",
-			status: "paused",
-			audience: "登录用户",
-			domain: "partner.example.com",
-			version: "v2",
-			publishedAt: "8 月 20 日",
-		},
-	],
+	externalLink: "https://chat.example.com/embed/pub_1234",
 	versionHistory: [
 		{ version: "v3", createdAt: "10 分钟前", author: "Local Admin", isCurrent: true },
 		{ version: "v2", createdAt: "2 天前", author: "Local Admin", isCurrent: false },
@@ -180,8 +139,22 @@ const PREVIEW_SKILLS: readonly AgentResource[] = [
 ];
 
 const PREVIEW_MCP: readonly AgentResource[] = [
-	{ id: "mcp_1", name: "CRM MCP Server", description: "客户关系管理系统接口", enabled: true, toolCount: 8 },
-	{ id: "mcp_2", name: "Knowledge MCP Server", description: "知识库检索与问答接口", enabled: true, toolCount: 5 },
+	{
+		id: "mcp_1",
+		name: "CRM MCP Server",
+		description: "客户关系管理系统接口",
+		enabled: true,
+		connectionStatus: "connected",
+		toolCount: 8,
+	},
+	{
+		id: "mcp_2",
+		name: "Knowledge MCP Server",
+		description: "知识库检索与问答接口",
+		enabled: true,
+		connectionStatus: "connected",
+		toolCount: 5,
+	},
 ];
 
 const AGENTS: readonly AgentListItem[] = [
@@ -529,6 +502,30 @@ function Icon({ name }: { readonly name: string }): React.ReactElement {
 				<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
 			</>
 		),
+		eye: (
+			<>
+				<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+				<circle cx="12" cy="12" r="2.5" />
+			</>
+		),
+		model: (
+			<>
+				<circle cx="12" cy="12" r="9" />
+				<path d="M12 3v18M3 12h18M5.6 6.2h12.8M5.6 17.8h12.8" />
+			</>
+		),
+		bulb: (
+			<>
+				<path d="M9 18h6M10 22h4" />
+				<path d="M8.2 15.2A7 7 0 1 1 15.8 15.2C14.7 16 14.2 17 14 18h-4c-.2-1-.7-2-1.8-2.8Z" />
+			</>
+		),
+		copy: (
+			<>
+				<rect x="8" y="8" width="12" height="12" rx="2" />
+				<path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+			</>
+		),
 	};
 	return (
 		<svg
@@ -865,7 +862,6 @@ export function AgentDetailPreview({
 	onBack,
 	onTest,
 	onPublish,
-	onOpenPublishedApp,
 	embedded = false,
 	data = PREVIEW_DETAIL,
 	publishData = PREVIEW_PUBLISH,
@@ -893,7 +889,6 @@ export function AgentDetailPreview({
 	readonly onBack: () => void;
 	readonly onTest?: () => void;
 	readonly onPublish?: () => void;
-	readonly onOpenPublishedApp?: (appId: string) => void;
 	readonly embedded?: boolean;
 	readonly data?: AgentDetailData;
 	readonly publishData?: AgentPublishData;
@@ -982,7 +977,16 @@ export function AgentDetailPreview({
 	}, [dirty, onDirtyChange]);
 	const selectedModel = models?.find((item) => item.id === model);
 	const reasoningCapability = selectedModel?.parameterCapabilities.reasoning;
-	const effortOptions = reasoningCapability?.efforts ?? (effort === undefined ? [] : [effort]);
+	useEffect(() => {
+		if (selectedModel === undefined || reasoningCapability?.supported === true) return;
+		if (!reasoning && effort === undefined) return;
+		setReasoning(false);
+		setEffort(undefined);
+		setSavedSnapshot((current) => {
+			const saved = JSON.parse(current) as Record<string, unknown>;
+			return JSON.stringify({ ...saved, reasoning: false, effort: undefined });
+		});
+	}, [selectedModel, reasoningCapability, reasoning, effort]);
 	const save = async (): Promise<void> => {
 		if (!dirty || !saveEnabled || saveState === "saving") return;
 		setSaveState("saving");
@@ -1148,10 +1152,8 @@ export function AgentDetailPreview({
 									onChange={(event) => {
 										const next = event.currentTarget.value;
 										setModel(next);
-										const capability = models?.find((item) => item.id === next)?.parameterCapabilities
-											.reasoning;
-										setReasoning(capability?.supported ?? false);
-										setEffort(capability?.defaultEffort ?? capability?.efforts[0]);
+										setReasoning(false);
+										setEffort(undefined);
 									}}
 									disabled={!modelEditable || modelsLoading || modelsError !== undefined}
 								>
@@ -1200,7 +1202,12 @@ export function AgentDetailPreview({
 										?
 									</span>
 								</div>
-								<EffortSeg value={effort} onChange={setEffort} capability={reasoningCapability} />
+								<EffortSeg
+									value={effort}
+									onChange={setEffort}
+									capability={reasoningCapability}
+									disabled={!modelEditable || !reasoning || reasoningCapability?.supported !== true}
+								/>
 							</div>
 						</div>
 					</section>
@@ -1390,18 +1397,20 @@ export function AgentDetailPreview({
 
 				<aside className="ard-side" aria-label="发布信息">
 					<PublishStatusCard publishData={publishData} onPublish={onPublish} />
-					<PublishInstancesCard instances={publishData.instances} onOpenApp={onOpenPublishedApp} />
-					<QuickInfoCard
+					<PublishedInfoCard
+						version={publishData.currentVersion}
 						modelName={selectedModel?.name ?? (model === "" ? "未选择" : model)}
 						reasoningEnabled={reasoning}
 						effort={effort}
-						skillsCount={skills.length}
-						mcpCount={mcpServers.length}
+						skills={draftSkills}
+						mcpServers={draftMcpServers}
+						newConversations={newConversations}
 						attachments={attachments}
 						avatar={avatar}
 						liveSpeech={speech}
 					/>
-					<VersionHistoryCard history={publishData.versionHistory} />
+					<ExternalAccessCard link={publishData.externalLink} />
+					<MoreCard history={publishData.versionHistory} />
 				</aside>
 			</div>
 		</main>
@@ -1537,228 +1546,221 @@ function PublishStatusCard({
 	readonly onPublish?: () => void;
 }): React.ReactElement {
 	const statusLabel: Record<PublishStatus, string> = {
-		online: "已上线",
+		online: "已发布",
 		paused: "已暂停",
 		draft: "未发布",
 	};
+	const isCurrent = publishData.status === "online" && publishData.draftRevision === publishData.currentVersion;
 	return (
-		<section className="ard-side-card" aria-label="发布状态">
+		<section className="ard-side-card ard-publish-status-card" aria-label="发布状态">
 			<h3>发布状态</h3>
 			<div className="ard-side-status">
 				<i aria-hidden="true" className={`is-${publishData.status}`} />
 				<strong>{statusLabel[publishData.status]}</strong>
 			</div>
-			<dl className="ard-side-kv">
+			<p className="ard-publish-subtitle">
+				{publishData.status === "online" ? "线上版本正在运行" : "当前 Agent 尚未上线"}
+			</p>
+			<div className="ard-version-compare">
 				<div>
-					<dt>当前版本</dt>
-					<dd>{publishData.currentVersion}</dd>
+					<small>当前（草稿）</small>
+					<span>Revision</span>
+					<strong>{publishData.draftRevision.replace(/^Revision\s*/, "v")}</strong>
+					<span>保存于</span>
+					<b>{publishData.draftSavedAt}</b>
 				</div>
+				<i>VS</i>
 				<div>
-					<dt>最后发布时间</dt>
-					<dd>{publishData.lastPublishedAt}</dd>
+					<small>线上（已发布）</small>
+					<span>Revision</span>
+					<strong>
+						{publishData.currentVersion === "" ? "—" : publishData.currentVersion.replace(/^Revision\s*/, "v")}
+					</strong>
+					<span>发布于</span>
+					<b>{publishData.lastPublishedAt || "—"}</b>
 				</div>
-			</dl>
-			<button type="button" className="ard-side-btn" onClick={onPublish} disabled={onPublish === undefined}>
-				<Icon name="send" />
-				发布更新
-			</button>
-			<button type="button" className="ard-side-btn">
-				<Icon name="pause" />
-				暂停发布
-			</button>
+			</div>
+			<div className={`ard-publish-sync ${isCurrent ? "is-current" : ""}`}>
+				<span>
+					<Icon name={isCurrent ? "check" : "history"} />
+					<strong>{isCurrent ? "当前配置已与线上版本一致" : "当前配置有更新"}</strong>
+					<small>{isCurrent ? "无需重新发布" : "发布后更新线上版本"}</small>
+				</span>
+				<button type="button" onClick={onPublish} disabled={onPublish === undefined || isCurrent}>
+					<Icon name="send" />
+					{isCurrent
+						? `发布当前版本（${publishData.currentVersion.replace(/^Revision\s*/, "v")}）`
+						: "发布当前版本"}
+				</button>
+			</div>
 		</section>
 	);
 }
 
-function PublishInstancesCard({
-	instances,
-	onOpenApp,
-}: {
-	readonly instances: readonly PublishInstance[];
-	readonly onOpenApp?: (appId: string) => void;
-}): React.ReactElement {
-	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const cardRef = useRef<HTMLElement | null>(null);
-	const selected = instances.find((item) => item.id === selectedId);
-
-	useEffect(() => {
-		if (selectedId === null) return;
-		const closeOnOutsideClick = (event: MouseEvent): void => {
-			if (cardRef.current?.contains(event.target as Node) === false) setSelectedId(null);
-		};
-		const closeOnEscape = (event: KeyboardEvent): void => {
-			if (event.key === "Escape") setSelectedId(null);
-		};
-		document.addEventListener("mousedown", closeOnOutsideClick);
-		document.addEventListener("keydown", closeOnEscape);
-		return () => {
-			document.removeEventListener("mousedown", closeOnOutsideClick);
-			document.removeEventListener("keydown", closeOnEscape);
-		};
-	}, [selectedId]);
-
-	return (
-		<section ref={cardRef} className="ard-side-card ard-publish-instances" aria-label="发布实例">
-			<h3>发布实例</h3>
-			{instances.length === 0 ? (
-				<p className="ard-side-empty">还没有应用使用这个 Agent</p>
-			) : (
-				<div className="ard-instance-list">
-					{instances.map((item) => {
-						const notEmpty = (part: string | undefined): part is string => part !== undefined && part !== "";
-						const audienceLine = [item.audience, item.domain].filter(notEmpty).join(" · ");
-						const versionLine = [item.version, item.publishedAt].filter(notEmpty).join(" · ");
-						return (
-							<button
-								type="button"
-								className="ard-instance-item"
-								key={item.id}
-								aria-expanded={selectedId === item.id}
-								onClick={() => setSelectedId((current) => (current === item.id ? null : item.id))}
-							>
-								<span className="ard-instance-icon" aria-hidden="true">
-									<Icon name="publish" />
-								</span>
-								<span className="ard-instance-body">
-									<span className="ard-instance-name">
-										{item.name}
-										<small className={`ard-instance-tag is-${item.status}`}>
-											{item.status === "online" ? "已上线" : "已暂停"}
-										</small>
-									</span>
-									{audienceLine === "" ? null : <span className="ard-instance-meta">{audienceLine}</span>}
-									{versionLine === "" ? null : <span className="ard-instance-meta">{versionLine}</span>}
-								</span>
-								<Icon name="chevron" />
-							</button>
-						);
-					})}
-				</div>
-			)}
-			{instances.length === 0 ? null : <div className="ard-side-link">共 {instances.length} 个关联应用</div>}
-			{selected === undefined ? null : (
-				<div className="ard-instance-popover" role="dialog" aria-label={`${selected.name} 应用详情`}>
-					<div className="ard-instance-popover-head">
-						<strong>{selected.name}</strong>
-						<button type="button" aria-label="关闭应用详情" onClick={() => setSelectedId(null)}>
-							×
-						</button>
-					</div>
-					<dl>
-						<div>
-							<dt>状态</dt>
-							<dd>{selected.status === "online" ? "已上线" : "已暂停"}</dd>
-						</div>
-						<div>
-							<dt>Public App ID</dt>
-							<dd>{selected.publicAppId ?? "—"}</dd>
-						</div>
-						<div>
-							<dt>当前版本 ID</dt>
-							<dd>{selected.currentVersionId ?? "尚未激活"}</dd>
-						</div>
-					</dl>
-					{onOpenApp === undefined ? null : (
-						<button type="button" className="ard-instance-popover-action" onClick={() => onOpenApp(selected.id)}>
-							进入应用详情
-							<Icon name="chevron" />
-						</button>
-					)}
-				</div>
-			)}
-		</section>
-	);
-}
-
-function QuickInfoCard({
+function PublishedInfoCard({
+	version,
 	modelName,
 	reasoningEnabled,
 	effort,
-	skillsCount,
-	mcpCount,
+	skills,
+	mcpServers,
+	newConversations,
 	attachments,
 	avatar,
 	liveSpeech,
 }: {
+	readonly version: string;
 	readonly modelName: string;
 	readonly reasoningEnabled: boolean;
 	readonly effort: ReasoningEffort | undefined;
-	readonly skillsCount: number;
-	readonly mcpCount: number;
+	readonly skills: readonly AgentResource[];
+	readonly mcpServers: readonly AgentResource[];
+	readonly newConversations: boolean;
 	readonly attachments: boolean;
 	readonly avatar: boolean;
 	readonly liveSpeech: boolean;
 }): React.ReactElement {
 	const effortDisplay: Record<string, string> = { low: "低", medium: "中", high: "高" };
 	return (
-		<section className="ard-side-card" aria-label="快捷信息">
-			<h3>快捷信息</h3>
-			<dl className="ard-info-table">
-				<div>
-					<dt>模型</dt>
-					<dd>{modelName}</dd>
-				</div>
-				<div>
-					<dt>深度思考</dt>
-					<dd>{reasoningEnabled ? "开启" : "关闭"}</dd>
-				</div>
-				<div>
-					<dt>思考强度</dt>
-					<dd>{effort === undefined ? "—" : (effortDisplay[effort] ?? effort)}</dd>
-				</div>
-				<div>
-					<dt>关联 Skill</dt>
-					<dd>{skillsCount}</dd>
-				</div>
-				<div>
-					<dt>关联 MCP Server</dt>
-					<dd>{mcpCount}</dd>
-				</div>
-				<div>
-					<dt>允许附件</dt>
-					<dd>{attachments ? "是" : "否"}</dd>
-				</div>
-				<div>
-					<dt>Avatar</dt>
-					<dd>{avatar ? "是" : "否"}</dd>
-				</div>
-				<div>
-					<dt>实验性语音</dt>
-					<dd>{liveSpeech ? "是" : "否"}</dd>
-				</div>
-			</dl>
+		<section className="ard-side-card ard-published-info" aria-label="线上版本信息">
+			<div className="ard-side-card-head">
+				<h3>线上版本信息（{version === "" ? "—" : version.replace(/^Revision\s*/, "v")}）</h3>
+				<span>
+					<Icon name="eye" /> 预览
+				</span>
+			</div>
+			<div className="ard-published-grid">
+				<InfoTile icon="model" title="模型">
+					<strong>{modelName}</strong>
+				</InfoTile>
+				<InfoTile icon="bulb" title="思考设置">
+					<span>
+						深度思考：<b>{reasoningEnabled ? "开启" : "关闭"}</b>
+					</span>
+					<span>
+						思考强度：<b>{effort === undefined ? "—" : (effortDisplay[effort] ?? effort)}</b>
+					</span>
+				</InfoTile>
+				<InfoTile icon="cube" title={`技能（${skills.length}）`}>
+					<strong>{skills.length === 0 ? "未绑定" : skills.map((item) => item.name).join("、")}</strong>
+					<span className={skills.some((item) => item.enabled) ? "is-positive" : ""}>
+						{skills.some((item) => item.enabled) ? "已启用" : "未启用"}
+					</span>
+				</InfoTile>
+				<InfoTile icon="mcp" title={`MCP Server（${mcpServers.length}）`}>
+					<strong>{mcpServers.length === 0 ? "未绑定" : mcpServers.map((item) => item.name).join("、")}</strong>
+					<span className={mcpServers.some((item) => item.connectionStatus === "connected") ? "is-positive" : ""}>
+						{mcpServers.some((item) => item.connectionStatus === "connected") ? "已连接" : "未连接"}
+					</span>
+				</InfoTile>
+				<InfoTile icon="chatBox" title="对话能力">
+					<span>
+						新建对话：<b>{newConversations ? "允许" : "关闭"}</b>
+					</span>
+					<span>
+						附件：<b>{attachments ? "允许" : "关闭"}</b>
+					</span>
+					<span>
+						Avatar：<b>{avatar ? "开启" : "关闭"}</b>
+					</span>
+					<span>
+						实时语音：<b>{liveSpeech ? "开启" : "关闭"}</b>
+					</span>
+				</InfoTile>
+				<InfoTile icon="spark" title="其他能力">
+					<span>
+						实验性功能：<b>{liveSpeech ? "开启" : "关闭"}</b>
+					</span>
+					<span>
+						预设建议：<b>关闭</b>
+					</span>
+				</InfoTile>
+			</div>
 		</section>
 	);
 }
 
-function VersionHistoryCard({ history }: { readonly history: readonly VersionHistoryItem[] }): React.ReactElement {
+function InfoTile({
+	icon,
+	title,
+	children,
+}: {
+	readonly icon: string;
+	readonly title: string;
+	readonly children: ReactNode;
+}): React.ReactElement {
 	return (
-		<section className="ard-side-card" aria-label="版本历史">
-			<h3>版本历史</h3>
-			{history.length === 0 ? (
-				<p className="ard-side-empty">还没有 Revision</p>
-			) : (
-				<div className="ard-version-list">
-					{history.map((item) => (
-						<button type="button" className="ard-version-item" key={item.version}>
-							<span className="ard-instance-icon" aria-hidden="true">
-								<Icon name="history" />
-							</span>
-							<span className="ard-instance-body">
-								<span className="ard-version-name">
-									{item.version}
-									{item.isCurrent ? <small className="ard-version-current">当前版本</small> : null}
-								</span>
-								<span className="ard-version-meta">
-									{item.createdAt} · {item.author}
-								</span>
-							</span>
-							<Icon name="chevron" />
-						</button>
-					))}
-				</div>
+		<article className="ard-info-tile">
+			<h4>
+				<Icon name={icon} />
+				{title}
+			</h4>
+			<div>{children}</div>
+		</article>
+	);
+}
+
+function ExternalAccessCard({ link }: { readonly link?: string }): React.ReactElement {
+	const [copied, setCopied] = useState(false);
+	const copy = async (): Promise<void> => {
+		if (link === undefined) return;
+		await navigator.clipboard.writeText(link);
+		setCopied(true);
+		window.setTimeout(() => setCopied(false), 1500);
+	};
+	return (
+		<section className="ard-side-card ard-external-card" aria-label="对外访问">
+			<h3>对外访问</h3>
+			<div>
+				<code>{link ?? "尚未发布，暂无访问地址"}</code>
+				<button type="button" disabled={link === undefined} onClick={() => void copy()} aria-label="复制访问地址">
+					<Icon name={copied ? "check" : "copy"} />
+				</button>
+			</div>
+			{link === undefined ? null : (
+				<a href={link} target="_blank" rel="noreferrer">
+					打开 Public Chat <Icon name="external" />
+				</a>
 			)}
-			{history.length === 0 ? null : <div className="ard-side-link">共 {history.length} 个 Revision</div>}
+		</section>
+	);
+}
+
+function MoreCard({ history }: { readonly history: readonly VersionHistoryItem[] }): React.ReactElement {
+	return (
+		<section className="ard-side-card ard-more-card" aria-label="更多">
+			<h3>更多</h3>
+			<details>
+				<summary>
+					查看版本历史 <Icon name="chevron" />
+				</summary>
+				{history.length === 0 ? (
+					<p className="ard-side-empty">还没有 Revision</p>
+				) : (
+					<div className="ard-version-list">
+						{history.map((item) => (
+							<button type="button" className="ard-version-item" key={item.version}>
+								<span className="ard-instance-icon" aria-hidden="true">
+									<Icon name="history" />
+								</span>
+								<span className="ard-instance-body">
+									<span className="ard-version-name">
+										{item.version}
+										{item.isCurrent ? <small className="ard-version-current">当前版本</small> : null}
+									</span>
+									<span className="ard-version-meta">
+										{item.createdAt} · {item.author}
+									</span>
+								</span>
+								<Icon name="chevron" />
+							</button>
+						))}
+					</div>
+				)}
+			</details>
+			<button type="button" disabled title="发布日志暂未开放">
+				查看发布日志 <Icon name="chevron" />
+			</button>
 		</section>
 	);
 }
@@ -1772,21 +1774,19 @@ function EffortSeg({
 	value,
 	onChange,
 	capability,
+	disabled,
 }: {
 	readonly value: ReasoningEffort | undefined;
 	readonly onChange: (next: ReasoningEffort) => void;
 	readonly capability: LlmAvailableModel["parameterCapabilities"]["reasoning"] | undefined;
+	readonly disabled: boolean;
 }): React.ReactElement {
 	const options: readonly { readonly label: string; readonly value: ReasoningEffort }[] = [
 		{ label: "低", value: "low" },
 		{ label: "中", value: "medium" },
 		{ label: "高", value: "high" },
 	];
-	// If the model declares an explicit list, honor it. Otherwise allow all
-	// three so the picker is always usable (e.g. while the catalog is loading).
-	const supported: ReadonlySet<ReasoningEffort> = new Set(
-		capability?.supported && capability.efforts.length > 0 ? capability.efforts : options.map((o) => o.value),
-	);
+	const supported: ReadonlySet<ReasoningEffort> = new Set(capability?.supported ? capability.efforts : []);
 	return (
 		<div className="ard-seg" role="radiogroup" aria-label="思考强度">
 			{options.map(({ label, value: optionValue }) => {
@@ -1800,7 +1800,7 @@ function EffortSeg({
 						aria-checked={isActive}
 						className={isActive ? "is-active" : ""}
 						onClick={() => onChange(optionValue)}
-						disabled={!isSupported}
+						disabled={disabled || !isSupported}
 					>
 						{label}
 					</button>

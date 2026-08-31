@@ -26,9 +26,6 @@ export type AdminRouteId =
 	| "agent-detail"
 	| "skills"
 	| "mcp"
-	| "apps"
-	| "app-create"
-	| "app-detail"
 	| "usage"
 	| "user-conversations"
 	| "user-conversation-detail"
@@ -40,7 +37,6 @@ export interface AdminRoute {
 	readonly params: Readonly<Record<string, string>>;
 }
 
-const APP_PUBLIC_ID_PATTERN = /^app_[0-9a-fA-F-]{36}$/;
 const AGENT_PUBLIC_ID_PATTERN = /^agent_[0-9a-fA-F-]{36}$/;
 const CONV_PUBLIC_ID_PATTERN = /^conv_[0-9a-fA-F-]{36}$/;
 
@@ -83,18 +79,6 @@ export function parseRoute(path: string): AdminRoute {
 	}
 	if (path === "/mcp") {
 		return { id: "mcp", path, params: {} };
-	}
-	if (path === r.apps) {
-		return { id: "apps", path: r.apps, params: {} };
-	}
-	if (path === `${r.apps}/new`) {
-		return { id: "app-create", path, params: {} };
-	}
-	if (path.startsWith(`${r.apps}/`)) {
-		const id = path.slice(r.apps.length + 1);
-		if (APP_PUBLIC_ID_PATTERN.test(id)) {
-			return { id: "app-detail", path: path, params: { appId: id } };
-		}
 	}
 	if (path === r.usage) {
 		return { id: "usage", path: r.usage, params: {} };

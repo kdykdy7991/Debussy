@@ -35,23 +35,11 @@ export const ADMIN_WORKBENCH_ROUTES = {
 	conversation: "/",
 	agents: "/agents",
 	agent: (agentId: AgentPublicId): string => `/agents/${agentId}`,
-	apps: "/apps",
-	app: (appId: PublishedAppPublicId): string => `/apps/${appId}`,
 	usage: "/usage",
 	userConversations: "/conversations",
 	userConversation: (conversationId: ConversationPublicId): string => `/conversations/${conversationId}`,
 	settings: "/settings",
 } as const;
-
-/**
- * Resolve an obsolete standalone Publishing route to its workbench route.
- * Unknown descendants return `null` instead of being redirected ambiguously.
- */
-export function legacyPublishingRedirect(pathname: string): string | null {
-	if (pathname === "/publishing" || pathname === "/publishing/") return ADMIN_WORKBENCH_ROUTES.apps;
-	const match = pathname.match(/^\/publishing\/apps\/(app_[^/]+)\/?$/);
-	return match === null ? null : ADMIN_WORKBENCH_ROUTES.app(match[1] as PublishedAppPublicId);
-}
 
 /** Agent list projection. `id` is the AgentDefinition display ID. */
 export interface AgentSummary {

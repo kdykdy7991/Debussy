@@ -1,6 +1,7 @@
 import type { PublishedAppId, PublishedAppVersionId, TenantId } from "../../../publishing/domain/ids.ts";
 import type {
 	AppScope,
+	FindOrCreateInternalResult,
 	PublishedAppListParams,
 	PublishedAppListRow,
 	PublishedAppRecord,
@@ -95,6 +96,66 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 					record.updatedAt,
 				);
 				return true;
+			});
+		},
+		async findOrCreateInternal(scope, record) {
+			// One transaction holds the whole find-or-create so the advisory
+			// transaction lock serializes concurrent publishes of the SAME Agent.
+			// Two racing first-publishes: the loser waits on the advisory lock,
+			// then observes the winner's inserted app and reuses it (never a 2nd).
+			return client.transaction(async (tx) => {
+				await txRows(
+					tx,
+					"select pg_advisory_xact_lock(hashtextextended($1, 0))",
+					`${scope.tenantId}:published_app:${record.agentDefinitionId}`,
+				);
+				const existing = await txRows(
+					tx,
+					`select * from published_apps
+					  where tenant_id = $1 and agent_definition_id = $2 and deleted_at is null
+					  order by created_at asc`,
+					scope.tenantId,
+					record.agentDefinitionId,
+				);
+				if (existing.length > 1) {
+					return { status: "conflict", count: existing.length } satisfies FindOrCreateInternalResult;
+				}
+				if (existing.length === 1) {
+					return { status: "existing", app: rowToRecord(existing[0]) } satisfies FindOrCreateInternalResult;
+				}
+				// 0 apps → auto-create an internal draft app, but only while the
+				// Agent is active (dead/locked Agents never produce a stray app).
+				const agent = await txRows(
+					tx,
+					`select revision from agent_definitions
+					 where id = $1 and tenant_id = $2 and deleted_at is null
+					 order by revision for update`,
+					record.agentDefinitionId,
+					scope.tenantId,
+				);
+				if (agent.length === 0) {
+					return { status: "agent_unavailable" } satisfies FindOrCreateInternalResult;
+				}
+				await txRows(
+					tx,
+					`insert into published_apps
+					 (id, tenant_id, agent_definition_id, public_app_id, name, status, access_mode,
+					  current_version_id, allowed_origins, mutable_policy, created_by, created_at, updated_at)
+					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2, $11, $12)`,
+					record.publishedAppId,
+					record.tenantId,
+					record.agentDefinitionId,
+					record.publicAppId,
+					record.name,
+					record.status,
+					record.accessMode,
+					record.currentVersionId,
+					record.allowedOrigins ?? [],
+					(record.mutablePolicy ?? {}) as object,
+					record.createdAt,
+					record.updatedAt,
+				);
+				return { status: "created", app: record } satisfies FindOrCreateInternalResult;
 			});
 		},
 		async get(scope: AppScope, publishedAppId) {
@@ -220,6 +281,16 @@ export function createPublishedAppRepository(client: PostgresClient): PublishedA
 				}
 				return { ok: true, previousVersionId };
 			});
+		},
+		async listByAgentDefinition(scope, agentDefinitionId) {
+			const rows = await client.run(
+				`select * from published_apps
+				  where tenant_id = $1 and agent_definition_id = $2 and deleted_at is null
+				  order by created_at asc`,
+				scope.tenantId,
+				agentDefinitionId,
+			);
+			return rows.map((row) => rowToRecord(row));
 		},
 		async count(scope: TenantScope) {
 			const rows = await client.run(

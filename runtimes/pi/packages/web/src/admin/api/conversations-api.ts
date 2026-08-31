@@ -1,7 +1,7 @@
 /**
  * Admin user-conversation HTTP client (WB-006 / SPEC §5.4).
  *
- * Mirrors `app-api.ts`: reads the admin token from `AdminAuthController`,
+ * Reads the admin token from `AdminAuthController`,
  * sets the Authorization header, and propagates 401 to the lock state. It
  * only fetches + JSON-serialises — no shape inference. All DTOs come from
  * `@earendil-works/pi-protocol`.

@@ -28,7 +28,6 @@ import {
 	AgentListPreview,
 	type AgentPublishData,
 	type AgentResource,
-	type PublishInstance,
 	type VersionHistoryItem,
 } from "../../ui-preview/agent-redesign.tsx";
 import { AgentApi } from "../api/agent-api.ts";
@@ -200,7 +199,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 		description: state.detail.description ?? "",
 		systemPrompt: state.detail.systemPrompt,
 		modelId: state.detail.modelId,
-		reasoningEnabled: state.detail.parameters.reasoning?.enabled ?? true,
+		reasoningEnabled: state.detail.parameters.reasoning?.enabled ?? false,
 		reasoningEffort: state.detail.parameters.reasoning?.effort,
 		attachments: state.detail.capabilities.attachments,
 		avatar: state.detail.capabilities.avatar,
@@ -254,7 +253,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 		loadApps();
 	};
 
-	// ---- 侧栏：Revision 历史 / 关联应用 / 发布状态 ----
+	// ---- 侧栏：Revision 历史 / 发布状态 ----
 	const currentRevision = state.detail.currentRevision;
 	const versionHistory: readonly VersionHistoryItem[] =
 		revisions.kind === "loaded"
@@ -265,22 +264,18 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 					isCurrent: rev.revision === currentRevision,
 				}))
 			: [];
-	const instances: readonly PublishInstance[] =
-		apps.kind === "loaded"
-			? apps.items.map((app) => ({
-					id: app.appId,
-					name: app.name,
-					status: app.status === "active" ? "online" : "paused",
-					publicAppId: app.publicAppId,
-					currentVersionId: app.currentVersionId ?? undefined,
-				}))
-			: [];
 	const updatedAtLabel = new Date(state.detail.updatedAt).toLocaleString("zh-CN", { hour12: false });
+	const liveApp = apps.kind === "loaded" ? apps.items.find((app) => app.status === "active") : undefined;
 	const publishData: AgentPublishData = {
-		status: instances.some((item) => item.status === "online") ? "online" : "draft",
-		currentVersion: `v${currentRevision}`,
-		lastPublishedAt: updatedAtLabel,
-		instances,
+		status: liveApp === undefined ? "draft" : "online",
+		draftRevision: `Revision ${currentRevision}`,
+		draftSavedAt: updatedAtLabel,
+		currentVersion: liveApp?.sourceAgentRevision !== undefined ? `Revision ${liveApp.sourceAgentRevision}` : "",
+		lastPublishedAt:
+			liveApp?.publishedAt === undefined
+				? ""
+				: new Date(liveApp.publishedAt).toLocaleString("zh-CN", { hour12: false }),
+		externalLink: liveApp?.embedUrl,
 		versionHistory,
 	};
 
@@ -329,7 +324,6 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 				onBack={() => navigate("/agents")}
 				onTest={() => navigate(`/chat?agentId=${agentId}`)}
 				onPublish={() => setPublishDrawerMode("open")}
-				onOpenPublishedApp={(appId) => navigate(`/apps/${appId}`)}
 				onDirtyChange={handleDirtyChange}
 				createdAt={updatedAtLabel}
 				createdBy={state.detail.updatedBy}

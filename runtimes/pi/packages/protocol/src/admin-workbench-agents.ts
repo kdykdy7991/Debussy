@@ -149,6 +149,45 @@ export interface AgentDefinitionAssociatedApp {
 	readonly name: string;
 	readonly status: string;
 	readonly currentVersionId: PublishedAppVersionPublicId | null;
+	/**
+	 * P2 publish-status surface: the Agent Revision currently published and
+	 * live (`sourceAgentRevision` of the app's current version). Optional —
+	 * absent when the app has no current version yet.
+	 */
+	readonly sourceAgentRevision?: number;
+	/** Monotonic version number of the live published version. */
+	readonly versionNumber?: number;
+	/** When the live version was created/published (ISO). */
+	readonly publishedAt?: string;
+	/** Public embed/chat link for the published Agent. */
+	readonly embedUrl?: string;
+}
+
+/**
+ * P2 one-click publish (`POST /api/control/v1/agent-definitions/:id/publish`).
+ * The server resolves the Agent's LATEST revision, reuses-or-creates the
+ * single internal published_app, creates + activates a version, and returns
+ * the live publish state. No client-supplied revision / application / version.
+ */
+export interface AgentPublishResponse {
+	readonly agentId: PublishedAppPublicId;
+	readonly agentRevision: number;
+	readonly publishedApp: {
+		readonly id: PublishedAppPublicId;
+		readonly publicAppId: PublishedAppLocator;
+		readonly name: string;
+		readonly status: string;
+	};
+	readonly version: {
+		readonly id: PublishedAppVersionPublicId;
+		readonly versionNumber: number;
+		readonly status: string;
+		readonly sourceAgentRevision: number;
+		readonly runtimeSpecHash: string | null;
+		readonly validationErrors: readonly unknown[];
+	};
+	readonly previousVersionId: PublishedAppVersionPublicId | null;
+	readonly embedUrl: string;
 }
 
 /**

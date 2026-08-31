@@ -29,7 +29,12 @@ import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/re
 import type { SkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import { parseRuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import { createConversationRuntimeManager } from "../runtime/conversation-runtime-manager.ts";
-import { createPiRuntimeAdapter, type RuntimeSessionFactory } from "../runtime/pi-runtime-adapter.ts";
+import {
+	type BuiltinToolNameResolver,
+	createPiRuntimeAdapter,
+	type PiRuntimeAdapter,
+	type RuntimeSessionFactory,
+} from "../runtime/pi-runtime-adapter.ts";
 import { managedTurnExecutor } from "../runtime/turn-executor.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { AccessTokenService, loadAccessTokenKeyMaterial } from "./auth/access-token.ts";
@@ -81,6 +86,10 @@ export interface EmbedPlaneOptions {
 	readonly previewTickets?: PreviewTicketService;
 	/** Materialises frozen Skill revisions so published sessions inject them. */
 	readonly skillMaterializer?: SkillMaterializer;
+	/** Shared builtin Tool name resolver for `allowedToolNames` (single source). */
+	readonly resolveToolName?: BuiltinToolNameResolver;
+	/** Optional injected shared PiRuntimeAdapter (shared with the Debug path). */
+	readonly runtimeAdapter?: PiRuntimeAdapter;
 	readonly log?: (message: string) => void;
 }
 
@@ -183,6 +192,16 @@ export interface EmbedServicesOptions {
 	readonly previewTickets?: PreviewTicketService;
 	/** Materialises frozen Skills so published sessions inject them (skillsOverride). */
 	readonly skillMaterializer?: SkillMaterializer;
+	/**
+	 * Resolves builtin Tool capability ids to runtime tool names for
+	 * `allowedToolNames` (single source; same resolver as the Debug path).
+	 */
+	readonly resolveToolName?: BuiltinToolNameResolver;
+	/**
+	 * Optional injected shared PiRuntimeAdapter. When absent, createEmbedServices
+	 * builds one from the same factory (single builder logic in both cases).
+	 */
+	readonly runtimeAdapter?: PiRuntimeAdapter;
 }
 
 export interface EmbedServicesHandle {
@@ -203,11 +222,14 @@ export interface EmbedServicesHandle {
 
 /** 纯组装：Exchange + Conversations + authenticator + managed turn executor。 */
 export function createEmbedServices(options: EmbedServicesOptions): EmbedServicesHandle {
-	const adapter = createPiRuntimeAdapter({
-		createSession: options.createSession,
-		...(options.mcpTools !== undefined ? { createMcpTools: options.mcpTools } : {}),
-		...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
-	});
+	const adapter =
+		options.runtimeAdapter ??
+		createPiRuntimeAdapter({
+			createSession: options.createSession,
+			...(options.mcpTools !== undefined ? { createMcpTools: options.mcpTools } : {}),
+			...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
+			...(options.resolveToolName !== undefined ? { resolveToolName: options.resolveToolName } : {}),
+		});
 	// TASK-034：分层限流 + 并发槽（缺省内存实现 + spec 默认规则；生产可从
 	// compose 注入 Redis store）。暴露在 handle 上供 realtime upgrade 复用。
 	const limits = options.limits ?? createEmbedLimits();
@@ -390,6 +412,8 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		...(options.citations !== undefined ? { citations: options.citations } : {}),
 		...(options.previewTickets !== undefined ? { previewTickets: options.previewTickets } : {}),
 		...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
+		...(options.resolveToolName !== undefined ? { resolveToolName: options.resolveToolName } : {}),
+		...(options.runtimeAdapter !== undefined ? { runtimeAdapter: options.runtimeAdapter } : {}),
 	});
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。

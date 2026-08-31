@@ -417,7 +417,7 @@ export function CustomLlmSection(): React.ReactElement {
 													})
 												}
 											/>
-											<span />
+											<span style={{ background: effectiveReasoning ? "#2f9e54" : "#cbd1da" }} />
 										</label>
 										{REASONING_EFFORTS.map((effort) => (
 											<input

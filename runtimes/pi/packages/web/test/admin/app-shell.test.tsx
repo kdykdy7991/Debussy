@@ -15,7 +15,6 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { legacyPublishingRedirect } from "@earendil-works/pi-protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminAppShell } from "../../src/admin/app-shell.tsx";
@@ -80,9 +79,9 @@ describe("AdminAppShell (WB-002)", () => {
 
 	it("navigate() is a function that accepts admin paths", () => {
 		// The actual hash assignment is browser-side; here we only verify the
-		// logical route stays within the frozen admin routes.
-		const route = parseRoute("/apps");
-		expect(route.id).toBe("apps");
+		// residual app route is gone and a known admin route still resolves.
+		expect(parseRoute("/apps").id).toBe("agents"); // Application routes removed
+		expect(parseRoute("/settings").id).toBe("settings");
 		expect(typeof navigate).toBe("function");
 	});
 
@@ -96,8 +95,7 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(parseRoute("/agents/agent_00000000-0000-0000-0000-000000000000").id).toBe("agent-detail");
 		expect(parseRoute("/skills").id).toBe("skills");
 		expect(parseRoute("/mcp").id).toBe("mcp");
-		expect(parseRoute("/apps").id).toBe("apps");
-		expect(parseRoute("/apps/app_00000000-0000-0000-0000-000000000000").id).toBe("app-detail");
+		expect(parseRoute("/apps").id).toBe("agents"); // removed Application routes fall back to Agents
 		expect(parseRoute("/usage").id).toBe("usage");
 		expect(parseRoute("/conversations").id).toBe("user-conversations");
 		expect(parseRoute("/conversations/conv_00000000-0000-0000-0000-000000000000").id).toBe(
@@ -106,15 +104,6 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(parseRoute("/settings").id).toBe("settings");
 		expect(parseRoute("/not-a-route").id).toBe("agents");
 		expect(parseRoute("/agents/not-an-id").id).toBe("agents");
-	});
-
-	it("redirects legacy /publishing routes", () => {
-		expect(legacyPublishingRedirect("/publishing")).toBe("/apps");
-		expect(legacyPublishingRedirect("/publishing/")).toBe("/apps");
-		expect(legacyPublishingRedirect("/publishing/apps/app_00000000-0000-0000-0000-000000000000")).toBe(
-			"/apps/app_00000000-0000-0000-0000-000000000000",
-		);
-		expect(legacyPublishingRedirect("/publishing/unknown/deep")).toBeNull();
 	});
 
 	it("renders the shell without the legacy unlock dialog", () => {

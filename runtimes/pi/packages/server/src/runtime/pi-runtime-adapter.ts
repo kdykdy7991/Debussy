@@ -50,12 +50,18 @@ export interface PiRuntimeAdapter {
 	open(spec: RuntimeSpec, scope: ScopeContext): Promise<RuntimeOpenResult>;
 }
 
+/** Maps a frozen builtin Tool capability `{id}` to its runtime tool name. */
+export type BuiltinToolNameResolver = (toolId: string) => string | undefined;
+
 export function createPiRuntimeAdapter(deps: {
 	readonly createSession: RuntimeSessionFactory;
 	readonly createMcpTools?: McpRuntimeToolFactory;
 	/** Materialises frozen Skills to server-controlled runtime dirs before session creation. */
 	readonly skillMaterializer?: SkillMaterializer;
+	/** Resolves builtin Tool capability ids (from the Agent draft) to tool names. */
+	readonly resolveToolName?: BuiltinToolNameResolver;
 }): PiRuntimeAdapter {
+	const resolveToolName = deps.resolveToolName;
 	return {
 		async open(spec, scope) {
 			const rejection = chatOnlyRejection(spec);
@@ -76,18 +82,53 @@ export function createPiRuntimeAdapter(deps: {
 				deps.skillMaterializer === undefined
 					? []
 					: await deps.skillMaterializer.materialize(spec, { tenantId: scope.tenantId });
+			// 单源 allowedToolNames：Debug 与 Published 用同一套计算，实际暴露工具
+			// 严格等于 RuntimeSpec 声明允许的工具（capabilities.tools + MCP tools）。
+			const allowedToolNames = computeAllowedToolNames(spec, resolveToolName);
 			const session = await deps.createSession({
 				id: scope.conversationId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
 				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
 				streamOptions: resolved.streamOptions,
 				...(customTools.length > 0 ? { customTools } : {}),
+				...(allowedToolNames.length > 0 ? { allowedToolNames } : {}),
 				systemPrompt: spec.agent.systemPrompt,
 				...(skills.length > 0 ? { skills } : {}),
 			});
 			return { ok: true, runtime: new ConversationRuntime({ scope, spec, session }) };
 		},
 	};
+}
+
+/**
+ * The tools a runtime is actually allowed to expose = exactly the tools the
+ * RuntimeSpec declares:
+ *
+ * - `spec.capabilities.tools` — builtin tool capabilities the Agent revision
+ *   whitelisted (capability `{id}` resolved to its runtime name);
+ * - `spec.capabilities.mcpServers[].tools[].name` — the frozen MCP Tool
+ *   allowlist.
+ *
+ * This must be the ONLY place allowedToolNames are computed, so
+ * `RuntimeSpec.allowed == Debug.actual == Published.actual`.
+ */
+function computeAllowedToolNames(spec: RuntimeSpec, resolveToolName: BuiltinToolNameResolver | undefined): string[] {
+	const names: string[] = [];
+	for (const tool of spec.capabilities.tools) {
+		const id = tool.id;
+		if (typeof id !== "string") {
+			throw new Error("RuntimeSpec contains a builtin Tool capability without a string id");
+		}
+		const name = resolveToolName === undefined ? undefined : resolveToolName(id);
+		if (name === undefined || name === "") {
+			throw new Error(`RuntimeSpec contains an unknown builtin Tool id: ${id}`);
+		}
+		names.push(name);
+	}
+	for (const server of spec.capabilities.mcpServers) {
+		for (const tool of server.tools) names.push(tool.name);
+	}
+	return [...new Set(names)];
 }
 
 /** MVP chat-only 白名单校验；返回 null 表示允许。 */

@@ -11,22 +11,20 @@
  * History is restored from the Debug event stream via the shared
  * `restoreContext` (user + assistant text only; never tool/reasoning).
  */
-import type {
-	Citation,
-	ModelRef,
-	ThinkingLevel,
-	ToolTranscriptItem,
-	TranscriptProgress,
-} from "@earendil-works/pi-protocol";
+import type { Citation, ModelRef, ToolTranscriptItem, TranscriptProgress } from "@earendil-works/pi-protocol";
 import { type CitationService, conversationRetrievalEnabled } from "../../citations/service.ts";
 import { resolveEffectiveModelOptions } from "../../model-parameters.ts";
 import { type RestoredContext, restoreContext } from "../../runtime/context-restore.ts";
-import type { ConversationRuntimeEvent } from "../../runtime/conversation-runtime.ts";
-import { ConversationRuntime } from "../../runtime/conversation-runtime.ts";
-import type { RuntimeSessionOptions } from "../../runtime/pi-runtime-adapter.ts";
+import type { ConversationRuntime, ConversationRuntimeEvent } from "../../runtime/conversation-runtime.ts";
+import {
+	type BuiltinToolNameResolver,
+	createPiRuntimeAdapter,
+	type PiRuntimeAdapter,
+	type RuntimeSessionOptions,
+} from "../../runtime/pi-runtime-adapter.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import { lastAssistantResult, lastAssistantResultAnyStatus } from "../../runtime/turn-executor.ts";
-import type { MaterializedSkill, PiSessionRuntime, ResolvedAttachmentInput, RetrievalInput } from "../../types.ts";
+import type { PiSessionRuntime, ResolvedAttachmentInput, RetrievalInput } from "../../types.ts";
 import type { AttachmentStore } from "../../uploads/store.ts";
 import {
 	type AgentDefinitionId,
@@ -89,6 +87,15 @@ export interface DebugConversationServiceOptions {
 	readonly attachments?: AttachmentStore;
 	/** Error sink for GC/background failures. Defaults to no-op. */
 	readonly reportError?: (error: Error) => void;
+	/**
+	 * Optional injected shared PiRuntimeAdapter (the SAME one the Published path
+	 * uses). When absent, the service builds one from the same
+	 * `createPiRuntimeAdapter` factory — Debug and Published therefore always go
+	 * through the exact same RuntimeSpec → Pi Agent construction.
+	 */
+	readonly openAdapter?: PiRuntimeAdapter;
+	/** Builtin Tool id → name resolver (only used when building the fallback adapter). */
+	readonly resolveToolName?: BuiltinToolNameResolver;
 }
 
 /** Cached Debug Runtime entry, keyed by `debugConversationId`. */
@@ -96,8 +103,6 @@ export interface DebugRuntimeEntry {
 	readonly runtime: ConversationRuntime;
 	readonly runtimeSpecHash: string;
 	readonly resolvedRevision: number;
-	/** Session-level override selected in the realtime Debug UI. */
-	readonly thinkingLevelOverride: ThinkingLevel | null;
 }
 
 /** Phase 2E: History list row, surface shape for the admin History panel. */
@@ -172,8 +177,6 @@ export interface DebugRealtimeTurnOptions {
 	readonly attachments?: readonly ResolvedAttachmentInput[];
 	/** Stable attachment ids from the same Debug conversation; surfaced to the runtime as prompt-time input. */
 	readonly attachmentIds?: readonly string[];
-	/** Session-level Debug UI override; null means use the Agent revision default. */
-	readonly thinkingLevelOverride?: ThinkingLevel | null;
 }
 
 /** One actively-running Realtime Turn, so the abort command can reach the inner agent. */
@@ -187,14 +190,12 @@ export class DebugConversationService {
 	private readonly repositories: PublishingRepositories;
 	private readonly debug: DebugRepositories;
 	private readonly catalog: CapabilityCatalog;
-	private readonly createSession: DebugSessionFactory;
-	private readonly skillMaterializer: SkillMaterializer | undefined;
-	private readonly createMcpTools: McpRuntimeToolFactory | undefined;
 	private readonly tenantId: TenantId;
 	private readonly ownerPrincipalId: PrincipalId;
 	private readonly citations: CitationService | undefined;
 	private readonly attachments: AttachmentStore | undefined;
 	private readonly reportError: (error: Error) => void;
+	private readonly openAdapter: PiRuntimeAdapter;
 
 	/** Runtime cache: `Map<debugConversationId, RuntimeEntry>` (Phase 1, in-memory). */
 	private readonly runtimes = new Map<DebugConversationId, DebugRuntimeEntry>();
@@ -215,14 +216,24 @@ export class DebugConversationService {
 		this.repositories = options.repositories;
 		this.debug = options.debug;
 		this.catalog = options.catalog;
-		this.createSession = options.createSession;
-		this.skillMaterializer = options.skillMaterializer;
-		this.createMcpTools = options.createMcpTools;
 		this.tenantId = options.tenantId;
 		this.ownerPrincipalId = options.ownerPrincipalId;
 		this.citations = options.citations;
 		this.attachments = options.attachments;
 		this.reportError = options.reportError ?? (() => {});
+		// Debug and Published go through the SAME RuntimeSpec → Pi Agent builder:
+		// inject the shared adapter instance, or build one from the same factory
+		// (used when `createSession` is a mock in unit harnesses).
+		this.openAdapter =
+			options.openAdapter ??
+			createPiRuntimeAdapter({
+				createSession: options.createSession,
+				...(options.createMcpTools !== undefined ? { createMcpTools: options.createMcpTools } : {}),
+				...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
+				...(options.resolveToolName !== undefined
+					? { resolveToolName: options.resolveToolName }
+					: { resolveToolName: (id) => this.catalog.tools.find((candidate) => candidate.id === id)?.name }),
+			});
 	}
 
 	/** Most recent `active` Debug conversation for (tenant, owner, agent), if any. */
@@ -448,7 +459,7 @@ export class DebugConversationService {
 			parameterCapabilities: spec.agent.model.parameterCapabilities,
 			conversationEffort: null,
 		}).thinkingLevel;
-		const effectiveThinkingLevel = options.thinkingLevelOverride ?? revisionThinkingLevel;
+		const effectiveThinkingLevel = revisionThinkingLevel;
 
 		// History restored from the Debug event stream before this Turn's events
 		// are written so it excludes the in-flight user message.
@@ -512,7 +523,6 @@ export class DebugConversationService {
 				spec,
 				runtimeSpecHash,
 				agentRevision,
-				options.thinkingLevelOverride ?? null,
 			);
 			this.activeTurns.set(conversationId, {
 				turnId,
@@ -1006,14 +1016,12 @@ export class DebugConversationService {
 		spec: RuntimeSpec,
 		runtimeSpecHash: string,
 		resolvedRevision: number,
-		thinkingLevelOverride: ThinkingLevel | null,
 	): Promise<ConversationRuntime> {
 		const existing = this.runtimes.get(conversationId);
 		if (
 			existing !== undefined &&
 			existing.runtimeSpecHash === runtimeSpecHash &&
-			existing.resolvedRevision === resolvedRevision &&
-			existing.thinkingLevelOverride === thinkingLevelOverride
+			existing.resolvedRevision === resolvedRevision
 		) {
 			return existing.runtime;
 		}
@@ -1021,14 +1029,7 @@ export class DebugConversationService {
 			await existing.runtime.close().catch(() => {});
 			this.runtimes.delete(conversationId);
 		}
-		const created = await this.openRuntime(
-			conversationId,
-			agentId,
-			spec,
-			runtimeSpecHash,
-			resolvedRevision,
-			thinkingLevelOverride,
-		);
+		const created = await this.openRuntime(conversationId, agentId, spec, runtimeSpecHash, resolvedRevision);
 		this.runtimes.set(conversationId, created);
 		return created.runtime;
 	}
@@ -1039,23 +1040,7 @@ export class DebugConversationService {
 		spec: RuntimeSpec,
 		runtimeSpecHash: string,
 		resolvedRevision: number,
-		thinkingLevelOverride: ThinkingLevel | null,
 	): Promise<DebugRuntimeEntry> {
-		const skills: readonly MaterializedSkill[] =
-			this.skillMaterializer === undefined
-				? []
-				: await this.skillMaterializer.materialize(spec, { tenantId: this.tenantId });
-		// Same effective-thinking resolver as Production (explicit params →
-		// legacy thinkingLevel → capability defaultEffort → off): a given Agent
-		// Revision + model + config yields identical reasoning behaviour in the
-		// Debug conversation and the published conversation.
-		const resolved = resolveEffectiveModelOptions({
-			params: spec.agent.model.params,
-			modelId: spec.agent.model.modelId,
-			parameterCapabilities: spec.agent.model.parameterCapabilities,
-			conversationEffort: null,
-		});
-		const effectiveThinkingLevel = thinkingLevelOverride ?? resolved.thinkingLevel;
 		const scope: ScopeContext = {
 			tenantId: this.tenantId,
 			publishedAppId: conversationId as unknown as ScopeContext["publishedAppId"],
@@ -1071,29 +1056,13 @@ export class DebugConversationService {
 				maxConcurrentTurnsPerConversation: spec.runtimePolicy.maxConcurrentTurnsPerConversation,
 			},
 		};
-		// MCP customTools (Phase 2A): built from the same factory Production uses
-		// (`createMcpRuntimeToolFactory`). Credentials are still resolved at
-		// execute-time inside each tool's `execute()` — they never enter the
-		// RuntimeSpec, the runtimeSpecHash, this conversation row, or any
-		// persisted tool event.
-		const customTools = this.createMcpTools === undefined ? [] : await this.createMcpTools(spec, scope);
-		const allowedBuiltinToolNames = spec.capabilities.tools.map((tool) => {
-			const entry = this.catalog.tools.find((candidate) => candidate.id === tool.id);
-			if (entry === undefined) throw new Error(`RuntimeSpec contains an unknown builtin Tool id: ${tool.id}`);
-			return entry.name;
-		});
-		const session = await this.createSession({
-			id: conversationId,
-			model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
-			...(effectiveThinkingLevel !== undefined ? { thinkingLevel: effectiveThinkingLevel } : {}),
-			streamOptions: resolved.streamOptions,
-			...(customTools.length > 0 ? { customTools } : {}),
-			allowedToolNames: [...allowedBuiltinToolNames, ...customTools.map((tool) => tool.name)],
-			systemPrompt: spec.agent.systemPrompt,
-			...(skills.length > 0 ? { skills } : {}),
-		});
-		const runtime = new ConversationRuntime({ scope, spec, session });
-		return { runtime, runtimeSpecHash, resolvedRevision, thinkingLevelOverride };
+		// Debug and Published go through the EXACT same RuntimeSpec → Pi Agent
+		// construction (createPiRuntimeAdapter.open). Model / thinking / skills /
+		// MCP customTools / allowedToolNames all come from the frozen spec; there
+		// is no second Debug-only Runtime configuration path.
+		const opened = await this.openAdapter.open(spec, scope);
+		if (!opened.ok) throw new Error(`open RuntimeSpec: ${opened.reason}`);
+		return { runtime: opened.runtime, runtimeSpecHash, resolvedRevision };
 	}
 
 	/**

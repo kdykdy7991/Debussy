@@ -23,6 +23,7 @@ import type {
 	BootstrapResponse,
 	ConversationDetailResponse,
 	ConversationListResponse,
+	ConversationResumeResponse,
 	ConversationSummary,
 	CreateConversationResponse,
 	DeleteAttachmentResponse,
@@ -105,6 +106,21 @@ export class EmbedApi {
 		return this.request<ConversationDetailResponse>(`/api/embed/v1/conversations/${conversationId}`, {
 			method: "GET",
 			token,
+		});
+	}
+
+	/**
+	 * P2 public-chat resume: `POST /conversations/:id/resume`. When the
+	 * conversation's pinned version went stale the server returns a NEW
+	 * conversation on the CURRENT version (preserving the old one); when the
+	 * version is still current it returns the same conversation (`resumed`).
+	 */
+	async resumeConversation(token: string, conversationId: string): Promise<ConversationResumeResponse> {
+		return this.request<ConversationResumeResponse>(`/api/embed/v1/conversations/${conversationId}/resume`, {
+			method: "POST",
+			token,
+			headers: { "content-type": "application/json" },
+			body: "{}",
 		});
 	}
 

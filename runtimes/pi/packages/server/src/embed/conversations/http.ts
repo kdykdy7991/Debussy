@@ -85,6 +85,8 @@ const CREATE_PATTERN = /^\/api\/embed\/v1\/conversations$/;
 const GET_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)$/;
 const ARCHIVE_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/archive$/;
 const REASONING_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/reasoning$/;
+/** P2: resume-or-roll-forward — resumes only when the pinned version is current. */
+const RESUME_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/resume$/;
 /** TASK-018 internal/dev 文本 Turn 路径，不作为最终公开协议。 */
 const DEV_TURN_PATTERN = /^\/api\/embed\/v1\/dev\/conversations\/([^/]+)\/turn$/;
 /** TASK-024：一次性 WebSocket Ticket 申请端点（spec 27.6）。 */
@@ -369,6 +371,31 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		jsonBody(ctx.response, 200, { data: conversationView(result.data), requestId: ctx.requestId });
 	}
 
+	async function resumeRoute(ctx: RouteContext): Promise<void> {
+		const conversationId = parseConversationId(ctx);
+		if (conversationId === null) return;
+		const result = await service.resumeOrRollForward({ principal: ctx.principal, conversationId });
+		if (!result.ok) {
+			jsonBody(
+				ctx.response,
+				result.error.httpStatus,
+				errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
+			);
+			return;
+		}
+		jsonBody(ctx.response, 200, {
+			data: {
+				conversation: conversationView(result.data.conversation),
+				resumed: result.data.resumed,
+				previousConversationId:
+					result.data.previousConversationId === null
+						? null
+						: toPublicId("ConversationId", result.data.previousConversationId),
+			},
+			requestId: ctx.requestId,
+		});
+	}
+
 	async function devTurnRoute(ctx: RouteContext): Promise<void> {
 		const conversationId = parseConversationId(ctx);
 		if (conversationId === null) return;
@@ -553,6 +580,8 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		if (reasoningMatch !== null) return { conversationId: reasoningMatch[1], handler: updateReasoningRoute };
 		const reasoningGetMatch = method === "GET" ? pathname.match(REASONING_PATTERN) : null;
 		if (reasoningGetMatch !== null) return { conversationId: reasoningGetMatch[1], handler: getReasoningRoute };
+		const resumeMatch = method === "POST" ? pathname.match(RESUME_PATTERN) : null;
+		if (resumeMatch !== null) return { conversationId: resumeMatch[1], handler: resumeRoute };
 		const devTurnMatch = method === "POST" ? pathname.match(DEV_TURN_PATTERN) : null;
 		if (devTurnMatch !== null) return { conversationId: devTurnMatch[1], handler: devTurnRoute };
 		const wsTicketMatch = method === "POST" ? pathname.match(WS_TICKET_PATTERN) : null;

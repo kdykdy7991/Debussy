@@ -691,7 +691,7 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 		expect(second.thinkingLevel).toBe("off");
 	});
 
-	it("applies the realtime Debug thinking override to the next Turn", async () => {
+	it("rejects a session thinking override (Debug thinking comes solely from the Agent revision)", async () => {
 		const repos = makeDebugRepos();
 		const publishing = makePublishing([
 			{ revision: 1, model: MODEL_A, params: { reasoning: { enabled: true, effort: "medium" } } },
@@ -700,14 +700,18 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 		const conv = await service.createNew(AGENT_ID);
 		const adapter = await realtime.acquire(conv.debugConversationId);
 
-		await adapter.setThinking("high");
-		expect(adapter.snapshot().thinkingLevel).toBe("high");
-		await adapter.prompt({ text: "use high" });
+		// WB-Agent 简化 (Phase 0.5): Debug has no second runtime configuration —
+		// model / thinking enabled and effort come solely from the frozen Agent
+		// revision, so a per-session override is deliberately unsupported.
+		await expect(adapter.setThinking("high")).rejects.toThrow(/fixed by the Agent revision/);
 
-		expect(capture.createdThinkingLevels).toEqual(["high"]);
+		// A normal Turn uses the effective thinkingLevel resolved from the frozen
+		// revision config, exactly as the published path would.
+		await adapter.prompt({ text: "use revision thinking" });
+		expect(capture.createdThinkingLevels).toEqual(["medium"]);
 		const events = await service.listEvents(conv.debugConversationId);
 		const turnStart = events.find((event) => event.eventType === "turn/start");
-		expect((turnStart?.payload as { thinkingLevel?: string }).thinkingLevel).toBe("high");
+		expect((turnStart?.payload as { thinkingLevel?: string }).thinkingLevel).toBe("medium");
 	});
 
 	it("P2C-A. attachmentIds forwarded from Composer through adapter.prompt to the inner runtime.prompt input", async () => {

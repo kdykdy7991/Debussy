@@ -143,13 +143,9 @@ import type {
 	PublishingRepositories,
 	TenantRecord,
 } from "../repositories.ts";
-import {
-	type AgentDraftConfig,
-	type CapabilityCatalog,
-	type CompilerInput,
-	compileRuntimeSpec,
-} from "../runtime-spec/compiler.ts";
+import { type AgentDraftConfig, type CapabilityCatalog, compileRuntimeSpec } from "../runtime-spec/compiler.ts";
 import { canonicalJson, sha256Hex } from "../runtime-spec/hash.ts";
+import { resolveAgentRevisionConfig } from "../runtime-spec/resolve.ts";
 import { PLATFORM_LIMITS, parseRuntimeSpec, type RuntimeSpec } from "../runtime-spec/schema.ts";
 import type { CustomLlmProviderView, LlmConfigStore, LlmModelSpecInput } from "./llm-config.ts";
 import { parseSkillArtifact, SkillImportRejected } from "./skill-import.ts";
@@ -319,7 +315,10 @@ export type ControlErrorCode =
 	| "INVALID_METRICS_FILTER" // metrics/context query params invalid (422)
 	// Agent V2 §4.3: conversation reasoning effort overrides.
 	| "REASONING_INVALID_EFFORT" // effort not in the model's declared tiers (422)
-	| "REASONING_NOT_CONFIGURABLE"; // policy forbids adjusting this conversation (403)
+	| "REASONING_NOT_CONFIGURABLE" // policy forbids adjusting this conversation (403)
+	// P1 one-click publish.
+	| "CONFLICTING_PUBLISHED_APPS" // agent has >1 published app; refuse to pick one (409)
+	| "PUBLISH_REJECTED"; // latest revision did not compile into a publishable spec (422)
 
 export interface ControlServiceError {
 	readonly code: ControlErrorCode;
@@ -405,6 +404,24 @@ export interface CreatePublishedAppVersionInput {
 
 export interface CreatePublishedAppVersionResult {
 	readonly version: PublishedAppVersionRecord;
+}
+
+/** P1 one-click publish: publish the Agent's CURRENT latest revision. */
+export interface PublishAgentInput {
+	readonly tenantId: TenantId;
+	readonly agentDefinitionId: AgentDefinitionId;
+	readonly requestId?: RequestId;
+}
+
+export interface PublishAgentResult {
+	readonly agentDefinitionId: AgentDefinitionId;
+	/** The latest revision that was frozen and published. */
+	readonly agentRevision: number;
+	readonly publishedApp: PublishedAppRecord;
+	readonly version: PublishedAppVersionRecord;
+	/** The previous live version (null on first-ever publish). */
+	readonly previousVersionId: PublishedAppVersionId | null;
+	readonly embedUrl: string;
 }
 
 /** MVP launch-token JWS algorithm (spec 24.1: Ed25519/EdDSA). */
@@ -564,11 +581,23 @@ export class ControlService {
 		// import 路径与 saveAgentRevision 同口径：模型参数只接受已声明 reasoning 字段，
 		// 非法 effort / 未知字段 / sampling-gen 覆盖一律拒绝（避免未加验证的草稿进入仓库）。
 		if (collected.config.model.params !== undefined) {
-			const parameterCapabilities = modelParameterCapabilities({
-				id: collected.config.model.modelId,
-				api: "openai-completions",
-				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(collected.config.model.modelId),
-			});
+			const availableModels = this.llm === undefined ? [] : await this.llm.listAvailableModels();
+			const selectedModel = availableModels.find(
+				(model) =>
+					model.provider === collected.config.model.provider && model.id === collected.config.model.modelId,
+			);
+			const catalogModel = this.catalog.models.find(
+				(model) =>
+					model.provider === collected.config.model.provider && model.modelId === collected.config.model.modelId,
+			);
+			const parameterCapabilities =
+				selectedModel?.parameterCapabilities ??
+				catalogModel?.parameterCapabilities ??
+				modelParameterCapabilities({
+					id: collected.config.model.modelId,
+					api: "openai-completions",
+					reasoning: false,
+				});
 			const parameterErrors = validateModelParameters(
 				collected.config.model.params as import("@earendil-works/pi-protocol").AgentModelParameters,
 				parameterCapabilities,
@@ -734,86 +763,41 @@ export class ControlService {
 		if (app === undefined) return fail("APP_NOT_FOUND", 404, "published app not found in tenant scope");
 
 		const agentScope = { tenantId: input.tenantId };
-		const agent = await this.repos.agentDefinitions.getRevision(
-			agentScope,
-			app.agentDefinitionId,
-			input.sourceAgentRevision,
-		);
+		const sourceRevision = input.sourceAgentRevision;
+		const agent = await this.repos.agentDefinitions.getRevision(agentScope, app.agentDefinitionId, sourceRevision);
 		if (agent === undefined) {
-			return fail("VERSION_NOT_FOUND", 404, `agent revision ${input.sourceAgentRevision} not found in tenant scope`);
+			return fail("VERSION_NOT_FOUND", 404, `agent revision ${sourceRevision} not found in tenant scope`);
 		}
 
 		// The version id is part of the frozen spec, so it is decided once and
 		// used for both the compile and the inserted row.
 		const versionId = newPublishedAppVersionId();
-		const skillBindings = await this.repos.skills.listBindings(
+		// Single source of truth for the resolved inputs (SAME resolver and
+		// compiler as the Debug path — "publish exactly what was debugged").
+		const resolved = await resolveAgentRevisionConfig(
+			{ skills: this.repos.skills, mcpServers: this.repos.mcpServers },
 			agentScope,
-			app.agentDefinitionId,
-			input.sourceAgentRevision,
+			{ agentDefinitionId: app.agentDefinitionId, revision: sourceRevision, draftConfig: agent.draftConfig },
 		);
-		const skills: NonNullable<CompilerInput["skills"]>[number][] = [];
-		for (const binding of skillBindings) {
-			const skill = await this.repos.skills.get(agentScope, binding.skillId);
-			const revision = await this.repos.skills.getRevision(agentScope, binding.skillId, binding.skillRevision);
-			if (skill === undefined || skill.status !== "enabled" || revision === undefined) {
-				return fail("SKILL_NOT_FOUND", 404, "a bound Skill revision is unavailable");
-			}
-			skills.push({
-				skillId: toPublicId("SkillId", revision.skillId),
-				revision: revision.revision,
-				sourceHash: revision.sourceHash,
-				name: revision.parsedName,
-				description: revision.description,
-				instructionText: revision.instructionText,
-				disableModelInvocation: revision.disableModelInvocation,
-			});
+		if (!resolved.ok) {
+			const unmatchedSkill = /a bound Skill revision is unavailable/.test(resolved.error);
+			return unmatchedSkill
+				? fail("SKILL_NOT_FOUND", 404, resolved.error)
+				: fail("MCP_BINDING_VIOLATION", 409, resolved.error);
 		}
-		const mcpBindings = await this.repos.mcpServers.listBindings(
-			agentScope,
-			app.agentDefinitionId,
-			input.sourceAgentRevision,
-		);
-		const mcpServers: NonNullable<CompilerInput["mcpServers"]>[number][] = [];
-		for (const binding of mcpBindings) {
-			const server = await this.repos.mcpServers.get(agentScope, binding.mcpServerId);
-			const revision = await this.repos.mcpServers.getRevision(agentScope, binding.mcpServerId, binding.mcpRevision);
-			if (server === undefined || server.status !== "enabled" || revision === undefined)
-				return fail("MCP_BINDING_VIOLATION", 409, "a bound MCP Server revision is unavailable");
-			if (
-				revision.authentication === "bearer" &&
-				!(await this.repos.mcpSecrets.has(agentScope, binding.mcpServerId))
-			) {
+		const { agent: draftConfig, skills, mcpServers } = resolved.data;
+		// Publish control gate: every bound bearer MCP Server needs a secret at
+		// publish time. (Resolution deliberately leaves credentials out; a
+		// missing secret is a publish/release gate, not a config input.)
+		for (const server of mcpServers) {
+			if (server.authentication !== "bearer") continue;
+			const serverId = fromPublicId("McpServerId", server.mcpServerId);
+			if (serverId !== null && !(await this.repos.mcpSecrets.has(agentScope, serverId))) {
 				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "a bound MCP Server credential is not configured");
 			}
-			const discoveredTools = await this.repos.mcpServers.listTools(
-				agentScope,
-				binding.mcpServerId,
-				binding.mcpRevision,
-			);
-			const allowed = new Set(binding.toolAllowlist);
-			const tools = discoveredTools.filter((tool) => allowed.has(tool.name));
-			if (tools.length !== allowed.size)
-				return fail(
-					"MCP_BINDING_VIOLATION",
-					409,
-					"an MCP Tool allowlist does not match its frozen discovery snapshot",
-				);
-			mcpServers.push({
-				mcpServerId: toPublicId("McpServerId", binding.mcpServerId),
-				revision: binding.mcpRevision,
-				transport: revision.transport,
-				endpoint: revision.endpoint,
-				authentication: revision.authentication,
-				tools: tools.map((tool) => ({
-					name: tool.name,
-					description: tool.description,
-					inputSchema: tool.inputSchema,
-					inputSchemaHash: tool.inputSchemaHash,
-				})),
-			});
 		}
 		const compiled = compileRuntimeSpec({
-			agent: agent.draftConfig as AgentDraftConfig,
+			agent: draftConfig,
 			publishedAppVersionId: versionId,
 			catalog: this.catalog,
 			skills,
@@ -824,8 +808,8 @@ export class ControlService {
 			publishedAppVersionId: versionId,
 			tenantId: input.tenantId,
 			publishedAppId: input.publishedAppId,
-			sourceAgentRevision: input.sourceAgentRevision,
-			snapshot: { agent: agent.draftConfig, skills, mcpServers },
+			sourceAgentRevision: sourceRevision,
+			snapshot: { agent: draftConfig, skills, mcpServers },
 			runtimeSpec: compiled.ok ? compiled.spec : null,
 			runtimeSpecHash: compiled.ok ? compiled.sha256 : null,
 			status: compiled.ok ? "ready" : "rejected",
@@ -833,17 +817,14 @@ export class ControlService {
 			createdAt: now,
 		};
 		const created = await this.repos.publishedAppVersions.createVersionGuarded(appScope, version, {
-			skills: skillBindings.map((binding) => ({ skillId: binding.skillId, revision: binding.skillRevision })),
-			mcpServers: mcpBindings.map((binding) => {
-				const server = mcpServers.find(
-					(candidate) => candidate.mcpServerId === toPublicId("McpServerId", binding.mcpServerId),
-				);
-				return {
-					mcpServerId: binding.mcpServerId,
-					revision: binding.mcpRevision,
-					requiresSecret: server?.authentication === "bearer",
-				};
-			}),
+			skills: (await this.repos.skills.listBindings(agentScope, app.agentDefinitionId, sourceRevision)).map(
+				(binding) => ({ skillId: binding.skillId, revision: binding.skillRevision }),
+			),
+			mcpServers: mcpServers.map((server) => ({
+				mcpServerId: fromPublicId("McpServerId", server.mcpServerId)!,
+				revision: server.revision,
+				requiresSecret: server.authentication === "bearer",
+			})),
 		});
 		if (created === undefined)
 			return fail("MCP_BINDING_VIOLATION", 409, "a bound capability changed while creating the version");
@@ -859,6 +840,123 @@ export class ControlService {
 			},
 		});
 		return { ok: true, data: { version: created } };
+	}
+
+	/**
+	 * P1 one-click publish: takes the Agent's CURRENT latest revision and turns
+	 * it into an activated Published Version in ONE backend operation. No
+	 * client-supplied `sourceAgentRevision` / application / version — the caller
+	 * only names the Agent.
+	 *
+	 * Call chain (all backend): getLatest → resolveAgentRevisionConfig →
+	 * compileRuntimeSpec → find-or-create internal published_app →
+	 * create published_app_version → activate (currentVersionId flip).
+	 *
+	 * published_app resolution rule (see `PublishedAppRepository
+	 * .listByAgentDefinition`):
+	 *   - 0 apps for the Agent → auto-create a draft internal app;
+	 *   - exactly 1 app → reuse it;
+	 *   - >1 apps → NOT allowed to pick one arbitrarily → fail
+	 *     `CONFLICTING_PUBLISHED_APPS` (the legacy schema permits 1:N).
+	 */
+	async publishAgent(input: PublishAgentInput): Promise<ControlResult<PublishAgentResult>> {
+		const agentScope = { tenantId: input.tenantId };
+		const latest = await this.repos.agentDefinitions.getLatest(agentScope, input.agentDefinitionId);
+		if (latest === undefined) return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+
+		const internal = this.newInternalPublishedApp(input.tenantId, input.agentDefinitionId, latest.name);
+		const appOutcome = await this.repos.publishedApps.findOrCreateInternal(agentScope, internal);
+		if (appOutcome.status === "agent_unavailable") {
+			return fail("AGENT_NOT_FOUND", 404, "agent definition is unavailable to publish");
+		}
+		if (appOutcome.status === "conflict") {
+			return fail(
+				"CONFLICTING_PUBLISHED_APPS",
+				409,
+				`Agent has ${appOutcome.count} published apps; one-click publish requires exactly one (or none). ` +
+					"Refusing to pick one automatically — resolve the ambiguity before publishing.",
+			);
+		}
+		const app = appOutcome.app;
+
+		const versionResult = await this.createPublishedAppVersion({
+			tenantId: input.tenantId,
+			publishedAppId: app.publishedAppId,
+			sourceAgentRevision: latest.revision,
+		});
+		if (!versionResult.ok) return versionResult;
+		const version = versionResult.data.version;
+		// A rejected version is persisted for audit but must never become live.
+		if (version.status !== "ready") {
+			return fail(
+				"PUBLISH_REJECTED",
+				422,
+				`agent revision ${latest.revision} did not compile into a publishable RuntimeSpec: ` +
+					`${version.validationErrors.join("; ")}`,
+			);
+		}
+
+		// Activate (flip currentVersionId → new version + app status → active),
+		// reusing the same row-locked transition the manual flow uses.
+		const appScope = { tenantId: input.tenantId, publishedAppId: app.publishedAppId };
+		const activated = await this.repos.publishedApps.transitionVersion(
+			appScope,
+			app.publishedAppId,
+			version.publishedAppVersionId,
+			{ activate: true },
+		);
+		if (!activated.ok) {
+			return fail("VERSION_UNAVAILABLE", 409, "publish could not activate the freshly created version");
+		}
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "agent.publish",
+			resourceType: "published_app_version",
+			resourceId: version.publishedAppVersionId,
+			requestId: input.requestId,
+			metadata: {
+				agentDefinitionId: input.agentDefinitionId,
+				agentRevision: latest.revision,
+				publishedAppId: app.publishedAppId,
+				versionNumber: version.versionNumber,
+				previousVersionId: activated.previousVersionId,
+			},
+		});
+		const updatedApp = await this.repos.publishedApps.get(appScope, app.publishedAppId);
+		return {
+			ok: true,
+			data: {
+				agentDefinitionId: input.agentDefinitionId,
+				agentRevision: latest.revision,
+				publishedApp: updatedApp ?? app,
+				version,
+				previousVersionId: activated.previousVersionId,
+				embedUrl: `${this.embedBaseUrl}/embed/${app.publicAppId}`,
+			},
+		};
+	}
+
+	/** Draft internal published_app candidate for a (first) publish of an Agent. */
+	private newInternalPublishedApp(
+		tenantId: TenantId,
+		agentDefinitionId: AgentDefinitionId,
+		name: string,
+	): PublishedAppRecord {
+		const now = new Date();
+		return {
+			publishedAppId: newPublishedAppId(),
+			tenantId,
+			agentDefinitionId,
+			publicAppId: newPublicAppId(),
+			name,
+			status: "draft",
+			accessMode: "anonymous",
+			currentVersionId: null,
+			allowedOrigins: [],
+			mutablePolicy: {},
+			createdAt: now,
+			updatedAt: now,
+		};
 	}
 
 	/**
@@ -1167,13 +1265,35 @@ export class ControlService {
 		if (!validation.ok) return validation;
 		const nextRevision = latest.revision + 1;
 		const draft = this.requestToDraft(input.request);
-		const sourceHash = sha256Hex(
-			canonicalJson({ draft, skills: input.request.skills ?? [], mcpServers: input.request.mcpServers ?? [] }),
-		);
+		// Agent 完整性（WB-009）：`skills` / `mcpServers` 未提交 = 未修改 = 从上一
+		// Revision 继承；显式 `[]` 才是清空。这样每个新 Revision 都是完整配置快照，
+		// 而不是把"前端没提交该字段"当成"清空该字段"。
+		let skillRefs = input.request.skills;
+		let mcpRefs = input.request.mcpServers;
+		if (skillRefs === undefined || mcpRefs === undefined) {
+			const [prevSkills, prevMcp] = await Promise.all([
+				this.repos.skills.listBindings({ tenantId: input.tenantId }, input.agentDefinitionId, latest.revision),
+				this.repos.mcpServers.listBindings({ tenantId: input.tenantId }, input.agentDefinitionId, latest.revision),
+			]);
+			skillRefs =
+				input.request.skills ??
+				prevSkills.map((binding) => ({
+					skillId: toPublicId("SkillId", binding.skillId),
+					revision: binding.skillRevision,
+				}));
+			mcpRefs =
+				input.request.mcpServers ??
+				prevMcp.map((binding) => ({
+					mcpServerId: toPublicId("McpServerId", binding.mcpServerId),
+					revision: binding.mcpRevision,
+					toolNames: [...binding.toolAllowlist],
+				}));
+		}
+		const sourceHash = sha256Hex(canonicalJson({ draft, skills: skillRefs, mcpServers: mcpRefs }));
 		const now = new Date();
-		const skillBindings = this.skillBindingsFromRequest(input.request.skills ?? []);
+		const skillBindings = this.skillBindingsFromRequest(skillRefs);
 		if (!skillBindings.ok) return skillBindings;
-		const mcpBindings = this.mcpBindingsFromRequest(input.request.mcpServers ?? []);
+		const mcpBindings = this.mcpBindingsFromRequest(mcpRefs);
 		if (!mcpBindings.ok) return mcpBindings;
 		const inserted = await this.repos.agentDefinitions.insertWithSkillBindings(
 			{
@@ -1225,23 +1345,47 @@ export class ControlService {
 			limit: 200,
 		});
 		const filtered = rows.filter((row) => row.agentDefinitionId === input.agentDefinitionId);
+		// P2: surface the live publish state for the Agent page (revision N,
+		// last published time, public link). Each agent normally has at most one
+		// app, so a per-row current-version read is cheap.
+		const items: AgentDefinitionAssociatedApp[] = [];
+		for (const row of filtered) {
+			const base: AgentDefinitionAssociatedApp = {
+				appId: toPublicId("PublishedAppId", row.publishedAppId) as AgentDefinitionAssociatedApp["appId"],
+				publicAppId: row.publicAppId as AgentDefinitionAssociatedApp["publicAppId"],
+				name: row.name,
+				status: row.status as string,
+				currentVersionId:
+					row.currentVersionId === null
+						? null
+						: (toPublicId(
+								"PublishedAppVersionId",
+								row.currentVersionId,
+							) as AgentDefinitionAssociatedApp["currentVersionId"]),
+				embedUrl: `${this.embedBaseUrl}/embed/${row.publicAppId}`,
+			};
+			let publishDetails: Pick<
+				AgentDefinitionAssociatedApp,
+				"sourceAgentRevision" | "versionNumber" | "publishedAt"
+			> = {};
+			if (row.currentVersionId !== null) {
+				const version = await this.repos.publishedAppVersions.get(
+					{ tenantId: input.tenantId, publishedAppId: row.publishedAppId },
+					row.currentVersionId,
+				);
+				if (version !== undefined && version.status === "ready") {
+					publishDetails = {
+						sourceAgentRevision: version.sourceAgentRevision,
+						versionNumber: version.versionNumber,
+						publishedAt: version.createdAt.toISOString(),
+					};
+				}
+			}
+			items.push({ ...base, ...publishDetails });
+		}
 		return {
 			ok: true,
-			data: {
-				items: filtered.map((row) => ({
-					appId: toPublicId("PublishedAppId", row.publishedAppId) as AgentDefinitionAssociatedApp["appId"],
-					publicAppId: row.publicAppId as AgentDefinitionAssociatedApp["publicAppId"],
-					name: row.name,
-					status: row.status as string,
-					currentVersionId:
-						row.currentVersionId === null
-							? null
-							: (toPublicId(
-									"PublishedAppVersionId",
-									row.currentVersionId,
-								) as AgentDefinitionAssociatedApp["currentVersionId"]),
-				})),
-			},
+			data: { items },
 		};
 	}
 
@@ -2115,12 +2259,15 @@ export class ControlService {
 		}
 		const availableModels = this.llm === undefined ? [] : await this.llm.listAvailableModels();
 		const selectedModel = availableModels.find((model) => model.id === request.modelId);
+		const catalogModels = this.catalog.models.filter((model) => model.modelId === request.modelId);
+		const catalogModel = catalogModels.length === 1 ? catalogModels[0] : undefined;
 		const parameterCapabilities =
 			selectedModel?.parameterCapabilities ??
+			catalogModel?.parameterCapabilities ??
 			modelParameterCapabilities({
 				id: request.modelId ?? "",
 				api: "openai-completions",
-				reasoning: /qwen[\s._-]*3[\s._-]*8/i.test(request.modelId ?? ""),
+				reasoning: false,
 			});
 		const parameterErrors = validateModelParameters(request.parameters, parameterCapabilities);
 		if (parameterErrors.length > 0) {

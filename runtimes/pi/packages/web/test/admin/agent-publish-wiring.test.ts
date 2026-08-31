@@ -20,26 +20,34 @@ describe("redesigned Agent publish wiring", () => {
 		expect(detailSource).toContain("onDirtyChange?.(dirty)");
 	});
 
-	it("refreshes Agent publication data after creating a version", () => {
+	it("refreshes Agent publication data after publishing", () => {
 		expect(pageSource).toMatch(
 			/onPublished=\{\(\) => \{[\s\S]*?load\(\);[\s\S]*?loadRevisions\(\);[\s\S]*?loadApps\(\);/,
 		);
 	});
 
-	it("creates and immediately activates the published app version", () => {
-		expect(publishDrawerSource).toContain("const created = await appApi.createVersion");
-		expect(publishDrawerSource).toContain("await appApi.activateVersion({ appId: selectedApp, versionId })");
-		expect(publishDrawerSource).toContain("创建并上线");
-		expect(publishDrawerSource).toContain("应用已上线");
-		expect(publishDrawerSource).not.toContain("应用版本已创建，尚未激活");
+	it("publishes with a single-one-click publishAgent call (no app/revision selection, no manual create-version/activate UI)", () => {
+		expect(publishDrawerSource).toContain("const result = await agentApi.publishAgent(agentId)");
+		expect(publishDrawerSource).not.toContain("select-app");
+		expect(publishDrawerSource).not.toContain("select-revision");
+		expect(publishDrawerSource).not.toContain("appApi.createVersion");
+		expect(publishDrawerSource).not.toContain("activateVersion");
+		expect(publishDrawerSource).not.toContain("createVersion");
+		expect(publishDrawerSource).not.toContain("选择目标应用");
+		expect(publishDrawerSource).not.toContain("选择 Agent Revision");
+		expect(publishDrawerSource).toContain("发布");
+		expect(publishDrawerSource).toContain("已发布");
 	});
 
-	it("shows associated app details without a duplicate create action", () => {
-		expect(detailSource).not.toContain("新建发布");
-		expect(detailSource).toContain('role="dialog" aria-label={`${selected.name} 应用详情`}');
-		expect(detailSource).toContain("Public App ID");
-		expect(detailSource).toContain("当前版本 ID");
-		expect(pageSource).toContain("onOpenPublishedApp={(appId) => navigate(`/apps/${appId}`)}");
+	it("Agent page shows the designed revision comparison, published summary, and external access", () => {
+		expect(detailSource).toContain("未发布");
+		expect(detailSource).toContain("当前（草稿）");
+		expect(detailSource).toContain("线上（已发布）");
+		expect(detailSource).toContain("线上版本信息");
+		expect(detailSource).toContain("对外访问");
+		expect(detailSource).toContain("打开 Public Chat");
+		expect(pageSource).toContain("sourceAgentRevision");
+		expect(pageSource).toContain("embedUrl");
 	});
 
 	it("does not label direct toolIds as all available tools", () => {

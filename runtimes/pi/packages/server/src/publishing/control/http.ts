@@ -47,8 +47,7 @@ import type {
 	TenantId,
 } from "../domain/ids.ts";
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
-import type { AccessMode } from "../domain/states.ts";
-import type { IdempotencyScope, PublishedAppRecord, PublishingRepositories } from "../repositories.ts";
+import type { IdempotencyScope, PublishingRepositories } from "../repositories.ts";
 import type { LlmModelSpecInput } from "./llm-config.ts";
 import type { ControlService, CurrentAgentDefinitionSource } from "./service.ts";
 import { ConversationExportNotFound } from "./service.ts";
@@ -342,242 +341,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			},
 		},
 		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps$/,
-			operation: "published-apps.create",
-			handler: async ({ requestId, body }) => {
-				const parsed = parseBody(body, {
-					agentDefinitionId: "string",
-					name: "string",
-					accessMode: "string",
-					allowedOrigins: ["array", "undefined"],
-					theme: ["object", "undefined"],
-				});
-				const agentDefinitionId = fromPublicId("AgentDefinitionId", parsed.agentDefinitionId as string);
-				if (agentDefinitionId === null) {
-					return badRequest("agentDefinitionId must be a bare agent_<uuid> id", requestId);
-				}
-				const accessMode = parsed.accessMode as AccessMode;
-				if (accessMode !== "anonymous" && accessMode !== "signed_user" && accessMode !== "mixed") {
-					return badRequest("accessMode must be anonymous | signed_user | mixed", requestId);
-				}
-				const allowedOrigins = parsed.allowedOrigins;
-				const theme = parsed.theme;
-				const created = await service.createPublishedApp({
-					tenantId,
-					agentDefinitionId,
-					name: parsed.name as string,
-					accessMode,
-					allowedOrigins: allowedOrigins === undefined ? undefined : (allowedOrigins as readonly string[]),
-					theme: theme === undefined ? undefined : (theme as { primaryColor?: string; welcomeMessage?: string }),
-				});
-				if (!created.ok) return serviceError(created.error, requestId);
-				return {
-					status: 201,
-					body: {
-						data: {
-							id: toPublicId("PublishedAppId", created.data.app.publishedAppId),
-							publicAppId: created.data.publicAppId,
-							status: created.data.app.status,
-							currentVersionId:
-								created.data.app.currentVersionId === null
-									? null
-									: toPublicId("PublishedAppVersionId", created.data.app.currentVersionId),
-							embedUrl: created.data.embedUrl,
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		{
-			// Partial update for mutable PublishedApp fields (`name` /
-			// `allowedOrigins`). Coexists with the GET on the same path
-			// (method routing at the dispatcher is `(method, path)`).
-			method: "PATCH",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)$/,
-			operation: "published-apps.update",
-			handler: async ({ requestId, body, params }) => {
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				// parseBody requires an object body; treat missing/null as empty.
-				const raw: Record<string, unknown> =
-					body !== undefined && body !== null && typeof body === "object" && !Array.isArray(body)
-						? (body as Record<string, unknown>)
-						: {};
-				const parsed = parseBody(raw, {
-					name: ["string", "undefined"],
-					allowedOrigins: ["array", "undefined"],
-				});
-				const result = await service.updatePublishedApp({
-					tenantId,
-					publishedAppId,
-					requestId: requestId as RequestId,
-					...(parsed.name !== undefined ? { name: parsed.name as string } : {}),
-					...(parsed.allowedOrigins !== undefined
-						? { allowedOrigins: parsed.allowedOrigins as readonly string[] }
-						: {}),
-				});
-				if (!result.ok) return serviceError(result.error, requestId);
-				const { app, auditEventId } = result.data;
-				return {
-					status: 200,
-					body: {
-						data: {
-							app: appView(app),
-							// Empty-string sentinel (no-op patch) → null on the wire.
-							auditEventId: auditEventId === "" ? null : toPublicId("AuditEventId", auditEventId),
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/versions$/,
-			operation: "published-apps.create-version",
-			handler: async ({ requestId, body, params }) => {
-				const parsed = parseBody(body, { sourceAgentRevision: "number" });
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const created = await service.createPublishedAppVersion({
-					tenantId,
-					publishedAppId,
-					sourceAgentRevision: parsed.sourceAgentRevision as number,
-				});
-				if (!created.ok) return serviceError(created.error, requestId);
-				const version = created.data.version;
-				// A rejected version is still created (for audit) but the API
-				// reports 422 + validationErrors (spec 27.2/27.7).
-				return {
-					status: version.status === "ready" ? 201 : 422,
-					body: {
-						data: {
-							version: {
-								id: toPublicId("PublishedAppVersionId", version.publishedAppVersionId),
-								versionNumber: version.versionNumber,
-								status: version.status,
-								sourceAgentRevision: version.sourceAgentRevision,
-								validationErrors: version.validationErrors,
-							},
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/activate$/,
-			operation: "published-apps.activate",
-			handler: (ctx) => transition("activate", ctx),
-		},
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/rollback$/,
-			operation: "published-apps.rollback",
-			handler: (ctx) => transition("rollback", ctx),
-		},
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/suspend$/,
-			operation: "published-apps.suspend",
-			handler: async ({ requestId, body, params }) => {
-				const parsed = parseBody(body, { reason: ["string", "undefined"] });
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const reason = parsed.reason;
-				const result = await service.suspendApp({
-					tenantId,
-					publishedAppId,
-					reason: reason === undefined ? undefined : (reason as string),
-				});
-				if (!result.ok) return serviceError(result.error, requestId);
-				return {
-					status: 200,
-					body: {
-						data: {
-							app: appView(result.data.app),
-							auditEventId: toPublicId("AuditEventId", result.data.auditEventId),
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/launch-keys$/,
-			operation: "published-apps.create-launch-key",
-			handler: async ({ requestId, body, params }) => {
-				const parsed = parseBody(body, {
-					keyId: "string",
-					algorithm: ["string", "undefined"],
-					publicKeyPem: "string",
-					notBefore: ["string", "undefined"],
-					expiresAt: ["string", "null", "undefined"],
-				});
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const created = await service.createLaunchKey({
-					tenantId,
-					publishedAppId,
-					keyId: parsed.keyId as string,
-					algorithm: parsed.algorithm === undefined ? undefined : (parsed.algorithm as string),
-					publicKeyPem: parsed.publicKeyPem as string,
-					notBefore: parsed.notBefore === undefined ? undefined : (parsed.notBefore as string),
-					expiresAt: parsed.expiresAt === undefined ? undefined : (parsed.expiresAt as string | null),
-				});
-				if (!created.ok) return serviceError(created.error, requestId);
-				return {
-					status: 201,
-					body: {
-						data: {
-							id: toPublicId("LaunchKeyId", created.data.key.launchKeyId),
-							keyId: created.data.key.keyId,
-							algorithm: created.data.key.algorithm,
-							status: created.data.key.status,
-							notBefore: created.data.key.notBefore.toISOString(),
-							expiresAt: created.data.key.expiresAt === null ? null : created.data.key.expiresAt.toISOString(),
-							retiredKeyIds: created.data.retired.map((key) => key.keyId),
-							auditEventId: toPublicId("AuditEventId", created.data.auditEventId),
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/launch-keys\/([^/]+)\/revoke$/,
-			operation: "published-apps.revoke-launch-key",
-			handler: async ({ requestId, params }) => {
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const keyId = params[1] as string;
-				if (keyId === undefined || keyId === "") {
-					return badRequest("keyId must not be empty", requestId);
-				}
-				const revoked = await service.revokeLaunchKey({ tenantId, publishedAppId, keyId });
-				if (!revoked.ok) return serviceError(revoked.error, requestId);
-				return {
-					status: 200,
-					body: {
-						data: {
-							id: toPublicId("LaunchKeyId", revoked.data.key.launchKeyId),
-							keyId: revoked.data.key.keyId,
-							status: revoked.data.key.status,
-							auditEventId: toPublicId("AuditEventId", revoked.data.auditEventId),
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		// ---- Query routes (ADMIN-002). GETs are authenticated reads; they
-		// never read a request body and never write idempotency records. ----
-		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/usage$/,
 			operation: "usage.summary",
@@ -608,98 +371,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		},
 		{
 			method: "GET",
-			pattern: /^\/api\/control\/v1\/published-apps$/,
-			operation: "published-apps.list",
-			handler: async ({ requestId, query }) => {
-				const parsed = parseListQuery(query, { status: true });
-				if (!parsed.ok) return badRequest(parsed.message, requestId);
-				const listed = await service.listPublishedApps({
-					tenantId,
-					limit: parsed.data.limit,
-					cursor: parsed.data.cursor,
-					status: parsed.data.status,
-				});
-				if (!listed.ok) return serviceError(listed.error, requestId);
-				return { status: 200, body: { data: listed.data, requestId } };
-			},
-		},
-		{
-			method: "GET",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)$/,
-			operation: "published-apps.get",
-			handler: async ({ requestId, params }) => {
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const detail = await service.getPublishedAppDetail({ tenantId, publishedAppId });
-				if (!detail.ok) return serviceError(detail.error, requestId);
-				return { status: 200, body: { data: detail.data, requestId } };
-			},
-		},
-		{
-			method: "DELETE",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)$/,
-			operation: "published-apps.delete",
-			handler: async ({ requestId, body, params }) => {
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const confirmName =
-					body !== null && typeof body === "object" ? (body as Record<string, unknown>).confirmName : undefined;
-				if (typeof confirmName !== "string") return badRequest("confirmName must be a string", requestId);
-				const result = await service.deletePublishedApp({ tenantId, publishedAppId, confirmName });
-				if (!result.ok) return serviceError(result.error, requestId);
-				return { status: 200, body: { data: result.data, requestId } };
-			},
-		},
-		{
-			method: "GET",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/versions$/,
-			operation: "published-apps.list-versions",
-			handler: async ({ requestId, query, params }) => {
-				const parsed = parseListQuery(query, {});
-				if (!parsed.ok) return badRequest(parsed.message, requestId);
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const listed = await service.listPublishedAppVersions({
-					tenantId,
-					publishedAppId,
-					limit: parsed.data.limit,
-					cursor: parsed.data.cursor,
-				});
-				if (!listed.ok) return serviceError(listed.error, requestId);
-				return { status: 200, body: { data: listed.data, requestId } };
-			},
-		},
-		{
-			method: "GET",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/launch-keys$/,
-			operation: "published-apps.list-launch-keys",
-			handler: async ({ requestId, params }) => {
-				const publishedAppId = parseAppId(params[0]);
-				if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				const listed = await service.listLaunchKeys({ tenantId, publishedAppId });
-				if (!listed.ok) return serviceError(listed.error, requestId);
-				// Never return PEM material: only keyId/algorithm/status/times.
-				return {
-					status: 200,
-					body: {
-						data: {
-							items: listed.data.keys.map((key) => ({
-								id: toPublicId("LaunchKeyId", key.launchKeyId),
-								keyId: key.keyId,
-								algorithm: key.algorithm,
-								status: key.status,
-								notBefore: key.notBefore.toISOString(),
-								expiresAt: key.expiresAt === null ? null : key.expiresAt.toISOString(),
-								createdAt: key.createdAt.toISOString(),
-							})),
-						},
-						requestId,
-					},
-				};
-			},
-		},
-		{
-			method: "GET",
 			pattern: /^\/api\/control\/v1\/audit-events$/,
 			operation: "audit-events.list",
 			handler: async ({ requestId, query }) => {
@@ -721,7 +392,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return { status: 200, body: { data: listed.data, requestId } };
 			},
 		},
-		// ---- User conversations (WB-006 / SPEC §5.4). ----
 		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/conversations$/,
@@ -990,7 +660,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return { status: 200, body: { data: listed.data, requestId } };
 			},
 		},
-		// ---- Dashboard summary (WB-004 / SPEC §5.3). ----
 		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/dashboard\/summary$/,
@@ -1001,7 +670,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				return { status: 200, body: { data: result.data, requestId } };
 			},
 		},
-		// ---- Session / whoami (MVP-01). ----
 		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/session$/,
@@ -1025,38 +693,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				};
 			},
 		},
-		// ---- Preview ticket (WB-005 / SPEC §6.3). ----
-		{
-			method: "POST",
-			pattern: /^\/api\/control\/v1\/published-apps\/([^/]+)\/preview-ticket$/,
-			operation: "published-apps.preview-ticket",
-			handler: async ({ requestId, body, params }) => {
-				const appId = parseAppId(params[0]);
-				if (appId === null) return badRequest("appId must be a bare app_<uuid> id", requestId);
-				if (body === undefined || typeof body !== "object" || body === null) {
-					return badRequest("body must be a JSON object", requestId);
-				}
-				const draft = body as Record<string, unknown>;
-				const versionIdRaw = draft.versionId;
-				if (typeof versionIdRaw !== "string" || versionIdRaw === "") {
-					return badRequest("versionId must be a non-empty string", requestId);
-				}
-				const versionId = fromPublicId("PublishedAppVersionId", versionIdRaw);
-				if (versionId === null) return badRequest("versionId must be a bare pav_<uuid> id", requestId);
-				const ttlSeconds =
-					typeof draft.ttlSeconds === "number" && Number.isFinite(draft.ttlSeconds) ? draft.ttlSeconds : undefined;
-				const result = await service.createPreviewTicket({
-					tenantId,
-					publishedAppId: appId,
-					versionId,
-					ttlSeconds,
-					requestId: requestId as RequestId,
-				});
-				if (!result.ok) return serviceError(result.error, requestId);
-				return { status: 201, body: { data: result.data, requestId } };
-			},
-		},
-		// ---- AgentDefinition detail (WB-003 / SPEC §5.2 / §15.1). ----
 		{
 			method: "GET",
 			pattern: /^\/api\/control\/v1\/skills$/,
@@ -1171,6 +807,56 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				const result = await service.deleteAgentDefinition({ tenantId, agentDefinitionId, confirmName });
 				if (!result.ok) return serviceError(result.error, requestId);
 				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/agent-definitions\/([^/]+)\/publish$/,
+			operation: "agent-definitions.publish",
+			handler: async ({ requestId, body, params }) => {
+				const agentDefinitionId = parseAgentId(params[0]);
+				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
+				// P1: publish the Agent's current LATEST revision. The client must
+				// NOT supply sourceAgentRevision / application / version.
+				if (body !== null && typeof body === "object" && Object.keys(body as Record<string, unknown>).length > 0) {
+					return badRequest("publish accepts no request body; it always publishes the latest revision", requestId);
+				}
+				const result = await service.publishAgent({
+					tenantId,
+					agentDefinitionId,
+					requestId: requestId as RequestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				const { data } = result;
+				return {
+					status: 201,
+					body: {
+						data: {
+							agentId: toPublicId("AgentDefinitionId", data.agentDefinitionId),
+							agentRevision: data.agentRevision,
+							publishedApp: {
+								id: toPublicId("PublishedAppId", data.publishedApp.publishedAppId),
+								publicAppId: data.publishedApp.publicAppId,
+								name: data.publishedApp.name,
+								status: data.publishedApp.status,
+							},
+							version: {
+								id: toPublicId("PublishedAppVersionId", data.version.publishedAppVersionId),
+								versionNumber: data.version.versionNumber,
+								status: data.version.status,
+								sourceAgentRevision: data.version.sourceAgentRevision,
+								runtimeSpecHash: data.version.runtimeSpecHash,
+								validationErrors: data.version.validationErrors,
+							},
+							previousVersionId:
+								data.previousVersionId === null
+									? null
+									: toPublicId("PublishedAppVersionId", data.previousVersionId),
+							embedUrl: data.embedUrl,
+						},
+						requestId,
+					},
+				};
 			},
 		},
 		{
@@ -1339,36 +1025,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 		},
 	];
 
-	async function transition(
-		kind: "activate" | "rollback",
-		ctx: { requestId: string; body: unknown; params: readonly string[] },
-	): Promise<Envelope> {
-		const parsed = parseBody(ctx.body, { versionId: "string" });
-		const publishedAppId = parseAppId(ctx.params[0]);
-		if (publishedAppId === null) return badRequest("appId must be a bare app_<uuid> id", ctx.requestId);
-		const versionId = fromPublicId("PublishedAppVersionId", parsed.versionId as string);
-		if (versionId === null) return badRequest("versionId must be a bare pav_<uuid> id", ctx.requestId);
-		const result =
-			kind === "activate"
-				? await service.activateApp({ tenantId, publishedAppId, versionId })
-				: await service.rollbackApp({ tenantId, publishedAppId, versionId });
-		if (!result.ok) return serviceError(result.error, ctx.requestId);
-		return {
-			status: 200,
-			body: {
-				data: {
-					app: appView(result.data.app),
-					previousVersionId:
-						result.data.previousVersionId === null
-							? null
-							: toPublicId("PublishedAppVersionId", result.data.previousVersionId),
-					auditEventId: toPublicId("AuditEventId", result.data.auditEventId),
-				},
-				requestId: ctx.requestId,
-			},
-		};
-	}
-
 	return async (request, response): Promise<boolean> => {
 		const pathname = requestPathname(request.url);
 		if (pathname === undefined || !pathname.startsWith(`${CONTROL_API_PREFIX}/`)) {
@@ -1531,11 +1187,6 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			throw error;
 		}
 	}
-}
-
-function parseAppId(appId: string | undefined): PublishedAppId | null {
-	if (appId === undefined) return null;
-	return fromPublicId("PublishedAppId", appId);
 }
 
 /** Parse a bare `conv_<uuid>` public id from a path segment. */
@@ -1813,22 +1464,6 @@ function parseUsageRange(
 		return { ok: false, message: "usage range must not exceed 90 days" };
 	}
 	return { ok: true, from: from.value, to: to.value };
-}
-
-/** View of a published app for API responses (27.1/27.3). */
-function appView(app: PublishedAppRecord): {
-	id: string;
-	publicAppId: string;
-	status: string;
-	currentVersionId: string | null;
-} {
-	return {
-		id: toPublicId("PublishedAppId", app.publishedAppId),
-		publicAppId: app.publicAppId,
-		status: app.status,
-		currentVersionId:
-			app.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", app.currentVersionId),
-	};
 }
 
 function serviceError(error: { code: string; httpStatus: number; message: string }, requestId: string): Envelope {

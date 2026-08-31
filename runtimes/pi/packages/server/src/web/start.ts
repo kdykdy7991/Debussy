@@ -34,6 +34,7 @@ import type { DebugSessionFactory } from "../publishing/debug/service.ts";
 import { DebugConversationService } from "../publishing/debug/service.ts";
 import { createMcpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import { createSkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
+import { type BuiltinToolNameResolver, createPiRuntimeAdapter } from "../runtime/pi-runtime-adapter.ts";
 import type { PiServer } from "../server.ts";
 import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
@@ -211,24 +212,34 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 						}
 					: {}),
 			});
+		// ONE MCP tool factory + ONE PiRuntimeAdapter shared by the Published
+		// (embed) path and the Debug path: "SAME RuntimeSpec → SAME Runtime
+		// Builder → SAME Tool Set". allowedToolNames is computed inside the
+		// adapter strictly from the RuntimeSpec.
+		const mcpTools = createMcpRuntimeToolFactory({
+			repositories: controlPlane.repositories,
+			secretBox: controlPlane.mcpSecretBox,
+		});
+		const controlCatalog = controlPlane.catalog;
+		const resolveToolName: BuiltinToolNameResolver = (toolId) =>
+			controlCatalog.tools.find((candidate) => candidate.id === toolId)?.name;
+		const piRuntimeAdapter = createPiRuntimeAdapter({
+			createSession: makeRuntimeSession,
+			createMcpTools: mcpTools,
+			skillMaterializer,
+			resolveToolName,
+		});
 		embedPlane = await composeEmbedPlane({
 			publishing,
 			repositories: controlPlane.repositories,
-			mcpTools: createMcpRuntimeToolFactory({
-				repositories: controlPlane.repositories,
-				secretBox: controlPlane.mcpSecretBox,
-			}),
+			mcpTools,
 			skillMaterializer,
+			runtimeAdapter: piRuntimeAdapter,
+			resolveToolName,
 			createSession: makeRuntimeSession,
 			citations,
 			previewTickets: controlPlane.previewTicketService,
 			log,
-		});
-		// Phase 2A: reuse the same MCP tool factory for Debug so MCP credentials
-		// stay execute-time and tool-call semantics match the Production path.
-		const debugMcpTools = createMcpRuntimeToolFactory({
-			repositories: controlPlane.repositories,
-			secretBox: controlPlane.mcpSecretBox,
 		});
 		// Debug Conversation Phase 1: persistent, per-agent debug conversations
 		// that survive Agent revision changes. Kept physically separate from the
@@ -241,7 +252,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			catalog: controlPlane.catalog,
 			createSession: makeRuntimeSession,
 			skillMaterializer,
-			createMcpTools: debugMcpTools,
+			createMcpTools: mcpTools,
+			openAdapter: piRuntimeAdapter,
 			tenantId: controlPlane.tenantId,
 			citations,
 			attachments,

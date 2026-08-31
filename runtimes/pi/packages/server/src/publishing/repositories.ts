@@ -522,10 +522,30 @@ export interface AgentDefinitionRepository {
 	): Promise<"deleted" | "has_associated_apps" | "not_found">;
 }
 
+/**
+ * Outcome of `PublishedAppRepository.findOrCreateInternal`.
+ *   - `created`   → an internal draft app was inserted for the Agent;
+ *   - `existing`  → exactly one app already existed and is returned;
+ *   - `conflict`  → the Agent already has >1 apps (legacy schema); never picks;
+ *   - `agent_unavailable` → the referenced Agent is missing/inactive.
+ */
+export type FindOrCreateInternalResult =
+	| { readonly status: "created"; readonly app: PublishedAppRecord }
+	| { readonly status: "existing"; readonly app: PublishedAppRecord }
+	| { readonly status: "conflict"; readonly count: number }
+	| { readonly status: "agent_unavailable" };
+
 export interface PublishedAppRepository {
 	insert(record: PublishedAppRecord): Promise<void>;
 	/** Insert only while the referenced Agent is active, under Agent row locks. */
 	insertForActiveAgent(record: PublishedAppRecord): Promise<boolean>;
+	/**
+	 * Find-or-create the single internal published_app for an Agent under a
+	 * transaction-scoped advisory lock keyed on the Agent id. Serializes
+	 * concurrent first-publishes: two concurrent 0-observed calls merge into
+	 * exactly one created app (TOCTOU-safe), never two.
+	 */
+	findOrCreateInternal(scope: TenantScope, record: PublishedAppRecord): Promise<FindOrCreateInternalResult>;
 	/** Scoped get: tenant + app must both match. */
 	get(scope: AppScope, publishedAppId: PublishedAppId): Promise<PublishedAppRecord | undefined>;
 	/**
@@ -533,6 +553,16 @@ export interface PublishedAppRepository {
 	 * paginated, optional status filter (ADMIN-001).
 	 */
 	list(params: PublishedAppListParams): Promise<PublishedAppListRow[]>;
+	/**
+	 * All non-deleted published apps pinned to one Agent (tenant-scoped), oldest
+	 * first. Used by one-click publish to apply the 0/1/N rule (a single Agent
+	 * may reference more than one app today — the schema has no uniqueness
+	 * constraint on `agent_definition_id`).
+	 */
+	listByAgentDefinition(
+		scope: TenantScope,
+		agentDefinitionId: AgentDefinitionId,
+	): Promise<readonly PublishedAppRecord[]>;
 	/**
 	 * Lookup by the globally-unique public locator (`public_app_id`, UNIQUE).
 	 *

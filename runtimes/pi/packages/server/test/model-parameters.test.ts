@@ -14,19 +14,22 @@ describe("model parameters", () => {
 		reasoning: true,
 	});
 
-	test("Qwen3.8 exposes only model-specific reasoning capabilities", () => {
+	test("uses the configured reasoning flag without model-name hardcoding", () => {
 		expect(qwen.reasoning).toMatchObject({
 			supported: true,
 			toggle: true,
 			efforts: ["low", "medium", "high"],
-			defaultEffort: "high",
 		});
 		expect(Object.keys(qwen)).toEqual(["reasoning"]);
 	});
 
 	test("generic reasoning models expose only three product effort tiers", () => {
 		const generic = modelParameterCapabilities({ id: "generic-reasoner", api: "openai-responses", reasoning: true });
-		expect(generic.reasoning.efforts).toEqual(["low", "medium", "high"]);
+		expect(generic.reasoning).toEqual({
+			supported: true,
+			toggle: true,
+			efforts: ["low", "medium", "high"],
+		});
 	});
 
 	test("accepts product tiers but rejects provider-specific efforts", () => {
@@ -56,27 +59,15 @@ describe("model parameters", () => {
 		expect(resolveModelStreamOptions({ reasoning: { enabled: true } }, "Qwen3.8-Agent").thinkingLevel).toBe("high");
 	});
 
-	test("uses the complete Qwen3.8 thinking preset by default", () => {
+	test("does not infer reasoning or sampling presets from a model name", () => {
 		const resolved = resolveModelStreamOptions({}, "Qwen3.8-Agent");
-		expect(resolved.thinkingLevel).toBe("high");
-		expect(resolved.streamOptions).toMatchObject({
-			temperature: 1,
-			samplingParams: {
-				top_p: 0.95,
-				top_k: 20,
-				min_p: 0,
-				presence_penalty: 0,
-				repetition_penalty: 1,
-			},
-		});
+		expect(resolved.thinkingLevel).toBeUndefined();
+		expect(resolved.streamOptions).toEqual({});
 	});
 
-	test("uses fixed Qwen3.8 instruction sampling when thinking is disabled", () => {
+	test("does not infer instruction sampling from a model name", () => {
 		const resolved = resolveModelStreamOptions({ reasoning: { enabled: false } }, "Qwen3.8-Agent");
-		expect(resolved.streamOptions).toMatchObject({
-			temperature: 0.7,
-			samplingParams: { top_p: 0.8, top_k: 20, presence_penalty: 1.5 },
-		});
+		expect(resolved.streamOptions).toEqual({});
 	});
 
 	test("keeps product tiers model-independent until the provider request is built", () => {

@@ -474,6 +474,63 @@ describe.skipIf(!pgUp)("embed conversation api", () => {
 		expect(oldRead.body.data.conversation.publishedAppVersionId).toBe(`pav_${appAV1Id}`);
 	});
 
+	test("P2 resume rolls an old-version conversation forward to the CURRENT version and preserves the old one", async () => {
+		const { token } = await tokenFor(appAId);
+		const created = await httpCall({
+			method: "POST",
+			path: "/api/embed/v1/conversations",
+			base: httpBase,
+			headers: { authorization: `Bearer ${token}` },
+			body: { title: "resume-anchor" },
+		});
+		expect(created.status).toBe(201);
+		const oldConv = created.body.data.id as string;
+		expect(created.body.data.publishedAppVersionId).toBe(`pav_${appAV1Id}`);
+
+		// Republish → appAV1 is no longer the CURRENT version.
+		const v2 = await publishAndActivateNextVersion(appAId);
+		expect(v2).not.toBe(appAV1Id);
+
+		// Resume the stale conversation: must roll forward to a NEW conversation
+		// on the current version, NOT return the stale one.
+		const resumed = await httpCall({
+			method: "POST",
+			path: `/api/embed/v1/conversations/${oldConv}/resume`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${token}` },
+		});
+		expect(resumed.status).toBe(200);
+		expect(resumed.body.data.resumed).toBe(false);
+		expect(resumed.body.data.previousConversationId).toBe(oldConv);
+		const newConv = resumed.body.data.conversation.id as string;
+		expect(newConv).not.toBe(oldConv);
+		expect(resumed.body.data.conversation.publishedAppVersionId).toBe(`pav_${v2}`);
+
+		// The old conversation is preserved and not deleted; it still pins v1.
+		const oldRead = await httpCall({
+			method: "GET",
+			path: `/api/embed/v1/conversations/${oldConv}`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${token}` },
+		});
+		expect(oldRead.status).toBe(200);
+		expect(oldRead.body.data.conversation.publishedAppVersionId).toBe(`pav_${appAV1Id}`);
+		expect(oldRead.body.data.conversation.status).toBe("active");
+
+		// The roll-forward conversation is on the CURRENT version: resuming it
+		// again returns it unchanged (resumed: true, not a new conversation).
+		const resumedAgain = await httpCall({
+			method: "POST",
+			path: `/api/embed/v1/conversations/${newConv}/resume`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${token}` },
+		});
+		expect(resumedAgain.status).toBe(200);
+		expect(resumedAgain.body.data.resumed).toBe(true);
+		expect(resumedAgain.body.data.conversation.id).toBe(newConv);
+		expect(resumedAgain.body.data.previousConversationId).toBeNull();
+	});
+
 	test("suspended app rejects new conversations (403 APP_SUSPENDED)", async () => {
 		const suspended = await createApp("Suspended");
 		await repos.publishedApps.updateMutable({ tenantId, publishedAppId: suspended.appId }, suspended.appId, {

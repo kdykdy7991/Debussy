@@ -11,6 +11,8 @@
 	--color-editorial: #e2422d;
 	--color-source: #1f7a6d;
 	--color-success: #1f7a6d;
+	--color-switch-on: #2f9e54;
+	--color-switch-off: #cbd1da;
 	--color-warning: #9a6926;
 	--color-danger-bg: #f3dfda;
 	--font-serif: "Instrument Sans", "Noto Sans SC", system-ui, sans-serif;
@@ -421,7 +423,7 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .composer-voice .live-speech-toggle > span { display: flex; align-items: baseline; gap: 5px; }
 .composer-voice .live-speech-toggle strong { font-weight: 600; }
 .composer-voice .live-speech-toggle small { color: var(--color-text-tertiary); font-size: 8px; }
-.composer-voice .live-speech-toggle input { width: 28px; height: 16px; margin: 0; accent-color: var(--color-editorial); cursor: pointer; }
+.composer-voice .live-speech-toggle input { width: 28px; height: 16px; margin: 0; accent-color: var(--color-switch-on); cursor: pointer; }
 .composer-voice .live-speech-toggle input:disabled { cursor: not-allowed; }
 .composer-hint { color: var(--color-text-tertiary); font-size: 8px; }
 .send-button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: var(--color-text-primary); color: var(--color-bg-content); cursor: pointer; }
@@ -790,6 +792,7 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 }
 .active-agent-presence .ai-agent-avatar { width: 64px; height: 64px; }
 .active-agent-presence-state {
+	display: none;
 	padding: 2px 5px;
 	border: 1px solid color-mix(in srgb, var(--color-text-primary) 18%, transparent);
 	border-radius: 4px;
@@ -1777,6 +1780,7 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	background: transparent;
 }
 .admin-debug-shell .active-agent-presence .active-agent-presence-state {
+	display: block;
 	background: transparent;
 	padding: 0;
 	font: 10px/1.4 var(--font-mono);

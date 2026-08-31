@@ -162,8 +162,28 @@ export class EmbedChatController {
 		});
 		const response = await this.withToken((token) => this.options.api.listConversations(token));
 		this.setState({ conversations: response.items });
-		if (response.items.length > 0) await this.openConversation(response.items[0]!.id);
+		if (response.items.length > 0) await this.resumeInitialConversation(response.items[0]!.id);
 		else if (!newConversationsEnabled) await this.newConversation();
+	}
+
+	/**
+	 * P2 public-chat resume: open the most recent conversation, but route it
+	 * through the server resume endpoint so a stale-version conversation rolls
+	 * forward to a NEW conversation on the CURRENT version (the old one stays in
+	 * history, untouched). When the version is still current the same
+	 * conversation is resumed unchanged.
+	 */
+	private async resumeInitialConversation(conversationId: string): Promise<void> {
+		try {
+			const resumed = await this.withToken((token) => this.options.api.resumeConversation(token, conversationId));
+			const conversations = this.state.conversations.some((item) => item.id === resumed.conversation.id)
+				? this.state.conversations
+				: [resumed.conversation, ...this.state.conversations];
+			this.setState({ conversations });
+			await this.openConversation(resumed.conversation.id);
+		} catch (error) {
+			this.handleError(error);
+		}
 	}
 
 	/** 新建会话并打开（服务端固定当前版本）。 */

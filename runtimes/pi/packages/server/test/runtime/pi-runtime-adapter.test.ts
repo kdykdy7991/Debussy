@@ -197,13 +197,9 @@ describe("pi runtime adapter", () => {
 		});
 		const result = await adapter.open(spec, scope("conv-params"));
 		expect(result.ok).toBe(true);
-		// Runtime keeps the product tier; the selected model maps high to its provider value later.
+		// Runtime keeps the configured product tier without inferring provider presets from the model name.
 		expect(calls[0]?.thinkingLevel).toBe("high");
-		expect(calls[0]?.streamOptions?.temperature).toBe(1);
-		expect(calls[0]?.streamOptions?.samplingParams).toMatchObject({
-			top_p: 0.95,
-			top_k: 20,
-		});
+		expect(calls[0]?.streamOptions).toEqual({});
 	});
 
 	test("wire-intent precedence: default fallback yields no override, revision config forces it", async () => {

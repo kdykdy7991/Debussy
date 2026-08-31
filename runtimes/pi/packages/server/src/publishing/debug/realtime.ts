@@ -221,7 +221,6 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 	private phase: SessionPhase = "idle";
 	private readonly listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
 	private revisionCounter = 0;
-	private thinkingLevelOverride: ThinkingLevel | null = null;
 	private closed = false;
 	private closedPromise: Promise<void> | undefined;
 
@@ -293,7 +292,6 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 			...(input.attachmentIds && input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
 			...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
 			onProgress: (progress) => this.emit({ type: "progress", progress }),
-			thinkingLevelOverride: this.thinkingLevelOverride,
 		});
 
 		this.phase = "idle";
@@ -345,17 +343,15 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 		// Model is resolved per-Turn from the Agent revision; not mutable here.
 	}
 
-	async setThinking(thinkingLevel: ThinkingLevel): Promise<void> {
-		if (this.closed) throw new Error("Debug conversation realtime adapter is closed");
-		if (this.phase !== "idle") throw new PiServerError("busy", "Cannot change thinking while a Turn is running");
-		this.thinkingLevelOverride = thinkingLevel;
-		this.revisionCounter += 1;
-		this.snapshotValue = {
-			...this.snapshotValue,
-			thinkingLevel,
-			revision: this.revisionCounter,
-		};
-		this.emit({ type: "snapshot" });
+	async setThinking(_thinkingLevel: ThinkingLevel): Promise<void> {
+		// MVP (WB-Agent 简化): Debug has no second runtime configuration — model,
+		// thinking enabled and effort all come from the frozen Agent revision.
+		// A per-session thinking override would make Debug diverge from what is
+		// published, so it is deliberately unsupported.
+		throw new PiServerError(
+			"invalid_request",
+			"Debug thinking level is fixed by the Agent revision; a session override is not supported",
+		);
 	}
 
 	subscribe(listener: (event: PiSessionRuntimeEvent) => void): () => void {

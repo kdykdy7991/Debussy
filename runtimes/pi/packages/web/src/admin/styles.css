@@ -43,6 +43,8 @@
 	--admin-warning-soft: #f8e8c8;
 	--admin-danger: #a65246;
 	--admin-danger-soft: #f2d9d4;
+	--admin-switch-on: #2f9e54;
+	--admin-switch-off: #cbd1da;
 	--admin-info: #6b7a8f;
 	--admin-info-soft: #dee3eb;
 	--admin-neutral: #6e7685;
@@ -106,6 +108,11 @@
 	--admin-topbar-height: 56px;
 	--admin-page-max-width: 1280px;
 	--admin-page-pad-x: 32px;
+}
+
+.admin-shell input[type="checkbox"],
+.admin-shell input[role="switch"] {
+	accent-color: var(--admin-switch-on);
 }
 
 /* ==========================================================================

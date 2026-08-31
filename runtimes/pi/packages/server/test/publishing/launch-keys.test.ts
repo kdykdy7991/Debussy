@@ -9,22 +9,18 @@
  * indistinguishable from missing in app B), audit events, and the HTTP
  * contract (201/400/404/409 + idempotency). Requires the local test DB.
  */
-import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { exportPKCS8, exportSPKI, generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { PostgresClient } from "../../src/persistence/postgres/client.ts";
 import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../src/persistence/postgres/repositories/index.ts";
-import { createControlHttpHandler } from "../../src/publishing/control/http.ts";
 import { ControlService, type CurrentAgentDefinitionSource } from "../../src/publishing/control/service.ts";
-import { newTenantId, type PublishedAppId, type TenantId, toPublicId } from "../../src/publishing/domain/ids.ts";
+import { newTenantId, type PublishedAppId, type TenantId } from "../../src/publishing/domain/ids.ts";
 import type { PublishingRepositories } from "../../src/publishing/repositories.ts";
 import type { AgentDraftConfig, CapabilityCatalog } from "../../src/publishing/runtime-spec/compiler.ts";
-import type { HttpRequestHandler } from "../../src/types.ts";
 
 const SCHEMA = `pub_test_${process.pid}_${Date.now().toString(36)}`;
 const PG_URL = process.env.PI_TEST_DATABASE_URL ?? "postgresql://skdy:skdy123@127.0.0.1:5433/skdy_agent_test";
-const ADMIN_TOKEN = "control-admin-token-0123456789abcdef0123456789abcdef";
 
 async function probe(): Promise<boolean> {
 	try {
@@ -64,66 +60,14 @@ function baseConfig(): AgentDraftConfig {
 	};
 }
 
-function httpCall(options: {
-	method: string;
-	path: string;
-	base: string;
-	headers?: Record<string, string>;
-	body?: unknown;
-}): Promise<{ status: number; body: any; requestId?: string }> {
-	return new Promise((resolve, reject) => {
-		const url = new URL(options.path, options.base);
-		const payload = options.body === undefined ? undefined : JSON.stringify(options.body);
-		const req = httpRequest(
-			url,
-			{
-				method: options.method,
-				headers: {
-					host: url.host,
-					"content-type": "application/json",
-					...(payload !== undefined ? { "content-length": Buffer.byteLength(payload) } : {}),
-					...options.headers,
-				},
-			},
-			(res: IncomingMessage) => {
-				const chunks: Buffer[] = [];
-				res.on("data", (chunk: Buffer) => chunks.push(chunk));
-				res.on("end", () => {
-					const raw = Buffer.concat(chunks).toString("utf-8");
-					let body: any;
-					try {
-						body = raw ? JSON.parse(raw) : undefined;
-					} catch {
-						body = raw;
-					}
-					resolve({
-						status: res.statusCode ?? 0,
-						body,
-						requestId: res.headers["x-request-id"] as string | undefined,
-					});
-				});
-			},
-		);
-		req.on("error", reject);
-		if (payload !== undefined) req.write(payload);
-		req.end();
-	});
-}
-
 describe.skipIf(!pgUp)("launch key management", () => {
 	let client: PostgresClient;
 	let repos: PublishingRepositories;
 	let service: ControlService;
-	let handler: HttpRequestHandler;
-	let httpBase: string;
 	let tenantId: TenantId;
-	let server: Server;
 	/** Bare published-app ids for the two test apps. */
 	let appA: PublishedAppId;
 	let appB: PublishedAppId;
-	/** Public ids for the HTTP tests. */
-	let appAPublic: string;
-	let appBPublic: string;
 	let publicKeyPem: string;
 	let privateKeyPem: string;
 	let secondPublicKeyPem: string;
@@ -157,27 +101,6 @@ describe.skipIf(!pgUp)("launch key management", () => {
 		if (!appAResult.ok || !appBResult.ok) throw new Error("app creation failed");
 		appA = appAResult.data.app.publishedAppId;
 		appB = appBResult.data.app.publishedAppId;
-		appAPublic = toPublicId("PublishedAppId", appA);
-		appBPublic = toPublicId("PublishedAppId", appB);
-		handler = createControlHttpHandler({
-			service,
-			repositories: repos,
-			adminToken: ADMIN_TOKEN,
-			tenantId,
-			source: source(baseConfig()),
-			onError: (error) => console.error("CONTROL HANDLER ERROR:", error),
-		});
-		server = createServer((req, res) => {
-			Promise.resolve(handler(req, res)).then((handled) => {
-				if (!handled) {
-					res.writeHead(404, { "content-type": "text/plain" });
-					res.end("Not found");
-				}
-			});
-		});
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-		const address = server.address() as { port: number };
-		httpBase = `http://127.0.0.1:${address.port}`;
 
 		const pair = await generateKeyPair("Ed25519", { extractable: true });
 		publicKeyPem = await exportSPKI(pair.publicKey);
@@ -186,7 +109,6 @@ describe.skipIf(!pgUp)("launch key management", () => {
 	});
 
 	afterAll(async () => {
-		await new Promise<void>((resolve) => server.close(() => resolve()));
 		await client.run(`drop schema if exists ${SCHEMA} cascade`);
 		await client.close();
 	});
@@ -429,163 +351,5 @@ describe.skipIf(!pgUp)("launch key management", () => {
 		const appEvents = await repos.audit.list({ scope: { tenantId }, appId: appA, limit: 50 });
 		expect(appEvents.some((event) => event.action === "app.launch-key.create")).toBe(true);
 		expect(appEvents.some((event) => event.action === "app.launch-key.revoke")).toBe(true);
-	});
-
-	test("HTTP: POST launch-keys creates a key (201) and echoes an audit id", async () => {
-		const res = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "lk-http-1" },
-			body: { keyId: "http-key-1", publicKeyPem },
-		});
-		expect(res.status).toBe(201);
-		expect(res.body.data.keyId).toBe("http-key-1");
-		expect(res.body.data.algorithm).toBe("EdDSA");
-		expect(res.body.data.status).toBe("active");
-		expect(res.body.data.id).toMatch(/^lkey_/);
-		expect(res.body.data.auditEventId).toMatch(/^aud_/);
-		expect(res.body.data.expiresAt).toBeNull();
-		expect(res.body.requestId).toBeTruthy();
-	});
-
-	test("HTTP: create launch-key validates the body (400) and rejects private keys (400)", async () => {
-		const missing = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: { publicKeyPem },
-		});
-		expect(missing.status).toBe(400);
-		expect(missing.body.error.code).toBe("INVALID_REQUEST");
-		const privateKey = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: { keyId: "http-private", publicKeyPem: privateKeyPem },
-		});
-		expect(privateKey.status).toBe(400);
-		expect(privateKey.body.error.code).toBe("INVALID_LAUNCH_KEY");
-	});
-
-	test("HTTP: duplicate keyId is a 409; unknown app is a uniform 404", async () => {
-		const first = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: { keyId: "http-dup", publicKeyPem },
-		});
-		expect(first.status).toBe(201);
-		const dup = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: { keyId: "http-dup", publicKeyPem: secondPublicKeyPem },
-		});
-		expect(dup.status).toBe(409);
-		expect(dup.body.error.code).toBe("KEY_ID_CONFLICT");
-		const unknownApp = await httpCall({
-			method: "POST",
-			path: "/api/control/v1/published-apps/app_00000000-0000-7000-8000-000000000099/launch-keys",
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: { keyId: "http-any", publicKeyPem },
-		});
-		expect(unknownApp.status).toBe(404);
-		expect(unknownApp.body.error.code).toBe("APP_NOT_FOUND");
-	});
-
-	test("HTTP: revoke (200), already revoked (409), unknown keyId (404), cross-app (404)", async () => {
-		const created = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: { keyId: "http-revoke", publicKeyPem },
-		});
-		expect(created.status).toBe(201);
-		const revoked = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys/http-revoke/revoke`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: {},
-		});
-		expect(revoked.status).toBe(200);
-		expect(revoked.body.data.status).toBe("revoked");
-		expect(revoked.body.data.auditEventId).toMatch(/^aud_/);
-		const again = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys/http-revoke/revoke`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: {},
-		});
-		expect(again.status).toBe(409);
-		expect(again.body.error.code).toBe("KEY_ALREADY_REVOKED");
-		const unknownKey = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys/never-registered/revoke`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: {},
-		});
-		expect(unknownKey.status).toBe(404);
-		expect(unknownKey.body.error.code).toBe("KEY_NOT_FOUND");
-		// Cross-app: the key belongs to app A, so revoking via app B is 404.
-		const crossApp = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appBPublic}/launch-keys/http-revoke/revoke`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-			body: {},
-		});
-		expect(crossApp.status).toBe(404);
-		expect(crossApp.body.error.code).toBe("KEY_NOT_FOUND");
-	});
-
-	test("HTTP: idempotency replays the same create and conflicts on a different body", async () => {
-		const body = { keyId: "http-idem", publicKeyPem };
-		const first = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "lk-idem" },
-			body,
-		});
-		expect(first.status).toBe(201);
-		const replay = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "lk-idem" },
-			body,
-		});
-		expect(replay.status).toBe(first.status);
-		expect(replay.body).toEqual(first.body);
-		const conflicting = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "idempotency-key": "lk-idem" },
-			body: { keyId: "http-idem", publicKeyPem: secondPublicKeyPem },
-		});
-		expect(conflicting.status).toBe(409);
-		expect(conflicting.body.error.code).toBe("IDEMPOTENCY_CONFLICT");
-	});
-
-	test("control routes still require the admin token (401)", async () => {
-		const res = await httpCall({
-			method: "POST",
-			path: `/api/control/v1/published-apps/${appAPublic}/launch-keys`,
-			base: httpBase,
-			body: { keyId: "no-token", publicKeyPem },
-		});
-		expect(res.status).toBe(401);
-		expect(res.body.error.code).toBe("UNAUTHORIZED");
 	});
 });
