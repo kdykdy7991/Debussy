@@ -26,6 +26,14 @@ describe("redesigned Agent publish wiring", () => {
 		);
 	});
 
+	it("creates and immediately activates the published app version", () => {
+		expect(publishDrawerSource).toContain("const created = await appApi.createVersion");
+		expect(publishDrawerSource).toContain("await appApi.activateVersion({ appId: selectedApp, versionId })");
+		expect(publishDrawerSource).toContain("创建并上线");
+		expect(publishDrawerSource).toContain("应用已上线");
+		expect(publishDrawerSource).not.toContain("应用版本已创建，尚未激活");
+	});
+
 	it("does not label direct toolIds as all available tools", () => {
 		expect(pageSource).not.toContain("toolsCount={state.detail.toolIds.length}");
 		expect(detailSource).not.toContain("<dt>可用工具</dt>");
