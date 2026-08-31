@@ -1769,6 +1769,7 @@ button {
 .admin-shell .admin-debug-topbar__select select {
 	padding-right: 0;
 	background-image: none;
+	font: 600 12px/1.2 var(--font-sans);
 }
 
 .admin-debug-shell .admin-debug-topbar__select {
