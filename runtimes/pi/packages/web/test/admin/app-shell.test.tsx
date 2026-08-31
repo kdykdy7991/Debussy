@@ -185,9 +185,9 @@ describe("Admin shell CSS layout (WB-002)", () => {
 		expect(css).toMatch(
 			/\.admin-debug-shell\s+\.editorial-composer\s*{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*var\(--admin-debug-composer-width\)/,
 		);
-		expect(css).toMatch(/\.admin-debug-topbar__agent\s*{[^}]*flex:\s*1 1 360px;[^}]*max-width:\s*520px/);
-		expect(css).toMatch(/\.admin-debug-topbar__right\s*{[^}]*flex:\s*1 1 520px/);
-		expect(css).toMatch(/\.admin-debug-chip\s*{[^}]*flex:\s*1 1 160px/);
+		expect(css).toMatch(/\.admin-debug-topbar__agent\s*{[^}]*flex:\s*0 1 auto;[^}]*max-width:\s*none/);
+		expect(css).toMatch(/\.admin-debug-topbar__right\s*{[^}]*flex:\s*0 0 auto;[^}]*margin-left:\s*auto/);
+		expect(css).toMatch(/\.admin-debug-chip\s*{[^}]*flex:\s*0 1 auto/);
 	});
 
 	it("left-aligns the Agent presence in the debug chat", () => {
