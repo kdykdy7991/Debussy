@@ -199,7 +199,7 @@ describe("Admin shell CSS layout (WB-002)", () => {
 
 	it("does not render the global select arrow over the debug Agent caret", () => {
 		expect(css).toMatch(
-			/\.admin-shell\s+\.admin-debug-topbar__select\s+select\s*{[^}]*padding-right:\s*0;[^}]*background-image:\s*none;[^}]*font:\s*600 12px\/1\.2 var\(--font-sans\)/,
+			/\.admin-shell\s+\.admin-debug-topbar__select\s+select\s*{[^}]*padding-right:\s*0;[^}]*background-image:\s*none;[^}]*color:\s*#111111;[^}]*font:\s*600 12px\/1\.2 var\(--font-sans\)/,
 		);
 	});
 
