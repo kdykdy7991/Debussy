@@ -834,6 +834,8 @@ export function AdminChatPage(): React.ReactElement {
 									</svg>
 									<span>返回 Agent</span>
 								</button>
+							</div>
+							<div className="admin-debug-topbar__right">
 								<div className="admin-debug-topbar__agent">
 									<span className="admin-debug-topbar__label">调试 Agent</span>
 									<label className="admin-debug-topbar__select">
@@ -855,8 +857,6 @@ export function AdminChatPage(): React.ReactElement {
 										<span aria-hidden="true" className="admin-debug-topbar__select-caret">▾</span>
 									</label>
 								</div>
-							</div>
-							<div className="admin-debug-topbar__right">
 								<DebugModelChip model={selectedModelMetadata} />
 								<DebugThinkingChip agent={selectedAgentDetail} model={selectedModelMetadata} />
 								<DebugThinkingEffortChip agent={selectedAgentDetail} model={selectedModelMetadata} />
