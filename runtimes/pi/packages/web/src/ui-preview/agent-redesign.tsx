@@ -89,6 +89,7 @@ export interface AgentResource {
 	/** Skill / MCP 目录接口不返回描述，缺失时 UI 省略该行。 */
 	readonly description?: string;
 	readonly enabled: boolean;
+	readonly connectionStatus?: "connected" | "failed" | "untested";
 	readonly toolCount?: number;
 	/** 绑定的 revision 落后于该资源的当前 revision。 */
 	readonly outdated?: boolean;
@@ -104,6 +105,7 @@ export interface AgentCatalogEntry {
 	readonly name: string;
 	readonly currentRevision: number;
 	readonly enabled?: boolean;
+	readonly connectionStatus?: "connected" | "failed" | "untested";
 	readonly toolCount?: number;
 	/** MCP server 当前 revision 冻结的工具名 —— 新增绑定时作为默认 allowlist。 */
 	readonly toolNames?: readonly string[];
@@ -933,6 +935,13 @@ export function AgentDetailPreview({
 	const [draftSkills, setDraftSkills] = useState<readonly AgentResource[]>(skills);
 	const [draftMcpServers, setDraftMcpServers] = useState<readonly AgentResource[]>(mcpServers);
 	const [pickerOpen, setPickerOpen] = useState<"skill" | "mcp" | null>(null);
+	// 目录通常晚于 Agent 详情返回。绑定身份保持不变，只补齐异步到达的名称和状态元数据。
+	useEffect(() => {
+		setDraftSkills((current) => mergeResourceMetadata(current, skills));
+	}, [skills]);
+	useEffect(() => {
+		setDraftMcpServers((current) => mergeResourceMetadata(current, mcpServers));
+	}, [mcpServers]);
 	const bindingKey = `${draftSkills.map((item) => `${item.id}@${item.revision ?? 0}`).join(",")}|${draftMcpServers
 		.map((item) => `${item.id}@${item.revision ?? 0}`)
 		.join(",")}`;
@@ -1317,6 +1326,7 @@ export function AgentDetailPreview({
 												version: `v${entry.currentRevision}`,
 												revision: entry.currentRevision,
 												enabled: entry.enabled ?? true,
+												connectionStatus: entry.connectionStatus,
 												toolCount: entry.toolCount,
 												toolNames: entry.toolNames ?? [],
 											},
@@ -1410,6 +1420,12 @@ function ResourceRow({
 	const detail: string = [item.description, item.toolCount === undefined ? undefined : `工具 ${item.toolCount} 个`]
 		.filter((part): part is string => part !== undefined && part !== "")
 		.join(" · ");
+	const mcpStatus =
+		item.connectionStatus === "connected"
+			? { label: "已连接", on: true }
+			: item.connectionStatus === "failed"
+				? { label: "连接失败", on: false }
+				: { label: "未测试", on: false };
 	return (
 		<div className="ard-resource-item">
 			<span className="ard-resource-icon" aria-hidden="true">
@@ -1423,9 +1439,9 @@ function ResourceRow({
 				</span>
 				{detail === "" ? null : <span className="ard-resource-desc">{detail}</span>}
 			</span>
-			<span className={`ard-resource-status ${item.enabled ? "is-on" : "is-off"}`}>
+			<span className={`ard-resource-status ${(kind === "mcp" ? mcpStatus.on : item.enabled) ? "is-on" : "is-off"}`}>
 				<i aria-hidden="true" />
-				{kind === "mcp" ? (item.enabled ? "已连接" : "未连接") : item.enabled ? "已启用" : "未启用"}
+				{kind === "mcp" ? mcpStatus.label : item.enabled ? "已启用" : "未启用"}
 			</span>
 			{onRemove === undefined ? null : (
 				<button type="button" className="ard-resource-remove" aria-label={`移除 ${item.name}`} onClick={onRemove}>
@@ -1434,6 +1450,38 @@ function ResourceRow({
 			)}
 		</div>
 	);
+}
+
+function mergeResourceMetadata(
+	current: readonly AgentResource[],
+	incoming: readonly AgentResource[],
+): readonly AgentResource[] {
+	let changed = false;
+	const merged = current.map((item) => {
+		const metadata = incoming.find((candidate) => candidate.id === item.id);
+		if (metadata === undefined) return item;
+		const next = {
+			...item,
+			name: metadata.name,
+			description: metadata.description,
+			enabled: metadata.enabled,
+			connectionStatus: metadata.connectionStatus,
+			toolCount: metadata.toolCount,
+			outdated: metadata.outdated,
+		};
+		if (
+			next.name === item.name &&
+			next.description === item.description &&
+			next.enabled === item.enabled &&
+			next.connectionStatus === item.connectionStatus &&
+			next.toolCount === item.toolCount &&
+			next.outdated === item.outdated
+		)
+			return item;
+		changed = true;
+		return next;
+	});
+	return changed ? merged : current;
 }
 
 /** 目录选择 popover：只列出尚未绑定的条目。 */

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
  */
 interface McpCatalogServer extends McpServerSummary {
 	readonly toolNames?: readonly string[];
+	readonly connectionStatus?: "connected" | "failed" | "untested";
 }
 
 import {
@@ -158,13 +159,17 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 				// 因此这里补拉每个 server 当前 revision 的工具名,供新增绑定时使用。
 				const items: McpCatalogServer[] = await Promise.all(
 					result.items.map(async (item) => {
-						if (item.status !== "enabled") return item;
 						try {
 							const detail = await mcpApi.get(item.id);
 							const current = detail.revisions.find((rev) => rev.revision === detail.currentRevision);
-							return { ...item, toolNames: current?.tools.map((tool) => tool.name) ?? [] };
+							return {
+								...item,
+								toolNames: current?.tools.map((tool) => tool.name) ?? [],
+								connectionStatus:
+									detail.lastTest === null ? "untested" : detail.lastTest.ok ? "connected" : "failed",
+							} satisfies McpCatalogServer;
 						} catch {
-							return item;
+							return { ...item, connectionStatus: "untested" } satisfies McpCatalogServer;
 						}
 					}),
 				);
@@ -301,6 +306,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 			version: `v${ref.revision}`,
 			revision: ref.revision,
 			enabled: catalog?.status === "enabled",
+			connectionStatus: catalog?.connectionStatus,
 			toolCount: ref.toolNames.length,
 			toolNames: ref.toolNames,
 			outdated: catalog !== undefined && ref.revision < catalog.currentRevision,
@@ -349,6 +355,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 								name: item.name,
 								currentRevision: item.currentRevision,
 								enabled: item.status === "enabled",
+								connectionStatus: item.connectionStatus,
 								toolCount: item.toolCount,
 								toolNames: item.toolNames,
 							}))

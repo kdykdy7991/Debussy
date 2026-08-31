@@ -49,4 +49,14 @@ describe("redesigned Agent publish wiring", () => {
 		expect(revisionSource).not.toContain("snapshot.toolIds.join");
 		expect(publishDrawerSource).not.toContain("snapshot.toolIds.length");
 	});
+
+	it("resolves MCP binding names and connection state from the loaded catalog", () => {
+		expect(pageSource).toContain(
+			'detail.lastTest === null ? "untested" : detail.lastTest.ok ? "connected" : "failed"',
+		);
+		expect(pageSource).toContain("connectionStatus: catalog?.connectionStatus");
+		expect(detailSource).toContain("mergeResourceMetadata(current, mcpServers)");
+		expect(detailSource).toContain('{ label: "已连接", on: true }');
+		expect(detailSource).not.toContain('item.enabled ? "已连接" : "未连接"');
+	});
 });
