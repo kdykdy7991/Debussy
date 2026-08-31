@@ -825,7 +825,6 @@ export function AdminChatPage(): React.ReactElement {
 									<span aria-hidden="true">←</span>
 									<span>返回 Agent</span>
 								</button>
-								<span className="admin-debug-topbar__divider" aria-hidden="true" />
 								<div className="admin-debug-topbar__agent">
 									<span className="admin-debug-topbar__label">调试 Agent</span>
 									<label className="admin-debug-topbar__select">

@@ -1771,6 +1771,23 @@ button {
 	background-image: none;
 }
 
+.admin-debug-shell .workspace-debug-back {
+	align-self: center;
+	min-height: 36px;
+	padding: 0 12px;
+	border: 1px solid var(--color-border-default);
+	border-radius: 8px;
+	background: var(--color-bg-content);
+	color: var(--color-text-primary);
+	box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+}
+
+.admin-debug-shell .workspace-debug-back:hover {
+	border-color: var(--color-border-strong);
+	background: var(--color-bg-subtle);
+	color: var(--color-text-primary);
+}
+
 /* ==========================================================================
    Agent 调试页宽屏适配
    - 1200px 以下继续使用现有紧凑布局

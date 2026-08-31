@@ -202,4 +202,11 @@ describe("Admin shell CSS layout (WB-002)", () => {
 			/\.admin-shell\s+\.admin-debug-topbar__select\s+select\s*{[^}]*padding-right:\s*0;[^}]*background-image:\s*none/,
 		);
 	});
+
+	it("styles the debug back action as a button without a divider", () => {
+		expect(css).toMatch(
+			/\.admin-debug-shell\s+\.workspace-debug-back\s*{[^}]*border:\s*1px solid var\(--color-border-default\);[^}]*border-radius:\s*8px;[^}]*background:\s*var\(--color-bg-content\)/,
+		);
+		expect(css).not.toContain(".admin-debug-topbar__divider");
+	});
 });

@@ -1497,12 +1497,6 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	min-width: 0;
 }
 
-.admin-debug-topbar__divider {
-	width: 1px;
-	height: 22px;
-	background: var(--color-border-default);
-}
-
 .admin-debug-topbar__agent {
 	display: flex;
 	flex-direction: column;
@@ -1800,7 +1794,6 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 		--admin-debug-panel-right: 12px;
 	}
 	.admin-debug-topbar { gap: 10px; padding: 10px 16px; min-height: 56px; }
-	.admin-debug-topbar__divider { display: none; }
 	.admin-debug-chip { min-height: 36px; padding: 4px 10px; }
 	.admin-debug-chip__value { max-width: 110px; }
 	.admin-debug-topbar__menu { width: 36px; height: 36px; }
