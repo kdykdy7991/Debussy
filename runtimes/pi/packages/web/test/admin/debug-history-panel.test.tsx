@@ -15,8 +15,8 @@
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DebugHistoryPanel } from "../../src/admin/components/debug-history-panel.tsx";
 import type { DebugConversationListItem } from "../../src/admin/api/agent-api.ts";
+import { DebugHistoryPanel } from "../../src/admin/components/debug-history-panel.tsx";
 
 const RECENT_TS = new Date(Date.now() - 8 * 60_000).toISOString(); // 8 minutes ago
 const HOURS_AGO_TS = new Date(Date.now() - 5 * 60 * 60_000).toISOString(); // 5 hours ago
@@ -95,36 +95,21 @@ describe("DebugHistoryPanel v2 redesign", () => {
 
 	it("shows the empty-state copy when the list has no items", () => {
 		const html = renderToStaticMarkup(
-			<DebugHistoryPanel
-				{...baseProps}
-				open
-				state={{ kind: "loaded", items: [] }}
-				activeConversationId={null}
-			/>,
+			<DebugHistoryPanel {...baseProps} open state={{ kind: "loaded", items: [] }} activeConversationId={null} />,
 		);
 		expect(html).toContain("该 Agent 暂无历史会话");
 	});
 
 	it("falls back to the placeholder when an item has no firstUserMessagePreview", () => {
 		const html = renderToStaticMarkup(
-			<DebugHistoryPanel
-				{...baseProps}
-				open
-				state={{ kind: "loaded", items }}
-				activeConversationId={null}
-			/>,
+			<DebugHistoryPanel {...baseProps} open state={{ kind: "loaded", items }} activeConversationId={null} />,
 		);
 		expect(html).toContain("（尚无消息）");
 	});
 
 	it("disables the clear button when the list is empty", () => {
 		const html = renderToStaticMarkup(
-			<DebugHistoryPanel
-				{...baseProps}
-				open
-				state={{ kind: "loaded", items: [] }}
-				activeConversationId={null}
-			/>,
+			<DebugHistoryPanel {...baseProps} open state={{ kind: "loaded", items: [] }} activeConversationId={null} />,
 		);
 		// The clear button still renders but is disabled
 		expect(html).toContain("debug-history-panel__clear");

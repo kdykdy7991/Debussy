@@ -10,6 +10,7 @@ import type {
 	LlmAvailableModel,
 	LlmProviderResponse,
 	LlmProviderTestResponse,
+	UpsertLlmModelSpec,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 import { AgentApiError } from "./agent-api.ts";
@@ -102,14 +103,7 @@ export class LlmApi {
 		readonly name: string;
 		readonly baseUrl: string;
 		readonly api: CustomLlmApi;
-		readonly models: readonly (
-			| string
-			| {
-					id: string;
-					reasoning?: boolean;
-					thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
-			  }
-		)[];
+		readonly models: readonly UpsertLlmModelSpec[];
 		readonly apiKey?: string;
 	}): Promise<LlmProviderResponse> {
 		return this.request({

@@ -138,12 +138,7 @@ function ChipBulbIcon(): React.ReactElement {
 function ChipBarsIcon(): React.ReactElement {
 	return (
 		<svg viewBox="0 0 16 16" width="14" height="14" focusable="false" aria-hidden="true">
-			<path
-				d="M3 12V8M6.5 12V5M10 12V9M13 12V3"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
+			<path d="M3 12V8M6.5 12V5M10 12V9M13 12V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
 }
@@ -761,9 +756,10 @@ export function AdminChatPage(): React.ReactElement {
 	// When the cleared flag is set we suppress the History list for the rest
 	// of the page session, but a fresh agent switch resets it so the user
 	// can still inspect another agent's list.
-	const visibleHistory = historyCleared && history.kind === "loaded" && history.items.length === 0
-		? { kind: "loaded" as const, items: [] }
-		: history;
+	const visibleHistory =
+		historyCleared && history.kind === "loaded" && history.items.length === 0
+			? { kind: "loaded" as const, items: [] }
+			: history;
 
 	return (
 		<div className="admin-debug-shell">
@@ -844,14 +840,16 @@ export function AdminChatPage(): React.ReactElement {
 											onChange={(event) => setSelectedAgentId(event.target.value as AgentPublicId)}
 											disabled={!hasAgents}
 										>
-											{agents.kind === "loaded"
-												? agents.items.map((agent) => (
-														<option value={agent.id} key={agent.id}>
-															{agent.name}
-															{agent.hasDraft ? "（含草稿）" : ""}
-														</option>
-													))
-												: <option value="">暂无 Agent</option>}
+											{agents.kind === "loaded" ? (
+												agents.items.map((agent) => (
+													<option value={agent.id} key={agent.id}>
+														{agent.name}
+														{agent.hasDraft ? "（含草稿）" : ""}
+													</option>
+												))
+											) : (
+												<option value="">暂无 Agent</option>
+											)}
 										</select>
 										<svg
 											className="admin-debug-topbar__select-caret"

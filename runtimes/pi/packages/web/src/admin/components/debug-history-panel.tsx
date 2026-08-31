@@ -95,19 +95,9 @@ export function DebugHistoryPanel(props: DebugHistoryPanelProps): React.ReactEle
 			<span className="debug-history-panel__notch" aria-hidden="true" />
 			<header className="debug-history-panel__header">
 				<h2 className="debug-history-panel__title">对话历史</h2>
-				<button
-					type="button"
-					className="debug-history-panel__close"
-					onClick={onClose}
-					aria-label="关闭历史面板"
-				>
+				<button type="button" className="debug-history-panel__close" onClick={onClose} aria-label="关闭历史面板">
 					<svg viewBox="0 0 16 16" width="14" height="14" focusable="false" aria-hidden="true">
-						<path
-							d="M4 4l8 8M12 4l-8 8"
-							stroke="currentColor"
-							strokeWidth="1.5"
-							strokeLinecap="round"
-						/>
+						<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 					</svg>
 				</button>
 			</header>
@@ -155,10 +145,7 @@ export function DebugHistoryPanel(props: DebugHistoryPanelProps): React.ReactEle
 										>
 											<span className="debug-history-panel__row-line">
 												<span className="debug-history-panel__preview">{preview}</span>
-												<time
-													className="debug-history-panel__time"
-													dateTime={item.lastActiveAt}
-												>
+												<time className="debug-history-panel__time" dateTime={item.lastActiveAt}>
 													{formatRelativeTime(item.lastActiveAt)}
 												</time>
 											</span>

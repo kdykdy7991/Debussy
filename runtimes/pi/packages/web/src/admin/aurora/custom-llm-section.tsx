@@ -9,8 +9,36 @@ const REASONING_EFFORTS: readonly ReasoningEffort[] = ["low", "medium", "high"];
 
 interface ModelDraftRow {
 	readonly id: string;
+	/** Raw input text; parsed to a positive int on save. */
+	readonly contextWindow: string;
+	/** Raw input text; parsed to a positive int on save. */
+	readonly maxTokens: string;
 	readonly reasoning: boolean | undefined;
 	readonly thinkingLevelMap: Partial<Record<ReasoningEffort, string>>;
+}
+
+function emptyModelRow(id = ""): ModelDraftRow {
+	return { id, contextWindow: "", maxTokens: "", reasoning: undefined, thinkingLevelMap: {} };
+}
+
+interface ModelFieldErrors {
+	readonly id?: string;
+	readonly contextWindow?: string;
+	readonly maxTokens?: string;
+}
+
+/** Per-field inline validation for one custom model row. */
+function modelFieldErrors(row: ModelDraftRow): ModelFieldErrors {
+	let errors: ModelFieldErrors = {};
+	if (row.id.trim() === "") errors = { ...errors, id: "必填" };
+	const cw = Number(row.contextWindow);
+	const mt = Number(row.maxTokens);
+	const cwOk = /^\d+$/.test(row.contextWindow) && Number.isSafeInteger(cw) && cw > 0;
+	if (!cwOk) errors = { ...errors, contextWindow: "正整数" };
+	const mtOk = /^\d+$/.test(row.maxTokens) && Number.isSafeInteger(mt) && mt > 0;
+	if (!mtOk) errors = { ...errors, maxTokens: "正整数" };
+	if (mt > cw && mtOk && cw > 0) errors = { ...errors, maxTokens: "不能大于上下文窗口" };
+	return errors;
 }
 
 interface ProviderDraft {
@@ -55,7 +83,13 @@ export function CustomLlmSection(): React.ReactElement {
 			name: provider.name,
 			baseUrl: provider.baseUrl,
 			api: provider.api,
-			models: provider.models.map((id) => ({ id, reasoning: undefined, thinkingLevelMap: {} })),
+			models: provider.models.map((m) => ({
+				id: m.id,
+				contextWindow: m.contextWindow !== undefined ? String(m.contextWindow) : "",
+				maxTokens: m.maxTokens !== undefined ? String(m.maxTokens) : "",
+				reasoning: undefined,
+				thinkingLevelMap: {},
+			})),
 			apiKey: "",
 		});
 		setMessage(null);
@@ -88,9 +122,29 @@ export function CustomLlmSection(): React.ReactElement {
 	);
 	const existing = selectedId !== null;
 
+	// Per-model inline validation; any content error disables saving.
+	const rowFieldErrors = draft.models.map((row) => modelFieldErrors(row));
+	const hasContentErrors = rowFieldErrors.some(
+		(errors) => errors.id !== undefined || errors.contextWindow !== undefined || errors.maxTokens !== undefined,
+	);
+	const saveDisabled = busy !== null || draft.models.length === 0 || hasContentErrors;
+
 	const set = (patch: Partial<ProviderDraft>): void => setDraft((current) => ({ ...current, ...patch }));
 
 	async function save(): Promise<void> {
+		if (draft.models.length === 0) {
+			setMessage({ tone: "error", text: "请至少添加一个模型" });
+			return;
+		}
+		for (const row of draft.models) {
+			const fieldErrors = modelFieldErrors(row);
+			const label = row.id.trim() !== "" ? row.id.trim() : "某模型";
+			const err = fieldErrors.id ?? fieldErrors.contextWindow ?? fieldErrors.maxTokens;
+			if (err) {
+				setMessage({ tone: "error", text: `${label}：${err}` });
+				return;
+			}
+		}
 		setBusy("save");
 		setMessage(null);
 		try {
@@ -102,9 +156,11 @@ export function CustomLlmSection(): React.ReactElement {
 				models: draft.models.map((row) => {
 					const entry: {
 						id: string;
+						contextWindow: number;
+						maxTokens: number;
 						reasoning?: boolean;
 						thinkingLevelMap?: Partial<Record<ReasoningEffort, string | null>>;
-					} = { id: row.id };
+					} = { id: row.id, contextWindow: Number(row.contextWindow), maxTokens: Number(row.maxTokens) };
 					if (row.reasoning !== undefined) entry.reasoning = row.reasoning;
 					const map: Partial<Record<ReasoningEffort, string | null>> = {};
 					for (const effort of REASONING_EFFORTS) {
@@ -174,7 +230,7 @@ export function CustomLlmSection(): React.ReactElement {
 				setMessage({ tone: "error", text: "连接成功，但该接口未返回可用的模型 ID" });
 				return;
 			}
-			set({ models: result.advertisedModels.map((id) => ({ id, reasoning: undefined, thinkingLevelMap: {} })) });
+			set({ models: result.advertisedModels.map((id) => emptyModelRow(id)) });
 			setMessage({ tone: "success", text: `已拉取 ${result.advertisedModels.length} 个可用模型` });
 		} catch (error) {
 			setMessage({ tone: "error", text: errorMessage(error) });
@@ -299,7 +355,7 @@ export function CustomLlmSection(): React.ReactElement {
 							<button type="button" disabled={busy !== null} onClick={() => void test()}>
 								{busy === "test" ? "测试中…" : "测试连接"}
 							</button>
-							<button type="button" className={styles.save} disabled={busy !== null} onClick={() => void save()}>
+							<button type="button" className={styles.save} disabled={saveDisabled} onClick={() => void save()}>
 								{busy === "save" ? "保存中…" : "保存配置"}
 							</button>
 						</div>
@@ -361,12 +417,7 @@ export function CustomLlmSection(): React.ReactElement {
 									<Icon name="refresh" />
 									刷新模型列表
 								</button>
-								<button
-									type="button"
-									onClick={() =>
-										set({ models: [...draft.models, { id: "", reasoning: undefined, thinkingLevelMap: {} }] })
-									}
-								>
+								<button type="button" onClick={() => set({ models: [...draft.models, emptyModelRow()] })}>
 									＋ 添加模型
 								</button>
 							</div>
@@ -374,6 +425,8 @@ export function CustomLlmSection(): React.ReactElement {
 						<div className={styles.modelTable}>
 							<div className={styles.modelHeader}>
 								<span>模型 ID</span>
+								<span title="模型支持的最大上下文 Token 数，用于上下文管理与自动压缩。">上下文窗口</span>
+								<span title="模型单次响应允许生成的最大 Token 数。">最大输出 Tokens</span>
 								<span>显示名称</span>
 								<span title="模型是否声明支持 reasoning">支持思考</span>
 								<span title="控制台选「低」时，下发给模型的 reasoning effort 值">低 low</span>
@@ -383,20 +436,63 @@ export function CustomLlmSection(): React.ReactElement {
 							</div>
 							{draft.models.map((row, index) => {
 								const modelId = row.id;
+								const fieldErrors = rowFieldErrors[index] ?? {};
 								const model = models.find((item) => item.id === modelId);
 								const effectiveReasoning = row.reasoning ?? model?.reasoning ?? false;
 								return (
 									<div className={styles.modelRow} key={`${index}-${modelId}`}>
-										<input
-											value={modelId}
-											onChange={(e) =>
-												set({
-													models: draft.models.map((r, i) =>
-														i === index ? { ...r, id: e.currentTarget.value } : r,
-													),
-												})
-											}
-										/>
+										<div className={`${styles.cellWrap} ${fieldErrors.id ? styles.cellErr : ""}`}>
+											<input
+												value={modelId}
+												placeholder="模型 ID"
+												onChange={(e) =>
+													set({
+														models: draft.models.map((r, i) =>
+															i === index ? { ...r, id: e.currentTarget.value } : r,
+														),
+													})
+												}
+											/>
+											{fieldErrors.id ? <small>{fieldErrors.id}</small> : null}
+										</div>
+										<div
+											className={`${styles.cellWrap} ${fieldErrors.contextWindow ? styles.cellErr : ""}`}
+											title="模型支持的最大上下文 Token 数，用于上下文管理与自动压缩。"
+										>
+											<input
+												type="number"
+												min={1}
+												value={row.contextWindow}
+												placeholder="如 131072"
+												onChange={(e) =>
+													set({
+														models: draft.models.map((r, i) =>
+															i === index ? { ...r, contextWindow: e.currentTarget.value } : r,
+														),
+													})
+												}
+											/>
+											{fieldErrors.contextWindow ? <small>{fieldErrors.contextWindow}</small> : null}
+										</div>
+										<div
+											className={`${styles.cellWrap} ${fieldErrors.maxTokens ? styles.cellErr : ""}`}
+											title="模型单次响应允许生成的最大 Token 数。"
+										>
+											<input
+												type="number"
+												min={1}
+												value={row.maxTokens}
+												placeholder="如 32768"
+												onChange={(e) =>
+													set({
+														models: draft.models.map((r, i) =>
+															i === index ? { ...r, maxTokens: e.currentTarget.value } : r,
+														),
+													})
+												}
+											/>
+											{fieldErrors.maxTokens ? <small>{fieldErrors.maxTokens}</small> : null}
+										</div>
 										<input value={model?.name ?? modelId} disabled />
 										<label
 											className={styles.switch}

@@ -166,10 +166,8 @@ export function ActiveAgentPresence({
 		return () => window.clearTimeout(timer);
 	}, [showCompleted]);
 	const terminalOrphanedTurn = hasTerminalOrphanedTurn(active);
-	const waitingForAssistant =
-		active.phase !== "idle" && currentTurn?.user !== undefined && assistant === undefined;
-	const lastAssistantFailed =
-		assistant?.status === "error" || assistant?.status === "aborted" || terminalOrphanedTurn;
+	const waitingForAssistant = active.phase !== "idle" && currentTurn?.user !== undefined && assistant === undefined;
+	const lastAssistantFailed = assistant?.status === "error" || assistant?.status === "aborted" || terminalOrphanedTurn;
 	const state = waking
 		? "waking"
 		: reaction

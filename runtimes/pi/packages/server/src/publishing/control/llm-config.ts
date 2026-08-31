@@ -23,8 +23,26 @@ interface ModelsJsonProviderEntry {
 	api?: string;
 	apiKey?: string;
 	headers?: Record<string, string>;
-	models?: readonly { id: string; name?: string; [key: string]: unknown }[];
+	models?: readonly {
+		id: string;
+		name?: string;
+		reasoning?: boolean;
+		thinkingLevelMap?: Record<string, string | null>;
+		contextWindow?: number;
+		maxTokens?: number;
+		[key: string]: unknown;
+	}[];
 	[key: string]: unknown;
+}
+
+/** A custom model view built from a models.json entry (read side). */
+export interface CustomLlmProviderModelItem {
+	readonly id: string;
+	readonly name?: string;
+	readonly reasoning?: boolean;
+	readonly thinkingLevelMap?: Record<string, string | null>;
+	readonly contextWindow?: number;
+	readonly maxTokens?: number;
 }
 
 export interface CustomLlmProviderView {
@@ -32,17 +50,20 @@ export interface CustomLlmProviderView {
 	name: string;
 	baseUrl: string;
 	api: CustomLlmApi;
-	models: readonly string[];
+	models: readonly CustomLlmProviderModelItem[];
 	apiKeyConfigured: boolean;
 }
 
-export type LlmModelSpecInput =
-	| string
-	| {
-			id: string;
-			reasoning?: boolean;
-			thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
-	  };
+/** One model spec for a create/update. `contextWindow` / `maxTokens` are required. */
+export interface LlmModelSpecInput {
+	readonly id: string;
+	/** Max input context tokens; must be a positive integer. */
+	readonly contextWindow: number;
+	/** Max output tokens for one response; positive integer not above contextWindow. */
+	readonly maxTokens: number;
+	readonly reasoning?: boolean;
+	readonly thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
+}
 
 export interface LlmConfigStore {
 	list(): Promise<CustomLlmProviderView[]>;
@@ -136,6 +157,10 @@ export function createLlmConfigStore(services: AgentSessionServices): LlmConfigS
 				return {
 					...(prev ?? {}),
 					id: spec.id,
+					// contextWindow / maxTokens are required on every new write so the
+					// runtime never silently falls back to Pi's 128000 / 16384 defaults.
+					contextWindow: spec.contextWindow,
+					maxTokens: spec.maxTokens,
 					...(spec.reasoning !== undefined ? { reasoning: spec.reasoning } : {}),
 					...(mergedMap !== undefined ? { thinkingLevelMap: mergedMap } : {}),
 				};
@@ -301,9 +326,21 @@ function toView(id: string, entry: ModelsJsonProviderEntry): CustomLlmProviderVi
 		return undefined;
 	}
 	const name = typeof entry.name === "string" && entry.name.trim() !== "" ? entry.name : id;
-	const models = (entry.models ?? [])
-		.map((model) => (typeof model.id === "string" ? model.id : undefined))
-		.filter((id): id is string => id !== undefined);
+	const models: CustomLlmProviderModelItem[] = (entry.models ?? []).map((model) => {
+		let item: CustomLlmProviderModelItem = {
+			id: typeof model.id === "string" ? model.id : String(model.id),
+		};
+		if (typeof model.name === "string" && model.name !== "") item = { ...item, name: model.name };
+		if (typeof model.reasoning === "boolean") item = { ...item, reasoning: model.reasoning };
+		if (model.thinkingLevelMap && typeof model.thinkingLevelMap === "object") {
+			item = { ...item, thinkingLevelMap: model.thinkingLevelMap };
+		}
+		// Only surface contextWindow/maxTokens when the stored config has them, so
+		// older models.json entries (that fall back to Pi defaults) round-trip cleanly.
+		if (typeof model.contextWindow === "number") item = { ...item, contextWindow: model.contextWindow };
+		if (typeof model.maxTokens === "number") item = { ...item, maxTokens: model.maxTokens };
+		return item;
+	});
 	return {
 		id,
 		name,
@@ -340,32 +377,44 @@ function requireHttpUrl(value: string, field: string): string {
 
 function normalizeModels(models: readonly LlmModelSpecInput[]): readonly {
 	id: string;
+	contextWindow: number;
+	maxTokens: number;
 	reasoning?: boolean;
 	thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
 }[] {
 	if (!Array.isArray(models) || models.length === 0) {
-		throw new Error("models must be a non-empty array of model ids");
+		throw new Error("models must be a non-empty array of model objects");
 	}
 	const seen = new Set<string>();
 	const out: {
 		id: string;
+		contextWindow: number;
+		maxTokens: number;
 		reasoning?: boolean;
 		thinkingLevelMap?: Partial<Record<"low" | "medium" | "high", string | null>>;
 	}[] = [];
 	for (const raw of models) {
-		const entry = typeof raw === "string" ? { id: raw } : raw;
-		if (typeof entry?.id !== "string" || entry.id.trim() === "") {
-			throw new Error("models must be a non-empty array of model ids");
+		const entry = (typeof raw === "object" && raw !== null ? raw : null) as Partial<LlmModelSpecInput> | null;
+		if (entry === null || typeof entry.id !== "string" || entry.id.trim() === "") {
+			throw new Error("models must be a non-empty array with each model having a non-empty id");
 		}
 		const id = entry.id.trim();
 		if (seen.has(id)) continue;
 		seen.add(id);
+
+		// Historical configs may predate these fields; a *new* write must supply
+		// them explicitly so Pi never silently falls back to 128000 / 16384.
+		const contextWindow = positiveTokenCount(entry.contextWindow, `model "${id}" contextWindow`);
+		const maxTokens = positiveTokenCount(entry.maxTokens, `model "${id}" maxTokens`);
+		if (maxTokens > contextWindow) {
+			throw new Error(`model "${id}" maxTokens (${maxTokens}) must not exceed contextWindow (${contextWindow})`);
+		}
+
 		const thinkingLevelMap: Partial<Record<"low" | "medium" | "high", string | null>> = {};
 		if (entry.thinkingLevelMap && typeof entry.thinkingLevelMap === "object") {
 			for (const level of ["low", "medium", "high"] as const) {
 				const value = entry.thinkingLevelMap[level];
 				if (value === null) {
-					// Explicit clear: signal the merge to drop a previously saved level.
 					thinkingLevelMap[level] = null;
 				} else if (typeof value === "string" && value.trim() !== "") {
 					thinkingLevelMap[level] = value.trim();
@@ -374,11 +423,21 @@ function normalizeModels(models: readonly LlmModelSpecInput[]): readonly {
 		}
 		out.push({
 			id,
+			contextWindow,
+			maxTokens,
 			...(typeof entry.reasoning === "boolean" ? { reasoning: entry.reasoning } : {}),
 			...(Object.keys(thinkingLevelMap).length ? { thinkingLevelMap } : {}),
 		});
 	}
 	return out;
+}
+
+/** Validate a token-budget field is a positive integer. Throws on anything else. */
+function positiveTokenCount(value: unknown, label: string): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+		throw new Error(`${label} must be a positive integer`);
+	}
+	return value;
 }
 
 function resolveApiKey(apiKey: string): string {
