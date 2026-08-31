@@ -1765,6 +1765,12 @@ button {
 	background-image: none;
 }
 
+/* Agent debug select already renders its own caret beside the native select. */
+.admin-shell .admin-debug-topbar__select select {
+	padding-right: 0;
+	background-image: none;
+}
+
 /* ==========================================================================
    Agent 调试页宽屏适配
    - 1200px 以下继续使用现有紧凑布局

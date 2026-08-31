@@ -196,4 +196,10 @@ describe("Admin shell CSS layout (WB-002)", () => {
 			/\.admin-debug-shell\s+\.active-agent-presence\s*{[^}]*align-self:\s*flex-start;[^}]*justify-items:\s*start;[^}]*place-items:\s*start/,
 		);
 	});
+
+	it("does not render the global select arrow over the debug Agent caret", () => {
+		expect(css).toMatch(
+			/\.admin-shell\s+\.admin-debug-topbar__select\s+select\s*{[^}]*padding-right:\s*0;[^}]*background-image:\s*none/,
+		);
+	});
 });
