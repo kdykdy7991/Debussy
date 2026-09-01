@@ -379,6 +379,30 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 		}
 		return found;
 	}
+
+	/**
+	 * Phase-3.5: resolve the REAL model context window / max output tokens via
+	 * the same model registry the session itself resolves through. Published and
+	 * Debug both use this for `workingContextBudget`, so the budget never falls
+	 * back to a guessed window when the deployed model is known. `undefined` is
+	 * returned only when the registry has no entry (callers must then apply the
+	 * documented conservative fallback).
+	 */
+	getResolvedModelMetadata(
+		provider: string,
+		modelId: string,
+	): { readonly contextWindow: number; readonly maxTokens: number } | undefined {
+		const found = this.services.modelRuntime.getModel(provider, modelId) as
+			| {
+					readonly contextWindow?: number;
+					readonly maxTokens?: number;
+			  }
+			| undefined;
+		if (found === undefined || found.contextWindow === undefined || found.maxTokens === undefined) {
+			return undefined;
+		}
+		return { contextWindow: found.contextWindow, maxTokens: found.maxTokens };
+	}
 }
 
 function assertValidSessionId(id: string): void {

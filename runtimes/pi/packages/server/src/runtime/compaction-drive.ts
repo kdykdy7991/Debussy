@@ -30,25 +30,102 @@ import type { SessionLogLevel } from "@earendil-works/pi-protocol";
 import { toAgentMessages } from "../coding-agent/history-mapper.ts";
 import type { ConversationEventRecord } from "../publishing/repositories.ts";
 import { restoreContext } from "./context-restore.ts";
+import { actualInputTokens, DEFAULT_SAFETY_MARGIN, type UsageTokens } from "./token-accounting.ts";
 
-/** Safety margin (assistant-preferred / payload slack) mirroring Pi's default reserve. */
-export const DEFAULT_COMPACTION_RESERVE_TOKENS = 16_384;
+/**
+ * Phase-3.6 budget semantics.
+ *
+ * The model request cost is split into Working Context (compression-able) and
+ * Runtime overhead (not compression-able). The budget reserves the REAL pieces:
+ *
+ *   budget = max(0, effectiveWindow
+ *                    - model.maxTokens          (output budget)
+ *                    - runtimeOverhead          (real system/skills/tools cost)
+ *                    - nextInputReserve         (space for the unknown next user msg)
+ *                    - safetyMargin)            (small error buffer)
+ *
+ * - `effectiveWindow = min(model.contextWindow, policy.maxContextTokens)`.
+ * - `runtimeOverhead` is MEASURED from the last turn's provider usage
+ *   (see `deriveMeasuredRuntimeOverhead`); when unavailable it falls back to a
+ *   documented conservative fraction of the window — never a fixed 2048.
+ * - `nextInputReserve` only applies at turn/end (the next message is unknown);
+ *   at pre-prompt the current user message is already inside the estimate, so it
+ *   is 0 and the real "next input" is accounted for exactly.
+ */
+
+/**
+ * Conservative output reservation when a model's `maxTokens` cannot be
+ * resolved. Documented as a conservative BOUND, never a correctness claim about
+ * the model. Compacts earlier (smaller budget) than the true model would, which
+ * is the safe direction.
+ */
+export const FALLBACK_OUTPUT_RESERVE = 8_192;
 /** Verbatim tokens kept after the summary so the next prompt sees concrete recent turns. */
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
 
-/** Unify the model context window and the Debussy policy budget into one ceiling. */
+/**
+ * Unify the resolved model window and the Debussy policy budget into one Working
+ * Context ceiling. Every term is an explicit, distinct reservation — no single
+ * magic number stands in for the real system/skills/tools overhead.
+ */
 export function workingContextBudget(
 	model: { readonly contextWindow?: number; readonly maxTokens?: number },
 	policyMaxContextTokens: number,
-	options: { readonly safetyReserve?: number } = {},
+	options: {
+		readonly runtimeOverheadTokens?: number;
+		readonly nextInputReserveTokens?: number;
+		readonly safetyMarginTokens?: number;
+	} = {},
 ): number {
-	const safetyReserve = options.safetyReserve ?? DEFAULT_COMPACTION_RESERVE_TOKENS;
-	const ceiling =
+	const effectiveWindow =
 		model.contextWindow !== undefined
 			? Math.min(model.contextWindow, policyMaxContextTokens)
 			: policyMaxContextTokens;
-	const outputReserve = model.maxTokens ?? 0;
-	return Math.max(0, ceiling - safetyReserve - outputReserve);
+	if (effectiveWindow <= 0) return 0;
+	const outputReserve = model.maxTokens ?? FALLBACK_OUTPUT_RESERVE;
+	const runtimeOverhead = options.runtimeOverheadTokens ?? 0;
+	const nextReserve = options.nextInputReserveTokens ?? 0;
+	const safety = options.safetyMarginTokens ?? DEFAULT_SAFETY_MARGIN;
+	return Math.max(0, effectiveWindow - outputReserve - runtimeOverhead - nextReserve - safety);
+}
+
+/**
+ * Derive the MEASURED runtime overhead (system prompt + Skills + tool schemas +
+ * fixed request content) from the persisted event stream — no new state, no new
+ * table, re-derived every time (works across runtime resets):
+ *
+ *   measuredOverhead
+ *     = actualInputTokens(last turn/end usage)          (real provider input)
+ *       - estimateWorkingContextTokens(events of that request)
+ *   = max(0, ...)
+ *
+ * The matching Working Context is the committed events up to the last turn/end
+ * that carried real `usage`. An in-flight (pre-prompt) user message sits after
+ * that sequence and is excluded, so the measurement stays stable whether called
+ * at turn/end or pre-prompt. Returns undefined when no measured usage exists yet
+ * (caller applies `conservativeRuntimeOverhead`).
+ */
+export function deriveMeasuredRuntimeOverhead(
+	events: readonly ConversationEventRecord[],
+	summaryText: string,
+	options: { readonly maxContextTokens?: number; readonly logLevel?: SessionLogLevel } = {},
+): number | undefined {
+	let lastUsageInput = 0;
+	let haveUsage = false;
+	let lastUsageSequence = 0;
+	for (const event of events) {
+		if (event.eventType !== "turn/end" && event.eventType !== "turn.end") continue;
+		const payload = (event.payload ?? {}) as { usage?: UsageTokens };
+		if (payload.usage === undefined) continue;
+		lastUsageInput = actualInputTokens(payload.usage);
+		lastUsageSequence = event.sequence;
+		haveUsage = true;
+	}
+	if (!haveUsage) return undefined;
+
+	const requestEvents = events.filter((event) => event.sequence <= lastUsageSequence);
+	const workingContext = estimateWorkingContextTokens(requestEvents, summaryText, options);
+	return Math.max(0, lastUsageInput - workingContext);
 }
 
 /** Estimated tokens of the Working Context that will be handed to the next prompt. */
@@ -72,6 +149,20 @@ export function estimateWorkingContextTokens(
 		0,
 	);
 	return summaryTokens + recentTokens;
+}
+
+/**
+ * Estimate the tokens of ONE in-flight user message (the current prompt). A
+ * trailing user/message with no assistant is excluded from the restored
+ * transcript, so the pre-prompt guard must add it explicitly to the Working
+ * Context it compares against the budget.
+ */
+export function estimateMessageTokens(text: string): number {
+	return estimateTokens({
+		role: "user",
+		content: [{ type: "text", text }],
+		timestamp: 0,
+	} as never);
 }
 
 /** True when the Working Context has grown past the budget and should be compacted. */
@@ -101,6 +192,7 @@ export function planCompaction(
 	options: {
 		readonly keepRecentTokens?: number;
 		readonly estimateTokensOverride?: number;
+		readonly extraEstimateTokens?: number;
 		readonly budget?: number;
 		readonly summaryText?: string;
 	},
@@ -136,9 +228,10 @@ export function planCompaction(
 
 	// Decide whether to actually compact by the token budget (pure override for
 	// tests lets callers short-circuit this without a full transcript build).
+	const extraEstimate = options.extraEstimateTokens ?? 0;
 	let requiresCompact: boolean;
 	if (options.budget !== undefined && options.summaryText !== undefined) {
-		const estimated = estimateWorkingContextTokens(recentEvents, options.summaryText);
+		const estimated = estimateWorkingContextTokens(recentEvents, options.summaryText) + extraEstimate;
 		requiresCompact = shouldCompactWorkingContext(estimated, options.budget);
 	} else if (options.estimateTokensOverride !== undefined && options.budget !== undefined) {
 		requiresCompact = shouldCompactWorkingContext(options.estimateTokensOverride, options.budget);

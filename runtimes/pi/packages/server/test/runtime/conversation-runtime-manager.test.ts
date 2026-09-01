@@ -182,6 +182,28 @@ describe("conversation runtime manager", () => {
 		await harness.manager.drain();
 	});
 
+	test("reset(conversationId) evicts the runtime so the next Turn rebuilds a fresh session (Phase-3.5 invariant)", async () => {
+		const harness = makeHarness();
+		const first = await harness.manager.acquire(chatOnlySpec(), scope("conv-1"));
+		expect(harness.opened).toBe(1);
+
+		// Phase-3.5: after every completed Turn the service calls reset()
+		// unconditionally. Even if Pi overflow-compacted INSIDE the evicted
+		// session, reset removes it from the cache before the next Turn.
+		await harness.manager.reset("conv-1" as ConversationId);
+		expect(harness.sessions.get("conv-1")?.disposed).toBe(1);
+		expect(harness.manager.get("conv-1" as ConversationId)).toBeUndefined();
+
+		// The next Turn must re-hydrate Working Context from Postgres through a
+		// freshly-opened session — it can never recycle the evicted session's
+		// Pi-only (overflow-compacted) in-memory state.
+		const second = await harness.manager.acquire(chatOnlySpec(), scope("conv-1"));
+		expect(second.created).toBe(true);
+		expect(harness.opened).toBe(2);
+		expect(second.runtime).not.toBe(first.runtime);
+		await harness.manager.drain();
+	});
+
 	test("idle runtimes are closed by sweepIdle and recreated on demand", async () => {
 		let clock = 0;
 		const harness = makeHarness(1000, () => clock);

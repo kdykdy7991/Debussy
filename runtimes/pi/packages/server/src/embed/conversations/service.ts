@@ -95,12 +95,24 @@ export interface ConversationServiceOptions {
 	 */
 	readonly citations?: ConversationCitationService;
 	/**
-	 * Phase-3: invoked after Debussy persisted a new compacted summary. The
-	 * wiring closes the cached runtime so the NEXT Turn re-seeds an in-memory
-	 * Pi session from Postgres — guaranteeing the in-memory session is never a
-	 * divergent second copy of context state.
+	 * Phase-3: invoked after a completed Turn to close the cached runtime so the
+	 * NEXT Turn always re-seeds an in-memory Pi session from Postgres. Debussy is
+	 * the only owner of Working Context state; a cached Pi session is never
+	 * trusted to continue past a Turn boundary — otherwise an emergency (overflow)
+	 * compaction inside Pi would leave context state that only the in-memory
+	 * session knows and Postgres has no record of.
 	 */
-	readonly onCompacted?: (conversationId: ConversationId) => Promise<void>;
+	readonly resetRuntime?: (conversationId: ConversationId) => Promise<void>;
+	/**
+	 * Phase-3.5: resolves the DEPLOYED model's real contextWindow / maxTokens via
+	 * the same model registry the sessions use, so `workingContextBudget` uses the
+	 * true model instead of a guessed window. Returns undefined when unresolvable
+	 * (callers apply the documented conservative fallback).
+	 */
+	readonly resolveModelMetadata?: (
+		provider: string,
+		modelId: string,
+	) => { readonly contextWindow: number; readonly maxTokens: number } | undefined;
 }
 
 export interface CreateConversationInput {
@@ -164,6 +176,7 @@ export class ConversationService {
 	private readonly turnExecutor: TurnExecutor;
 	private readonly citations: ConversationCitationService | undefined;
 	private readonly onCompacted: ((conversationId: ConversationId) => Promise<void>) | undefined;
+	private readonly resolveModelMetadata: ConversationServiceOptions["resolveModelMetadata"];
 	/** 进程内单写者守卫：同一 Conversation 同时最多一个 Turn（PD-13）。 */
 	private readonly runningTurns = new Set<ConversationId>();
 
@@ -171,7 +184,8 @@ export class ConversationService {
 		this.repos = options.repositories;
 		this.turnExecutor = options.turnExecutor;
 		this.citations = options.citations;
-		this.onCompacted = options.onCompacted;
+		this.onCompacted = options.resetRuntime;
+		this.resolveModelMetadata = options.resolveModelMetadata;
 	}
 
 	/**
@@ -513,6 +527,7 @@ export class ConversationService {
 		scope: OwnerScope,
 		conversationId: ConversationId,
 		spec: RuntimeSpec,
+		opts: { readonly excludeTurnId?: TurnId } = {},
 	): Promise<RestoredContext> {
 		// WB-007 + WB-008: pass the configured log level so restoreContext
 		// can report dropped chunks accurately. When a summary exists, we
@@ -526,8 +541,13 @@ export class ConversationService {
 			(after, limit) => this.repos.events.list(scope, conversationId, { limit, afterSequence: after }),
 			afterSequence,
 		);
+		// The pre-prompt guard rebuild drops the in-flight Turn so the injected
+		// transcript never duplicates the current user message (which is also the
+		// prompt text).
+		const filtered =
+			opts.excludeTurnId === undefined ? events : events.filter((event) => event.turnId !== opts.excludeTurnId);
 		const restored = restoreContext(
-			events,
+			filtered,
 			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
 			spec.contextPolicy.logLevel,
 		);
@@ -551,6 +571,41 @@ export class ConversationService {
 			});
 		}
 		return restored;
+	}
+
+	/**
+	 * Phase-3.6 pre-prompt guard (layer B). Runs AFTER the current user/message
+	 * is committed and BEFORE the provider call. It adds the known user input to
+	 * the Working-Context estimate and, when the calibrated (measured-overhead)
+	 * budget would be exceeded, compacts PRIOR complete Turns so the request fits.
+	 * The current Turn is never compressed; the boundary still lands on a prior
+	 * Turn's assistant/message and toolCall/toolResult stay paired. Returns the
+	 * (possibly rebuilt) history to hand to the prompt.
+	 */
+	private async runPrePromptGuard(
+		scope: OwnerScope,
+		spec: RuntimeSpec,
+		conversationId: ConversationId,
+		turnId: TurnId,
+		currentUserText: string,
+		history: RestoredContext,
+	): Promise<RestoredContext> {
+		const model = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
+		const result = await runDebussyCompaction(
+			createConversationEventCompactionStore(this.repos, scope, conversationId),
+			spec,
+			{
+				model,
+				// The current user message is known (see currentUserText) and added to the
+				// estimate explicitly, so nothing extra is reserved.
+				nextInputReserveTokens: 0,
+				currentUserText,
+			},
+		);
+		if (!result.compacted) return history;
+		// A new summary was persisted → the prompt must see the condensed head,
+		// with the in-flight Turn dropped so its user message is not duplicated.
+		return this.restoreHistory(scope, conversationId, spec, { excludeTurnId: turnId });
 	}
 
 	/**
@@ -719,11 +774,26 @@ export class ConversationService {
 				if (progress.item.role !== "tool") return;
 				void this.persistToolProgress(scope, input.conversationId, turnId, spec, progress.type, progress.item);
 			};
+			// Phase-3.6 pre-prompt guard: the current user message is now known and
+			// committed, so before sending the request we add it to the Working
+			// Context estimate and, when the real (measured) runtime overhead plus
+			// this message would exceed the calibrated budget, compact PRIOR complete
+			// Turns first. The current Turn is never compressed (planCompaction only
+			// truncates complete Turns), the boundary stays a prior Turn's
+			// assistant/message, and toolCall/toolResult pairs remain intact.
+			const historyForRequest = await this.runPrePromptGuard(
+				scope,
+				spec,
+				input.conversationId,
+				turnId,
+				input.text,
+				history,
+			);
 			const result = await this.turnExecutor({
 				scope: turnScope,
 				spec,
 				text: input.text,
-				history,
+				history: historyForRequest,
 				retrieval,
 				onProgress,
 			});
@@ -778,13 +848,22 @@ export class ConversationService {
 				// Debussy-owned compaction (Phase-3): when the Working Context
 				// (head summary + structured events after it) has grown past the
 				// unified budget, persist a new chained summary at a complete-Turn
-				// boundary and reset the cached runtime so the next Turn rebuilds
-				// an equivalent Working Context from Postgres only.
-				const compaction = await runDebussyCompaction(
+				// boundary. The budget is derived from the DEPLOYED model's real
+				// contextWindow / maxTokens (Phase-3.5), not a guessed window.
+				const model = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
+				await runDebussyCompaction(
 					createConversationEventCompactionStore(this.repos, scope, input.conversationId),
 					spec,
+					model !== undefined ? { model } : {},
 				);
-				if (compaction.compacted && this.onCompacted !== undefined) {
+				// Phase-3.5 invariant: reset the cached runtime after EVERY
+				// completed Turn (unconditionally). Pi may have performed an
+				// emergency overflow compaction this Turn that left in-memory
+				// context ONLY the session knows; Postgres has no corresponding
+				// Summary. Evicting the runtime unconditionally guarantees the
+				// next Turn always re-hydrates its Working Context from Postgres
+				// and can never recycle a Pi-only state.
+				if (this.onCompacted !== undefined) {
 					await this.onCompacted(input.conversationId);
 				}
 				// WB-008: post-turn rollover check. Re-read the conversation

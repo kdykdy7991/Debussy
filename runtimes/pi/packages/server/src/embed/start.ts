@@ -90,6 +90,11 @@ export interface EmbedPlaneOptions {
 	readonly resolveToolName?: BuiltinToolNameResolver;
 	/** Optional injected shared PiRuntimeAdapter (shared with the Debug path). */
 	readonly runtimeAdapter?: PiRuntimeAdapter;
+	/** Phase-3.5: resolves the deployed model's real contextWindow / maxTokens. */
+	readonly resolveModelMetadata?: (
+		provider: string,
+		modelId: string,
+	) => { readonly contextWindow: number; readonly maxTokens: number } | undefined;
 	readonly log?: (message: string) => void;
 }
 
@@ -202,6 +207,15 @@ export interface EmbedServicesOptions {
 	 * builds one from the same factory (single builder logic in both cases).
 	 */
 	readonly runtimeAdapter?: PiRuntimeAdapter;
+	/**
+	 * Phase-3.5: resolves the deployed model's real contextWindow / maxTokens
+	 * from the model registry. When absent, the budget falls back to the declared
+	 * policy cap + conservative reserves (documented fallback, still safe).
+	 */
+	readonly resolveModelMetadata?: (
+		provider: string,
+		modelId: string,
+	) => { readonly contextWindow: number; readonly maxTokens: number } | undefined;
 }
 
 export interface EmbedServicesHandle {
@@ -265,9 +279,12 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 		repositories: options.repositories,
 		turnExecutor: managedTurnExecutor(runtimeManager),
 		...(conversationCitations !== undefined ? { citations: conversationCitations } : {}),
-		// Phase-3: after Debussy persists a compaction, evict the cached runtime
-		// so the next Turn rebuilds an equivalent Working Context from Postgres.
-		onCompacted: (conversationId) => runtimeManager.reset(conversationId),
+		// Phase-3: after a Turn, reset the cached runtime unconditionally so the
+		// next Turn rebuilds an equivalent Working Context from Postgres. This is
+		// what makes a Pi-only (overflow-compacted) in-memory state impossible to
+		// recycle across Turns.
+		resetRuntime: (conversationId) => runtimeManager.reset(conversationId),
+		resolveModelMetadata: options.resolveModelMetadata,
 	});
 	// TASK-030/031：附件对象存储 + 总量配额；未配置 store 时 uploads 端点
 	// 503（不静默退化为磁盘）。
@@ -417,6 +434,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		...(options.skillMaterializer !== undefined ? { skillMaterializer: options.skillMaterializer } : {}),
 		...(options.resolveToolName !== undefined ? { resolveToolName: options.resolveToolName } : {}),
 		...(options.runtimeAdapter !== undefined ? { runtimeAdapter: options.runtimeAdapter } : {}),
+		...(options.resolveModelMetadata !== undefined ? { resolveModelMetadata: options.resolveModelMetadata } : {}),
 	});
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。

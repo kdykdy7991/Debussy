@@ -29,8 +29,15 @@
 import { newConversationSummaryId } from "../publishing/domain/ids.ts";
 import type { ConversationEventRecord } from "../publishing/repositories.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
-import { estimateWorkingContextTokens, planCompaction, workingContextBudget } from "./compaction-drive.ts";
+import {
+	deriveMeasuredRuntimeOverhead,
+	estimateMessageTokens,
+	estimateWorkingContextTokens,
+	planCompaction,
+	workingContextBudget,
+} from "./compaction-drive.ts";
 import { buildSummary } from "./summary-builder.ts";
+import { conservativeRuntimeOverhead, DEFAULT_NEXT_INPUT_RESERVE } from "./token-accounting.ts";
 
 /** The summary row shape the driver reads / writes (plane-agnostic). */
 export interface DebussySummaryRecord {
@@ -74,10 +81,53 @@ export interface DebussyCompactionResult {
 }
 
 export interface DebussyCompactionOptions {
-	/** Real model window/max-output when the caller can resolve them (§9). */
+	/** Real model window/max-output when the caller can resolve them. */
 	readonly model?: { readonly contextWindow?: number; readonly maxTokens?: number };
 	/** When set, forces a compaction decision (tests / headless override). */
 	readonly budgetOverride?: number;
+	/**
+	 * Space kept for the as-yet-unknown next user message. turn/end passes a
+	 * default; the pre-prompt guard passes 0 (its current user message is already
+	 * in the estimate).
+	 */
+	readonly nextInputReserveTokens?: number;
+	/**
+	 * The exact current user message (pre-prompt guard only). A trailing
+	 * in-flight user/message is excluded from the restored transcript, so the
+	 * guard must add it to the Working-Context estimate explicitly — otherwise a
+	 * huge current message would escape the pre-prompt check. turn/end leaves this
+	 * unset (the next message is unknown).
+	 */
+	readonly currentUserText?: string;
+	/** Small error buffer (defaults to the token-accounting default). */
+	readonly safetyMarginTokens?: number;
+}
+
+/**
+ * Resolve the Working Context budget using REAL runtime overhead measured from
+ * the last turn's provider usage (system prompt + Skills + tool schemas), falling
+ * back to a conservative fraction of the window when no usage exists yet. Never
+ * a fixed magic constant.
+ */
+function resolveBudget(
+	spec: RuntimeSpec,
+	options: DebussyCompactionOptions,
+	recentEvents: readonly ConversationEventRecord[],
+	summaryText: string,
+): number {
+	const policy = spec.contextPolicy.maxContextTokens;
+	const effectiveWindow =
+		options.model?.contextWindow !== undefined ? Math.min(options.model.contextWindow, policy) : policy;
+	const measured = deriveMeasuredRuntimeOverhead(recentEvents, summaryText, {
+		maxContextTokens: policy,
+		logLevel: spec.contextPolicy.logLevel,
+	});
+	const runtimeOverhead = measured ?? conservativeRuntimeOverhead(effectiveWindow);
+	return workingContextBudget(options.model ?? {}, policy, {
+		runtimeOverheadTokens: runtimeOverhead,
+		nextInputReserveTokens: options.nextInputReserveTokens ?? DEFAULT_NEXT_INPUT_RESERVE,
+		safetyMarginTokens: options.safetyMarginTokens,
+	});
 }
 
 /**
@@ -97,9 +147,12 @@ export async function runDebussyCompaction(
 	if (recentEvents.length === 0) return { compacted: false, throughSequence: null };
 
 	const summaryText = textOf(latest?.body);
-	const budget =
-		options.budgetOverride ?? workingContextBudget(options.model ?? {}, spec.contextPolicy.maxContextTokens);
-	const plan = planCompaction(recentEvents, { budget, summaryText });
+	const budget = options.budgetOverride ?? resolveBudget(spec, options, recentEvents, summaryText);
+	const plan = planCompaction(recentEvents, {
+		budget,
+		summaryText,
+		extraEstimateTokens: options.currentUserText !== undefined ? estimateMessageTokens(options.currentUserText) : 0,
+	});
 	if (!plan.shouldCompact || plan.throughSequence <= 0) return { compacted: false, throughSequence: null };
 
 	const built = buildSummary(plan.summarizeEvents, {

@@ -247,6 +247,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			createSession: makeRuntimeSession,
 			citations,
 			previewTickets: controlPlane.previewTicketService,
+			resolveModelMetadata: (provider, modelId) =>
+				(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),
 			log,
 		});
 		// Debug Conversation Phase 1: persistent, per-agent debug conversations
@@ -262,6 +264,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			skillMaterializer,
 			createMcpTools: mcpTools,
 			openAdapter: piRuntimeAdapter,
+			resolveModelMetadata: (provider, modelId) =>
+				(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),
 			tenantId: controlPlane.tenantId,
 			citations,
 			attachments,

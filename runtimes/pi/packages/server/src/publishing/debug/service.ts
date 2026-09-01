@@ -104,6 +104,11 @@ export interface DebugConversationServiceOptions {
 	readonly openAdapter?: PiRuntimeAdapter;
 	/** Builtin Tool id → name resolver (only used when building the fallback adapter). */
 	readonly resolveToolName?: BuiltinToolNameResolver;
+	/** Phase-3.5: resolves the deployed model's real contextWindow / maxTokens. */
+	readonly resolveModelMetadata?: (
+		provider: string,
+		modelId: string,
+	) => { readonly contextWindow: number; readonly maxTokens: number } | undefined;
 }
 
 /** Cached Debug Runtime entry, keyed by `debugConversationId`. */
@@ -204,6 +209,7 @@ export class DebugConversationService {
 	private readonly attachments: AttachmentStore | undefined;
 	private readonly reportError: (error: Error) => void;
 	private readonly openAdapter: PiRuntimeAdapter;
+	private readonly resolveModelMetadata: DebugConversationServiceOptions["resolveModelMetadata"];
 
 	/** Runtime cache: `Map<debugConversationId, RuntimeEntry>` (Phase 1, in-memory). */
 	private readonly runtimes = new Map<DebugConversationId, DebugRuntimeEntry>();
@@ -229,6 +235,7 @@ export class DebugConversationService {
 		this.citations = options.citations;
 		this.attachments = options.attachments;
 		this.reportError = options.reportError ?? (() => {});
+		this.resolveModelMetadata = options.resolveModelMetadata;
 		// Debug and Published go through the SAME RuntimeSpec → Pi Agent builder:
 		// inject the shared adapter instance, or build one from the same factory
 		// (used when `createSession` is a mock in unit harnesses).
@@ -475,28 +482,7 @@ export class DebugConversationService {
 		// after its throughSequence and prepend the summary, so the rebuilt
 		// Working Context is bounded and mirrors Production. Cursor-paginated
 		// replay so a post-summary window is never silently truncated.
-		const debugRef = this.conversationRef(conversationId);
-		const summary = await this.debug.summaries.getLatest(debugRef);
-		const afterSequence = summary?.throughSequence ?? 0;
-		const events = await replayAllAfter(
-			(after, limit) => this.debug.events.list(debugRef, { afterSequence: after, limit }),
-			afterSequence,
-		);
-		let history: RestoredContext = restoreContext(
-			events as unknown as readonly ConversationEventRecord[],
-			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
-			spec.contextPolicy.logLevel,
-		);
-		if (summary !== undefined) {
-			history = mergeRestored(
-				buildSummaryRestoredMessage(
-					(summary.body as { text?: string }).text ?? "",
-					summary.throughSequence,
-					spec.contextPolicy.logLevel,
-				),
-				history,
-			);
-		}
+		let history: RestoredContext = await this.buildHistory(conversationId, spec);
 
 		const turnId = options.inputTurnId ?? newTurnId();
 		const persisted = await this.appendAll(conversationId, [
@@ -593,6 +579,14 @@ export class DebugConversationService {
 
 			try {
 				const retrieval = await this.buildRetrieval(conversationId, spec, text, turnId);
+				// Phase-3.6 pre-prompt guard (Debug parity with Production): the
+				// current user message is committed; when the calibrated budget
+				// would be exceeded, compact PRIOR complete Turns, then rebuild the
+				// current-turn-EXCLUDING history so the injected transcript does not
+				// duplicate the user message that is also the prompt text.
+				if (await this.runDebugPrePromptGuard(conversationId, spec, text)) {
+					history = await this.buildHistory(conversationId, spec, { excludeTurnId: turnId });
+				}
 				await runtime.prompt(text, {
 					history,
 					retrieval,
@@ -669,18 +663,20 @@ export class DebugConversationService {
 						payload: { ok: true, ...(output.usage ? { usage: output.usage } : {}) },
 					},
 				]);
-				// Debussy-owned compaction (Phase-3): persist a chained summary at
-				// a complete-Turn boundary when the Working Context exceeds the
-				// unified budget. On compaction, evict the runtime so the next
-				// Turn rebuilds an equivalent Working Context from Postgres and
-				// there is no second, divergent in-memory context (Debug parity).
-				const compaction = await runDebussyCompaction(
+				// Debussy-owned compaction (Phase-3): persist a chained summary at a
+				// complete-Turn boundary when the Working Context exceeds the
+				// unified budget (resolved from the DEPLOYED model, Phase-3.5).
+				const modelMetadata = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
+				await runDebussyCompaction(
 					createDebugConversationEventCompactionStore(this.debug, this.conversationRef(conversationId)),
 					spec,
+					modelMetadata !== undefined ? { model: modelMetadata } : {},
 				);
-				if (compaction.compacted) {
-					await this.releaseRuntime(conversationId);
-				}
+				// Phase-3.5: Debug's headless path already unconditionally evicts
+				// the runtime for the next Turn in executeTurn()'s finally (see
+				// releaseRuntimeIfUnpinned) — guaranteeing a Pi overflow-compacted
+				// in-memory context can never serve another Turn. This block only
+				// owns compaction; the runtime lifecycle is handled there.
 				return {
 					ok: true,
 					terminal: "end",
@@ -882,6 +878,65 @@ export class DebugConversationService {
 				payload: event.payload,
 			},
 		]);
+	}
+
+	/**
+	 * Build a restored Working Context from the Debug event stream: head summary
+	 * (if any) + structured events after its throughSequence. When `excludeTurnId`
+	 * is set (pre-prompt guard rebuild), that in-flight Turn's events are dropped
+	 * so the injected transcript never duplicates its user message.
+	 */
+	private async buildHistory(
+		conversationId: DebugConversationId,
+		spec: RuntimeSpec,
+		opts: { readonly excludeTurnId?: TurnId } = {},
+	): Promise<RestoredContext> {
+		const debugRef = this.conversationRef(conversationId);
+		const summary = await this.debug.summaries.getLatest(debugRef);
+		const afterSequence = summary?.throughSequence ?? 0;
+		const events = await replayAllAfter(
+			(after, limit) => this.debug.events.list(debugRef, { afterSequence: after, limit }),
+			afterSequence,
+		);
+		const filtered =
+			opts.excludeTurnId === undefined ? events : events.filter((event) => event.turnId !== opts.excludeTurnId);
+		let history: RestoredContext = restoreContext(
+			filtered as unknown as readonly ConversationEventRecord[],
+			{ maxContextTokens: spec.contextPolicy.maxContextTokens },
+			spec.contextPolicy.logLevel,
+		);
+		if (summary !== undefined) {
+			history = mergeRestored(
+				buildSummaryRestoredMessage(
+					(summary.body as { text?: string }).text ?? "",
+					summary.throughSequence,
+					spec.contextPolicy.logLevel,
+				),
+				history,
+			);
+		}
+		return history;
+	}
+
+	/**
+	 * Phase-3.6 pre-prompt guard (Debug parity). Runs once the current user
+	 * message is committed and before the provider call: if the calibrated
+	 * (measured-overhead) budget would be exceeded, Debussy compacts PRIOR
+	 * complete Turns. Returns true when a summary was persisted (the caller must
+	 * rebuild history with `excludeTurnId` before prompting).
+	 */
+	private async runDebugPrePromptGuard(
+		conversationId: DebugConversationId,
+		spec: RuntimeSpec,
+		currentUserText: string,
+	): Promise<boolean> {
+		const model = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
+		const result = await runDebussyCompaction(
+			createDebugConversationEventCompactionStore(this.debug, this.conversationRef(conversationId)),
+			spec,
+			{ model, nextInputReserveTokens: 0, currentUserText },
+		);
+		return result.compacted;
 	}
 
 	/** Close + evict a cached Runtime (used when a realtime adapter is released). */
