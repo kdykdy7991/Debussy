@@ -155,7 +155,8 @@ export function ActiveAgentPresence({
 		assistant !== undefined &&
 		previousAssistant?.id === assistant?.id &&
 		previousAssistant.status === "streaming" &&
-		assistant.status === "complete";
+		assistant.status === "complete" &&
+		assistant.stopReason !== "toolUse";
 	useEffect(() => {
 		previousAssistantRef.current = assistant;
 		if (completedThisRender) setShowCompleted(true);
@@ -395,11 +396,10 @@ function resolveAgentState({
 	thinking: boolean;
 	tools: readonly ToolTranscriptItem[];
 }): AgentAvatarState {
-	if (!streaming) return "completed";
 	const runningTool = tools.find((tool) => tool.status === "running");
 	if (runningTool) return isSearchTool(runningTool) ? "searching" : "working";
-	if (tools.length > 0 && textBlocks === 0) return "reading";
-	if (textBlocks > 0) return "writing";
+	if (!streaming && tools.length > 0) return "reading";
+	if (streaming && textBlocks > 0) return "writing";
 	if (thinking) return "thinking";
 	return "loading";
 }
