@@ -110,6 +110,8 @@ export interface EmbedPlaneHandle {
 	readonly metrics: MetricRegistry;
 	/** 共享 TTS 队列（TASK-036；单实例进程级）。 */
 	readonly ttsQueue: EmbedTtsQueue;
+	/** Published Conversation orchestration reused by thin external adapters. */
+	readonly conversationService: ConversationService;
 	close(): Promise<void>;
 }
 
@@ -508,6 +510,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		accessTokens: config.accessTokens,
 		metrics,
 		ttsQueue: services.ttsQueue,
+		conversationService: services.conversationService,
 		close: async () => {
 			await services.close();
 			await redis.close();

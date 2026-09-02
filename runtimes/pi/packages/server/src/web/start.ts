@@ -19,6 +19,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import type { Duplex } from "node:stream";
 import { attachmentStoreReader, CitationService, CitationStore } from "../citations/index.ts";
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
@@ -45,6 +46,8 @@ import { LiveSpeechManager } from "../voice/live/live-speech-manager.ts";
 import { normalizeVoiceProfiles } from "../voice/profiles.ts";
 import { SpeechManager } from "../voice/speech-manager.ts";
 import type { VoiceProfile } from "../voice/types.ts";
+import type { VoicePocConfig } from "../voice-poc/config.ts";
+import { createVoicePocUpgradeHandler, type VoicePocUpgradeHandle } from "../voice-poc/http.ts";
 import { createLiveSpeechHttpHandler } from "./live-speech.ts";
 import { createSpeechHttpHandler } from "./speech.ts";
 import { createUploadHttpHandler } from "./uploads.ts";
@@ -112,6 +115,8 @@ export interface StartWebServerOptions {
 	autoStart?: boolean;
 	/** Speech proxy; when omitted, speech commands and PCM routes are unavailable. */
 	voice?: WebVoiceOptions;
+	/** Experimental VoxEMW text-stream POC binding. */
+	voicePoc?: VoicePocConfig;
 	/**
 	 * Publishing configuration. When absent or disabled, no publishing
 	 * infrastructure (database, Redis, object store, keys) is created and the
@@ -134,6 +139,9 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	const publishing = options.publishing ?? parsePublishingConfig(process.env);
 	if (publishing.enabled) {
 		log("publishing enabled: control/data/runtime planes will be composed by embed/start.ts");
+	}
+	if (options.voicePoc !== undefined && !publishing.enabled) {
+		throw new Error("Voice POC requires publishing to be enabled");
 	}
 
 	const backend = await CodingAgentPiSessionBackend.create(resolved.backend);
@@ -167,6 +175,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	let debugConversationHandler: HttpRequestHandler | undefined;
 	let debugRealtime: DebugConversationRealtime | undefined;
 	let debugSweepTimer: ReturnType<typeof setInterval> | undefined;
+	let voicePoc: VoicePocUpgradeHandle | undefined;
 	if (publishing.enabled) {
 		// 33.1/33.2: missing token / db / bootstrap config fails startup.
 		controlPlane = await composeControlPlane({
@@ -251,6 +260,16 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 				(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),
 			log,
 		});
+		if (options.voicePoc !== undefined) {
+			voicePoc = createVoicePocUpgradeHandler({
+				config: options.voicePoc,
+				tenantId: controlPlane.tenantId,
+				repositories: controlPlane.repositories,
+				conversationService: embedPlane.conversationService,
+				onError: (error) => log(`voice POC error: ${formatError(error)}`),
+			});
+			log("voice POC WebSocket mounted at /api/voice-poc/v1/ws");
+		}
 		// Debug Conversation Phase 1: persistent, per-agent debug conversations
 		// that survive Agent revision changes. Kept physically separate from the
 		// Production conversation schema; the old ephemeral debug-session path
@@ -352,7 +371,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	const server = createWebSocketServer(wsBackend, {
 		...resolved.listener,
 		// TASK-025：embed Realtime upgrade（ticket 校验）接管非主路径 upgrade。
-		...(embedPlane?.realtimeUpgrade !== undefined ? { onUnhandledUpgrade: embedPlane.realtimeUpgrade } : {}),
+		...composeUpgradeHandlers(voicePoc?.handleUpgrade, embedPlane?.realtimeUpgrade),
 		httpHandler,
 		attachments,
 		// Cross-tenant attach hardening: every WS attach_upload goes through
@@ -413,6 +432,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		if (closing) return closing;
 		closing = (async () => {
 			log("pi web server shutting down");
+			if (voicePoc !== undefined) {
+				try {
+					await voicePoc.close();
+				} catch (error) {
+					log(`error during voice POC close: ${formatError(error)}`);
+				}
+			}
 			try {
 				await server.close();
 			} catch (error) {
@@ -588,6 +614,16 @@ function composeHttpHandlers(handlers: readonly HttpRequestHandler[]): HttpReque
 			if (await handler(request, response)) return true;
 		}
 		return false;
+	};
+}
+
+function composeUpgradeHandlers(
+	...handlers: readonly (((request: IncomingMessage, socket: Duplex, head: Buffer) => boolean) | undefined)[]
+): Pick<WebSocketServerOptions, "onUnhandledUpgrade"> {
+	const active = handlers.filter((handler) => handler !== undefined);
+	if (active.length === 0) return {};
+	return {
+		onUnhandledUpgrade: (request, socket, head) => active.some((handler) => handler(request, socket, head)),
 	};
 }
 

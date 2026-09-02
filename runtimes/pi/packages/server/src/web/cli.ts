@@ -11,6 +11,7 @@ import { normalizeVoiceProfiles } from "../voice/profiles.ts";
  *          [--max-frame-length <bytes>] [--max-pending-bytes <bytes>]
  */
 import type { VoiceProfile } from "../voice/types.ts";
+import { loadVoicePocConfig } from "../voice-poc/config.ts";
 import { type StartWebServerOptions, startWebServer, type WebVoiceOptions } from "./start.ts";
 
 interface CliFlags {
@@ -151,6 +152,7 @@ async function main(): Promise<number> {
 		maxPendingBytes: flags.maxPendingBytes,
 		webToken: process.env.PI_WEB_TOKEN,
 		voice: buildVoiceOptionsFromEnv(),
+		voicePoc: loadVoicePocConfig(process.env),
 	};
 
 	const handle = await startWebServer(options);

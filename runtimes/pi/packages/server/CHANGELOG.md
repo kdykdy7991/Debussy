@@ -9,6 +9,7 @@
 
 ### Added
 
+- Added an experimental fixed-binding Voice POC WebSocket that streams visible Published Agent text for VoxEMW ASR/TTS integration testing.
 - Added configurable WebSocket upgrade authorization and local Web development token support.
 - Added a bounded per-session progress replay buffer (2,000 events or 10 minutes, whichever expires first) and the protocol v2 `resume` command, so a reconnecting client replays the exact `session_progress` events it missed or receives a recognizable `resetRequired` reset to the authoritative snapshot. Replay buffers survive runtime disposal within the retention window and sequences stay contiguous across reopens.
 - Added P1 one-click publish: `POST /api/control/v1/agent-definitions/:id/publish` turns the Agent's current latest revision into an activated Published Version in one backend operation (getLatest → resolve → compile → find-or-create internal `published_app` → create version → activate), with no client-supplied `sourceAgentRevision` or application/version selection and no payload. The find-or-create step runs under an Agent-scoped PostgreSQL `pg_advisory_xact_lock`, so two concurrent first-publishes of the same Agent always merge into exactly one internal app (TOCTOU-safe).
