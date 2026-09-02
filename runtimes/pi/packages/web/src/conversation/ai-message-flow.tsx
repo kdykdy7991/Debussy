@@ -141,6 +141,7 @@ export function ActiveAgentPresence({
 }): React.ReactElement | null {
 	const [waking, setWaking] = useState(true);
 	const [showCompleted, setShowCompleted] = useState(false);
+	const [showCompactionLabel, setShowCompactionLabel] = useState(false);
 	const turns = groupTurns(active.transcript);
 	const currentTurn = turns.at(-1);
 	const assistant = currentTurn?.assistant;
@@ -166,32 +167,43 @@ export function ActiveAgentPresence({
 		const timer = window.setTimeout(() => setShowCompleted(false), 1000);
 		return () => window.clearTimeout(timer);
 	}, [showCompleted]);
+	useEffect(() => {
+		if (active.phase !== "compaction") {
+			setShowCompactionLabel(false);
+			return undefined;
+		}
+		const timer = window.setTimeout(() => setShowCompactionLabel(true), 180);
+		return () => window.clearTimeout(timer);
+	}, [active.phase]);
 	const terminalOrphanedTurn = hasTerminalOrphanedTurn(active);
 	const waitingForAssistant = active.phase !== "idle" && currentTurn?.user !== undefined && assistant === undefined;
 	const lastAssistantFailed = assistant?.status === "error" || assistant?.status === "aborted" || terminalOrphanedTurn;
 	const state = waking
 		? "waking"
-		: reaction
-			? reaction
-			: waitingForAssistant
-				? "loading"
-				: lastAssistantFailed
-					? "failed"
-					: showCompleted || completedThisRender
-						? "completed"
-						: active.phase === "idle"
-							? composerFocused
-								? "waiting"
-								: "idle"
-							: resolveAgentState({
-									streaming: assistant?.status === "streaming",
-									textBlocks: assistant?.content.filter((content) => content.type === "text").length ?? 0,
-									thinking: assistant?.content.some((content) => content.type === "thinking") ?? false,
-									tools: currentTurn?.tools ?? [],
-								});
+		: active.phase === "compaction"
+			? "compacting"
+			: reaction
+				? reaction
+				: waitingForAssistant
+					? "loading"
+					: lastAssistantFailed
+						? "failed"
+						: showCompleted || completedThisRender
+							? "completed"
+							: active.phase === "idle"
+								? composerFocused
+									? "waiting"
+									: "idle"
+								: resolveAgentState({
+										streaming: assistant?.status === "streaming",
+										textBlocks: assistant?.content.filter((content) => content.type === "text").length ?? 0,
+										thinking: assistant?.content.some((content) => content.type === "thinking") ?? false,
+										tools: currentTurn?.tools ?? [],
+									});
 	return (
 		<div className="active-agent-presence">
 			<AgentStatusAvatar state={state} />
+			{showCompactionLabel ? <span className="active-agent-compaction">正在整理较早的对话…</span> : null}
 			{SHOW_AGENT_STATE_DEBUG ? <code className="active-agent-presence-state">UI: {state}</code> : null}
 		</div>
 	);

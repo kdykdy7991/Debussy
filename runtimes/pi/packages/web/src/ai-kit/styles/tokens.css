@@ -106,6 +106,7 @@
 	--ai-weight-regular: 400;
 	--ai-weight-medium: 500;
 	--ai-weight-semibold: 600;
+	--ai-weight-bold: 700;
 
 	/* 字距（label 级宽字距） */
 	--ai-track-eyebrow: 0.32em;

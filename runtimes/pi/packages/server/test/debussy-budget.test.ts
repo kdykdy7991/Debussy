@@ -146,4 +146,33 @@ describe("runDebussyCompaction budget (Phase-3.6 measured runtime overhead)", ()
 		expect(boundary).toBeGreaterThan(0);
 		expect(boundary).toBeLessThan(inFlightSeq); // before the in-flight user's sequence
 	});
+
+	it("signals the UI phase only when a real compaction runs", async () => {
+		const phases: string[] = [];
+		const store = new MemStore();
+		store.events = prior.slice();
+		await runDebussyCompaction(store, makeSpec(c0 + 20_000), {
+			model: {},
+			nextInputReserveTokens: 0,
+			onCompactionStart: () => {
+				phases.push("start");
+			},
+			onCompactionEnd: () => {
+				phases.push("end");
+			},
+		});
+		expect(phases).toEqual([]);
+
+		await runDebussyCompaction(store, makeSpec(1), {
+			model: {},
+			nextInputReserveTokens: 0,
+			onCompactionStart: () => {
+				phases.push("start");
+			},
+			onCompactionEnd: () => {
+				phases.push("end");
+			},
+		});
+		expect(phases).toEqual(["start", "end"]);
+	});
 });

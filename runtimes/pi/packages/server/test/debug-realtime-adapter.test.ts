@@ -11,6 +11,7 @@
  *   D. reconnect / cache loss -> snapshot rebuilt from events, next turn works
  *   E. authorization -> a different tenant/owner cannot attach a conversation
  */
+import type { AssistantTranscriptItem } from "@earendil-works/pi-protocol";
 import { describe, expect, it } from "vitest";
 import { DebugConversationRealtime } from "../src/publishing/debug/realtime.ts";
 import { DebugConversationService } from "../src/publishing/debug/service.ts";
@@ -68,6 +69,8 @@ interface Capture {
 	blockOnPrompt: boolean;
 	/** When true the fake streams a `thinking` delta and finishes with a thinking part. */
 	emitThinking: boolean;
+	/** When true the fake emits a complete tool lifecycle before the final answer. */
+	emitTool: boolean;
 }
 
 interface FakeSession extends PiSessionRuntime {
@@ -106,6 +109,24 @@ function makeSessionFactory(capture: Capture): (opts: unknown) => Promise<FakeSe
 						},
 					},
 				});
+				if (capture.emitTool) {
+					const toolItem = {
+						id: `tool-${input.text}`,
+						role: "tool" as const,
+						toolCallId: `call-${input.text}`,
+						toolName: "read",
+						input: null,
+						content: [],
+						status: "running" as const,
+						isError: false as const,
+						timestamp: Date.now(),
+					};
+					emit({ type: "progress", progress: { type: "item_started", item: toolItem } });
+					emit({
+						type: "progress",
+						progress: { type: "item_finished", item: { ...toolItem, status: "complete" } },
+					});
+				}
 				emit({
 					type: "progress",
 					progress: { type: "assistant_delta", messageId, contentIndex: 0, kind: "text", delta: "Hello" },
@@ -132,7 +153,7 @@ function makeSessionFactory(capture: Capture): (opts: unknown) => Promise<FakeSe
 					});
 				}
 				const text = `echo:${input.text}`;
-				const contentParts: Array<Record<string, unknown>> = [{ type: "text", text }];
+				const contentParts: AssistantTranscriptItem["content"] = [{ type: "text", text }];
 				if (capture.emitThinking) contentParts.push({ type: "thinking", redacted: false, thinking: "considered" });
 				items.push({ role: "assistant", status: "complete", content: contentParts });
 				emit({
@@ -211,6 +232,15 @@ function makeDebugRepos(): DebugRepositories {
 			async listByScope() {
 				return [];
 			},
+			async expireActiveBefore() {
+				return [];
+			},
+			async listDeletedBefore() {
+				return [];
+			},
+			async deletePhysical() {
+				return false;
+			},
 		},
 		events: {
 			async append(_scope, conversationId, input) {
@@ -225,6 +255,14 @@ function makeDebugRepos(): DebugRepositories {
 			async list(scope, params) {
 				const list = eventsByConv.get(scope.debugConversationId) ?? [];
 				return list.filter((e) => e.sequence > (params.afterSequence ?? 0)).slice(0, params.limit);
+			},
+		},
+		summaries: {
+			async getLatest() {
+				return undefined;
+			},
+			async insert() {
+				return true;
 			},
 		},
 	};
@@ -314,6 +352,7 @@ function makeService(
 		prompts: [],
 		blockOnPrompt: false,
 		emitThinking: false,
+		emitTool: false,
 	};
 	const service = new DebugConversationService({
 		repositories: publishing.repositories,
@@ -373,6 +412,23 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 		expect(eventTypes(events)).toEqual(["turn/start", "user/message", "assistant/message", "turn/end"]);
 	});
 
+	it("keeps completed tool items in the final realtime snapshot", async () => {
+		const repos = makeDebugRepos();
+		const publishing = makePublishing([{ revision: 1, model: MODEL_A }]);
+		const { service, realtime, capture } = makeService(repos, publishing, TENANT_A, OWNER_A);
+		capture.emitTool = true;
+		const conv = await service.createNew(AGENT_ID);
+		const adapter = await realtime.acquire(conv.debugConversationId);
+
+		await adapter.prompt({ text: "tool turn" });
+
+		expect(adapter.snapshot().transcript.find((item) => item.role === "tool")).toMatchObject({
+			id: "tool-tool turn",
+			toolName: "read",
+			status: "complete",
+		});
+	});
+
 	it("B. cancel persists a single turn/interrupted and the next turn still runs", async () => {
 		const repos = makeDebugRepos();
 		const publishing = makePublishing([{ revision: 1, model: MODEL_A }]);
@@ -428,10 +484,11 @@ describe("DebugConversationRuntimeAdapter (Phase 2, P0)", () => {
 		// Inner runtime was rebuilt (new bottom session created).
 		expect(capture.created).toBe(2);
 
-		// History from the rev-1 turn is injected into the rev-2 prompt.
+		// History from the rev-1 turn is injected as structured transcript into the rev-2 prompt.
 		const t2 = capture.prompts[1]!;
-		expect((t2.retrieval?.context ?? "").includes("T1 rev17")).toBe(true);
-		expect((t2.retrieval?.context ?? "").includes("echo:T1 rev17")).toBe(true);
+		const t2History = JSON.stringify(t2.transcript ?? []);
+		expect(t2History.includes("T1 rev17")).toBe(true);
+		expect(t2History.includes("echo:T1 rev17")).toBe(true);
 
 		// Streaming still reaches the adapter after the rebuild.
 		const final = adapter.snapshot();

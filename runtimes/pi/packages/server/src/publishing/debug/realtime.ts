@@ -23,6 +23,7 @@ import type {
 	SessionSnapshot,
 	ThinkingLevel,
 	TranscriptItem,
+	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../../errors.ts";
 import type { PiSessionBackend, PiSessionRuntime, PiSessionRuntimeEvent, PromptInput } from "../../types.ts";
@@ -291,7 +292,11 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 			inputTurnId: turnId,
 			...(input.attachmentIds && input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
 			...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
-			onProgress: (progress) => this.emit({ type: "progress", progress }),
+			onCompactionChange: (compacting) => this.setTurnPhase(compacting ? "compaction" : "turn"),
+			onProgress: (progress) => {
+				this.snapshotValue = applyToolProgress(this.snapshotValue, progress);
+				this.emit({ type: "progress", progress });
+			},
 		});
 
 		this.phase = "idle";
@@ -432,6 +437,23 @@ export class DebugConversationRuntimeAdapter implements PiSessionRuntime {
 	private emit(event: PiSessionRuntimeEvent): void {
 		for (const listener of [...this.listeners]) listener(event);
 	}
+
+	private setTurnPhase(phase: "compaction" | "turn"): void {
+		this.phase = phase;
+		this.revisionCounter += 1;
+		this.snapshotValue = { ...this.snapshotValue, phase, revision: this.revisionCounter };
+		this.emit({ type: "snapshot" });
+	}
+}
+
+/** Keep completed tool items in the Adapter's authoritative final snapshot. */
+function applyToolProgress(snapshot: SessionSnapshot, progress: TranscriptProgress): SessionSnapshot {
+	if (progress.type === "assistant_delta" || progress.item.role !== "tool") return snapshot;
+	const index = snapshot.transcript.findIndex((item) => item.id === progress.item.id);
+	if (index === -1) return { ...snapshot, transcript: [...snapshot.transcript, progress.item] };
+	const transcript = [...snapshot.transcript];
+	transcript[index] = progress.item;
+	return { ...snapshot, transcript };
 }
 
 /**

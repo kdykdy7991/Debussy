@@ -14,6 +14,7 @@ export type AgentAvatarState =
 	| "waking"
 	| "playful"
 	| "loading"
+	| "compacting"
 	| "thinking"
 	| "searching"
 	| "working"
@@ -28,6 +29,7 @@ const stateLabels: Record<AgentAvatarState, string> = {
 	waking: "Agent 正在进入会话",
 	playful: "Agent 收到了积极反馈",
 	loading: "Agent 正在启动",
+	compacting: "Agent 正在整理较早的对话",
 	thinking: "Agent 正在思考",
 	searching: "Agent 正在检索",
 	working: "Agent 正在执行任务",
@@ -63,6 +65,7 @@ const sourceState: Record<Exclude<AgentAvatarState, "failed">, string> = {
 	waking: "waking",
 	playful: "playful",
 	loading: "loading",
+	compacting: "uploading",
 	thinking: "notifying",
 	searching: "loading",
 	working: "loading",

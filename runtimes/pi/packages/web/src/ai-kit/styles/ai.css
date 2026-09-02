@@ -403,6 +403,7 @@
 	font-weight: var(--ai-weight-light);
 	letter-spacing: 0.005em;
 	font-family: var(--ai-font-sans);
+	font-synthesis: weight style;
 }
 
 .ai-prose.is-plain {
@@ -449,9 +450,7 @@
 
 .ai-prose strong {
 	color: var(--ai-text-primary);
-	font-weight: var(--ai-weight-medium);
-	border-bottom: 1px solid var(--ai-accent);
-	padding-bottom: 1px;
+	font-weight: var(--ai-weight-bold);
 }
 
 /* ===== Streamdown Markdown：管理台的完整回答排版 ===== */

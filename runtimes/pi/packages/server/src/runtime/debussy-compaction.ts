@@ -101,6 +101,10 @@ export interface DebussyCompactionOptions {
 	readonly currentUserText?: string;
 	/** Small error buffer (defaults to the token-accounting default). */
 	readonly safetyMarginTokens?: number;
+	/** Called only after the driver has decided that a real compaction will run. */
+	readonly onCompactionStart?: () => void | Promise<void>;
+	/** Paired with `onCompactionStart`, including insert/advance failures. */
+	readonly onCompactionEnd?: () => void | Promise<void>;
 }
 
 /**
@@ -155,30 +159,35 @@ export async function runDebussyCompaction(
 	});
 	if (!plan.shouldCompact || plan.throughSequence <= 0) return { compacted: false, throughSequence: null };
 
-	const built = buildSummary(plan.summarizeEvents, {
-		...(latest?.body !== undefined ? { previousBody: bodyOf(latest.body) } : {}),
-	});
-	// The boundary must be the durable event sequence — derived by both builders
-	// from the last assistant/message of the summarized slice.
-	const throughSequence = plan.throughSequence;
-	const collapsedNow = Math.round(estimateWorkingContextTokens(plan.summarizeEvents, ""));
-	const tokensBefore = (latest?.tokensBefore ?? 0) + collapsedNow;
+	await options.onCompactionStart?.();
+	try {
+		const built = buildSummary(plan.summarizeEvents, {
+			...(latest?.body !== undefined ? { previousBody: bodyOf(latest.body) } : {}),
+		});
+		// The boundary must be the durable event sequence — derived by both builders
+		// from the last assistant/message of the summarized slice.
+		const throughSequence = plan.throughSequence;
+		const collapsedNow = Math.round(estimateWorkingContextTokens(plan.summarizeEvents, ""));
+		const tokensBefore = (latest?.tokensBefore ?? 0) + collapsedNow;
 
-	const record: DebussySummaryRecord = {
-		id: newConversationSummaryId(),
-		throughSequence,
-		modelId: spec.agent.model.modelId === "" ? "(debussy-compaction)" : spec.agent.model.modelId,
-		sourceEventCount: built.sourceEventCount,
-		sourceBytes: built.sourceBytes,
-		body: built.body,
-		createdAt: new Date(),
-		previousSummaryId: latest?.id,
-		tokensBefore,
-	};
-	const inserted = await store.insert(record);
-	if (!inserted) return { compacted: false, throughSequence: null };
-	await store.advanceLatest(throughSequence);
-	return { compacted: true, throughSequence };
+		const record: DebussySummaryRecord = {
+			id: newConversationSummaryId(),
+			throughSequence,
+			modelId: spec.agent.model.modelId === "" ? "(debussy-compaction)" : spec.agent.model.modelId,
+			sourceEventCount: built.sourceEventCount,
+			sourceBytes: built.sourceBytes,
+			body: built.body,
+			createdAt: new Date(),
+			previousSummaryId: latest?.id,
+			tokensBefore,
+		};
+		const inserted = await store.insert(record);
+		if (!inserted) return { compacted: false, throughSequence: null };
+		await store.advanceLatest(throughSequence);
+		return { compacted: true, throughSequence };
+	} finally {
+		await options.onCompactionEnd?.();
+	}
 }
 
 async function replayAll(

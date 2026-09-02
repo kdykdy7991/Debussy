@@ -186,6 +186,8 @@ export interface DebugRealtimeTurnOptions {
 	readonly inputTurnId?: TurnId;
 	/** Forwarded streaming progress (single execution). Tool items are dropped for P0. */
 	readonly onProgress?: (progress: TranscriptProgress) => void;
+	/** Realtime-only phase signal for a Debussy pre-prompt compaction. */
+	readonly onCompactionChange?: (compacting: boolean) => void;
 	/** Resolved attachments bound to this Debug conversation; injected into the inner runtime prompt. */
 	readonly attachments?: readonly ResolvedAttachmentInput[];
 	/** Stable attachment ids from the same Debug conversation; surfaced to the runtime as prompt-time input. */
@@ -584,7 +586,7 @@ export class DebugConversationService {
 				// would be exceeded, compact PRIOR complete Turns, then rebuild the
 				// current-turn-EXCLUDING history so the injected transcript does not
 				// duplicate the user message that is also the prompt text.
-				if (await this.runDebugPrePromptGuard(conversationId, spec, text)) {
+				if (await this.runDebugPrePromptGuard(conversationId, spec, text, options.onCompactionChange)) {
 					history = await this.buildHistory(conversationId, spec, { excludeTurnId: turnId });
 				}
 				await runtime.prompt(text, {
@@ -929,12 +931,19 @@ export class DebugConversationService {
 		conversationId: DebugConversationId,
 		spec: RuntimeSpec,
 		currentUserText: string,
+		onCompactionChange?: (compacting: boolean) => void,
 	): Promise<boolean> {
 		const model = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
 		const result = await runDebussyCompaction(
 			createDebugConversationEventCompactionStore(this.debug, this.conversationRef(conversationId)),
 			spec,
-			{ model, nextInputReserveTokens: 0, currentUserText },
+			{
+				model,
+				nextInputReserveTokens: 0,
+				currentUserText,
+				onCompactionStart: () => onCompactionChange?.(true),
+				onCompactionEnd: () => onCompactionChange?.(false),
+			},
 		);
 		return result.compacted;
 	}

@@ -791,6 +791,14 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	pointer-events: none;
 }
 .active-agent-presence .ai-agent-avatar { width: 64px; height: 64px; }
+.active-agent-compaction {
+	padding: 3px 7px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--color-bg-content) 90%, transparent);
+	color: var(--color-text-secondary);
+	font: 500 11px/1.35 var(--font-sans);
+	white-space: nowrap;
+}
 .active-agent-presence-state {
 	display: none;
 	padding: 2px 5px;
@@ -1740,10 +1748,8 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	background: var(--color-bg-subtle);
 	border-radius: 14px 14px 4px 14px;
 	color: var(--color-text-primary);
-	font: 13px/1.5 var(--font-sans);
 	box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
 }
-.admin-debug-shell .ai-user-text { font: inherit; }
 .admin-debug-shell .ai-user-att {
 	margin-bottom: 6px;
 }
