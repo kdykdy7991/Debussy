@@ -106,7 +106,8 @@ export function AgentDesignTab({
 	const enabledCapabilities = [
 		draft.capabilities.attachments ? "附件" : null,
 		draft.capabilities.avatar ? "Avatar" : null,
-		draft.capabilities.liveSpeech ? "实时语音" : null,
+		draft.capabilities.liveSpeech ? "朗读" : null,
+		draft.capabilities.realtimeVoice ? "实时语音" : null,
 	].filter((item): item is string => item !== null);
 
 	return (

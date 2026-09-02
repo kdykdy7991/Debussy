@@ -339,7 +339,8 @@ function formatCapabilities(capabilities: AgentConfigSnapshot["capabilities"]): 
 	const labels: Array<[string, boolean]> = [
 		["附件上传", capabilities.attachments],
 		["Avatar", capabilities.avatar],
-		["实时语音(实验性)", capabilities.liveSpeech],
+		["朗读", capabilities.liveSpeech],
+		["实时语音(实验性)", capabilities.realtimeVoice === true],
 		["引用检索(只读)", capabilities.citations],
 		["Realtime(只读)", capabilities.realtime],
 		["Web 搜索(只读)", capabilities.webSearch],

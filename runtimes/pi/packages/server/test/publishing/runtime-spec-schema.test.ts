@@ -61,7 +61,21 @@ describe("runtime spec schema", () => {
 		expect(result.spec.runtimePolicy.turnTimeoutMs).toBe(120000);
 		expect(result.spec.capabilities.uploads).toEqual({ enabled: true, maxFiles: 10, maxFileBytes: 26214400 });
 		expect(result.spec.capabilities.speech).toEqual({ enabled: false }); // default for omitted object
+		expect(result.spec.capabilities.realtimeVoice).toEqual({ enabled: false });
 		expect(result.spec.securityPolicyVersion).toBe("sp_001");
+	});
+
+	test("freezes the experimental realtime voice capability independently from speech", () => {
+		const input = validInput();
+		const capabilities = input.capabilities as Record<string, unknown>;
+		const result = parseRuntimeSpec({
+			...input,
+			capabilities: { ...capabilities, speech: { enabled: false }, realtimeVoice: { enabled: true } },
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.spec.capabilities.speech.enabled).toBe(false);
+		expect(result.spec.capabilities.realtimeVoice.enabled).toBe(true);
 	});
 
 	test("rejects an unknown schemaVersion", () => {

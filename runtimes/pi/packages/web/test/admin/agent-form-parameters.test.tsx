@@ -69,6 +69,14 @@ const baseDraft: AgentConfigSnapshot = {
 };
 
 describe("AgentForm model parameters", () => {
+	test("shows legacy read-aloud and experimental realtime voice as separate switches", () => {
+		const html = renderToStaticMarkup(<AgentForm draft={baseDraft} models={[qwen]} onEdit={vi.fn()} />);
+		expect(html).toContain("朗读");
+		expect(html).toContain("实时语音");
+		expect(html).toContain('data-experimental="true"');
+		expect(html).toContain("保存并发布后生效");
+	});
+
 	test("renders all six model-declared thinking efforts (no lossy product mapping)", () => {
 		const onEdit = vi.fn();
 		const html = renderToStaticMarkup(<AgentForm draft={baseDraft} models={[qwen]} onEdit={onEdit} />);

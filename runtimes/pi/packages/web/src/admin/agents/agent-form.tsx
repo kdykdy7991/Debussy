@@ -7,11 +7,11 @@
  *   1. 基本信息（只读 — 接口不支持编辑）
  *   2. 指令（System Prompt + 字符计数 + 空值/超长状态）
  *   3. 模型与思考（严格选择器 → Provider/能力摘要 → toggle → 默认强度）
- *   4. 输入输出能力（附件 / Avatar / 实验性实时语音）
+ *   4. 输入输出能力（附件 / Avatar / 朗读 / 实验性实时语音）
  *   5. 扩展能力（工具 / 知识库 / Skill / MCP 的只读真实状态）
  *
  * 阶段一约束继续保留：能力只暴露 `attachments` / `avatar` /
- * `liveSpeech`；工具 / 知识库只允许移除不允许新增。
+ * `liveSpeech` / `realtimeVoice`；工具 / 知识库只允许移除不允许新增。
  *
  * 阶段三视觉：所有页面专属样式收敛到 `agent-design.module.css`。
  */
@@ -27,7 +27,7 @@ import styles from "./agent-design.module.css";
 import { productReasoningEfforts } from "./reasoning-efforts.ts";
 
 /** 阶段一：仅暴露真正会持久化的能力开关。 */
-export type EditableCapability = "attachments" | "avatar" | "liveSpeech";
+export type EditableCapability = "attachments" | "avatar" | "liveSpeech" | "realtimeVoice";
 
 export const EDITABLE_CAPABILITIES: readonly {
 	readonly key: EditableCapability;
@@ -37,10 +37,11 @@ export const EDITABLE_CAPABILITIES: readonly {
 }[] = [
 	{ key: "attachments", label: "附件上传", description: "允许用户在对话里上传附件（图片、文档等）。" },
 	{ key: "avatar", label: "Avatar", description: "启用 Agent Avatar（多模态头像表达）。" },
+	{ key: "liveSpeech", label: "朗读", description: "使用现有 TTS 朗读 Agent 回复。" },
 	{
-		key: "liveSpeech",
-		label: "实时语音（实验性）",
-		description: "实验性开关：当前文本版本未纳入验收，启用与否不会改变行为。",
+		key: "realtimeVoice",
+		label: "实时语音",
+		description: "允许外部语音终端通过实验性实时语音链路使用此 Agent；保存并发布后生效。",
 		experimental: true,
 	},
 ];

@@ -4,14 +4,12 @@ import type { ConversationService } from "../src/embed/conversations/service.ts"
 import type { EmbedAuthContext } from "../src/embed/middleware/authenticate.ts";
 import { runtimeUnavailable } from "../src/publishing/domain/errors.ts";
 import {
-	newAgentDefinitionId,
 	newConversationId,
 	newPrincipalId,
 	newPublishedAppId,
 	newPublishedAppVersionId,
 	newTenantId,
 	newTurnId,
-	toPublicId,
 } from "../src/publishing/domain/ids.ts";
 import { loadVoicePocConfig } from "../src/voice-poc/config.ts";
 import { VoicePocConnection, type VoicePocTransport } from "../src/voice-poc/connection.ts";
@@ -21,28 +19,12 @@ describe("Voice POC configuration", () => {
 		expect(loadVoicePocConfig({})).toBeUndefined();
 	});
 
-	test("loads a complete fixed binding", () => {
-		const agentDefinitionId = newAgentDefinitionId();
-		expect(
-			loadVoicePocConfig({
-				VOICE_POC_AGENT_ID: toPublicId("AgentDefinitionId", agentDefinitionId),
-				VOICE_POC_TOKEN: "poc-secret",
-			}),
-		).toEqual({ agentDefinitionId, token: "poc-secret" });
-		expect(loadVoicePocConfig({ VOICE_POC_AGENT_ID: agentDefinitionId, VOICE_POC_TOKEN: "poc-secret" })).toEqual({
-			agentDefinitionId,
-			token: "poc-secret",
-		});
+	test("loads a token-only binding", () => {
+		expect(loadVoicePocConfig({ VOICE_POC_TOKEN: "poc-secret" })).toEqual({ token: "poc-secret" });
 	});
 
-	test("rejects partial or malformed bindings", () => {
-		expect(() => loadVoicePocConfig({ VOICE_POC_TOKEN: "poc-secret" })).toThrow(/must be set together/);
-		expect(() =>
-			loadVoicePocConfig({
-				VOICE_POC_AGENT_ID: "not-an-id",
-				VOICE_POC_TOKEN: "poc-secret",
-			}),
-		).toThrow(/VOICE_POC_AGENT_ID/);
+	test("rejects an empty token", () => {
+		expect(() => loadVoicePocConfig({ VOICE_POC_TOKEN: "" })).toThrow(/must not be empty/);
 	});
 });
 

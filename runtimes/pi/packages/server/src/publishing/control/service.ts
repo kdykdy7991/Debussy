@@ -2199,6 +2199,7 @@ export class ControlService {
 		const knowledgeBaseIds = Array.isArray(d.knowledgeBases) ? d.knowledgeBases.map((k) => k.id) : [];
 		const capabilities: AgentCapabilities = {
 			newConversations: d.conversations?.allowNew !== false,
+			realtimeVoice: d.realtimeVoice?.enabled === true,
 			liveSpeech: d.speech?.enabled === true,
 			avatar: d.avatar?.enabled === true,
 			attachments: d.uploads?.enabled === true,
@@ -2236,6 +2237,7 @@ export class ControlService {
 			knowledgeBases: request.knowledgeBaseIds.map((id) => ({ id })),
 			uploads: { enabled: request.capabilities.attachments },
 			speech: { enabled: request.capabilities.liveSpeech },
+			realtimeVoice: { enabled: request.capabilities.realtimeVoice === true },
 			avatar: { enabled: request.capabilities.avatar },
 			conversations: { allowNew: request.capabilities.newConversations !== false },
 		};
@@ -2353,6 +2355,7 @@ export class ControlService {
 		if (pKb.size !== cKb.size || ![...pKb].every((id) => cKb.has(id))) fields.push("knowledgeBaseIds");
 		if (
 			(p.speech?.enabled ?? false) !== (c.speech?.enabled ?? false) ||
+			(p.realtimeVoice?.enabled ?? false) !== (c.realtimeVoice?.enabled ?? false) ||
 			(p.avatar?.enabled ?? false) !== (c.avatar?.enabled ?? false) ||
 			(p.uploads?.enabled ?? false) !== (c.uploads?.enabled ?? false)
 		)

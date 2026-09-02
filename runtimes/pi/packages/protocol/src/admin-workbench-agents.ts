@@ -59,6 +59,8 @@ export interface AgentDefinitionDetail {
 export interface AgentCapabilities {
 	/** Show conversation history/sidebar and allow users to create additional conversations. */
 	readonly newConversations?: boolean;
+	/** Enable the external ASR/Agent/TTS realtime voice POC for published revisions. */
+	readonly realtimeVoice?: boolean;
 	readonly liveSpeech: boolean;
 	readonly avatar: boolean;
 	readonly attachments: boolean;

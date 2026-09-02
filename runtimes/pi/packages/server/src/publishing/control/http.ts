@@ -1256,6 +1256,7 @@ function parseCapabilities(value: unknown): AgentCapabilities {
 	const asBool = (v: unknown): boolean => v === true;
 	return {
 		newConversations: obj.newConversations !== false,
+		realtimeVoice: asBool(obj.realtimeVoice),
 		liveSpeech: asBool(obj.liveSpeech),
 		avatar: asBool(obj.avatar),
 		attachments: asBool(obj.attachments),

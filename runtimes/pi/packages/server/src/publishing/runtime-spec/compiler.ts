@@ -58,6 +58,7 @@ export interface AgentDraftConfig {
 		readonly maxFileBytes?: number;
 	};
 	readonly speech?: { readonly enabled?: boolean };
+	readonly realtimeVoice?: { readonly enabled?: boolean };
 	readonly avatar?: { readonly enabled?: boolean };
 	readonly conversations?: { readonly allowNew?: boolean };
 	readonly theme?: { readonly primaryColor?: string; readonly welcomeMessage?: string };
@@ -176,6 +177,7 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 			mcpServers,
 			...("uploads" in agent && agent.uploads !== undefined ? { uploads: agent.uploads } : {}),
 			...("speech" in agent && agent.speech !== undefined ? { speech: agent.speech } : {}),
+			...(agent.realtimeVoice === undefined ? {} : { realtimeVoice: agent.realtimeVoice }),
 			...("avatar" in agent && agent.avatar !== undefined ? { avatar: agent.avatar } : {}),
 			...("conversations" in agent && agent.conversations !== undefined
 				? { conversations: agent.conversations }

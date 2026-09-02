@@ -203,7 +203,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 		reasoningEffort: state.detail.parameters.reasoning?.effort,
 		attachments: state.detail.capabilities.attachments,
 		avatar: state.detail.capabilities.avatar,
-		liveSpeech: state.detail.capabilities.liveSpeech,
+		realtimeVoice: state.detail.capabilities.realtimeVoice === true,
 		newConversations: state.detail.capabilities.newConversations !== false,
 	};
 	const saveDraft = async (draft: AgentEditableDraft): Promise<void> => {
@@ -238,7 +238,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 					...state.detail.capabilities,
 					attachments: draft.attachments,
 					avatar: draft.avatar,
-					liveSpeech: draft.liveSpeech,
+					realtimeVoice: draft.realtimeVoice,
 					newConversations: draft.newConversations,
 				},
 				skills: draft.skills ?? state.detail.skills,
@@ -437,6 +437,7 @@ function RealAgentList(): React.ReactElement {
 							toolIds: [],
 							knowledgeBaseIds: [],
 							capabilities: {
+								realtimeVoice: false,
 								liveSpeech: false,
 								avatar: false,
 								attachments: false,

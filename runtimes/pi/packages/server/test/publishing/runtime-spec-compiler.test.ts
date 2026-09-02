@@ -125,6 +125,14 @@ describe("runtime spec compiler", () => {
 		expect(parseRuntimeSpec(JSON.parse(result.canonicalJson)).ok).toBe(true);
 	});
 
+	test("publishing freezes experimental realtime voice without enabling legacy speech", () => {
+		const result = compile(draft({ realtimeVoice: { enabled: true }, speech: { enabled: false } }));
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.spec.capabilities.realtimeVoice.enabled).toBe(true);
+		expect(result.spec.capabilities.speech.enabled).toBe(false);
+	});
+
 	test("model parameter capabilities are frozen into the published runtime spec", () => {
 		const result = compile();
 		expect(result.ok).toBe(true);

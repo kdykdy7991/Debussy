@@ -27,7 +27,7 @@ export interface AgentDetailData {
 	readonly reasoningEffort: ReasoningEffort | undefined;
 	readonly attachments: boolean;
 	readonly avatar: boolean;
-	readonly liveSpeech: boolean;
+	readonly realtimeVoice: boolean;
 	readonly newConversations: boolean;
 }
 
@@ -40,7 +40,7 @@ export interface AgentEditableDraft {
 	readonly reasoningEffort: ReasoningEffort | undefined;
 	readonly attachments: boolean;
 	readonly avatar: boolean;
-	readonly liveSpeech: boolean;
+	readonly realtimeVoice: boolean;
 	readonly newConversations: boolean;
 	/** 绑定编辑（Skill / MCP）；不传时由调用方沿用服务端当前绑定。 */
 	readonly skills?: readonly { readonly skillId: string; readonly revision: number }[];
@@ -114,7 +114,7 @@ const PREVIEW_DETAIL: AgentDetailData = {
 	reasoningEffort: "medium",
 	attachments: true,
 	avatar: false,
-	liveSpeech: false,
+	realtimeVoice: false,
 	newConversations: true,
 };
 
@@ -924,7 +924,7 @@ export function AgentDetailPreview({
 	const [effort, setEffort] = useState<ReasoningEffort | undefined>(data.reasoningEffort);
 	const [attachments, setAttachments] = useState(data.attachments);
 	const [avatar, setAvatar] = useState(data.avatar);
-	const [speech, setSpeech] = useState(data.liveSpeech);
+	const [realtimeVoice, setRealtimeVoice] = useState(data.realtimeVoice);
 	const [newConversations, setNewConversations] = useState(data.newConversations);
 	// Skill / MCP 绑定草稿：props 只作为初始值（详情页按 revision 重建组件）
 	const [draftSkills, setDraftSkills] = useState<readonly AgentResource[]>(skills);
@@ -950,7 +950,7 @@ export function AgentDetailPreview({
 			effort: data.reasoningEffort,
 			attachments: data.attachments,
 			avatar: data.avatar,
-			speech: data.liveSpeech,
+			realtimeVoice: data.realtimeVoice,
 			newConversations: data.newConversations,
 			bindings: bindingKey,
 		}),
@@ -966,7 +966,7 @@ export function AgentDetailPreview({
 		effort,
 		attachments,
 		avatar,
-		speech,
+		realtimeVoice,
 		newConversations,
 		bindings: bindingKey,
 	});
@@ -1002,7 +1002,7 @@ export function AgentDetailPreview({
 					reasoningEffort: effort,
 					attachments,
 					avatar,
-					liveSpeech: speech,
+					realtimeVoice,
 					newConversations,
 					skills: draftSkills
 						.filter((item) => item.revision !== undefined)
@@ -1032,7 +1032,7 @@ export function AgentDetailPreview({
 		setEffort(data.reasoningEffort);
 		setAttachments(data.attachments);
 		setAvatar(data.avatar);
-		setSpeech(data.liveSpeech);
+		setRealtimeVoice(data.realtimeVoice);
 		setNewConversations(data.newConversations);
 		setDraftSkills(skills);
 		setDraftMcpServers(mcpServers);
@@ -1240,8 +1240,8 @@ export function AgentDetailPreview({
 								title="实验性实时语音"
 								description="启用对话中的语音输入与输出（实验性）"
 								icon="mic"
-								value={speech}
-								onChange={setSpeech}
+								value={realtimeVoice}
+								onChange={setRealtimeVoice}
 							/>
 						</div>
 					</section>
@@ -1407,7 +1407,7 @@ export function AgentDetailPreview({
 						newConversations={newConversations}
 						attachments={attachments}
 						avatar={avatar}
-						liveSpeech={speech}
+						realtimeVoice={realtimeVoice}
 					/>
 					<ExternalAccessCard link={publishData.externalLink} />
 					<MoreCard history={publishData.versionHistory} />
@@ -1607,7 +1607,7 @@ function PublishedInfoCard({
 	newConversations,
 	attachments,
 	avatar,
-	liveSpeech,
+	realtimeVoice,
 }: {
 	readonly version: string;
 	readonly modelName: string;
@@ -1618,7 +1618,7 @@ function PublishedInfoCard({
 	readonly newConversations: boolean;
 	readonly attachments: boolean;
 	readonly avatar: boolean;
-	readonly liveSpeech: boolean;
+	readonly realtimeVoice: boolean;
 }): React.ReactElement {
 	const effortDisplay: Record<string, string> = { low: "低", medium: "中", high: "高" };
 	return (
@@ -1664,12 +1664,12 @@ function PublishedInfoCard({
 						Avatar：<b>{avatar ? "开启" : "关闭"}</b>
 					</span>
 					<span>
-						实时语音：<b>{liveSpeech ? "开启" : "关闭"}</b>
+						实时语音：<b>{realtimeVoice ? "开启" : "关闭"}</b>
 					</span>
 				</InfoTile>
 				<InfoTile icon="spark" title="其他能力">
 					<span>
-						实验性功能：<b>{liveSpeech ? "开启" : "关闭"}</b>
+						实验性功能：<b>{realtimeVoice ? "开启" : "关闭"}</b>
 					</span>
 					<span>
 						预设建议：<b>关闭</b>

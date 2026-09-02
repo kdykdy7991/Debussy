@@ -5,7 +5,8 @@ import { WebSocketServer } from "ws";
 import type { ConversationService } from "../embed/conversations/service.ts";
 import type { EmbedAuthContext } from "../embed/middleware/authenticate.ts";
 import { newPrincipalId, type TenantId } from "../publishing/domain/ids.ts";
-import type { PublishingRepositories } from "../publishing/repositories.ts";
+import type { PublishedAppRecord, PublishingRepositories } from "../publishing/repositories.ts";
+import { parseRuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import { requestPathname } from "../transports/websocket/listener.ts";
 import type { VoicePocConfig } from "./config.ts";
 import { VoicePocConnection } from "./connection.ts";
@@ -45,12 +46,9 @@ export function createVoicePocUpgradeHandler(options: {
 			return;
 		}
 		try {
-			const apps = await options.repositories.publishedApps.listByAgentDefinition(
-				{ tenantId: options.tenantId },
-				options.config.agentDefinitionId,
-			);
+			const apps = await enabledVoiceApps();
 			if (apps.length !== 1) {
-				rejectUpgrade(socket, 503, "voice POC binding unavailable");
+				rejectUpgrade(socket, 503, "exactly one published Agent must enable experimental realtime voice");
 				return;
 			}
 			const app = apps[0];
@@ -110,6 +108,30 @@ export function createVoicePocUpgradeHandler(options: {
 			options.onError?.(error);
 			if (!socket.destroyed) rejectUpgrade(socket, 503, "voice POC unavailable");
 		}
+	}
+
+	async function enabledVoiceApps(): Promise<PublishedAppRecord[]> {
+		const enabled: PublishedAppRecord[] = [];
+		let cursor: string | undefined;
+		do {
+			const rows = await options.repositories.publishedApps.list({
+				scope: { tenantId: options.tenantId },
+				limit: 100,
+				...(cursor === undefined ? {} : { cursor }),
+				status: "active",
+			});
+			for (const app of rows) {
+				if (app.currentVersionId === null) continue;
+				const version = await options.repositories.publishedAppVersions.get(
+					{ tenantId: options.tenantId, publishedAppId: app.publishedAppId },
+					app.currentVersionId,
+				);
+				const parsed = parseRuntimeSpec(version?.runtimeSpec);
+				if (parsed.ok && parsed.spec.capabilities.realtimeVoice.enabled) enabled.push(app);
+			}
+			cursor = rows.length === 100 ? rows[rows.length - 1]?.cursor : undefined;
+		} while (cursor !== undefined);
+		return enabled;
 	}
 }
 

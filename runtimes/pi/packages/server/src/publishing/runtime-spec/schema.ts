@@ -39,6 +39,7 @@ export const PLATFORM_LIMITS = {
 export const PLATFORM_DEFAULTS = {
 	uploads: { enabled: true, maxFiles: 10, maxFileBytes: 26_214_400 },
 	speech: { enabled: false },
+	realtimeVoice: { enabled: false },
 	avatar: { enabled: false },
 	conversations: { allowNew: true },
 	profile: "chat-only",
@@ -146,6 +147,7 @@ const capabilitiesSpec = z
 		mcpServers: z.array(mcpServerRevisionSpec).max(PLATFORM_LIMITS.maxMcpServers).default([]),
 		uploads: uploadsCapability.default(PLATFORM_DEFAULTS.uploads),
 		speech: booleanCapability.default(PLATFORM_DEFAULTS.speech),
+		realtimeVoice: booleanCapability.default(PLATFORM_DEFAULTS.realtimeVoice),
 		avatar: booleanCapability.default(PLATFORM_DEFAULTS.avatar),
 		conversations: z
 			.object({ allowNew: z.boolean().default(true) })
