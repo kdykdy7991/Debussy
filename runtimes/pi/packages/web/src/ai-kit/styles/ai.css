@@ -587,6 +587,12 @@
 	white-space: pre;
 }
 
+/* 整条回答已有统一复制入口，隐藏 FlowToken 代码块自带的悬浮复制按钮。 */
+.ai-markdown button[aria-label="Copy code"],
+.ai-markdown button[aria-label="Copied!"] {
+	display: none;
+}
+
 .ai-markdown-table {
 	width: 100%;
 	margin: 0 0 var(--ai-prose-gap);
