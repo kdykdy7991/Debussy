@@ -280,11 +280,12 @@ export function AdminChatPage(): React.ReactElement {
 	const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDefinitionDetail | null>(null);
 	const [runtime, setRuntime] = useState<ChatRuntime | null>(null);
 	const [debugSessionId, setDebugSessionId] = useState<string | null>(null);
+	const realtimeVoiceAvailable = selectedAgentDetail?.capabilities.realtimeVoice === true;
 	// Voice MVP: reuses the same VoiceEngineTransport / VoiceAsrSession /
 	// VoiceTtsSession stack the published chat uses; the admin bearer is
 	// forwarded so the ticket endpoint (when reachable) issues a usable ticket.
 	const adminWebToken = import.meta.env.VITE_PI_WEB_TOKEN;
-	const voiceEngine = useVoiceMode({ token: adminWebToken });
+	const voiceEngine = useVoiceMode({ token: adminWebToken, available: realtimeVoiceAvailable });
 	// skillId -> { name, enabled } for resolving bound Skill references into the
 	// Composer's `/skill:` completion list (Agent detail only carries skillIds).
 	const [skillLookup, setSkillLookup] = useState<Map<
@@ -788,8 +789,8 @@ export function AdminChatPage(): React.ReactElement {
 				variant="admin"
 				showSidebar={false}
 				enableVoice={false}
-				enableRealtimeVoice={true}
-				voiceEngine={voiceEngine}
+				enableRealtimeVoice={realtimeVoiceAvailable}
+				voiceEngine={realtimeVoiceAvailable ? voiceEngine : undefined}
 				skills={composerSkills}
 				emptySendable={selected !== undefined && debugSessionId === null}
 				postComposer={

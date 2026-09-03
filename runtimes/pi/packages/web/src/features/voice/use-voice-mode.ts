@@ -30,6 +30,8 @@ export interface VoiceModeBundle {
 export interface UseVoiceModeOptions {
 	/** Authentication bearer the admin page already uses for the WS. */
 	readonly token?: string;
+	/** Agent capability gate. False also tears down any active voice resources. */
+	readonly available?: boolean;
 }
 
 interface AdminVoiceApi {
@@ -57,7 +59,7 @@ function defaultAdminVoiceApi(): AdminVoiceApi {
 	};
 }
 
-export function useVoiceMode({ token }: UseVoiceModeOptions): VoiceModeBundle {
+export function useVoiceMode({ token, available = true }: UseVoiceModeOptions): VoiceModeBundle {
 	const [mode, setMode] = useState<PublishedChatMode>("text");
 	const [status, setStatus] = useState<VoiceEngineStatus>("disconnected");
 	const [asr, setAsr] = useState<VoiceAsrState>({ phase: "idle" });
@@ -118,6 +120,7 @@ export function useVoiceMode({ token }: UseVoiceModeOptions): VoiceModeBundle {
 	}, []);
 
 	const onToggle = useCallback(async (): Promise<void> => {
+		if (!available) return;
 		if (mode === "voice") {
 			setMode("text");
 			startAsrOnConnectRef.current = false;
@@ -148,7 +151,24 @@ export function useVoiceMode({ token }: UseVoiceModeOptions): VoiceModeBundle {
 			// The transport already routes failures to status; swallow here so
 			// the click handler stays synchronous from the React perspective.
 		}
-	}, [ensureTransport, mode, token]);
+	}, [available, ensureTransport, mode, token]);
+
+	// Capability changes and Agent switches must release resources, not merely
+	// hide the controls while microphone capture or playback continues.
+	useEffect(() => {
+		if (available) return;
+		setMode("text");
+		startAsrOnConnectRef.current = false;
+		intentionalCloseRef.current = true;
+		const transport = transportRef.current;
+		const asrSession = asrRef.current;
+		const ttsSession = ttsRef.current;
+		if (asrSession !== null && ttsSession !== null && transport !== null) {
+			void cleanupVoiceMode({ asr: asrSession, tts: ttsSession, transport });
+		}
+		setAsr({ phase: "idle" });
+		setTts("idle");
+	}, [available]);
 
 	// Cleanup on unmount: leave voice mode if still active.
 	useEffect(() => {

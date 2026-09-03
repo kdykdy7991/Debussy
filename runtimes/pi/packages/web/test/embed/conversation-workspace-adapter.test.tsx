@@ -126,6 +126,8 @@ describe("embed ConversationWorkspace adapter", () => {
 		const textarea = /<textarea[^>]*>/.exec(markup)?.[0];
 		expect(textarea).toBeDefined();
 		expect(textarea).not.toContain("disabled");
+		expect(markup).not.toContain("语音模式");
+		expect(markup).not.toContain("朗读回复");
 		expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="上传文件附件"/);
 	});
 
