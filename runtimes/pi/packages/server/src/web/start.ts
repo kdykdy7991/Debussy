@@ -24,6 +24,7 @@ import { attachmentStoreReader, CitationService, CitationStore } from "../citati
 import type { CodingAgentPiSessionBackendOptions } from "../coding-agent/backend.ts";
 import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
 import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
+import type { VoiceEngineConfig } from "../embed/voice-engine/config.ts";
 import { PiServerError } from "../errors.ts";
 import { createDebugRepositories } from "../persistence/postgres/repositories/debug.ts";
 import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
@@ -117,6 +118,12 @@ export interface StartWebServerOptions {
 	voice?: WebVoiceOptions;
 	/** Experimental VoxEMW text-stream POC binding. */
 	voicePoc?: VoicePocConfig;
+	/**
+	 * VoxEMW 同源 WS 反代配置（spec MVP §4.2 / §5.1）。未提供 = voice engine
+	 * 端点关闭,`/api/voice-engine/v1/ws` 不挂载。`voicePoc` 与本选项互不
+	 * 耦合：前者用于 VoxEMW 页面测试壳,后者用于发布对话页。
+	 */
+	voiceEngine?: VoiceEngineConfig;
 	/**
 	 * Publishing configuration. When absent or disabled, no publishing
 	 * infrastructure (database, Redis, object store, keys) is created and the
@@ -258,6 +265,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			previewTickets: controlPlane.previewTicketService,
 			resolveModelMetadata: (provider, modelId) =>
 				(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),
+			...(options.voiceEngine !== undefined ? { voiceEngine: options.voiceEngine } : {}),
 			log,
 		});
 		if (options.voicePoc !== undefined) {
@@ -361,6 +369,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		httpHandlers.push(
 			embedPlane.bootstrapHandler,
 			embedPlane.exchangeHandler,
+			embedPlane.voiceEngineTicketHandler,
 			embedPlane.attachmentsHandler,
 			embedPlane.conversationsHandler,
 		);
@@ -371,7 +380,12 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	const server = createWebSocketServer(wsBackend, {
 		...resolved.listener,
 		// TASK-025：embed Realtime upgrade（ticket 校验）接管非主路径 upgrade。
-		...composeUpgradeHandlers(voicePoc?.handleUpgrade, embedPlane?.realtimeUpgrade),
+		// voice engine 同源反代（spec MVP §5.1）也挂在 onUnhandledUpgrade 上。
+		...composeUpgradeHandlers(
+			voicePoc?.handleUpgrade,
+			embedPlane?.realtimeUpgrade,
+			embedPlane?.voiceEngineUpgrade?.handleUpgrade,
+		),
 		httpHandler,
 		attachments,
 		// Cross-tenant attach hardening: every WS attach_upload goes through

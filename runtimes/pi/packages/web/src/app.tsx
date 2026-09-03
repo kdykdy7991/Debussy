@@ -17,11 +17,18 @@ import { ActiveAgentPresence, AiMessageFlow } from "./conversation/ai-message-fl
 import { ConversationComposer } from "./conversation/conversation-composer.tsx";
 import { ConversationSidebar } from "./conversation/conversation-sidebar.tsx";
 import { type VisualTheme, WorkspaceMasthead } from "./conversation/workspace-masthead.tsx";
+import type { VoiceAsrState } from "./embed/voice-asr-session.ts";
+import { submitAsrFinalOnce } from "./embed/voice-asr-submit.ts";
+import type { VoiceEngineStatus } from "./embed/voice-engine-transport.ts";
+import type { PublishedChatMode } from "./embed/voice-mode.ts";
+import { allowsPublishedChatSubmit } from "./embed/voice-mode.ts";
+import type { VoiceTtsPhase } from "./embed/voice-tts-session.ts";
 import type { LivePlaybackState } from "./features/voice/live-types.ts";
 import { PlaybackArbiter } from "./features/voice/playback-arbiter.ts";
 import type { SpeechController } from "./features/voice/speech-controller.ts";
 import type { SpeechControllerSource } from "./features/voice/types.ts";
 import { useLiveSpeech } from "./features/voice/use-live-speech.ts";
+import { VoiceModePanel } from "./features/voice/voice-mode-panel.tsx";
 import type { PiConnectionStore } from "./lib/connection-controller.ts";
 import type { SessionBrowserStore } from "./lib/session-controller.ts";
 
@@ -31,6 +38,31 @@ export interface AppProps {
 	variant?: "standalone" | "admin";
 	contextHeader?: ReactNode;
 	enableVoice?: boolean;
+	/**
+	 * Enable the same-origin Voice Engine WS connection (MVP §5.1). Distinct
+	 * from `enableVoice`: the legacy SpeechController + PlaybackArbiter path
+	 * stays off when this is on; this flag drives an independent toggle in
+	 * the composer that opens a transparent WebSocket to VoxEMW via
+	 * Debussy's same-origin proxy. Only meaningful when the published app
+	 * advertises `features.realtimeVoice === true`.
+	 */
+	enableRealtimeVoice?: boolean;
+	/**
+	 * Host-owned voice-engine status + toggle (Task 5). When set, the
+	 * composer renders the `VoiceEngineButton` independently of
+	 * `enableVoice`. The workspace itself does not manage the underlying
+	 * transport — it only renders the button and delegates to `onToggle`.
+	 */
+	voiceEngine?: {
+		readonly status: VoiceEngineStatus;
+		readonly asr: VoiceAsrState;
+		readonly mode: PublishedChatMode;
+		readonly tts: VoiceTtsPhase;
+		readonly replyAudioEnabled?: boolean;
+		readonly onToggle: () => void;
+		readonly onReplyAudioToggle?: () => void;
+		readonly onTextSubmit?: () => void;
+	};
 	enableUploads?: boolean;
 	showSidebar?: boolean;
 	/**
@@ -71,6 +103,8 @@ export function ConversationWorkspace({
 	variant = "standalone",
 	contextHeader,
 	enableVoice = true,
+	enableRealtimeVoice = false,
+	voiceEngine,
 	enableUploads = true,
 	showSidebar = true,
 	preComposer,
@@ -132,6 +166,7 @@ export function ConversationWorkspace({
 	const [composerFocused, setComposerFocused] = useState(false);
 	const [agentReaction, setAgentReaction] = useState<AgentReaction | undefined>(undefined);
 	const agentReactionTimerRef = useRef<number | undefined>(undefined);
+	const submittedAsrFinalsRef = useRef(new Set<string>());
 	const [sessionQuery, setSessionQuery] = useState("");
 	const [sidebarOpen, setSidebarOpen] = useState(() => variant === "admin" && showSidebar);
 	const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -150,6 +185,7 @@ export function ConversationWorkspace({
 	const active = sessionSnapshot.activeSession;
 	const activeId = active?.id;
 	const running = active !== undefined && active.phase !== "idle";
+	const publishedChatMode = voiceEngine?.mode ?? "text";
 	const canSend =
 		connected &&
 		!sessionSnapshot.loading &&
@@ -189,51 +225,68 @@ export function ConversationWorkspace({
 		setSidebarOpen(false);
 		void sessions.selectSession(sessionId).catch(() => {});
 	};
+	const submitConversationText = useCallback(
+		(submittedMessage: string, source: "composer" | "asr" = "composer"): boolean => {
+			if (!allowsPublishedChatSubmit(publishedChatMode, source) || !submittedMessage.trim() || !canSend || running)
+				return false;
+			const reaction = detectAgentReaction(submittedMessage);
+			if (reaction) {
+				setAgentReaction(reaction);
+				if (agentReactionTimerRef.current !== undefined) window.clearTimeout(agentReactionTimerRef.current);
+				agentReactionTimerRef.current = window.setTimeout(() => {
+					agentReactionTimerRef.current = undefined;
+					setAgentReaction(undefined);
+				}, 1600);
+			}
+			setMessage("");
+			if (source === "composer") voiceEngine?.onTextSubmit?.();
+			if (composerRef.current) composerRef.current.style.height = "auto";
+			// Sending is an explicit request to return to the live edge. Once the
+			// user scrolls up again, the scroll handler below releases this lock.
+			followConversationRef.current = true;
+			const attachmentIds = active?.attachments?.map((attachment) => attachment.id);
+			// Phase 2 live朗读: ask the hook whether to attach `speech` before the
+			// prompt leaves the page. The hook owns the AudioContext unlock and the
+			// persisted toggle; this layer only wires it through.
+			void (async () => {
+				const prep = enableVoice ? await live.preparePrompt() : { attachSpeech: false };
+				const baseOptions = attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined;
+				const options =
+					prep.attachSpeech && baseOptions
+						? { ...baseOptions, speech: { mode: "live" as const } }
+						: prep.attachSpeech
+							? { speech: { mode: "live" as const } }
+							: baseOptions;
+				const result = await sessions.send(submittedMessage, options);
+				if (result.liveSpeech && client?.getLiveSpeechHandle) {
+					const handle = client.getLiveSpeechHandle(result.liveSpeech.id);
+					if (handle) live.bindHandle(handle);
+				}
+			})().catch(() => {
+				// Preserve a failed prompt without overwriting anything the user has
+				// already started typing while the request was in flight.
+				setMessage((current) => (current === "" ? submittedMessage : current));
+			});
+			return true;
+		},
+		[active?.attachments, canSend, client, enableVoice, live, publishedChatMode, running, sessions, voiceEngine],
+	);
 	const submitMessage = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!message.trim() || running) return;
-		const submittedMessage = message;
-		const reaction = detectAgentReaction(submittedMessage);
-		if (reaction) {
-			setAgentReaction(reaction);
-			if (agentReactionTimerRef.current !== undefined) window.clearTimeout(agentReactionTimerRef.current);
-			agentReactionTimerRef.current = window.setTimeout(() => {
-				agentReactionTimerRef.current = undefined;
-				setAgentReaction(undefined);
-			}, 1600);
-		}
-		setMessage("");
-		if (composerRef.current) composerRef.current.style.height = "auto";
-		// Sending is an explicit request to return to the live edge. Once the
-		// user scrolls up again, the scroll handler below releases this lock.
-		followConversationRef.current = true;
-		const attachmentIds = active?.attachments?.map((attachment) => attachment.id);
-		// Phase 2 live朗读: ask the hook whether to attach `speech` before the
-		// prompt leaves the page. The hook owns the AudioContext unlock and the
-		// persisted toggle; this layer only wires it through.
-		void (async () => {
-			const prep = enableVoice ? await live.preparePrompt() : { attachSpeech: false };
-			const baseOptions = attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : undefined;
-			const options =
-				prep.attachSpeech && baseOptions
-					? { ...baseOptions, speech: { mode: "live" as const } }
-					: prep.attachSpeech
-						? { speech: { mode: "live" as const } }
-						: baseOptions;
-			const result = await sessions.send(submittedMessage, options);
-			if (result.liveSpeech && client?.getLiveSpeechHandle) {
-				const handle = client.getLiveSpeechHandle(result.liveSpeech.id);
-				if (handle) live.bindHandle(handle);
-			}
-		})().catch(() => {
-			// Preserve a failed prompt without overwriting anything the user has
-			// already started typing while the request was in flight.
-			setMessage((current) => (current === "" ? submittedMessage : current));
-		});
+		submitConversationText(message, "composer");
 	};
+
+	useEffect(() => {
+		const asr = voiceEngine?.asr;
+		if (asr?.phase !== "final" || asr.finalRequestId === undefined || asr.finalText === undefined) return;
+		submitAsrFinalOnce(asr.finalRequestId, asr.finalText, submittedAsrFinalsRef.current, (text) =>
+			submitConversationText(text, "asr"),
+		);
+	}, [submitConversationText, voiceEngine?.asr]);
 
 	const dismissLiveHint = useCallback(() => setLiveHint(undefined), []);
 	const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+		if (publishedChatMode === "voice") return;
 		const files = event.target.files ? [...event.target.files] : [];
 		event.target.value = "";
 		if (files.length === 0) return;
@@ -241,11 +294,16 @@ export function ConversationWorkspace({
 	};
 	const removeAttachment = (attachmentId: string) => void sessions.removeAttachment(attachmentId).catch(() => {});
 	const handleMessageKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+		if (publishedChatMode === "voice") {
+			event.preventDefault();
+			return;
+		}
 		if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
 		event.currentTarget.form?.requestSubmit();
 	};
 	const handleMessageChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+		if (publishedChatMode === "voice") return;
 		setMessage(event.target.value);
 		event.target.style.height = "0";
 		event.target.style.height = `${Math.min(event.target.scrollHeight, 240)}px`;
@@ -477,6 +535,11 @@ export function ConversationWorkspace({
 					skills={skills}
 					onSkillPick={(name) => setMessage(`/skill:${name} `)}
 					onVoiceChange={live.setEnabled}
+					voiceEngine={
+						enableRealtimeVoice && voiceEngine
+							? { ...voiceEngine, enabled: voiceEngine.mode === "voice" }
+							: undefined
+					}
 					onSubmit={submitMessage}
 					onMessageChange={handleMessageChange}
 					onMessageKeyDown={handleMessageKeyDown}
@@ -489,6 +552,16 @@ export function ConversationWorkspace({
 				/>
 				{postComposer}
 			</main>
+
+			{enableRealtimeVoice && voiceEngine ? (
+				<VoiceModePanel
+					status={voiceEngine.status}
+					asr={voiceEngine.asr}
+					mode={voiceEngine.mode}
+					tts={voiceEngine.tts}
+					onExit={voiceEngine.onToggle}
+				/>
+			) : null}
 
 			<button
 				className={`scrim ${sidebarOpen ? "show" : ""}`}

@@ -17,6 +17,10 @@ import type {
 } from "../lib/session-controller.ts";
 import type { EmbedChatController, EmbedChatState } from "./chat-controller.ts";
 import type { ChatAttachment, ChatMessage, ConversationSummary } from "./types.ts";
+import type { VoiceAsrState } from "./voice-asr-session.ts";
+import type { VoiceEngineStatus } from "./voice-engine-transport.ts";
+import type { PublishedChatMode } from "./voice-mode.ts";
+import type { VoiceTtsPhase } from "./voice-tts-session.ts";
 
 /**
  * Embed owns authentication and wire transport, but it does not own a second
@@ -28,6 +32,20 @@ export function EmbedConversationWorkspace(props: {
 	readonly controller: EmbedChatController;
 	/** 已绑定 Skill（发布版本能力）：传入后聊天输入支持 `/skill:` 补全。 */
 	readonly skills?: readonly { name: string; description?: string }[];
+	/**
+	 * Task 5：发布页同源 Voice Engine WS 状态与 toggle 回调。仅当发布版
+	 * 本 `features.realtimeVoice === true` 时由父组件传入。
+	 */
+	readonly voiceEngine?: {
+		readonly status: VoiceEngineStatus;
+		readonly asr: VoiceAsrState;
+		readonly mode: PublishedChatMode;
+		readonly tts: VoiceTtsPhase;
+		readonly replyAudioEnabled: boolean;
+		readonly onToggle: () => void;
+		readonly onReplyAudioToggle: () => void;
+		readonly onTextSubmit: () => void;
+	};
 }): React.JSX.Element {
 	const stores = useMemo(() => createEmbedWorkspaceStores(props.controller), [props.controller]);
 	const state = useSyncExternalStore(
@@ -42,6 +60,8 @@ export function EmbedConversationWorkspace(props: {
 			variant="admin"
 			showSidebar={state.newConversationsEnabled !== false}
 			enableVoice={false}
+			enableRealtimeVoice={props.voiceEngine !== undefined}
+			voiceEngine={props.voiceEngine}
 			enableUploads={state.uploadsEnabled}
 			skills={props.skills}
 			contextHeader={

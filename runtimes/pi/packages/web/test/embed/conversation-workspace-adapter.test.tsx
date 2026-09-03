@@ -123,6 +123,104 @@ describe("embed ConversationWorkspace adapter", () => {
 		expect(markup).toContain("editorial-composer");
 		expect(markup).toContain("PUBLISHED CHAT");
 		expect(markup).not.toContain("PublishedConversationWorkspace");
+		const textarea = /<textarea[^>]*>/.exec(markup)?.[0];
+		expect(textarea).toBeDefined();
+		expect(textarea).not.toContain("disabled");
 		expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="上传文件附件"/);
+	});
+
+	test("disables every text composer entry while Voice Mode is active", () => {
+		const state: EmbedChatState = {
+			conversations: [
+				{
+					id: "conv_1",
+					publishedAppVersionId: "pav_1",
+					status: "active",
+					title: "会话",
+					lastEventSequence: 0,
+					createdAt: "2026-09-03T00:00:00.000Z",
+				},
+			],
+			activeId: "conv_1",
+			messages: [],
+			sending: false,
+			uploading: false,
+			connectionStatus: "connected",
+			attachments: [],
+			uploadsEnabled: true,
+			error: null,
+			rolloverNotice: null,
+		};
+		const markup = renderToStaticMarkup(
+			<EmbedConversationWorkspace
+				title="已发布 Agent"
+				controller={controllerWith(state)}
+				voiceEngine={{
+					status: "connected",
+					asr: { phase: "listening" },
+					mode: "voice",
+					tts: "idle",
+					replyAudioEnabled: false,
+					onToggle: () => {},
+					onReplyAudioToggle: () => {},
+					onTextSubmit: () => {},
+				}}
+			/>,
+		);
+
+		expect(markup).toContain("voice-mode-toggle is-voice");
+		expect(markup).toMatch(/voice-mode-toggle__option[^>]*data-active="true"[^>]*aria-pressed="true"/);
+		expect(markup).toMatch(/<textarea[^>]*disabled=""/);
+		expect(markup).toMatch(/<input[^>]*type="file"[^>]*disabled=""/);
+		expect(markup).toContain('aria-label="语音模式下不可发送文字"');
+		expect(markup).toContain("退出语音");
+		expect(markup).not.toContain("朗读回复");
+	});
+
+	test("keeps the text composer enabled while Agent reply reading is on", () => {
+		const state: EmbedChatState = {
+			conversations: [
+				{
+					id: "conv_1",
+					publishedAppVersionId: "pav_1",
+					status: "active",
+					title: "会话",
+					lastEventSequence: 0,
+					createdAt: "2026-09-03T00:00:00.000Z",
+				},
+			],
+			activeId: "conv_1",
+			messages: [],
+			sending: false,
+			uploading: false,
+			connectionStatus: "connected",
+			attachments: [],
+			uploadsEnabled: true,
+			error: null,
+			rolloverNotice: null,
+		};
+		const markup = renderToStaticMarkup(
+			<EmbedConversationWorkspace
+				title="已发布 Agent"
+				controller={controllerWith(state)}
+				voiceEngine={{
+					status: "connected",
+					asr: { phase: "idle" },
+					mode: "text",
+					tts: "playing",
+					replyAudioEnabled: true,
+					onToggle: () => {},
+					onReplyAudioToggle: () => {},
+					onTextSubmit: () => {},
+				}}
+			/>,
+		);
+
+		expect(markup).toContain("朗读回复");
+		expect(markup).toMatch(/voice-reply-toggle[^>]*is-enabled[^>]*aria-pressed="true"/);
+		const textarea = /<textarea[^>]*>/.exec(markup)?.[0];
+		expect(textarea).toBeDefined();
+		expect(textarea).not.toContain("disabled");
+		expect(markup).not.toContain('aria-label="语音模式下不可发送文字"');
 	});
 });

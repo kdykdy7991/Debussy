@@ -105,6 +105,7 @@ export interface ExchangeAppView {
 	readonly features: {
 		readonly uploads: boolean;
 		readonly speech: boolean;
+		readonly realtimeVoice: boolean;
 		readonly avatar: boolean;
 		readonly newConversations: boolean;
 	};
@@ -410,12 +411,15 @@ export class ExchangeService {
 			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
 			versionId,
 		);
-		if (version === undefined) return { uploads: false, speech: false, avatar: false, newConversations: true };
+		if (version === undefined)
+			return { uploads: false, speech: false, realtimeVoice: false, avatar: false, newConversations: true };
 		const parsed = parseRuntimeSpec(version.runtimeSpec);
-		if (!parsed.ok) return { uploads: false, speech: false, avatar: false, newConversations: true };
+		if (!parsed.ok)
+			return { uploads: false, speech: false, realtimeVoice: false, avatar: false, newConversations: true };
 		return {
 			uploads: parsed.spec.capabilities.uploads.enabled,
 			speech: parsed.spec.capabilities.speech.enabled,
+			realtimeVoice: parsed.spec.capabilities.realtimeVoice.enabled,
 			avatar: parsed.spec.capabilities.avatar.enabled,
 			newConversations: parsed.spec.capabilities.conversations.allowNew,
 		};
@@ -424,17 +428,20 @@ export class ExchangeService {
 	/** 从当前版本的 RuntimeSpec 读取功能开关（27.4）；缺失/不可解析时全部关闭。 */
 	private async readFeatures(app: PublishedAppRecord): Promise<ExchangeAppView["features"]> {
 		if (app.currentVersionId === null)
-			return { uploads: false, speech: false, avatar: false, newConversations: true };
+			return { uploads: false, speech: false, realtimeVoice: false, avatar: false, newConversations: true };
 		const version = await this.repos.publishedAppVersions.get(
 			{ tenantId: app.tenantId, publishedAppId: app.publishedAppId },
 			app.currentVersionId,
 		);
-		if (version === undefined) return { uploads: false, speech: false, avatar: false, newConversations: true };
+		if (version === undefined)
+			return { uploads: false, speech: false, realtimeVoice: false, avatar: false, newConversations: true };
 		const parsed = parseRuntimeSpec(version.runtimeSpec);
-		if (!parsed.ok) return { uploads: false, speech: false, avatar: false, newConversations: true };
+		if (!parsed.ok)
+			return { uploads: false, speech: false, realtimeVoice: false, avatar: false, newConversations: true };
 		return {
 			uploads: parsed.spec.capabilities.uploads.enabled,
 			speech: parsed.spec.capabilities.speech.enabled,
+			realtimeVoice: parsed.spec.capabilities.realtimeVoice.enabled,
 			avatar: parsed.spec.capabilities.avatar.enabled,
 			newConversations: parsed.spec.capabilities.conversations.allowNew,
 		};

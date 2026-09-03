@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { loadVoiceEngineConfig } from "../embed/voice-engine/config.ts";
 import { normalizeVoiceProfiles } from "../voice/profiles.ts";
 /**
  * Dev entry point: starts the Pi web server with sensible defaults and binds
@@ -153,6 +154,7 @@ async function main(): Promise<number> {
 		webToken: process.env.PI_WEB_TOKEN,
 		voice: buildVoiceOptionsFromEnv(),
 		voicePoc: loadVoicePocConfig(process.env),
+		voiceEngine: loadVoiceEngineConfig(process.env),
 	};
 
 	const handle = await startWebServer(options);

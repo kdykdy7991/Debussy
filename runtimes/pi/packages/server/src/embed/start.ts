@@ -41,6 +41,7 @@ import { AccessTokenService, loadAccessTokenKeyMaterial } from "./auth/access-to
 import { createExchangeHttpHandler } from "./auth/exchange-http.ts";
 import { LaunchTokenVerifier } from "./auth/launch-token.ts";
 import { ExchangeService } from "./auth/principal.ts";
+import { createVoiceProxyTicketService, type VoiceProxyTicketService } from "./auth/voice-proxy-ticket.ts";
 import { createWsTicketService, type WsTicketService } from "./auth/ws-ticket.ts";
 import { createBootstrapHttpHandler } from "./bootstrap-http.ts";
 import { ConversationCitationService } from "./citations/service.ts";
@@ -58,6 +59,9 @@ import { ttsProviderError } from "./tts/provider.ts";
 import { EmbedTtsQueue } from "./tts/queue.ts";
 import { createAttachmentsHttpHandler } from "./uploads/http.ts";
 import { AttachmentService } from "./uploads/service.ts";
+import type { VoiceEngineConfig } from "./voice-engine/config.ts";
+import { createVoiceEngineUpgradeHandler, type VoiceEngineUpgradeHandle } from "./voice-engine/proxy.ts";
+import { createVoiceEngineTicketHttpHandler } from "./voice-engine-ticket-http.ts";
 
 export interface EmbedPlaneOptions {
 	readonly publishing: PublishingConfig;
@@ -95,16 +99,27 @@ export interface EmbedPlaneOptions {
 		provider: string,
 		modelId: string,
 	) => { readonly contextWindow: number; readonly maxTokens: number } | undefined;
+	/**
+	 * Voice Engine upstream configuration（spec MVP §4.2）。未提供 = 关闭
+	 * 同源 WS 反代,`voiceEngineUpgrade` 不挂载。
+	 */
+	readonly voiceEngine?: VoiceEngineConfig;
 	readonly log?: (message: string) => void;
 }
 
 export interface EmbedPlaneHandle {
 	readonly bootstrapHandler: HttpRequestHandler;
 	readonly exchangeHandler: HttpRequestHandler;
+	readonly voiceEngineTicketHandler: HttpRequestHandler;
 	readonly attachmentsHandler: HttpRequestHandler;
 	readonly conversationsHandler: HttpRequestHandler;
 	/** Realtime upgrade handler（挂到 listener 的 onUnhandledUpgrade）。 */
 	readonly realtimeUpgrade: UpgradeHandler | undefined;
+	/**
+	 * Voice Engine 同源 WS 反代 upgrade handler（挂到 listener 的
+	 * onUnhandledUpgrade）。仅当 `voiceEngine` 配置存在时构造。
+	 */
+	readonly voiceEngineUpgrade: VoiceEngineUpgradeHandle | undefined;
 	readonly accessTokens: AccessTokenService;
 	/** 指标注册表 + Prometheus 文本（spec 15.1；操作者可渲染/暴露）。 */
 	readonly metrics: MetricRegistry;
@@ -165,6 +180,7 @@ export interface EmbedServicesOptions {
 	readonly mcpTools?: McpRuntimeToolFactory;
 	/** WebSocket Ticket 服务（TASK-024/025）；未提供时 ws-ticket 端点 503。 */
 	readonly wsTickets?: WsTicketService;
+	readonly voiceProxyTickets?: VoiceProxyTicketService;
 	/** Realtime 端点基地址（ws-ticket 响应 realtimeUrl）。 */
 	readonly realtimeBaseUrl?: string;
 	/** Realtime upgrade handler（TASK-025）；未提供时无 Realtime 端点。 */
@@ -351,6 +367,11 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 		handlers: [
 			createBootstrapHttpHandler({ repositories: options.repositories }),
 			createExchangeHttpHandler({ service: exchangeService, limiter: limits.limiter, metrics, secrets }),
+			createVoiceEngineTicketHttpHandler({
+				authenticator,
+				repositories: options.repositories,
+				...(options.voiceProxyTickets === undefined ? {} : { tickets: options.voiceProxyTickets }),
+			}),
 			// uploads 必须先于 conversations 匹配（同路径前缀）。
 			createAttachmentsHttpHandler({
 				service: attachmentsService,
@@ -396,6 +417,9 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	}
 	const redis = new RedisClient({ url: redisUrl });
 	const wsTickets = createWsTicketService(createRedisTicketStore(redis));
+	const voiceProxyTickets = createVoiceProxyTicketService(
+		createRedisTicketStore(redis, { keyPrefix: "embed:voice-engine-ticket:" }),
+	);
 	// TASK-034：分层限流 + 并发槽。生产用 Redis store（cluster-wide 计数、
 	// 身份/并发故障默认 fail-closed），检查者可注入自定义实现。
 	const limits = options.limits ?? createEmbedLimits({ store: createRedisRateLimitStore(redis) });
@@ -423,6 +447,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		createSession: options.createSession,
 		...(options.mcpTools !== undefined ? { mcpTools: options.mcpTools } : {}),
 		wsTickets,
+		voiceProxyTickets,
 		realtimeBaseUrl: options.publishing.embedBaseUrl,
 		launchTokens,
 		limits,
@@ -501,17 +526,34 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		onError: (error) => log(`realtime upgrade error: ${error instanceof Error ? error.message : String(error)}`),
 	});
 
+	// Voice Engine 同源 WS 反代（spec MVP §4.2 / §5.1）。仅当 voiceEngine 配置
+	// 存在时构造；upstream token 注册到 SecretRegistry 以便 redacting sink
+	// 不让它出现在 access/error 日志或错误消息中。
+	let voiceEngineUpgrade: VoiceEngineUpgradeHandle | undefined;
+	if (options.voiceEngine !== undefined) {
+		secrets.register(options.voiceEngine.upstreamToken);
+		voiceEngineUpgrade = createVoiceEngineUpgradeHandler({
+			tickets: voiceProxyTickets,
+			config: options.voiceEngine,
+			onError: (error) => log(`voice-engine proxy error: ${error instanceof Error ? error.message : String(error)}`),
+		});
+		log("embed data plane composed: + voice engine WS proxy");
+	}
+
 	return {
 		bootstrapHandler: services.handlers[0],
 		exchangeHandler: services.handlers[1],
-		attachmentsHandler: services.handlers[2],
-		conversationsHandler: services.handlers[3],
+		voiceEngineTicketHandler: services.handlers[2],
+		attachmentsHandler: services.handlers[3],
+		conversationsHandler: services.handlers[4],
 		realtimeUpgrade,
+		voiceEngineUpgrade,
 		accessTokens: config.accessTokens,
 		metrics,
 		ttsQueue: services.ttsQueue,
 		conversationService: services.conversationService,
 		close: async () => {
+			await voiceEngineUpgrade?.close();
 			await services.close();
 			await redis.close();
 			await objectStore?.close();

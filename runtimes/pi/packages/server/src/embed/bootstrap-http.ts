@@ -83,6 +83,7 @@ async function appSummary(
 	features: {
 		uploads: boolean;
 		speech: boolean;
+		realtimeVoice: boolean;
 		avatar: boolean;
 		newConversations: boolean;
 		// Bound Skill capabilities of the pinned version; drives `/skill:` completion + UI.
@@ -94,6 +95,7 @@ async function appSummary(
 	let features = {
 		uploads: false,
 		speech: false,
+		realtimeVoice: false,
 		avatar: false,
 		newConversations: true,
 		skills: [] as readonly { name: string; description: string; automationAvailable: boolean }[],
@@ -109,6 +111,7 @@ async function appSummary(
 				features = {
 					uploads: parsed.spec.capabilities.uploads.enabled,
 					speech: parsed.spec.capabilities.speech.enabled,
+					realtimeVoice: parsed.spec.capabilities.realtimeVoice.enabled,
 					avatar: parsed.spec.capabilities.avatar.enabled,
 					newConversations: parsed.spec.capabilities.conversations.allowNew,
 					skills: parsed.spec.capabilities.skills.map((skill) => ({

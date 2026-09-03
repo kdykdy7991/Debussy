@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmbedApi, EmbedApiError } from "./api.ts";
 import { EmbedAuthController } from "./auth-controller.ts";
 import { EmbedChatController } from "./chat-controller.ts";
@@ -8,6 +8,10 @@ import { EmbedErrorState } from "./error-state.tsx";
 import { EmbedPostMessageChannel } from "./post-message.ts";
 import type { WebSocketLike } from "./realtime-transport.ts";
 import type { BootstrapResponse } from "./types.ts";
+import { VoiceAsrSession, type VoiceAsrState } from "./voice-asr-session.ts";
+import { type VoiceEngineStatus, VoiceEngineTransport } from "./voice-engine-transport.ts";
+import { cleanupVoiceMode, type PublishedChatMode } from "./voice-mode.ts";
+import { currentVisibleAssistant, type VoiceTtsPhase, VoiceTtsSession } from "./voice-tts-session.ts";
 
 type Phase = "loading" | "error" | "ready";
 type EmbedMode = "anonymous" | "signed_user" | "preview";
@@ -34,9 +38,21 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const [phase, setPhase] = useState<Phase>("loading");
 	const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [realtimeVoiceEnabled, setRealtimeVoiceEnabled] = useState(false);
+	const [voiceStatus, setVoiceStatus] = useState<VoiceEngineStatus>("disconnected");
+	const [voiceAsr, setVoiceAsr] = useState<VoiceAsrState>({ phase: "idle" });
+	const [voiceMode, setVoiceMode] = useState<PublishedChatMode>("text");
+	const [voiceTtsPhase, setVoiceTtsPhase] = useState<VoiceTtsPhase>("idle");
+	const [replyAudioEnabled, setReplyAudioEnabled] = useState(false);
 	const controllersRef = useRef<{ auth: EmbedAuthController; chat: EmbedChatController } | null>(null);
 	const channelRef = useRef<EmbedPostMessageChannel | null>(null);
 	const hostOriginRef = useRef<string | null>(null);
+	const voiceTransportRef = useRef<VoiceEngineTransport | null>(null);
+	const voiceAsrRef = useRef<VoiceAsrSession | null>(null);
+	const voiceTtsRef = useRef<VoiceTtsSession | null>(null);
+	const startAsrOnConnectRef = useRef(false);
+	const intentionalVoiceCloseRef = useRef(false);
+	const replyAudioEnabledRef = useRef(false);
 
 	/** 计算 iframe 内容高度并回发宿主（resize-request / 尺寸变化 / ready 后）。 */
 	const reportHeight = useCallback((): void => {
@@ -49,6 +65,100 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 	const focusComposer = useCallback((): void => {
 		document.getElementById("message")?.focus();
 	}, []);
+
+	/** G1: explicit, mutually exclusive Text/Voice mode switch. */
+	const voiceEngineToggle = useCallback(async (): Promise<void> => {
+		const controllers = controllersRef.current;
+		const transport = voiceTransportRef.current;
+		if (controllers === null || transport === null) return;
+		const asr = voiceAsrRef.current;
+		const tts = voiceTtsRef.current;
+		if (asr === null || tts === null) return;
+		if (voiceMode === "voice") {
+			setVoiceMode("text");
+			startAsrOnConnectRef.current = false;
+			intentionalVoiceCloseRef.current = true;
+			await cleanupVoiceMode({ asr, tts, transport });
+			setVoiceAsr({ phase: "idle" });
+			setVoiceTtsPhase("idle");
+			focusComposer();
+			return;
+		}
+		// Full Voice Mode owns TTS while active; Text Mode starts with the
+		// independently controlled reply reader switched off.
+		replyAudioEnabledRef.current = false;
+		setReplyAudioEnabled(false);
+		setVoiceMode("voice");
+		if (transport.currentStatus === "connected") {
+			tts.enable();
+			await asr.start();
+			return;
+		}
+		try {
+			startAsrOnConnectRef.current = true;
+			tts.enable();
+			await transport.connect(controllers.auth.getToken());
+		} catch {
+			// transport already routes failures to status; swallow here so
+			// the click handler stays synchronous from the React perspective.
+		}
+	}, [focusComposer, voiceMode]);
+
+	/** Text Mode TTS-only switch: never starts ASR or requests microphone access. */
+	const replyAudioToggle = useCallback(async (): Promise<void> => {
+		if (voiceMode !== "text") return;
+		const controllers = controllersRef.current;
+		const transport = voiceTransportRef.current;
+		const tts = voiceTtsRef.current;
+		if (controllers === null || transport === null || tts === null) return;
+		if (replyAudioEnabledRef.current) {
+			replyAudioEnabledRef.current = false;
+			setReplyAudioEnabled(false);
+			await tts.stop();
+			intentionalVoiceCloseRef.current = true;
+			transport.close();
+			return;
+		}
+		replyAudioEnabledRef.current = true;
+		setReplyAudioEnabled(true);
+		tts.enable();
+		if (transport.currentStatus === "connected") return;
+		try {
+			await transport.connect(controllers.auth.getToken());
+		} catch {
+			replyAudioEnabledRef.current = false;
+			setReplyAudioEnabled(false);
+			await tts.stop(false);
+		}
+	}, [voiceMode]);
+
+	const interruptReplyAudio = useCallback((): void => {
+		if (replyAudioEnabledRef.current) voiceTtsRef.current?.interruptForUserTurn();
+	}, []);
+
+	const voiceEngine = useMemo(() => {
+		if (!realtimeVoiceEnabled) return undefined;
+		return {
+			status: voiceStatus,
+			asr: voiceAsr,
+			mode: voiceMode,
+			tts: voiceTtsPhase,
+			replyAudioEnabled,
+			onToggle: () => void voiceEngineToggle(),
+			onReplyAudioToggle: () => void replyAudioToggle(),
+			onTextSubmit: interruptReplyAudio,
+		};
+	}, [
+		realtimeVoiceEnabled,
+		voiceStatus,
+		voiceAsr,
+		voiceMode,
+		voiceTtsPhase,
+		replyAudioEnabled,
+		voiceEngineToggle,
+		replyAudioToggle,
+		interruptReplyAudio,
+	]);
 
 	/** 认证 + 会话加载（匿名直接进入；signed_user 用宿主 init 的 Launch Token）。 */
 	const signInAndLoad = useCallback(
@@ -70,6 +180,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 						: await controllers.auth.signIn(props.publicAppId, hostOrigin!);
 			// PD-18：launchToken 即用即弃（此处不留存任何引用）。
 			await controllers.chat.initialize(state.features);
+			setRealtimeVoiceEnabled(state.features.realtimeVoice === true);
 			setPhase("ready");
 			if (mode !== "preview") {
 				// WB-005: preview never postMessages the host (admin-only tab).
@@ -130,6 +241,45 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			wsFactory: props.wsFactory,
 		});
 		controllersRef.current = { auth, chat };
+		// Task 5: same-origin Voice Engine WS transport. Eagerly constructed so
+		// that toggle clicks have a stable target; status updates flow through
+		// the React state. Eagerly invalidating the transport on phase
+		// transitions to `loading` (logout) is handled by the cleanup below.
+		let voiceAsrSession: VoiceAsrSession;
+		let voiceTtsSession: VoiceTtsSession;
+		const voiceTransport = new VoiceEngineTransport({
+			getTicket: (token) => api.getVoiceEngineWsTicket(token),
+			onStatus: (status) => {
+				setVoiceStatus(status);
+				if (status === "connected" && startAsrOnConnectRef.current) {
+					startAsrOnConnectRef.current = false;
+					void voiceAsrSession.start();
+				} else if (status === "closed") {
+					startAsrOnConnectRef.current = false;
+					void voiceTtsSession.stop(false);
+					replyAudioEnabledRef.current = false;
+					setReplyAudioEnabled(false);
+					if (intentionalVoiceCloseRef.current) intentionalVoiceCloseRef.current = false;
+					else void voiceAsrSession.handleDisconnect();
+				}
+			},
+			onMessage: (data) => {
+				voiceAsrSession.handleMessage(data);
+				voiceTtsSession.handleMessage(data);
+			},
+			wsFactory: props.wsFactory as ((url: string) => WebSocketLike) | undefined,
+		});
+		voiceAsrSession = new VoiceAsrSession({ send: (frame) => voiceTransport.send(frame), onState: setVoiceAsr });
+		voiceTtsSession = new VoiceTtsSession({ send: (frame) => voiceTransport.send(frame), onPhase: setVoiceTtsPhase });
+		voiceTransportRef.current = voiceTransport;
+		voiceAsrRef.current = voiceAsrSession;
+		voiceTtsRef.current = voiceTtsSession;
+		const observeVisibleAssistant = (): void => {
+			const visible = currentVisibleAssistant(chat.getState().messages);
+			voiceTtsSession.observeVisibleAssistant(visible.id, visible.text, visible.status);
+		};
+		observeVisibleAssistant();
+		const unsubscribeVoiceTts = chat.subscribe(observeVisibleAssistant);
 		let channel: EmbedPostMessageChannel | undefined;
 		let mode: EmbedMode = "anonymous";
 
@@ -188,6 +338,13 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			window.removeEventListener("resize", onWindowResize);
 			channel?.stop();
 			chat.close();
+			void voiceAsrSession.dispose();
+			unsubscribeVoiceTts();
+			void voiceTtsSession.stop();
+			voiceTransport.close();
+			voiceTransportRef.current = null;
+			voiceAsrRef.current = null;
+			voiceTtsRef.current = null;
 		};
 	}, [
 		focusComposer,
@@ -235,6 +392,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			title={summary.name}
 			controller={chatController}
 			skills={summary.features.skills?.map((skill) => ({ name: skill.name, description: skill.description }))}
+			voiceEngine={voiceEngine}
 		/>
 	);
 	/* Legacy EmbedShell fallback retained below temporarily for migration reference.

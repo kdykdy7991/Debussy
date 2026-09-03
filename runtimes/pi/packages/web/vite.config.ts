@@ -152,14 +152,14 @@ export default defineConfig({
  * Vite 的 proxy 配置项没有官方强类型（属于 http-proxy 透传），这里用
  * `as` 窄化到我们实际用到的字段。
  */
-type ProxyEntry = {
+export type ProxyEntry = {
 	target: string;
 	changeOrigin: boolean;
 	ws?: boolean;
 	configure?: (proxyServer: unknown) => void;
 };
 
-function buildProxyConfig(
+export function buildProxyConfig(
 	embedTarget: string | undefined,
 	adminTarget: string | undefined,
 ): Record<string, ProxyEntry> | undefined {
@@ -185,6 +185,7 @@ function buildProxyConfig(
 		return {
 			"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 			"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
+			"/api/voice-engine": { target: embedTarget, changeOrigin: false, ws: true },
 		};
 	}
 	if (isAdminOnly) {
@@ -198,6 +199,7 @@ function buildProxyConfig(
 		return {
 			"/api/control": { target: adminTarget, changeOrigin: false, configure: adminConfigure },
 			"/api/embed": { target: adminTarget, changeOrigin: false, ws: true },
+			"/api/voice-engine": { target: adminTarget, changeOrigin: false, ws: true },
 		};
 	}
 	if (embedTarget === undefined) {
@@ -211,5 +213,6 @@ function buildProxyConfig(
 	return {
 		"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 		"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
+		"/api/voice-engine": { target: embedTarget, changeOrigin: false, ws: true },
 	};
 }

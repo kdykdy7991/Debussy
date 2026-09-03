@@ -9,7 +9,7 @@
 import type { TicketStore } from "../../embed/auth/ws-ticket.ts";
 import type { RedisClient } from "./client.ts";
 
-const KEY_PREFIX = "embed:ws-ticket:";
+const DEFAULT_KEY_PREFIX = "embed:ws-ticket:";
 
 /** 原子读取并删除：`GET` + `DEL`，返回旧值或 nil。 */
 const CONSUME_LUA = `
@@ -20,13 +20,14 @@ end
 return value
 `;
 
-export function createRedisTicketStore(redis: RedisClient): TicketStore {
+export function createRedisTicketStore(redis: RedisClient, options: { readonly keyPrefix?: string } = {}): TicketStore {
+	const keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
 	return {
 		async set(hash, claims, ttlSeconds) {
-			await redis.run("SET", `${KEY_PREFIX}${hash}`, claims, "EX", ttlSeconds);
+			await redis.run("SET", `${keyPrefix}${hash}`, claims, "EX", ttlSeconds);
 		},
 		async consume(hash) {
-			const reply = await redis.run("EVAL", CONSUME_LUA, 1, `${KEY_PREFIX}${hash}`);
+			const reply = await redis.run("EVAL", CONSUME_LUA, 1, `${keyPrefix}${hash}`);
 			return reply === null || reply === undefined ? null : String(reply);
 		},
 	};

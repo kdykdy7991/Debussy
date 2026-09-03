@@ -388,6 +388,11 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 
 /* Composer */
 .composer-dock { position: absolute; z-index: 15; right: 0; bottom: 0; left: 0; padding: 18px 24px 20px; background: linear-gradient(transparent, var(--color-bg-content) 28%); pointer-events: none; }
+/* The mode switch occupies its own row, so enabling voice never participates
+ * in (or shrinks) the established composer width calculation. */
+.composer-dock:has(> .composer-voice-engine) {
+	padding: 18px 24px 20px;
+}
 .editorial-composer { width: min(var(--composer-max), calc(100% - 24px)); margin: 0 auto; padding: 12px 14px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg); background: rgb(255 253 248 / 97%); box-shadow: var(--shadow-float); pointer-events: auto; transition: border var(--duration-base), box-shadow var(--duration-base); }
 .editorial-composer:focus-within { border-color: var(--color-text-primary); box-shadow: 0 15px 42px rgb(32 27 20 / 16%); }
 .editorial-composer.running { border-color: var(--color-editorial); }
@@ -425,6 +430,340 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .composer-voice .live-speech-toggle small { color: var(--color-text-tertiary); font-size: 8px; }
 .composer-voice .live-speech-toggle input { width: 28px; height: 16px; margin: 0; accent-color: var(--color-switch-on); cursor: pointer; }
 .composer-voice .live-speech-toggle input:disabled { cursor: not-allowed; }
+.composer-voice-engine {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: min(var(--composer-max), calc(100% - 24px));
+	margin: 0 auto 8px;
+	pointer-events: auto;
+}
+.voice-reply-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 11px;
+	border: 1px solid var(--color-border-default);
+	border-radius: 999px;
+	background: var(--color-bg-content);
+	color: var(--color-text-secondary);
+	font: 500 12px/1 var(--font-sans);
+	cursor: pointer;
+	transition: border-color 140ms, background 140ms, color 140ms;
+}
+.voice-reply-toggle:hover:not(:disabled) { border-color: var(--color-border-strong); color: var(--color-text-primary); }
+.voice-reply-toggle.is-enabled {
+	border-color: #2f9e54;
+	background: rgb(47 158 84 / 9%);
+	color: #237a40;
+}
+.voice-reply-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
+.voice-reply-toggle__icon { display: inline-flex; }
+.voice-reply-toggle__state { font-weight: 700; }
+.voice-engine-debug { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.voice-mode-indicator { color: var(--color-text-primary); font-size: 11px; }
+.voice-mode-active .voice-engine-button { color: var(--color-danger, #b42318); font-weight: 600; }
+.voice-engine-button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--color-text-secondary); font-size: 10px; cursor: pointer; }
+.voice-engine-button:disabled { cursor: wait; opacity: 0.65; }
+.voice-engine-button svg { width: 16px; height: 16px; }
+.voice-engine-final, .voice-engine-error { max-width: 360px; font-size: 10px; overflow-wrap: anywhere; }
+.voice-engine-final { color: var(--color-text-secondary); }
+.voice-engine-error { color: var(--color-danger, #dc2626); }
+
+/* ------------------------------------------------------------------
+ * Chat text/voice mode toggle (designed to fit the composer footer
+ * in either admin or standalone shell — small, monochrome, no border
+ * noise). The two options share one rounded capsule; the active side
+ * is the only one filled.
+ * ------------------------------------------------------------------ */
+.voice-mode-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 0;
+	height: 30px;
+	padding: 3px;
+	border: 1px solid var(--color-border-default);
+	border-radius: 999px;
+	background: var(--color-bg-content);
+	color: var(--color-text-secondary);
+}
+.voice-mode-toggle__option {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 22px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	font: 500 12px/1 var(--font-sans);
+	letter-spacing: 0.01em;
+	cursor: pointer;
+	transition: background 140ms, color 140ms;
+}
+.voice-mode-toggle__option[data-active="true"] {
+	background: #111111;
+	color: #ffffff;
+}
+.voice-mode-toggle__option:disabled { cursor: not-allowed; opacity: 0.55; }
+.voice-mode-toggle__icon { display: inline-flex; }
+.voice-mode-toggle__option[data-active="false"] .voice-mode-toggle__icon {
+	color: var(--color-text-tertiary);
+}
+.voice-mode-toggle__option[data-active="true"] .voice-mode-toggle__icon {
+	color: currentColor;
+}
+
+/* ------------------------------------------------------------------
+ * Voice mode floating panel (right side). Mirrors the debug-history
+ * panel so the two side affordances feel like one family — same
+ * anchor, same shadow, same close-button style — but the panel itself
+ * is its own component (different content).
+ * ------------------------------------------------------------------ */
+.voice-mode-panel {
+	position: absolute;
+	z-index: 40;
+	top: var(--voice-mode-panel-top, 88px);
+	right: var(--voice-mode-panel-right, 32px);
+	display: flex;
+	flex-direction: column;
+	width: var(--voice-mode-panel-width, 300px);
+	max-height: calc(100% - var(--voice-mode-panel-top, 88px) - 32px);
+	padding: 0;
+	background: var(--color-bg-content);
+	border: 1px solid var(--color-border-default);
+	border-radius: 14px;
+	box-shadow: 0 18px 48px rgb(15 23 42 / 14%), 0 2px 6px rgb(15 23 42 / 6%);
+	overflow: hidden;
+	animation: voice-mode-panel-in 180ms var(--ease-standard, ease);
+}
+
+.voice-mode-panel__notch {
+	position: absolute;
+	top: -7px;
+	right: 28px;
+	width: 14px;
+	height: 14px;
+	background: var(--color-bg-content);
+	border-top: 1px solid var(--color-border-default);
+	border-left: 1px solid var(--color-border-default);
+	transform: rotate(45deg);
+	border-top-left-radius: 3px;
+}
+
+.voice-mode-panel__header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px 16px 8px;
+}
+.voice-mode-panel__title-block {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+.voice-mode-panel__icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	background: var(--color-bg-subtle);
+	color: #2f9e54;
+	flex: 0 0 auto;
+}
+.voice-mode-panel__title-text {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+.voice-mode-panel__title-text strong {
+	font: 600 14px/1.2 var(--font-sans);
+	color: var(--color-text-primary);
+}
+.voice-mode-panel__status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font: 500 11.5px/1 var(--font-sans);
+	color: var(--color-text-tertiary);
+}
+.voice-mode-panel__status.is-active { color: #2f9e54; }
+.voice-mode-panel__status-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	flex: 0 0 auto;
+}
+.voice-mode-panel__status.is-active .voice-mode-panel__status-dot {
+	box-shadow: 0 0 0 3px rgb(47 158 84 / 16%);
+	animation: voice-mode-panel-pulse 1.6s ease-in-out infinite;
+}
+
+.voice-mode-panel__exit {
+	flex: 0 0 auto;
+	min-height: 30px;
+	padding: 0 12px;
+	border: 1px solid var(--color-border-default);
+	border-radius: 8px;
+	background: var(--color-bg-content);
+	color: var(--color-text-primary);
+	font: 600 12px/1 var(--font-sans);
+	cursor: pointer;
+	transition: background 140ms, color 140ms, border-color 140ms;
+}
+.voice-mode-panel__exit:hover {
+	background: #111111;
+	border-color: #111111;
+	color: #ffffff;
+}
+
+.voice-mode-panel__prompt {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 4px 16px 8px;
+}
+.voice-mode-panel__hint {
+	margin: 0;
+	font: 500 12px/1.4 var(--font-sans);
+	color: var(--color-text-secondary);
+}
+.voice-mode-panel__elapsed {
+	flex: 0 0 auto;
+	font: 600 12px/1 var(--font-mono);
+	color: var(--color-text-tertiary);
+}
+
+.voice-mode-panel__waveform {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	height: 56px;
+	padding: 0 16px;
+}
+.voice-mode-panel__bar {
+	display: inline-block;
+	width: 3px;
+	border-radius: 2px;
+	background: #2f9e54;
+	opacity: 0.35;
+	transform-origin: center;
+	animation: voice-mode-panel-wave 1.2s ease-in-out infinite;
+}
+.voice-mode-panel__waveform:not(.is-listening) .voice-mode-panel__bar {
+	background: var(--color-border-strong);
+	opacity: 0.4;
+	animation: none;
+	transform: scaleY(0.35);
+}
+
+.voice-mode-panel__events {
+	padding: 6px 16px 12px;
+	border-top: 1px solid var(--color-border-default);
+}
+.voice-mode-panel__events-title {
+	margin: 4px 0 8px;
+	font: 600 11px/1 var(--font-sans);
+	color: var(--color-text-tertiary);
+	letter-spacing: 0.04em;
+}
+.voice-mode-panel__events-empty {
+	margin: 6px 0 4px;
+	font: 500 11px/1.4 var(--font-sans);
+	color: var(--color-text-tertiary);
+}
+.voice-mode-panel__events-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.voice-mode-panel__event {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 0;
+	font: 500 12px/1.4 var(--font-sans);
+	color: var(--color-text-secondary);
+}
+.voice-mode-panel__event-dot {
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--color-bg-subtle);
+	color: var(--color-text-tertiary);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+}
+.voice-mode-panel__event-dot::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+}
+.voice-mode-panel__event-dot--connected { color: #2f9e54; }
+.voice-mode-panel__event-dot--listening { color: #2f9e54; }
+.voice-mode-panel__event-dot--recognizing { color: var(--color-text-primary); }
+.voice-mode-panel__event-dot--reply { color: var(--color-text-primary); }
+.voice-mode-panel__event-dot--playing { color: var(--color-text-primary); }
+.voice-mode-panel__event-dot--info { color: var(--color-text-tertiary); }
+.voice-mode-panel__event-label { flex: 1 1 auto; min-width: 0; }
+.voice-mode-panel__event-time {
+	flex: 0 0 auto;
+	font: 10px/1 var(--font-mono);
+	color: var(--color-text-tertiary);
+}
+
+.voice-mode-panel__tip {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 16px 14px;
+	border-top: 1px solid var(--color-border-default);
+	background: var(--color-bg-subtle);
+	color: var(--color-text-secondary);
+	font: 500 11.5px/1.4 var(--font-sans);
+}
+.voice-mode-panel__tip-icon {
+	display: inline-flex;
+	color: var(--color-text-tertiary);
+	flex: 0 0 auto;
+}
+
+@keyframes voice-mode-panel-in {
+	from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+	to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes voice-mode-panel-pulse {
+	0%, 100% { box-shadow: 0 0 0 3px rgb(47 158 84 / 16%); }
+	50% { box-shadow: 0 0 0 5px rgb(47 158 84 / 6%); }
+}
+@keyframes voice-mode-panel-wave {
+	0%, 100% { transform: scaleY(0.35); opacity: 0.4; }
+	50% { transform: scaleY(1); opacity: 1; }
+}
+
+@media (max-width: 1100px) {
+	.voice-mode-panel {
+		--voice-mode-panel-width: 260px;
+		--voice-mode-panel-right: 12px;
+	}
+}
 .composer-hint { color: var(--color-text-tertiary); font-size: 8px; }
 .send-button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: var(--color-text-primary); color: var(--color-bg-content); cursor: pointer; }
 .stop-button { display: inline-flex; height: 30px; align-items: center; gap: 7px; padding: 0 11px; border: 1px solid var(--color-editorial); border-radius: 15px; background: transparent; color: var(--color-editorial); font-size: 9px; cursor: pointer; }
@@ -873,7 +1212,7 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	padding: 0;
 	font: 15px/1.5 var(--font-serif);
 }
-.composer-toolbar { align-items: center; margin-top: 11px; gap: 10px; }
+.composer-toolbar { align-items: center; margin-top: 14px; gap: 10px; }
 .composer-tools { display: flex; gap: 6px; }
 .composer-tool,
 .composer-attach {
@@ -1653,6 +1992,14 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	padding: 8px 24px 6px;
 	background: transparent;
 	pointer-events: auto;
+}
+/* Admin debug keeps its wider composer width for both the switch row and form. */
+.admin-debug-shell .composer-dock:has(> .composer-voice-engine) {
+	padding: 8px 24px 6px;
+}
+.admin-debug-shell .composer-voice-engine {
+	width: 100%;
+	max-width: var(--admin-debug-composer-width);
 }
 .admin-debug-shell .editorial-composer {
 	box-shadow: none;

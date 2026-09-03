@@ -22,6 +22,7 @@ export interface EmbedAuthState {
 	readonly features: {
 		readonly uploads: boolean;
 		readonly speech: boolean;
+		readonly realtimeVoice: boolean;
 		readonly avatar: boolean;
 		readonly newConversations?: boolean;
 	};

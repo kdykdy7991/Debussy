@@ -30,6 +30,7 @@ export type {
 	RealtimeDecodeError,
 	RealtimeDecodeResult,
 	RecoverableEventBase,
+	VoiceEngineWsTicketResponse,
 	WsTicketResponse,
 } from "@earendil-works/pi-protocol";
 

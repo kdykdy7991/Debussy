@@ -1,6 +1,11 @@
 import type { SessionSnapshot, VoiceCapability } from "@earendil-works/pi-protocol";
 import type { ChangeEventHandler, FocusEventHandler, FormEventHandler, KeyboardEventHandler, RefObject } from "react";
+import type { VoiceAsrState } from "../embed/voice-asr-session.ts";
+import type { VoiceEngineStatus } from "../embed/voice-engine-transport.ts";
+import type { VoiceTtsPhase } from "../embed/voice-tts-session.ts";
 import { LiveSpeechToggle } from "../features/voice/live-speech-toggle.tsx";
+import { VoiceModeToggle } from "../features/voice/voice-mode-toggle.tsx";
+import { VoiceReplyToggle } from "../features/voice/voice-reply-toggle.tsx";
 import type { SessionBrowserSnapshot } from "../lib/session-controller.ts";
 
 export interface ConversationComposerProps {
@@ -21,6 +26,21 @@ export interface ConversationComposerProps {
 	/** 已绑定 Skill（发布版本能力，review doc §4.6）：输入 `/skill:` 时补全。 */
 	readonly skills?: readonly { name: string; description?: string }[];
 	readonly onVoiceChange: (enabled: boolean) => void;
+	/**
+	 * Voice Engine 同源 WS 反代的最小 UI（Task 5）。仅在发布页
+	 * `features.realtimeVoice === true` 时由宿主传入;不与旧 SpeechController /
+	 * LiveSpeechToggle / `enableVoice` 共用。
+	 */
+	readonly voiceEngine?: {
+		readonly status: VoiceEngineStatus;
+		readonly asr: VoiceAsrState;
+		readonly enabled: boolean;
+		readonly tts: VoiceTtsPhase;
+		readonly replyAudioEnabled?: boolean;
+		readonly onToggle: () => void;
+		readonly onReplyAudioToggle?: () => void;
+		readonly onTextSubmit?: () => void;
+	};
 	readonly onSubmit: FormEventHandler<HTMLFormElement>;
 	readonly onMessageChange: ChangeEventHandler<HTMLTextAreaElement>;
 	readonly onMessageKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -57,9 +77,29 @@ function skillSuggestions(
 
 export function ConversationComposer(props: ConversationComposerProps): React.ReactElement {
 	const active = props.active;
-	const suggestions = skillSuggestions(props.message, props.skills ?? []);
+	const textDisabled = props.voiceEngine?.enabled === true;
+	const suggestions = textDisabled ? [] : skillSuggestions(props.message, props.skills ?? []);
 	return (
 		<div className="composer-dock">
+			{props.voiceEngine ? (
+				<div className="composer-voice-engine">
+					<VoiceModeToggle
+						status={props.voiceEngine.status}
+						asr={props.voiceEngine.asr}
+						enabled={props.voiceEngine.enabled}
+						tts={props.voiceEngine.tts}
+						disabled={!props.connected}
+						onToggle={props.voiceEngine.onToggle}
+					/>
+					{!props.voiceEngine.enabled && props.voiceEngine.onReplyAudioToggle ? (
+						<VoiceReplyToggle
+							enabled={props.voiceEngine.replyAudioEnabled === true}
+							disabled={!props.connected}
+							onToggle={props.voiceEngine.onReplyAudioToggle}
+						/>
+					) : null}
+				</div>
+			) : null}
 			<form className={`editorial-composer ${props.running ? "running" : ""}`} onSubmit={props.onSubmit}>
 				{(active || props.sessions.uploads.length > 0) &&
 				((active?.attachments?.length ?? 0) > 0 || props.sessions.uploads.length > 0) ? (
@@ -112,19 +152,22 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 						id="message"
 						rows={1}
 						placeholder={
-							active
-								? props.running
-									? "Agent 运行中，可停止后继续输入…"
-									: "Ask anything, or point me at a document…"
-								: props.emptySendable
-									? "输入第一条消息，发送时创建调试会话…"
-									: "选择或新建一个会话后开始…"
+							textDisabled
+								? "当前为语音模式，退出后可输入文字"
+								: active
+									? props.running
+										? "Agent 运行中，可停止后继续输入…"
+										: "Ask anything, or point me at a document…"
+									: props.emptySendable
+										? "输入第一条消息，发送时创建调试会话…"
+										: "选择或新建一个会话后开始…"
 						}
 						disabled={
 							!props.connected ||
 							(active === undefined && !props.emptySendable) ||
 							props.sessions.loading ||
-							props.running
+							props.running ||
+							textDisabled
 						}
 						value={props.message}
 						onChange={props.onMessageChange}
@@ -156,6 +199,7 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 							type="button"
 							onClick={() => props.fileInputRef.current?.click()}
 							disabled={
+								textDisabled ||
 								!props.uploadsEnabled ||
 								!props.connected ||
 								active === undefined ||
@@ -169,7 +213,14 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 								<path d="M10 4.5v11M4.5 10h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 							</svg>
 						</button>
-						<input ref={props.fileInputRef} type="file" multiple hidden onChange={props.onFilesSelected} />
+						<input
+							ref={props.fileInputRef}
+							type="file"
+							multiple
+							hidden
+							disabled={textDisabled}
+							onChange={props.onFilesSelected}
+						/>
 					</div>
 					{props.voice ? (
 						<div className="composer-voice">
@@ -181,7 +232,11 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 						</div>
 					) : null}
 					<div className="composer-submit">
-						{props.running ? (
+						{textDisabled ? (
+							<button className="send-button" type="submit" disabled aria-label="语音模式下不可发送文字">
+								Send <span aria-hidden="true">↵</span>
+							</button>
+						) : props.running ? (
 							<button className="stop-button" type="button" onClick={props.onAbort}>
 								Stop
 							</button>

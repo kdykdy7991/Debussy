@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationWorkspace } from "../../app.tsx";
+import { useVoiceMode } from "../../features/voice/use-voice-mode.ts";
 import { PiConnectionController } from "../../lib/connection-controller.ts";
 import { LazyDebugSessionController, MutableEnsureAttachedRef } from "../../lib/lazy-debug-session-controller.ts";
 import type { SessionController } from "../../lib/session-controller.ts";
@@ -279,6 +280,11 @@ export function AdminChatPage(): React.ReactElement {
 	const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDefinitionDetail | null>(null);
 	const [runtime, setRuntime] = useState<ChatRuntime | null>(null);
 	const [debugSessionId, setDebugSessionId] = useState<string | null>(null);
+	// Voice MVP: reuses the same VoiceEngineTransport / VoiceAsrSession /
+	// VoiceTtsSession stack the published chat uses; the admin bearer is
+	// forwarded so the ticket endpoint (when reachable) issues a usable ticket.
+	const adminWebToken = import.meta.env.VITE_PI_WEB_TOKEN;
+	const voiceEngine = useVoiceMode({ token: adminWebToken });
 	// skillId -> { name, enabled } for resolving bound Skill references into the
 	// Composer's `/skill:` completion list (Agent detail only carries skillIds).
 	const [skillLookup, setSkillLookup] = useState<Map<
@@ -782,20 +788,10 @@ export function AdminChatPage(): React.ReactElement {
 				variant="admin"
 				showSidebar={false}
 				enableVoice={false}
+				enableRealtimeVoice={true}
+				voiceEngine={voiceEngine}
 				skills={composerSkills}
 				emptySendable={selected !== undefined && debugSessionId === null}
-				preComposer={
-					<details className="admin-debug-thinking" aria-label="思考过程">
-						<summary>思考过程</summary>
-						<div className="admin-debug-thinking__body">
-							{/* Debug-only surface for the active turn's accumulated thinking.
-							    Renders empty when the agent has not yet streamed any
-							    `thinking` content; the page-level conversation summary still
-							    shows the latest user/assistant exchange above. */}
-							暂无思考内容
-						</div>
-					</details>
-				}
 				postComposer={
 					<p className="admin-debug-composer-hint">
 						<span>

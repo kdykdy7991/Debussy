@@ -9,6 +9,7 @@
 
 ### Added
 
+- Added the first Published Chat Voice Engine integration slice: `realtimeVoice` is projected independently from legacy speech, and authenticated Embed clients can request purpose-scoped, single-use Voice Proxy tickets stored in an isolated Redis namespace.
 - Added an experimental Voice POC WebSocket that streams visible Published Agent text for VoxEMW ASR/TTS integration testing. Routing now selects the single active published Agent whose independent realtime-voice capability is enabled; only the shared token remains environment configuration.
 - Added configurable WebSocket upgrade authorization and local Web development token support.
 - Added a bounded per-session progress replay buffer (2,000 events or 10 minutes, whichever expires first) and the protocol v2 `resume` command, so a reconnecting client replays the exact `session_progress` events it missed or receives a recognizable `resetRequired` reset to the authoritative snapshot. Replay buffers survive runtime disposal within the retention window and sequences stay contiguous across reopens.

@@ -31,6 +31,7 @@ import type {
 	EmbedErrorEnvelope,
 	ExchangeRequest,
 	ExchangeResponse,
+	VoiceEngineWsTicketResponse,
 	WsTicketResponse,
 } from "./types.ts";
 
@@ -174,6 +175,14 @@ export class EmbedApi {
 	/** 申请一次性 WebSocket Ticket（spec 27.6；TASK-026）。 */
 	async getWsTicket(token: string, conversationId: string): Promise<WsTicketResponse> {
 		return this.request<WsTicketResponse>(`/api/embed/v1/conversations/${conversationId}/ws-ticket`, {
+			method: "POST",
+			token,
+		});
+	}
+
+	/** Obtain a short-lived, single-use ticket for the same-origin Voice Engine proxy. */
+	async getVoiceEngineWsTicket(token: string): Promise<VoiceEngineWsTicketResponse> {
+		return this.request<VoiceEngineWsTicketResponse>("/api/embed/v1/voice-engine/ws-ticket", {
 			method: "POST",
 			token,
 		});

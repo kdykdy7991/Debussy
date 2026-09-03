@@ -38,6 +38,7 @@ export interface ExchangeResponse {
 		readonly features: {
 			readonly uploads: boolean;
 			readonly speech: boolean;
+			readonly realtimeVoice: boolean;
 			readonly avatar: boolean;
 			readonly newConversations?: boolean;
 		};
@@ -60,6 +61,7 @@ export interface BootstrapResponse {
 	readonly features: {
 		readonly uploads: boolean;
 		readonly speech: boolean;
+		readonly realtimeVoice: boolean;
 		readonly avatar: boolean;
 		readonly newConversations?: boolean;
 		/** Bound Skill capabilities of the pinned version (drive `/skill:` completion + UI). */
@@ -174,4 +176,11 @@ export interface WsTicketResponse {
 	readonly ticket: string;
 	readonly expiresAt: string;
 	readonly realtimeUrl: string;
+}
+
+/** `POST /api/embed/v1/voice-engine/ws-ticket` response. */
+export interface VoiceEngineWsTicketResponse {
+	readonly ticket: string;
+	readonly expiresAt: string;
+	readonly voiceEngineUrl: string;
 }
