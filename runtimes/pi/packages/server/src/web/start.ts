@@ -265,6 +265,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			previewTickets: controlPlane.previewTicketService,
 			resolveModelMetadata: (provider, modelId) =>
 				(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),
+			generateTitle: (provider, modelId, source) =>
+				(embedBackend ?? backend).generateConversationTitle(provider, modelId, source),
 			...(options.voiceEngine !== undefined ? { voiceEngine: options.voiceEngine } : {}),
 			log,
 		});

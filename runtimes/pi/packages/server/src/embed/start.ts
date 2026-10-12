@@ -64,6 +64,7 @@ import { createVoiceEngineUpgradeHandler, type VoiceEngineUpgradeHandle } from "
 import { createVoiceEngineTicketHttpHandler } from "./voice-engine-ticket-http.ts";
 
 export interface EmbedPlaneOptions {
+	readonly generateTitle?: (provider: string, modelId: string, source: string) => Promise<string | undefined>;
 	readonly publishing: PublishingConfig;
 	readonly repositories: PublishingRepositories;
 	/** 底层会话工厂（真实组合接 CodingAgentPiSessionBackend.createSession）。 */
@@ -173,6 +174,7 @@ export async function loadEmbedPlaneConfig(publishing: PublishingConfig): Promis
 }
 
 export interface EmbedServicesOptions {
+	readonly generateTitle?: (provider: string, modelId: string, source: string) => Promise<string | undefined>;
 	readonly accessTokens: AccessTokenService;
 	readonly subjectPepper: string;
 	readonly repositories: PublishingRepositories;
@@ -303,6 +305,7 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 		// recycle across Turns.
 		resetRuntime: (conversationId) => runtimeManager.reset(conversationId),
 		resolveModelMetadata: options.resolveModelMetadata,
+		generateTitle: options.generateTitle,
 	});
 	// TASK-030/031：附件对象存储 + 总量配额；未配置 store 时 uploads 端点
 	// 503（不静默退化为磁盘）。
@@ -462,6 +465,7 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		...(options.resolveToolName !== undefined ? { resolveToolName: options.resolveToolName } : {}),
 		...(options.runtimeAdapter !== undefined ? { runtimeAdapter: options.runtimeAdapter } : {}),
 		...(options.resolveModelMetadata !== undefined ? { resolveModelMetadata: options.resolveModelMetadata } : {}),
+		...(options.generateTitle !== undefined ? { generateTitle: options.generateTitle } : {}),
 	});
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。

@@ -33,6 +33,13 @@ export interface EmbedChatError {
 }
 
 export interface EmbedChatState {
+	readonly contextUsage?: {
+		readonly usedTokens: number;
+		readonly workingBudget: number;
+		readonly contextWindow: number;
+		readonly usagePercent: number;
+		readonly summaryThroughSequence: number;
+	} | null;
 	readonly conversations: readonly ConversationSummary[];
 	readonly activeId: string | null;
 	readonly messages: readonly ChatMessage[];
@@ -110,10 +117,12 @@ export class EmbedChatController {
 	private pendingCitations: readonly Citation[] | null = null;
 	/** 工具事件可能先于第一段 assistant 文本到达，暂存到本次回复创建时再挂载。 */
 	private pendingTools: readonly ChatToolCall[] = [];
+	private contextUsageRequest = 0;
 
 	constructor(options: EmbedChatControllerOptions) {
 		this.options = options;
 		this.state = {
+			contextUsage: null,
 			conversations: [],
 			activeId: null,
 			messages: [],
@@ -224,14 +233,40 @@ export class EmbedChatController {
 			this.closing = false;
 			this.setState({
 				activeId: conversationId,
+				contextUsage: null,
 				messages,
 				attachments: [],
 				sending: false,
 				error: null,
 			});
 			this.transport.connect(conversationId, detail.conversation.lastEventSequence);
+			void this.refreshContextUsage(conversationId);
 		} catch (error) {
 			this.handleError(error);
+		}
+	}
+
+	async compactContext(): Promise<boolean> {
+		const conversationId = this.state.activeId;
+		if (conversationId === null || this.state.sending) return false;
+		const result = await this.withToken((token) => this.options.api.compactContext(token, conversationId));
+		await this.refreshConversationList();
+		await this.refreshContextUsage(conversationId);
+		return result.compacted;
+	}
+
+	private async refreshConversationList(): Promise<void> {
+		try {
+			const response = await this.withToken((token) => this.options.api.listConversations(token));
+			const active = this.state.conversations.find((conversation) => conversation.id === this.state.activeId);
+			this.setState({
+				conversations:
+					active && !response.items.some((item) => item.id === active.id)
+						? [active, ...response.items]
+						: response.items,
+			});
+		} catch {
+			// A stale sidebar title is preferable to interrupting the conversation.
 		}
 	}
 
@@ -370,6 +405,7 @@ export class EmbedChatController {
 		this.transport.close();
 		this.setState({
 			conversations: [],
+			contextUsage: null,
 			activeId: null,
 			messages: [],
 			sending: false,
@@ -441,6 +477,8 @@ export class EmbedChatController {
 				this.pendingCitations = null;
 				this.pendingTools = [];
 				this.setState({ messages, sending: false });
+				void this.refreshConversationList();
+				if (this.state.activeId !== null) void this.refreshContextUsage(this.state.activeId);
 				break;
 			}
 			case "turn.failed": {
@@ -496,6 +534,17 @@ export class EmbedChatController {
 				// conversation.snapshot / tool.* / usage.updated / runtime.status：
 				// MVP 展示层忽略（传输层已按 sequence 处理）。
 				break;
+		}
+	}
+
+	private async refreshContextUsage(conversationId: string): Promise<void> {
+		const request = ++this.contextUsageRequest;
+		try {
+			const contextUsage = await this.withToken((token) => this.options.api.getContextUsage(token, conversationId));
+			if (this.state.activeId === conversationId && request === this.contextUsageRequest)
+				this.setState({ contextUsage });
+		} catch {
+			// A missing usage estimate must not interrupt the conversation.
 		}
 	}
 

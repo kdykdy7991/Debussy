@@ -83,6 +83,8 @@ interface Route {
 
 const CREATE_PATTERN = /^\/api\/embed\/v1\/conversations$/;
 const GET_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)$/;
+const CONTEXT_USAGE_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/context-usage$/;
+const COMPACT_CONTEXT_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/compact$/;
 const ARCHIVE_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/archive$/;
 const REASONING_PATTERN = /^\/api\/embed\/v1\/conversations\/([^/]+)\/reasoning$/;
 /** P2: resume-or-roll-forward — resumes only when the pinned version is current. */
@@ -297,6 +299,36 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 			},
 			requestId: ctx.requestId,
 		});
+	}
+
+	async function contextUsageRoute(ctx: RouteContext): Promise<void> {
+		const conversationId = parseConversationId(ctx);
+		if (conversationId === null) return;
+		const result = await service.getContextUsage({ principal: ctx.principal, conversationId });
+		if (!result.ok) {
+			jsonBody(
+				ctx.response,
+				result.error.httpStatus,
+				errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
+			);
+			return;
+		}
+		jsonBody(ctx.response, 200, { data: result.data, requestId: ctx.requestId });
+	}
+
+	async function compactContextRoute(ctx: RouteContext): Promise<void> {
+		const conversationId = parseConversationId(ctx);
+		if (conversationId === null) return;
+		const result = await service.compactContext({ principal: ctx.principal, conversationId });
+		if (!result.ok) {
+			jsonBody(
+				ctx.response,
+				result.error.httpStatus,
+				errorEnvelope(result.error.code, result.error.message, ctx.requestId, result.error.retryable),
+			);
+			return;
+		}
+		jsonBody(ctx.response, 200, { data: result.data, requestId: ctx.requestId });
 	}
 
 	async function updateReasoningRoute(ctx: RouteContext): Promise<void> {
@@ -574,6 +606,10 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 		if (method === "GET" && CREATE_PATTERN.test(pathname)) return { handler: listRoute };
 		const getMatch = method === "GET" ? pathname.match(GET_PATTERN) : null;
 		if (getMatch !== null) return { conversationId: getMatch[1], handler: getRoute };
+		const contextUsageMatch = method === "GET" ? pathname.match(CONTEXT_USAGE_PATTERN) : null;
+		if (contextUsageMatch !== null) return { conversationId: contextUsageMatch[1], handler: contextUsageRoute };
+		const compactContextMatch = method === "POST" ? pathname.match(COMPACT_CONTEXT_PATTERN) : null;
+		if (compactContextMatch !== null) return { conversationId: compactContextMatch[1], handler: compactContextRoute };
 		const archiveMatch = method === "POST" ? pathname.match(ARCHIVE_PATTERN) : null;
 		if (archiveMatch !== null) return { conversationId: archiveMatch[1], handler: archiveRoute };
 		const reasoningMatch = method === "PUT" ? pathname.match(REASONING_PATTERN) : null;

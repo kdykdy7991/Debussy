@@ -64,13 +64,14 @@ import type {
 } from "../../publishing/repositories.ts";
 import { canonicalJson, sha256Hex } from "../../publishing/runtime-spec/hash.ts";
 import { parseRuntimeSpec, type RuntimeSpec } from "../../publishing/runtime-spec/schema.ts";
+import { estimateWorkingContextTokens } from "../../runtime/compaction-drive.ts";
 import {
 	buildSummaryRestoredMessage,
 	mergeRestored,
 	type RestoredContext,
 	restoreContext,
 } from "../../runtime/context-restore.ts";
-import { runDebussyCompaction } from "../../runtime/debussy-compaction.ts";
+import { resolveWorkingContextBudget, runDebussyCompaction } from "../../runtime/debussy-compaction.ts";
 import { createConversationEventCompactionStore } from "../../runtime/debussy-compaction-stores.ts";
 import { replayAllAfter } from "../../runtime/replay.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
@@ -103,6 +104,7 @@ export interface ConversationServiceOptions {
 	 * session knows and Postgres has no record of.
 	 */
 	readonly resetRuntime?: (conversationId: ConversationId) => Promise<void>;
+	readonly generateTitle?: (provider: string, modelId: string, source: string) => Promise<string | undefined>;
 	/**
 	 * Phase-3.5: resolves the DEPLOYED model's real contextWindow / maxTokens via
 	 * the same model registry the sessions use, so `workingContextBudget` uses the
@@ -177,8 +179,10 @@ export class ConversationService {
 	private readonly citations: ConversationCitationService | undefined;
 	private readonly onCompacted: ((conversationId: ConversationId) => Promise<void>) | undefined;
 	private readonly resolveModelMetadata: ConversationServiceOptions["resolveModelMetadata"];
+	private readonly generateTitle: ConversationServiceOptions["generateTitle"];
 	/** 进程内单写者守卫：同一 Conversation 同时最多一个 Turn（PD-13）。 */
 	private readonly runningTurns = new Set<ConversationId>();
+	private readonly compactingConversations = new Set<ConversationId>();
 
 	constructor(options: ConversationServiceOptions) {
 		this.repos = options.repositories;
@@ -186,6 +190,50 @@ export class ConversationService {
 		this.citations = options.citations;
 		this.onCompacted = options.resetRuntime;
 		this.resolveModelMetadata = options.resolveModelMetadata;
+		this.generateTitle = options.generateTitle;
+	}
+
+	private async updateGeneratedTitle(
+		scope: OwnerScope,
+		conversationId: ConversationId,
+		spec: RuntimeSpec,
+		source: string,
+		fallbackSource: string,
+		force: boolean,
+	): Promise<void> {
+		if (source.trim() === "") return;
+		try {
+			const current = await this.repos.conversations.get(scope, conversationId);
+			if (current === undefined || (!force && current.title.trim() !== "")) return;
+			let generated: string | undefined;
+			try {
+				generated = await this.generateTitle?.(
+					spec.agent.model.provider,
+					spec.agent.model.modelId,
+					source.slice(0, 6000),
+				);
+			} catch (error) {
+				console.warn("Conversation title generation failed", error);
+			}
+			const title = generated
+				?.replace(/[\r\n]+/g, " ")
+				.replace(/^[\s"'“”]+|[\s"'“”]+$/g, "")
+				.trim();
+			const fallback = fallbackSource
+				.trim()
+				.split(/[\r\n。！？!?]/, 1)[0]
+				?.trim()
+				.slice(0, 24);
+			const valid = (candidate: string | undefined) =>
+				candidate !== undefined &&
+				candidate.length > 0 &&
+				candidate.length <= 40 &&
+				!/^(你好|您好|hi|hello|新对话|未命名对话|对话)$/i.test(candidate);
+			const chosen = valid(title) ? title : valid(fallback) ? fallback : undefined;
+			if (chosen !== undefined) await this.repos.conversations.setTitle(scope, conversationId, chosen);
+		} catch (error) {
+			console.warn("Conversation title update failed", error);
+		}
 	}
 
 	/**
@@ -313,6 +361,117 @@ export class ConversationService {
 		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
 		if (record === undefined) return { ok: false, error: conversationNotFound() };
 		return { ok: true, data: record };
+	}
+
+	/** 当前持久化 Working Context 的估算；与压缩决策使用同一估算器和预算。 */
+	async getContextUsage(input: GetConversationInput): Promise<
+		ConversationResult<{
+			readonly usedTokens: number;
+			readonly contextWindow: number;
+			readonly workingBudget: number;
+			readonly usagePercent: number;
+			readonly summaryThroughSequence: number;
+		}>
+	> {
+		const scope = ownerScope(input.principal);
+		const conversation = await this.repos.conversations.get(scope, input.conversationId);
+		if (conversation === undefined) return { ok: false, error: conversationNotFound() };
+		const version = await this.repos.publishedAppVersions.get(scope, conversation.publishedAppVersionId);
+		if (version === undefined) return { ok: false, error: versionUnavailable() };
+		const parsed = parseRuntimeSpec(version.runtimeSpec);
+		if (!parsed.ok) return { ok: false, error: runtimeUnavailable("RuntimeSpec is invalid") };
+		const spec = parsed.spec;
+		const summary = await this.repos.summaries.getLatest(scope, input.conversationId);
+		const events = await replayAllAfter(
+			(after, limit) => this.repos.events.list(scope, input.conversationId, { limit, afterSequence: after }),
+			summary?.throughSequence ?? 0,
+		);
+		const summaryText = (summary?.body as { text?: string } | undefined)?.text ?? "";
+		const model = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
+		const contextWindow = Math.min(
+			model?.contextWindow ?? spec.contextPolicy.maxContextTokens,
+			spec.contextPolicy.maxContextTokens,
+		);
+		const usedTokens = estimateWorkingContextTokens(events, summaryText, {
+			maxContextTokens: spec.contextPolicy.maxContextTokens,
+			logLevel: spec.contextPolicy.logLevel,
+		});
+		const workingBudget = resolveWorkingContextBudget(spec, { model }, events, summaryText);
+		return {
+			ok: true,
+			data: {
+				usedTokens,
+				contextWindow,
+				workingBudget,
+				usagePercent: Number(((usedTokens / Math.max(1, workingBudget)) * 100).toFixed(1)),
+				summaryThroughSequence: summary?.throughSequence ?? 0,
+			},
+		};
+	}
+
+	/** 手动压缩较早的完整轮次；最近一轮保留原文，摘要持久化到 Postgres。 */
+	async compactContext(input: GetConversationInput): Promise<ConversationResult<{ readonly compacted: boolean }>> {
+		const scope = ownerScope(input.principal);
+		const conversation = await this.repos.conversations.get(scope, input.conversationId);
+		if (conversation === undefined || conversation.status !== "active")
+			return { ok: false, error: conversationNotFound() };
+		if (this.runningTurns.has(input.conversationId) || this.compactingConversations.has(input.conversationId)) {
+			return { ok: false, error: turnAlreadyRunning() };
+		}
+		this.compactingConversations.add(input.conversationId);
+		try {
+			const version = await this.repos.publishedAppVersions.get(scope, conversation.publishedAppVersionId);
+			if (version === undefined) return { ok: false, error: versionUnavailable() };
+			const parsed = parseRuntimeSpec(version.runtimeSpec);
+			if (!parsed.ok) return { ok: false, error: runtimeUnavailable("RuntimeSpec is invalid") };
+			const result = await runDebussyCompaction(
+				createConversationEventCompactionStore(this.repos, scope, input.conversationId),
+				parsed.spec,
+				{ budgetOverride: 0, keepRecentTokens: 0 },
+			);
+			if (result.compacted) {
+				await this.onCompacted?.(input.conversationId);
+			}
+			const summary = await this.repos.summaries.getLatest(scope, input.conversationId);
+			if (
+				summary !== undefined &&
+				typeof summary.body === "object" &&
+				summary.body !== null &&
+				"text" in summary.body &&
+				typeof summary.body.text === "string"
+			) {
+				const lastUserMessage =
+					"lastUserMessage" in summary.body && typeof summary.body.lastUserMessage === "string"
+						? summary.body.lastUserMessage
+						: "";
+				await this.updateGeneratedTitle(
+					scope,
+					input.conversationId,
+					parsed.spec,
+					summary.body.text,
+					lastUserMessage,
+					result.compacted,
+				);
+			} else if (!result.compacted && conversation.title.trim() === "") {
+				const events = await replayAllAfter(
+					(after, limit) => this.repos.events.list(scope, input.conversationId, { limit, afterSequence: after }),
+					0,
+				);
+				const built = buildSummary(events);
+				if (built.throughSequence > 0)
+					await this.updateGeneratedTitle(
+						scope,
+						input.conversationId,
+						parsed.spec,
+						built.body.text,
+						built.body.lastUserMessage,
+						false,
+					);
+			}
+			return { ok: true, data: { compacted: result.compacted } };
+		} finally {
+			this.compactingConversations.delete(input.conversationId);
+		}
 	}
 
 	/**
@@ -603,6 +762,24 @@ export class ConversationService {
 			},
 		);
 		if (!result.compacted) return history;
+		const summary = await this.repos.summaries.getLatest(scope, conversationId);
+		if (
+			summary !== undefined &&
+			typeof summary.body === "object" &&
+			summary.body !== null &&
+			"text" in summary.body &&
+			typeof summary.body.text === "string"
+		)
+			await this.updateGeneratedTitle(
+				scope,
+				conversationId,
+				spec,
+				summary.body.text,
+				"lastUserMessage" in summary.body && typeof summary.body.lastUserMessage === "string"
+					? summary.body.lastUserMessage
+					: "",
+				true,
+			);
 		// A new summary was persisted → the prompt must see the condensed head,
 		// with the in-flight Turn dropped so its user message is not duplicated.
 		return this.restoreHistory(scope, conversationId, spec, { excludeTurnId: turnId });
@@ -650,7 +827,9 @@ export class ConversationService {
 		if (record === undefined || record.status !== "active") return { ok: false, error: conversationNotFound() };
 		// 单写者守卫：has 检查与 add 之间无 await（事件循环内原子），并发
 		// 请求只有一个能进入执行段（PD-13）。
-		if (this.runningTurns.has(input.conversationId)) return { ok: false, error: turnAlreadyRunning() };
+		if (this.runningTurns.has(input.conversationId) || this.compactingConversations.has(input.conversationId)) {
+			return { ok: false, error: turnAlreadyRunning() };
+		}
 		this.runningTurns.add(input.conversationId);
 		// Agent V2 M1：PI_AGENT_V2_METRICS 关闭时不采集。开启时在 turn 开始时取一次
 		// 单调+墙上基准，供 turn/end / turn/failed 写入 TurnMetrics。
@@ -851,11 +1030,40 @@ export class ConversationService {
 				// boundary. The budget is derived from the DEPLOYED model's real
 				// contextWindow / maxTokens (Phase-3.5), not a guessed window.
 				const model = this.resolveModelMetadata?.(spec.agent.model.provider, spec.agent.model.modelId);
-				await runDebussyCompaction(
+				const compaction = await runDebussyCompaction(
 					createConversationEventCompactionStore(this.repos, scope, input.conversationId),
 					spec,
 					model !== undefined ? { model } : {},
 				);
+				if (compaction.compacted) {
+					const summary = await this.repos.summaries.getLatest(scope, input.conversationId);
+					if (
+						summary !== undefined &&
+						typeof summary.body === "object" &&
+						summary.body !== null &&
+						"text" in summary.body &&
+						typeof summary.body.text === "string"
+					)
+						await this.updateGeneratedTitle(
+							scope,
+							input.conversationId,
+							spec,
+							summary.body.text,
+							"lastUserMessage" in summary.body && typeof summary.body.lastUserMessage === "string"
+								? summary.body.lastUserMessage
+								: "",
+							true,
+						);
+				} else if (!/^(你好|您好|hi|hello|嗨)[!！。\s]*$/i.test(input.text.trim())) {
+					await this.updateGeneratedTitle(
+						scope,
+						input.conversationId,
+						spec,
+						`${input.text}\n${result.outputText}`,
+						input.text,
+						false,
+					);
+				}
 				// Phase-3.5 invariant: reset the cached runtime after EVERY
 				// completed Turn (unconditionally). Pi may have performed an
 				// emergency overflow compaction this Turn that left in-memory

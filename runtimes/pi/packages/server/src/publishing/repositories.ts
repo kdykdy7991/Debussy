@@ -735,6 +735,8 @@ export interface ConversationRepository {
 	get(scope: OwnerScope, conversationId: ConversationId): Promise<ConversationRecord | undefined>;
 	/** Scoped list with opaque cursor pagination. */
 	list(params: ConversationListParams): Promise<ConversationListRow[]>;
+	/** Persist a generated title within the conversation owner scope. */
+	setTitle(scope: OwnerScope, conversationId: ConversationId, title: string): Promise<void>;
 	/** Scoped status transition (active -> archived/deleted). */
 	updateStatus(
 		scope: OwnerScope,

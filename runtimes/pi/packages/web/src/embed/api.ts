@@ -110,6 +110,29 @@ export class EmbedApi {
 		});
 	}
 
+	async getContextUsage(
+		token: string,
+		conversationId: string,
+	): Promise<{
+		usedTokens: number;
+		contextWindow: number;
+		workingBudget: number;
+		usagePercent: number;
+		summaryThroughSequence: number;
+	}> {
+		return this.request(`/api/embed/v1/conversations/${conversationId}/context-usage`, {
+			method: "GET",
+			token,
+		});
+	}
+
+	async compactContext(token: string, conversationId: string): Promise<{ compacted: boolean }> {
+		return this.request(`/api/embed/v1/conversations/${conversationId}/compact`, {
+			method: "POST",
+			token,
+		});
+	}
+
 	/**
 	 * P2 public-chat resume: `POST /conversations/:id/resume`. When the
 	 * conversation's pinned version went stale the server returns a NEW

@@ -120,9 +120,9 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			// Cursor mode adds two parameters, so the limit placeholder shifts.
 			const limitIndex = cursorParams.length > 0 ? 6 : 4;
 			const rows = await client.run(
-				`select * from conversations
+				`select c.* from conversations c
 				 where tenant_id = $1 and published_app_id = $2 and owner_principal_id = $3
-				   and deleted_at is null and status = 'active'
+				   and deleted_at is null and status = 'active' and last_event_sequence > 0
 				   ${cursorWhere}
 				 order by last_active_at desc, id desc
 				 limit $${limitIndex}`,
@@ -133,6 +133,18 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				limit + 1,
 			);
 			return rows.slice(0, limit).map((row) => toListRow(rowToRecord(row)));
+		},
+		async setTitle(scope: OwnerScope, conversationId, title) {
+			await client.run(
+				`update conversations set title = $5, updated_at = now()
+				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				   and deleted_at is null`,
+				conversationId,
+				scope.tenantId,
+				scope.publishedAppId,
+				scope.principalId,
+				title,
+			);
 		},
 		async updateStatus(scope: OwnerScope, conversationId, status) {
 			await client.run(

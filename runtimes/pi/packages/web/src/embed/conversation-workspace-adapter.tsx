@@ -151,7 +151,13 @@ function connectionSnapshot(state: EmbedChatState): PiConnectionSnapshot {
 }
 
 function sessionSnapshot(state: EmbedChatState): SessionBrowserSnapshot {
-	const sessions = state.conversations.map((conversation) => summaryFromConversation(conversation, state));
+	const sessions = state.conversations
+		.filter(
+			(conversation) =>
+				conversation.lastEventSequence > 0 ||
+				(conversation.id === state.activeId && state.messages.some((message) => message.role === "user")),
+		)
+		.map((conversation) => summaryFromConversation(conversation, state));
 	const activeConversation = state.conversations.find((conversation) => conversation.id === state.activeId);
 	return {
 		sessions,

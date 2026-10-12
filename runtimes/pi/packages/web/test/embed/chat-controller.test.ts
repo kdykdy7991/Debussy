@@ -102,6 +102,7 @@ function createRouter(
 		conversations: initial.conversations ?? [SUMMARY_1],
 		details: initial.details ?? new Map<string, unknown>(),
 		wsTickets: initial.wsTickets ?? true,
+		compactResult: true,
 		calls: [] as { path: string; method: string; token?: string; body?: unknown }[],
 		failNext: new Map<string, { status: number; error: { code: string; message: string; retryable: boolean } }>(),
 		resumeRollForward: initial.rollForwardTo as { id: string; lastEventSequence: number } | undefined,
@@ -141,6 +142,16 @@ function createRouter(
 				201,
 			);
 		}
+		if (method === "GET" && path.endsWith("/context-usage")) {
+			return jsonResponse({
+				usedTokens: 100,
+				workingBudget: 1000,
+				contextWindow: 2000,
+				usagePercent: 10,
+				summaryThroughSequence: 2,
+			});
+		}
+		if (method === "POST" && path.endsWith("/compact")) return jsonResponse({ compacted: state.compactResult });
 		const detailMatch = path.match(/^\/api\/embed\/v1\/conversations\/([^/]+)$/);
 		if (method === "GET" && detailMatch !== null) {
 			const found = state.details.get(detailMatch[1]!);
@@ -243,6 +254,30 @@ afterEach(() => {
 });
 
 describe("embed chat controller", () => {
+	test("manual compaction refreshes a generated title even when no new summary was needed", async () => {
+		const harness = makeHarness({ conversations: [{ ...SUMMARY_1, title: "" }] });
+		harness.router.state.compactResult = false;
+		await harness.controller.initialize();
+		harness.router.state.conversations = [{ ...SUMMARY_1, title: "工单 MCP 工具排查" }];
+		expect(await harness.controller.compactContext()).toBe(false);
+		expect(harness.controller.getState().conversations[0]?.title).toBe("工单 MCP 工具排查");
+		harness.controller.close();
+	});
+
+	test("manual context compaction calls the scoped endpoint and refreshes usage", async () => {
+		const harness = makeHarness();
+		await harness.controller.initialize();
+		await flush();
+		expect(await harness.controller.compactContext()).toBe(true);
+		expect(harness.router.state.calls).toContainEqual(
+			expect.objectContaining({
+				path: "/api/embed/v1/conversations/conv_1/compact",
+				method: "POST",
+			}),
+		);
+		expect(harness.controller.getState().contextUsage?.summaryThroughSequence).toBe(2);
+		harness.controller.close();
+	});
 	test("single-conversation mode creates the initial conversation automatically", async () => {
 		const harness = makeHarness({ conversations: [] });
 		await harness.controller.initialize({ newConversations: false });
