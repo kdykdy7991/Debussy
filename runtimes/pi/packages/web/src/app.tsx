@@ -16,6 +16,7 @@ import { type AgentReaction, detectAgentReaction } from "./conversation/agent-re
 import { ActiveAgentPresence, AiMessageFlow } from "./conversation/ai-message-flow.tsx";
 import { ConversationComposer } from "./conversation/conversation-composer.tsx";
 import { ConversationSidebar } from "./conversation/conversation-sidebar.tsx";
+import { NEAR_BOTTOM_PX, nextConversationFollow } from "./conversation/scroll-follow.ts";
 import { type VisualTheme, WorkspaceMasthead } from "./conversation/workspace-masthead.tsx";
 import type { VoiceAsrState } from "./embed/voice-asr-session.ts";
 import { submitAsrFinalOnce } from "./embed/voice-asr-submit.ts";
@@ -173,7 +174,12 @@ export function ConversationWorkspace({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const conversationScrollRef = useRef<HTMLDivElement>(null);
 	const followConversationRef = useRef(true);
+	const lastConversationScrollTopRef = useRef(0);
+	const pointerDraggingConversationRef = useRef(false);
+	const lastReaderScrollDownAtRef = useRef(0);
+	const touchYRef = useRef<number | null>(null);
 	const pendingConversationScrollFrameRef = useRef<number | undefined>(undefined);
+	const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 	const [theme, setTheme] = useState<VisualTheme>(() => {
 		if (typeof window === "undefined") return "editorial";
 		try {
@@ -244,6 +250,7 @@ export function ConversationWorkspace({
 			// Sending is an explicit request to return to the live edge. Once the
 			// user scrolls up again, the scroll handler below releases this lock.
 			followConversationRef.current = true;
+			setShowJumpToLatest(false);
 			const attachmentIds = active?.attachments?.map((attachment) => attachment.id);
 			// Phase 2 live朗读: ask the hook whether to attach `speech` before the
 			// prompt leaves the page. The hook owns the AudioContext unlock and the
@@ -328,31 +335,111 @@ export function ConversationWorkspace({
 			const currentElement = conversationScrollRef.current;
 			if (!currentElement || (!force && !followConversationRef.current)) return;
 			currentElement.scrollTop = currentElement.scrollHeight;
+			lastConversationScrollTopRef.current = currentElement.scrollTop;
+			setShowJumpToLatest(false);
 		});
+	}, []);
+
+	const pauseConversationFollow = useCallback(() => {
+		followConversationRef.current = false;
+		lastReaderScrollDownAtRef.current = 0;
+		if (pendingConversationScrollFrameRef.current !== undefined) {
+			window.cancelAnimationFrame(pendingConversationScrollFrameRef.current);
+			pendingConversationScrollFrameRef.current = undefined;
+		}
+		const element = conversationScrollRef.current;
+		if (element && element.scrollHeight - element.scrollTop - element.clientHeight > NEAR_BOTTOM_PX) {
+			setShowJumpToLatest(true);
+		}
 	}, []);
 
 	const handleConversationScroll = useCallback(() => {
 		const element = conversationScrollRef.current;
 		if (!element) return;
+		const previousTop = lastConversationScrollTopRef.current;
+		lastConversationScrollTopRef.current = element.scrollTop;
 		const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-		// Do not pull a reader back to the live edge while they inspect history.
-		followConversationRef.current = distanceFromBottom < 96;
-	}, []);
+		followConversationRef.current = nextConversationFollow(
+			followConversationRef.current,
+			previousTop,
+			element.scrollTop,
+			distanceFromBottom,
+			pointerDraggingConversationRef.current,
+			pointerDraggingConversationRef.current || Date.now() - lastReaderScrollDownAtRef.current < 350,
+		);
+		setShowJumpToLatest(!followConversationRef.current && distanceFromBottom > NEAR_BOTTOM_PX);
+		// A content resize can fire scroll before the scheduled frame. It does not
+		// change scrollTop, so keep following unless the reader actually moved up.
+		if (followConversationRef.current) scheduleConversationScroll();
+	}, [scheduleConversationScroll]);
 
 	useEffect(() => {
 		if (!activeId) return;
 		followConversationRef.current = true;
+		lastConversationScrollTopRef.current = 0;
+		pointerDraggingConversationRef.current = false;
+		lastReaderScrollDownAtRef.current = 0;
+		setShowJumpToLatest(false);
 		scheduleConversationScroll(true);
+	}, [activeId, scheduleConversationScroll]);
+
+	useEffect(() => {
+		if (!activeId) return;
+		const element = conversationScrollRef.current;
+		if (!element) return;
+		const onContentChange = () => {
+			if (followConversationRef.current) scheduleConversationScroll();
+			else {
+				const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+				setShowJumpToLatest(distance > NEAR_BOTTOM_PX);
+			}
+		};
+		const sizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onContentChange);
+		sizeObserver?.observe(element);
+		if (element.firstElementChild) sizeObserver?.observe(element.firstElementChild);
+		const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(onContentChange);
+		mutationObserver?.observe(element, { childList: true, characterData: true, subtree: true });
+		return () => {
+			sizeObserver?.disconnect();
+			mutationObserver?.disconnect();
+		};
 	}, [activeId, scheduleConversationScroll]);
 
 	useEffect(() => {
 		if (active) scheduleConversationScroll();
 	}, [active, scheduleConversationScroll]);
 
+	useEffect(() => {
+		if (!activeId) return undefined;
+		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			const target = event.target;
+			if (target instanceof Node && target !== document.body && !conversationScrollRef.current?.contains(target))
+				return;
+			if (
+				target instanceof HTMLElement &&
+				(target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+			)
+				return;
+			if (
+				event.key === "ArrowUp" ||
+				event.key === "PageUp" ||
+				event.key === "Home" ||
+				(event.key === " " && event.shiftKey)
+			) {
+				pauseConversationFollow();
+			} else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) {
+				lastReaderScrollDownAtRef.current = Date.now();
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [activeId, pauseConversationFollow]);
+
 	useEffect(
 		() => () => {
 			if (pendingConversationScrollFrameRef.current !== undefined) {
 				window.cancelAnimationFrame(pendingConversationScrollFrameRef.current);
+				pendingConversationScrollFrameRef.current = undefined;
 			}
 		},
 		[],
@@ -489,7 +576,43 @@ export function ConversationWorkspace({
 					</output>
 				) : null}
 
-				<div className="conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
+				<div
+					className="conversation-scroll"
+					ref={conversationScrollRef}
+					onScroll={handleConversationScroll}
+					onWheel={(event) => {
+						if (event.deltaY < 0) pauseConversationFollow();
+						else if (event.deltaY > 0) lastReaderScrollDownAtRef.current = Date.now();
+					}}
+					onTouchStart={(event) => {
+						touchYRef.current = event.touches[0]?.clientY ?? null;
+					}}
+					onTouchMove={(event) => {
+						const nextY = event.touches[0]?.clientY;
+						if (nextY === undefined) return;
+						if (touchYRef.current !== null && nextY > touchYRef.current + 4) pauseConversationFollow();
+						else if (touchYRef.current !== null && nextY < touchYRef.current - 4)
+							lastReaderScrollDownAtRef.current = Date.now();
+						touchYRef.current = nextY;
+					}}
+					onTouchEnd={() => {
+						touchYRef.current = null;
+					}}
+					onPointerDown={(event) => {
+						if (event.pointerType !== "touch") {
+							pointerDraggingConversationRef.current = true;
+							lastReaderScrollDownAtRef.current = Date.now();
+						}
+					}}
+					onPointerUp={() => {
+						pointerDraggingConversationRef.current = false;
+						lastReaderScrollDownAtRef.current = 0;
+					}}
+					onPointerCancel={() => {
+						pointerDraggingConversationRef.current = false;
+						lastReaderScrollDownAtRef.current = 0;
+					}}
+				>
 					{active ? (
 						<Conversation
 							active={active}
@@ -509,6 +632,29 @@ export function ConversationWorkspace({
 						<EmptyConversation connected={connected} createSession={createSession} setMessage={setMessage} />
 					)}
 				</div>
+				{active && showJumpToLatest ? (
+					<button
+						type="button"
+						className="conversation-jump-latest"
+						aria-label="回到底部，查看最新消息"
+						title="查看最新消息"
+						onClick={() => {
+							followConversationRef.current = true;
+							setShowJumpToLatest(false);
+							scheduleConversationScroll(true);
+						}}
+					>
+						<svg viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+							<path
+								d="M10 3.5v11m0 0-4-4m4 4 4-4M4 17h12"
+								stroke="currentColor"
+								strokeWidth="1.6"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						</svg>
+					</button>
+				) : null}
 				{active ? (
 					<ActiveAgentPresence
 						key={active.id}

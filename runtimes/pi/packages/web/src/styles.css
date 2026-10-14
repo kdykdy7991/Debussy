@@ -1117,6 +1117,26 @@ body[data-theme="vision-glass"] { background: linear-gradient(145deg, #e7e8ea, #
 	padding-bottom: 0;
 	overflow-y: auto;
 }
+.conversation-jump-latest {
+	position: absolute;
+	z-index: 6;
+	right: 28px;
+	bottom: 152px;
+	display: grid;
+	width: 38px;
+	height: 38px;
+	place-items: center;
+	padding: 0;
+	border: 1px solid #d7d2c9;
+	border-radius: 999px;
+	background: #fff;
+	box-shadow: 0 4px 18px rgb(24 23 19 / 12%);
+	color: #26231f;
+	cursor: pointer;
+}
+.conversation-jump-latest:hover { background: #f7f4ee; }
+.conversation-jump-latest:focus-visible { outline: 2px solid var(--color-editorial); outline-offset: 2px; }
+.conversation-jump-latest svg { width: 19px; height: 19px; }
 .active-agent-presence {
 	position: absolute;
 	z-index: 4;
