@@ -1958,7 +1958,7 @@
 	padding-inline: 16px;
 }
 .ard-form {
-	gap: 0;
+	gap: 12px;
 }
 .ard-form > section,
 .ard-form > section:first-of-type,
@@ -1967,12 +1967,9 @@
 .ard-detail-page.is-embedded .ard-form > section:first-of-type,
 .ard-detail-page.is-embedded .ard-form > section.ard-instructions {
 	padding: 18px 18px 20px;
-	border: 1px solid var(--ard-line);
+	border: 1.5px solid #c5ccd5;
 	border-radius: 8px;
 	background: #fff;
-}
-.ard-form > section + section {
-	margin-top: -1px;
 }
 .ard-form h2 {
 	margin-bottom: 14px;
@@ -2029,7 +2026,7 @@
 }
 .ard-side-card {
 	padding: 16px;
-	border: 1px solid var(--ard-line);
+	border: 1.5px solid #c5ccd5;
 	border-radius: 8px;
 }
 .ard-side-card h3 {
@@ -2250,6 +2247,118 @@
 }
 .ard-external-card a svg {
 	width: 11px;
+}
+.ard-trusted-system {
+	display: grid;
+	gap: 8px;
+	padding-top: 12px;
+	border-top: 1px solid var(--ard-line-soft);
+}
+.ard-trusted-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.ard-trusted-heading strong {
+	font-size: 12px;
+}
+.ard-trusted-heading span {
+	padding: 4px 8px;
+	border: 1px solid var(--ard-line);
+	border-radius: 6px;
+	color: var(--ard-muted);
+	font-size: 10px;
+}
+.ard-trusted-heading span.is-enabled {
+	border-color: #cde8d5;
+	background: #f2faf4;
+	color: var(--ard-green);
+}
+.ard-trusted-label {
+	color: var(--ard-muted);
+	font-size: 10px;
+}
+.ard-trusted-value {
+	display: block;
+	padding: 10px;
+	border: 1px solid var(--ard-line);
+	border-radius: 6px;
+	background: #fbfcfd;
+	font-size: 10px;
+	overflow-wrap: anywhere;
+}
+.ard-trusted-rotate,
+.ard-trusted-copy {
+	min-height: 34px;
+	padding: 0 12px;
+	border: 1px solid var(--ard-line);
+	border-radius: 6px;
+	background: #fff;
+	color: var(--ard-ink);
+	font-size: 11px;
+	font-weight: 600;
+}
+.ard-trusted-rotate:disabled {
+	opacity: 0.55;
+}
+.ard-trusted-confirm {
+	display: grid;
+	gap: 10px;
+	padding: 12px;
+	border: 1px solid #efd8ac;
+	border-radius: 7px;
+	background: #fffaf1;
+}
+.ard-trusted-confirm p {
+	margin: 0;
+	color: var(--ard-ink);
+	font-size: 11px;
+}
+.ard-trusted-confirm > div {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+.ard-trusted-confirm button {
+	min-height: 32px;
+	padding: 0 10px;
+	border: 1px solid var(--ard-line);
+	border-radius: 6px;
+	background: #fff;
+	color: var(--ard-ink);
+	font-size: 11px;
+	font-weight: 600;
+}
+.ard-trusted-confirm button.ard-trusted-confirm-action {
+	border-color: #17202a;
+	background: #17202a;
+	color: #fff;
+}
+.ard-trusted-confirm button:disabled {
+	opacity: 0.55;
+}
+.ard-trusted-copy {
+	border-color: #17202a;
+	background: #17202a;
+	color: #fff;
+}
+.ard-trusted-issued {
+	display: grid;
+	gap: 8px;
+	padding: 10px;
+	border: 1px solid #cde8d5;
+	border-radius: 7px;
+	background: #f2faf4;
+}
+.ard-trusted-issued p {
+	margin: 0;
+	color: var(--ard-muted);
+	font-size: 10px;
+}
+.ard-trusted-error {
+	color: #a43b35;
+	font-size: 11px;
 }
 .ard-more-card details,
 .ard-more-card > button {

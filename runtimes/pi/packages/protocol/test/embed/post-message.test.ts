@@ -19,6 +19,22 @@ import {
 } from "../../src/embed/post-message.ts";
 
 describe("decodeEmbedHostMessage", () => {
+	test("accepts one-time trusted code and rejects mixed credentials", () => {
+		const base = { protocol: POST_MESSAGE_PROTOCOL, version: POST_MESSAGE_VERSION, type: "init" };
+		const code = "a".repeat(43);
+		expect(decodeEmbedHostMessage({ ...base, payload: { exchangeCode: code } })).toEqual({
+			ok: true,
+			message: { type: "init", exchangeCode: code },
+		});
+		expect(decodeEmbedHostMessage({ ...base, payload: { exchangeCode: code, launchToken: "x" } })).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+		expect(decodeEmbedHostMessage({ ...base, payload: { exchangeCode: "short" } })).toEqual({
+			ok: false,
+			reason: "INVALID_PAYLOAD",
+		});
+	});
 	test("decodes anonymous init (no payload) and init with launchToken", () => {
 		expect(
 			decodeEmbedHostMessage({ protocol: POST_MESSAGE_PROTOCOL, version: POST_MESSAGE_VERSION, type: "init" }),

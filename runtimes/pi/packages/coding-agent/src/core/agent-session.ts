@@ -1719,10 +1719,7 @@ export class AgentSession {
 			throw new Error("Cannot inject conversation history while the agent is busy.");
 		}
 		for (const message of messages) {
-			const withTs =
-				message.timestamp && message.timestamp > 0
-					? message
-					: { ...message, timestamp: Date.now() };
+			const withTs = message.timestamp && message.timestamp > 0 ? message : { ...message, timestamp: Date.now() };
 			this.agent.state.messages.push(withTs);
 			this.sessionManager.appendMessage(
 				withTs as unknown as Parameters<typeof this.sessionManager.appendMessage>[0],

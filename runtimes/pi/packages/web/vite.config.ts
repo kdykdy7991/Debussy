@@ -21,6 +21,7 @@ const isEmbedOnly = target === "embed";
 const isSingle = isAdminOnly || isEmbedOnly;
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+const embedSourceRoots = ["src", "../client/src", "../protocol/src"].map((path) => resolve(projectRoot, path));
 
 /**
  * 读取 dev 模式的 admin token。dev:admin 脚本通过 `PI_CONTROL_ADMIN_TOKEN_FILE`
@@ -45,6 +46,16 @@ function routeRewritePlugin(): PluginOption {
 		configureServer(server) {
 			server.middlewares.use((req, _res, next) => {
 				const url = req.url ?? "/";
+				const remoteAddress = req.socket.remoteAddress;
+				const isLocalRequest =
+					remoteAddress === "127.0.0.1" ||
+					remoteAddress === "::1" ||
+					remoteAddress === "::ffff:127.0.0.1";
+				if (!isLocalRequest && !isPublicEmbedDevPath(url)) {
+					_res.statusCode = 403;
+					_res.end("This route is available only on localhost");
+					return;
+				}
 				// Backend / Vite internal traffic must never fall through to the
 				// SPA history fallback below — otherwise /api/control/*, WebSocket
 				// upgrades, and HMR requests all collapse into index.html (MVP-01).
@@ -112,7 +123,7 @@ export default defineConfig({
 		},
 	},
 	server: {
-		host: "127.0.0.1",
+		host: process.env.PI_WEB_HOST ?? "127.0.0.1",
 		port: isEmbedOnly ? 5174 : 5173,
 		strictPort: true,
 		proxy: buildProxyConfig(process.env.PI_EMBED_DEV_PROXY_TARGET, process.env.PI_ADMIN_DEV_PROXY_TARGET),
@@ -135,6 +146,31 @@ export default defineConfig({
 		},
 	},
 });
+
+/** LAN visitors can load Embed and its assets/API, but never the admin proxy. */
+export function isPublicEmbedDevPath(url: string): boolean {
+	const path = url.split("?", 1)[0];
+	if (path.startsWith("/@fs/")) {
+		try {
+			const filePath = resolve(decodeURIComponent(path.slice("/@fs".length)));
+			return embedSourceRoots.some((root) => filePath.startsWith(`${root}/`));
+		} catch {
+			return false;
+		}
+	}
+	return (
+		path === "/embed.html" ||
+		/^\/(?:embed|preview)\/pub_[0-9a-fA-F-]{36}(?:\/|$)/.test(path) ||
+		path.startsWith("/api/embed/") ||
+		path.startsWith("/api/voice-engine/") ||
+		path === "/@vite/client" ||
+		path === "/@react-refresh" ||
+		path.startsWith("/@id/") ||
+		path.startsWith("/src/") ||
+		path.startsWith("/node_modules/") ||
+		path.startsWith("/shared/")
+	);
+}
 
 /**
  * Build the dev-server proxy config.
@@ -184,6 +220,7 @@ export function buildProxyConfig(
 		}
 		return {
 			"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
+			"/api/admin": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 			"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
 			"/api/voice-engine": { target: embedTarget, changeOrigin: false, ws: true },
 		};
@@ -198,6 +235,7 @@ export function buildProxyConfig(
 		}
 		return {
 			"/api/control": { target: adminTarget, changeOrigin: false, configure: adminConfigure },
+			"/api/admin": { target: adminTarget, changeOrigin: false, configure: adminConfigure },
 			"/api/embed": { target: adminTarget, changeOrigin: false, ws: true },
 			"/api/voice-engine": { target: adminTarget, changeOrigin: false, ws: true },
 		};
@@ -208,10 +246,12 @@ export function buildProxyConfig(
 		);
 		return {
 			"/api/control": { target: adminTarget ?? "", changeOrigin: false, configure: adminConfigure },
+			"/api/admin": { target: adminTarget ?? "", changeOrigin: false, configure: adminConfigure },
 		};
 	}
 	return {
 		"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
+		"/api/admin": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 		"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
 		"/api/voice-engine": { target: embedTarget, changeOrigin: false, ws: true },
 	};

@@ -37,6 +37,7 @@ import type {
 	TranscriptItem,
 	UserTranscriptItem,
 } from "@earendil-works/pi-protocol";
+import { imageProvenance } from "@earendil-works/pi-protocol";
 
 /**
  * Optional entry point passed in by the runtime: the runtime knows the live
@@ -182,7 +183,8 @@ function toToolContent(part: AiTextContent | AiImageContent): ToolTranscriptItem
 	if (part.type === "text") {
 		return { type: "text", text: part.text };
 	}
-	return { type: "image", data: part.data, mimeType: part.mimeType };
+	const provenance = imageProvenance("provenance" in part ? part.provenance : undefined);
+	return { type: "image", data: part.data, mimeType: part.mimeType, ...(provenance ? { provenance } : {}) };
 }
 
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);

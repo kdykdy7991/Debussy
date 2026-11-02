@@ -9,6 +9,8 @@
 
 ### Added
 
+- Added periodic MCP tool discovery with immutable revision updates and stale tool compatibility checks.
+- Added MCP API Key authentication through `X-Mcp-Api-Key`, using encrypted credentials for connection tests, tool discovery, and runtime calls.
 - Added the first Published Chat Voice Engine integration slice: `realtimeVoice` is projected independently from legacy speech, and authenticated Embed clients can request purpose-scoped, single-use Voice Proxy tickets stored in an isolated Redis namespace.
 - Added an experimental Voice POC WebSocket that streams visible Published Agent text for VoxEMW ASR/TTS integration testing. Routing now selects the single active published Agent whose independent realtime-voice capability is enabled; only the shared token remains environment configuration.
 - Added configurable WebSocket upgrade authorization and local Web development token support.
@@ -19,6 +21,8 @@
 
 ### Fixed
 
+- Corrected trusted-system origin matching for legacy JSON-string lists and normalized the admin response to an array.
+- Raised the MCP tool allowlist limit from 32 to 128 and aligned compiler and runtime decoding checks, allowing larger MCP catalogs to compile.
 - Hardened protocol adapters against contradictory lifecycle states, invalid identifiers and timestamps, sparse execution arrays, and additive `pi-ai` contract drift.
 - Added safe loopback Origin defaults, preserved the all-cwd allowlist marker, and released all Coding Agent event subscriptions during runtime disposal.
 

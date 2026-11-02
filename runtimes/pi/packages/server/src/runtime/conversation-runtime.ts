@@ -11,7 +11,13 @@
  * 鉴权：调用方必须先完成逐资源授权，再以已授权的 Scope 打开 Runtime。
  */
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
-import type { PiSessionRuntime, PiSessionRuntimeEvent, ResolvedAttachmentInput, RetrievalInput } from "../types.ts";
+import type {
+	PiSessionRuntime,
+	PiSessionRuntimeEvent,
+	ResolvedAttachmentInput,
+	RetrievalInput,
+	TranscriptMessage,
+} from "../types.ts";
 import { historyToContextText, historyToReference, type RestoredContext } from "./context-restore.ts";
 import { createEffectOwner, type EffectOwner } from "./effect-owner.ts";
 import type { ScopeContext } from "./scope-context.ts";
@@ -22,6 +28,8 @@ export interface ConversationRuntimeOptions {
 	readonly spec: RuntimeSpec;
 	/** 底层会话；MVP 每个 Conversation 独立（AD-07）。 */
 	readonly session: PiSessionRuntime;
+	readonly systemPrompt?: string;
+	readonly hydrateToolReferences?: (transcript: readonly TranscriptMessage[]) => void;
 }
 
 export interface ConversationRuntimeEvent {
@@ -33,6 +41,8 @@ export class ConversationRuntime {
 	readonly scope: ScopeContext;
 	readonly spec: RuntimeSpec;
 	private readonly session: PiSessionRuntime;
+	private readonly systemPrompt: string | undefined;
+	private readonly hydrateToolReferences: ConversationRuntimeOptions["hydrateToolReferences"];
 	private readonly owner: EffectOwner;
 	private readonly listeners = new Set<(event: ConversationRuntimeEvent) => void>();
 	private closed = false;
@@ -52,6 +62,8 @@ export class ConversationRuntime {
 		this.scope = options.scope;
 		this.spec = options.spec;
 		this.session = options.session;
+		this.systemPrompt = options.systemPrompt;
+		this.hydrateToolReferences = options.hydrateToolReferences;
 		// 所有资源经 owner 注册（TASK-020）：本阶段只有底层会话，后续
 		// Timer/listener/AbortController 同样在此登记。
 		this.owner = createEffectOwner();
@@ -113,11 +125,15 @@ export class ConversationRuntime {
 				? history.transcript
 				: undefined;
 		const hasHistory = hydrate && history !== undefined && history.messages.length > 0;
+		if (structuredHistory !== undefined) this.hydrateToolReferences?.(structuredHistory);
 		const hasAttachments =
 			(attachmentIds !== undefined && attachmentIds.length > 0) ||
 			(attachments !== undefined && attachments.length > 0);
 		if (structuredHistory === undefined && retrieval === undefined && !hasAttachments) {
-			await this.session.prompt({ text });
+			await this.session.prompt({
+				text,
+				...(this.systemPrompt !== undefined ? { systemPrompt: this.systemPrompt } : {}),
+			});
 			return;
 		}
 		const contextParts: string[] = [];
@@ -133,6 +149,7 @@ export class ConversationRuntime {
 		}
 		await this.session.prompt({
 			text,
+			...(this.systemPrompt !== undefined ? { systemPrompt: this.systemPrompt } : {}),
 			...(structuredHistory !== undefined ? { transcript: structuredHistory } : {}),
 			...(hasAttachments
 				? {

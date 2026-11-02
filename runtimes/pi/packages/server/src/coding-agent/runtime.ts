@@ -21,7 +21,6 @@ import type {
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
-import { toAgentMessages } from "./history-mapper.ts";
 import type {
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
@@ -29,6 +28,7 @@ import type {
 	ResolvedAttachmentInput,
 	SteerInput,
 } from "../types.ts";
+import { toAgentMessages } from "./history-mapper.ts";
 import { subscribeToAgentSession } from "./progress-adapter.ts";
 import { buildSessionSnapshot, type RuntimeHints } from "./snapshot-adapter.ts";
 

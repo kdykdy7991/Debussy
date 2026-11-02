@@ -70,6 +70,23 @@
 	font-size: var(--aurora-text-sm);
 }
 
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-2);
+	color: var(--aurora-ink);
+}
+
+.field input,
+.field select,
+.field textarea {
+	padding: var(--aurora-space-2);
+	border: 1px solid var(--aurora-line);
+	border-radius: var(--aurora-radius-sm);
+	background: var(--aurora-surface);
+	color: var(--aurora-ink);
+}
+
 .banner {
 	padding: var(--aurora-space-3) var(--aurora-space-4);
 	border-radius: var(--aurora-radius-sm);

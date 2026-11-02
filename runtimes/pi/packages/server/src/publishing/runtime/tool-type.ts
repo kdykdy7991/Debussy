@@ -14,13 +14,20 @@
  * label. The runtime's tool registry for executable tools is the
  * AgentSession's `_baseToolDefinitions` + `customTools` (MCP).
  */
+
+import { mcpResourceToolName } from "../mcp/resource-content.ts";
 import type { RuntimeSpec } from "../runtime-spec/schema.ts";
 
 export type DebugToolType = "builtin" | "mcp" | "skill";
 
 export function deriveToolType(spec: RuntimeSpec, toolName: string): DebugToolType {
 	if (spec.capabilities.skills.some((skill) => skill.name === toolName)) return "skill";
-	if (spec.capabilities.mcpServers.some((server) => server.tools.some((tool) => tool.name === toolName))) {
+	if (
+		spec.capabilities.mcpServers.some(
+			(server) =>
+				server.tools.some((tool) => tool.name === toolName) || mcpResourceToolName(server.mcpServerId) === toolName,
+		)
+	) {
 		return "mcp";
 	}
 	return "builtin";

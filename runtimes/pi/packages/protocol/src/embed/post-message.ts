@@ -32,6 +32,8 @@ export type EmbedHostPostMessage =
 			readonly type: "init";
 			/** signed_user：宿主后端签发的 Launch Token；匿名 init 省略。 */
 			readonly launchToken?: string;
+			/** trusted_app：宿主后端向 Debussy 换取的一次性 code。 */
+			readonly exchangeCode?: string;
 	  }
 	| { readonly type: "logout" }
 	/** 宿主请求 iframe 聚焦输入框。 */
@@ -44,7 +46,7 @@ export type EmbedIframePostMessage =
 	| {
 			readonly type: "ready";
 			readonly publicAppId: string;
-			readonly mode: "anonymous" | "signed_user";
+			readonly mode: "anonymous" | "signed_user" | "trusted_app";
 	  }
 	| { readonly type: "error"; readonly code: string; readonly message: string }
 	| { readonly type: "resize"; readonly height: number }
@@ -91,6 +93,12 @@ export function decodeEmbedHostMessage(raw: unknown): PostMessageDecodeResult {
 		}
 		if (typeof payload !== "object" || Array.isArray(payload)) return { ok: false, reason: "INVALID_PAYLOAD" };
 		const launchToken = (payload as Record<string, unknown>).launchToken;
+		const exchangeCode = (payload as Record<string, unknown>).exchangeCode;
+		if (exchangeCode !== undefined) {
+			if (launchToken !== undefined || typeof exchangeCode !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(exchangeCode))
+				return { ok: false, reason: "INVALID_PAYLOAD" };
+			return { ok: true, message: { type: "init", exchangeCode } };
+		}
 		if (launchToken === undefined) return { ok: true, message: { type: "init" } };
 		if (
 			typeof launchToken !== "string" ||
@@ -155,7 +163,8 @@ export function decodeEmbedIframeMessage(raw: unknown): EmbedPayloadDecodeResult
 			return { ok: false, reason: "INVALID_PAYLOAD" };
 		const { publicAppId, mode } = payload as Record<string, unknown>;
 		if (typeof publicAppId !== "string" || publicAppId === "") return { ok: false, reason: "INVALID_PAYLOAD" };
-		if (mode !== "anonymous" && mode !== "signed_user") return { ok: false, reason: "INVALID_PAYLOAD" };
+		if (mode !== "anonymous" && mode !== "signed_user" && mode !== "trusted_app")
+			return { ok: false, reason: "INVALID_PAYLOAD" };
 		return { ok: true, message: { type: "ready", publicAppId, mode } };
 	}
 	if (type === "error") {

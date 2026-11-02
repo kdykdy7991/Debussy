@@ -8,6 +8,7 @@
  * stage-C checkpoint: create app -> immutable version -> activate ->
  * publicAppId, all over HTTP. Requires the local test DB.
  */
+import { generateKeyPairSync } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { PostgresClient } from "../../src/persistence/postgres/client.ts";
@@ -16,6 +17,7 @@ import { createPublishingRepositories } from "../../src/persistence/postgres/rep
 import { createControlHttpHandler } from "../../src/publishing/control/http.ts";
 import { ControlService, type CurrentAgentDefinitionSource } from "../../src/publishing/control/service.ts";
 import { newTenantId, type TenantId } from "../../src/publishing/domain/ids.ts";
+import { McpSecretBox } from "../../src/publishing/mcp/secret-box.ts";
 import type { PublishingRepositories } from "../../src/publishing/repositories.ts";
 import type { AgentDraftConfig, CapabilityCatalog } from "../../src/publishing/runtime-spec/compiler.ts";
 import type { HttpRequestHandler } from "../../src/types.ts";
@@ -154,7 +156,13 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		await runMigrations(client);
 		repos = createPublishingRepositories(client);
 		const tenantId = newTenantId();
-		service = new ControlService({ repositories: repos, catalog: CATALOG, embedBaseUrl: "https://embed.test" });
+		service = new ControlService({
+			repositories: repos,
+			catalog: CATALOG,
+			embedBaseUrl: "https://embed.test",
+			launchTokenAllowedIssuers: ["ticket-system"],
+			mcpSecretBox: new McpSecretBox(Buffer.alloc(32, 3)),
+		});
 		// 33.1: the bootstrap tenant exists before any control call.
 		const bootstrapped = await service.bootstrapTenant({ tenantId, tenantName: "bootstrap" });
 		if (!bootstrapped.ok) throw new Error("bootstrap failed");
@@ -295,14 +303,35 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 				config: {
 					transport: "streamable_http",
 					endpoint: "https://mcp.example.com/v1",
-					authentication: "none",
+					authentication: "api_key",
 				},
 			},
 		});
 		expect(created.status).toBe(201);
 		expect(created.body.data.id).toMatch(/^mcp_/);
 		expect(created.body.data.secretConfigured).toBe(false);
+		expect(created.body.data.revisions[0].config.authentication).toBe("api_key");
 		expect(JSON.stringify(created.body)).not.toContain("bearerToken");
+		const missingSecret = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}/test`,
+			base: httpBase,
+			headers: auth,
+			body: {},
+		});
+		expect(missingSecret.status).toBe(409);
+		expect(missingSecret.body.error.code).toBe("MCP_SECRET_NOT_CONFIGURED");
+		const credential = "http-api-key-test-secret";
+		const saved = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/mcp-servers/${created.body.data.id}/secret`,
+			base: httpBase,
+			headers: auth,
+			body: { bearerToken: credential },
+		});
+		expect(saved.status).toBe(200);
+		expect(saved.body.data.secretConfigured).toBe(true);
+		expect(JSON.stringify(saved.body)).not.toContain(credential);
 
 		const list = await httpCall({
 			method: "GET",
@@ -324,7 +353,7 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 				config: {
 					transport: "streamable_http",
 					endpoint: "https://mcp.example.com/v2",
-					authentication: "none",
+					authentication: "api_key",
 				},
 			},
 		});
@@ -337,6 +366,9 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 			headers: auth,
 		});
 		expect(detail.status).toBe(200);
+		expect(detail.body.data.revisions[0].config.authentication).toBe("api_key");
+		expect(detail.body.data.secretConfigured).toBe(true);
+		expect(JSON.stringify(detail.body)).not.toContain(credential);
 		expect(detail.body.data.revisions.map((revision: { revision: number }) => revision.revision)).toEqual([2, 1]);
 
 		const disabled = await httpCall({
@@ -499,7 +531,31 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		expect(republished.body.data.version.versionNumber).toBeGreaterThan(published.body.data.version.versionNumber);
 		expect(republished.body.data.previousVersionId).toBe(published.body.data.version.id);
 
-		// Publish body must be empty (the latest revision is implied).
+		const publicKeyPem = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString();
+		const signed = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/agent-definitions/${agentId}/publish`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+			body: {
+				accessMode: "signed_user",
+				allowedOrigins: ["https://host.test"],
+				signedIdentity: { issuer: "ticket-system", keyId: "ticket-key-1", publicKeyPem },
+			},
+		});
+		expect(signed.status).toBe(201);
+		expect(signed.body.data.publishedApp.id).not.toBe(published.body.data.publishedApp.id);
+		const signedAgain = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/agent-definitions/${agentId}/publish`,
+			base: httpBase,
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+			body: { accessMode: "signed_user" },
+		});
+		expect(signedAgain.status).toBe(201);
+		expect(signedAgain.body.data.version.versionNumber).toBe(2);
+
+		// The latest revision is implied; callers cannot supply an old revision.
 		const rejectedBody = await httpCall({
 			method: "POST",
 			path: `/api/control/v1/agent-definitions/${agentId}/publish`,

@@ -1,13 +1,13 @@
 import { memo, useEffect, useRef, useState } from "react";
-import geometryDataUrl from "../../../../../../design/references/grok-icon-study/replica/geometry-data.js?url";
-import idleAvatarUrl from "../../../../../../design/references/grok-icon-study/replica/grok-blob-idle.svg?url";
-import characterUrl from "../../../../../../design/references/grok-icon-study/replica/src/character.js?url";
-import eyesUrl from "../../../../../../design/references/grok-icon-study/replica/src/eyes.js?url";
-import fxUrl from "../../../../../../design/references/grok-icon-study/replica/src/fx.js?url";
-import mathUrl from "../../../../../../design/references/grok-icon-study/replica/src/math.js?url";
-import poseUrl from "../../../../../../design/references/grok-icon-study/replica/src/pose.js?url";
-import tablesUrl from "../../../../../../design/references/grok-icon-study/replica/src/tables.js?url";
-import tricksUrl from "../../../../../../design/references/grok-icon-study/replica/src/tricks.js?url";
+import geometryDataUrl from "../../assets/grok-icon-study/geometry-data.js?url";
+import idleAvatarUrl from "../../assets/grok-icon-study/grok-blob-idle.svg?url";
+import characterUrl from "../../assets/grok-icon-study/src/character.js?url";
+import eyesUrl from "../../assets/grok-icon-study/src/eyes.js?url";
+import fxUrl from "../../assets/grok-icon-study/src/fx.js?url";
+import mathUrl from "../../assets/grok-icon-study/src/math.js?url";
+import poseUrl from "../../assets/grok-icon-study/src/pose.js?url";
+import tablesUrl from "../../assets/grok-icon-study/src/tables.js?url";
+import tricksUrl from "../../assets/grok-icon-study/src/tricks.js?url";
 
 export type AgentAvatarState =
 	| "idle"

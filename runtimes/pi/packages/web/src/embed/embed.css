@@ -397,3 +397,23 @@
 		max-width: 92%;
 	}
 }
+.composer-submit-with-info { flex-direction: row; align-items: center; gap: 6px; }
+.embed-context-ring { position: relative; line-height: 0; }
+.embed-context-ring summary { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; cursor: pointer; list-style: none; }
+.embed-context-ring summary::-webkit-details-marker { display: none; }
+.embed-context-ring summary:hover { background: var(--color-bg-hover, rgb(0 0 0 / 5%)); }
+.embed-context-ring summary:focus-visible { outline: 2px solid var(--color-editorial); outline-offset: 2px; }
+.embed-context-ring-track { stroke: var(--color-border-strong); }
+.embed-context-ring-fill { stroke: var(--color-editorial); stroke-linecap: round; }
+.embed-context-ring-panel { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 10px); width: 260px; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: 12px; background: var(--color-bg-content); box-shadow: var(--shadow-float); color: var(--color-text-primary); font: 12px/1.5 var(--font-sans); white-space: normal; }
+.embed-context-ring-panel strong { display: block; font-size: 13px; }
+.embed-context-ring-panel p { margin: 5px 0 12px; color: var(--color-editorial); font-weight: 700; }
+.embed-context-ring-panel dl { display: grid; gap: 7px; margin: 0; }
+.embed-context-ring-panel dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.embed-context-ring-panel dt { color: var(--color-text-tertiary); }
+.embed-context-ring-panel dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.embed-context-ring-compact { width: 100%; margin-top: 14px; padding: 8px 10px; border: 1px solid var(--color-border-strong); border-radius: 8px; background: var(--color-bg-content); color: var(--color-text-primary); font: 600 12px var(--font-sans); cursor: pointer; }
+.embed-context-ring-compact:hover:not(:disabled) { border-color: var(--color-editorial); color: var(--color-editorial); }
+.embed-context-ring-compact:disabled { opacity: .55; cursor: not-allowed; }
+.embed-context-ring-panel .embed-context-ring-result { display: block; margin: 9px 0 0; color: var(--color-text-secondary); font-weight: 400; }
+.embed-context-ring-panel small { display: block; margin-top: 12px; color: var(--color-text-tertiary); line-height: 1.4; }

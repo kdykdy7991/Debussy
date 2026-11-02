@@ -217,7 +217,7 @@ export interface McpServerRevisionRecord {
 	readonly revision: number;
 	readonly transport: "streamable_http";
 	readonly endpoint: string;
-	readonly authentication: "none" | "bearer";
+	readonly authentication: "none" | "bearer" | "api_key";
 	readonly createdAt: Date;
 }
 
@@ -269,6 +269,7 @@ export interface McpServerRepository {
 	addRevision(input: {
 		readonly scope: TenantScope;
 		readonly mcpServerId: McpServerId;
+		readonly expectedRevision?: number;
 		readonly revision: Omit<McpServerRevisionRecord, "revision">;
 		readonly tools: readonly Omit<McpToolRecord, "mcpRevision">[];
 	}): Promise<McpServerRevisionRecord | undefined>;
@@ -344,7 +345,7 @@ export interface PublishedAppRecord {
 	readonly publicAppId: string;
 	readonly name: string;
 	readonly status: PublishedAppStatus;
-	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 	readonly currentVersionId: PublishedAppVersionId | null;
 	readonly allowedOrigins: readonly string[];
 	readonly mutablePolicy: unknown;
@@ -582,7 +583,7 @@ export interface PublishedAppRepository {
 		fields: {
 			readonly name?: string;
 			readonly status?: PublishedAppStatus;
-			readonly accessMode?: "anonymous" | "signed_user" | "mixed";
+			readonly accessMode?: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 			readonly allowedOrigins?: readonly string[];
 			readonly mutablePolicy?: unknown;
 		},

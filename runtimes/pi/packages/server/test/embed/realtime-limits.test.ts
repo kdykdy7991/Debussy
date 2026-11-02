@@ -19,13 +19,16 @@ import {
 } from "../../src/embed/realtime/connection.ts";
 import {
 	type ConversationId,
+	newConversationEventId,
 	newConversationId,
 	newPrincipalId,
 	newPublishedAppId,
 	newPublishedAppVersionId,
 	newTenantId,
+	newTurnId,
 	toPublicId,
 } from "../../src/publishing/domain/ids.ts";
+import type { ConversationEventRecord, ConversationRecord } from "../../src/publishing/repositories.ts";
 
 type Listener = (...args: unknown[]) => void;
 
@@ -139,6 +142,84 @@ function sendTurn(ws: FakeWebSocket): void {
 }
 
 describe("embed realtime connection limits", () => {
+	test("forwards native tool images with stable IDs and replays the same images on sync", async () => {
+		const image = {
+			type: "image" as const,
+			data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ZkAAAAASUVORK5CYII=",
+			mimeType: "image/png",
+		};
+		const item = {
+			id: "tool-1",
+			role: "tool" as const,
+			toolCallId: "read-1",
+			toolName: "read_resource",
+			input: {},
+			content: [image],
+			timestamp: 0,
+			status: "complete" as const,
+			isError: false as const,
+		};
+		const turnId = newTurnId();
+		const rows: ConversationEventRecord[] = [
+			{
+				eventId: newConversationEventId(),
+				tenantId,
+				publishedAppId: appId,
+				conversationId: convId,
+				sequence: 2,
+				eventType: "tool/result",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { toolCallId: item.toolCallId, toolName: item.toolName, content: item.content },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+			{
+				eventId: newConversationEventId(),
+				tenantId,
+				publishedAppId: appId,
+				conversationId: convId,
+				sequence: 3,
+				eventType: "assistant/message",
+				eventSchemaVersion: 1,
+				turnId,
+				payload: { text: "图片如下" },
+				payloadBytes: 0,
+				createdAt: new Date(),
+			},
+		];
+		const services: RealtimeServices = {
+			...noopServices,
+			getConversation: async () => ({ lastEventSequence: 3, status: "active" }) as ConversationRecord,
+			listEvents: async () => rows,
+			executeTurn: async ({ onProgress }) => {
+				onProgress?.({ type: "item_started", item: { ...item, status: "running" } });
+				onProgress?.({ type: "item_finished", item });
+				return okTurn("图片如下");
+			},
+		};
+		const live = makeConnection({ limits: createEmbedLimits({ config: {} }), services });
+		sendTurn(live.ws);
+		await flush();
+		expect(live.ws.sent.find((event) => event.type === "tool.started")).toMatchObject({ toolCallId: "read-1" });
+		expect(live.ws.sent.find((event) => event.type === "tool.completed")).toMatchObject({
+			toolCallId: "read-1",
+			images: [image],
+		});
+		const reconnected = makeConnection({ limits: createEmbedLimits({ config: {} }), services });
+		reconnected.ws.emit(
+			"message",
+			JSON.stringify({ type: "conversation.sync", conversationId: publicConvId, lastSeenSequence: 1 }),
+		);
+		await flush();
+		expect(reconnected.ws.sent.map((event) => event.type)).toEqual([
+			"tool.completed",
+			"message.completed",
+			"conversation.snapshot",
+		]);
+		expect(reconnected.ws.sent[0]).toMatchObject({ sequence: 2, turnId, toolCallId: "read-1", images: [image] });
+	});
+
 	test("forwards real text and thinking deltas before the durable completion", async () => {
 		const limits = createEmbedLimits({ turnSlotCapacity: 1, config: {} });
 		const harness = makeConnection({

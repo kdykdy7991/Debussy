@@ -198,12 +198,7 @@ export interface DebugConversationSummaryRecord {
 /** Head-summary lookup (resume/restore) + append for a Debug Conversation. */
 export interface DebugConversationSummaryRepository {
 	/** The most recent summary for a Debug conversation (or undefined). */
-	getLatest(
-		ref: DebugConversationRef,
-	): Promise<DebugConversationSummaryRecord | undefined>;
+	getLatest(ref: DebugConversationRef): Promise<DebugConversationSummaryRecord | undefined>;
 	/** Persist a new summary (returns true when inserted). */
-	insert(
-		ref: DebugConversationRef,
-		record: DebugConversationSummaryRecord,
-	): Promise<boolean>;
+	insert(ref: DebugConversationRef, record: DebugConversationSummaryRecord): Promise<boolean>;
 }

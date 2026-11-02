@@ -20,7 +20,10 @@ fi
 
 web_ui_port="${PI_WEB_UI_PORT:-5173}"
 server_port="${PI_WEB_SERVER_PORT:-8765}"
-allowed_origin="${PI_WEB_ALLOWED_ORIGIN:-http://127.0.0.1:${web_ui_port}}"
+origin_args=(--allow-origin "${PI_WEB_ALLOWED_ORIGIN:-http://127.0.0.1:${web_ui_port}}")
+if [[ -z "${PI_WEB_ALLOWED_ORIGIN:-}" ]]; then
+	origin_args+=(--allow-origin "http://localhost:${web_ui_port}")
+fi
 export VITE_PI_WS_URL="${VITE_PI_WS_URL:-ws://127.0.0.1:${server_port}/api/pi/v1/ws}"
 export PI_EMBED_DEV_PROXY_TARGET="${PI_EMBED_DEV_PROXY_TARGET:-http://127.0.0.1:${server_port}}"
 generated_web_token=$(node -p "require(\"node:crypto\").randomBytes(32).toString(\"hex\")")
@@ -37,7 +40,7 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-./node_modules/.bin/tsx packages/server/src/web/cli.ts --port "$server_port" --allow-origin "$allowed_origin" "$@" &
+./node_modules/.bin/tsx packages/server/src/web/cli.ts --port "$server_port" "${origin_args[@]}" "$@" &
 server_pid=$!
 
 # Do not expose Vite until its API/WebSocket proxy has a live backend.  Starting
@@ -61,7 +64,7 @@ if [[ "$server_ready" != "true" ]]; then
 	exit 1
 fi
 
-npm run dev --workspace=@earendil-works/pi-web -- --host 127.0.0.1 --port "$web_ui_port" --strictPort &
+npm run dev --workspace=@earendil-works/pi-web -- --host "${PI_WEB_HOST:-127.0.0.1}" --port "$web_ui_port" --strictPort &
 web_pid=$!
 
 # POSIX-portable wait: blocks until $server_pid exits, then returns. $web_pid

@@ -9,6 +9,39 @@
  * sequence 非负整数；未知 type 返回稳定的协议错误码。
  */
 
+import type { ImageContent } from "../schemas.ts";
+
+/** Copy only bounded display text; internal tool names and URLs are never fallbacks. */
+export function imageProvenance(value: unknown): ImageContent["provenance"] {
+	if (value === null || typeof value !== "object") return undefined;
+	const row = value as Record<string, unknown>;
+	const documentTitle = typeof row.documentTitle === "string" ? row.documentTitle.trim().slice(0, 240) : "";
+	const title = typeof row.title === "string" ? row.title.trim().slice(0, 240) : "";
+	return documentTitle || title
+		? { ...(documentTitle ? { documentTitle } : {}), ...(title ? { title } : {}) }
+		: undefined;
+}
+
+/** Shared defensive decoder for persisted and live tool images. */
+export function toolImagesFromContent(value: unknown): ImageContent[] {
+	if (!Array.isArray(value)) return [];
+	let chars = 0;
+	const images: ImageContent[] = [];
+	for (const entry of value) {
+		if (entry === null || typeof entry !== "object") continue;
+		const block = entry as Record<string, unknown>;
+		if (block.type !== "image" || typeof block.data !== "string" || typeof block.mimeType !== "string") continue;
+		if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(block.mimeType)) continue;
+		if (block.data.length === 0 || block.data.length > 1_398_104 || !/^[A-Za-z0-9+/]+={0,2}$/.test(block.data))
+			continue;
+		chars += block.data.length;
+		if (images.length >= 4 || chars > 1_398_112) break;
+		const provenance = imageProvenance(block.provenance);
+		images.push({ type: "image", data: block.data, mimeType: block.mimeType, ...(provenance ? { provenance } : {}) });
+	}
+	return images;
+}
+
 /** 客户端命令（spec 9.1）。 */
 export type ClientCommand =
 	| { readonly type: "conversation.subscribe"; readonly conversationId: string; readonly lastSeenSequence?: number }
@@ -40,8 +73,14 @@ export type EmbedServerEvent =
 			readonly delta: string;
 	  })
 	| (RecoverableEventBase & { readonly type: "message.completed"; readonly text: string; readonly thinking?: string })
-	| (RecoverableEventBase & { readonly type: "tool.started"; readonly tool: string })
-	| (RecoverableEventBase & { readonly type: "tool.completed"; readonly tool: string; readonly ok: boolean })
+	| (RecoverableEventBase & { readonly type: "tool.started"; readonly tool: string; readonly toolCallId?: string })
+	| (RecoverableEventBase & {
+			readonly type: "tool.completed";
+			readonly tool: string;
+			readonly ok: boolean;
+			readonly toolCallId?: string;
+			readonly images?: readonly ImageContent[];
+	  })
 	| (RecoverableEventBase & { readonly type: "citation.updated"; readonly citations: readonly unknown[] })
 	| (RecoverableEventBase & {
 			readonly type: "usage.updated";
@@ -205,14 +244,28 @@ export function decodeServerEvent(input: unknown): RealtimeDecodeResult<EmbedSer
 					...(record.thinking !== undefined ? { thinking: stringField(record, "thinking") } : {}),
 				});
 			case "tool.started":
-				return ok({ ...base, type: "tool.started", tool: stringField(record, "tool") });
-			case "tool.completed":
+				return ok({
+					...base,
+					type: "tool.started",
+					tool: stringField(record, "tool"),
+					...(record.toolCallId !== undefined ? { toolCallId: stringField(record, "toolCallId") } : {}),
+				});
+			case "tool.completed": {
+				const images = record.images === undefined ? undefined : toolImagesFromContent(record.images);
+				if (
+					record.images !== undefined &&
+					(!Array.isArray(record.images) || images?.length !== record.images.length)
+				)
+					return err("INVALID_FIELD", "invalid tool images");
 				return ok({
 					...base,
 					type: "tool.completed",
 					tool: stringField(record, "tool"),
 					ok: booleanField(record, "ok"),
+					...(record.toolCallId !== undefined ? { toolCallId: stringField(record, "toolCallId") } : {}),
+					...(images !== undefined ? { images } : {}),
 				});
+			}
 			case "citation.updated":
 				return ok({ ...base, type: "citation.updated", citations: arrayField(record, "citations") });
 			case "usage.updated": {

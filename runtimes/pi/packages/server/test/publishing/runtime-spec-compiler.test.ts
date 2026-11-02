@@ -55,6 +55,60 @@ function compile(agent: AgentDraftConfig = draft()) {
 }
 
 describe("runtime spec compiler", () => {
+	test.each([33, 128, 129])("enforces the MCP tool limit consistently for %i tools", (count) => {
+		const mcpServers = [
+			{
+				mcpServerId: "mcp_test",
+				revision: 1,
+				transport: "streamable_http" as const,
+				endpoint: "https://mcp.example.com/rpc",
+				authentication: "api_key" as const,
+				tools: Array.from({ length: count }, (_, index) => ({
+					name: `tool_${index}`,
+					description: null,
+					inputSchema: { type: "object" },
+					inputSchemaHash: "a".repeat(64),
+				})),
+			},
+		];
+		const compiled = compileRuntimeSpec({ agent: draft(), publishedAppVersionId: "pav_x", catalog, mcpServers });
+		expect(compiled.ok).toBe(count <= 128);
+		const base = compile();
+		if (!base.ok) throw new Error(base.errors.join("; "));
+		expect(parseRuntimeSpec({ ...base.spec, capabilities: { ...base.spec.capabilities, mcpServers } }).ok).toBe(
+			count <= 128,
+		);
+		if (compiled.ok) {
+			expect(compiled.spec.capabilities.mcpServers[0]?.tools).toHaveLength(count);
+			expect(parseRuntimeSpec(JSON.parse(compiled.canonicalJson)).ok).toBe(true);
+		} else {
+			expect(compiled.errors).toContain("MCP Tool allowlist has 129 tools, exceeding the platform limit of 128");
+		}
+	});
+
+	test.each([128, 129])("enforces the aggregate limit across multiple MCP servers with %i tools", (count) => {
+		const base = compile();
+		if (!base.ok) throw new Error(base.errors.join("; "));
+		const mcpServers = [64, count - 64].map((size, serverIndex) => ({
+			mcpServerId: `mcp_${serverIndex}`,
+			revision: 1,
+			transport: "streamable_http" as const,
+			endpoint: "https://mcp.example.com/rpc",
+			authentication: "none" as const,
+			tools: Array.from({ length: size }, (_, index) => ({
+				name: `tool_${serverIndex}_${index}`,
+				description: null,
+				inputSchema: { type: "object" },
+				inputSchemaHash: "a".repeat(64),
+			})),
+		}));
+		expect(compileRuntimeSpec({ agent: draft(), publishedAppVersionId: "pav_x", catalog, mcpServers }).ok).toBe(
+			count <= 128,
+		);
+		expect(parseRuntimeSpec({ ...base.spec, capabilities: { ...base.spec.capabilities, mcpServers } }).ok).toBe(
+			count <= 128,
+		);
+	});
 	test("same input compiles to the same hash", () => {
 		const a = compile();
 		const b = compile();

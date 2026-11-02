@@ -88,6 +88,9 @@ export type ConversationResult<T> =
 
 export interface ConversationServiceOptions {
 	readonly repositories: PublishingRepositories;
+	readonly loadTrustedIdentity?: (
+		principalId: ScopeContext["principalId"],
+	) => Promise<ScopeContext["trustedIdentity"]>;
 	/** Turn 执行器（TASK-018 内部/测试路径；Realtime 通道建成后替换）。 */
 	readonly turnExecutor: TurnExecutor;
 	/**
@@ -179,7 +182,13 @@ export class ConversationService {
 	private readonly citations: ConversationCitationService | undefined;
 	private readonly onCompacted: ((conversationId: ConversationId) => Promise<void>) | undefined;
 	private readonly resolveModelMetadata: ConversationServiceOptions["resolveModelMetadata"];
+	private readonly loadTrustedIdentity: ConversationServiceOptions["loadTrustedIdentity"];
 	private readonly generateTitle: ConversationServiceOptions["generateTitle"];
+	/** Identity is stable for one signed access token; a renewed token gets a fresh lookup. */
+	private readonly trustedIdentityByToken = new Map<
+		string,
+		{ readonly principalId: ScopeContext["principalId"]; readonly identity: Promise<ScopeContext["trustedIdentity"]> }
+	>();
 	/** 进程内单写者守卫：同一 Conversation 同时最多一个 Turn（PD-13）。 */
 	private readonly runningTurns = new Set<ConversationId>();
 	private readonly compactingConversations = new Set<ConversationId>();
@@ -190,6 +199,7 @@ export class ConversationService {
 		this.citations = options.citations;
 		this.onCompacted = options.resetRuntime;
 		this.resolveModelMetadata = options.resolveModelMetadata;
+		this.loadTrustedIdentity = options.loadTrustedIdentity;
 		this.generateTitle = options.generateTitle;
 	}
 
@@ -859,11 +869,34 @@ export class ConversationService {
 			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
 			// Agent V2 §4.3：会话级 reasoning effort 覆盖（事实源；缺省=Revision 默认）。
 			const conversationReasoning = await this.repos.conversationReasoning.get(scope, input.conversationId);
+			let trustedIdentity: ScopeContext["trustedIdentity"];
+			if (this.loadTrustedIdentity !== undefined) {
+				const tokenId = input.principal.tokenId;
+				let cached = this.trustedIdentityByToken.get(tokenId);
+				if (cached === undefined || cached.principalId !== input.principal.principalId) {
+					cached = {
+						principalId: input.principal.principalId,
+						identity: this.loadTrustedIdentity(input.principal.principalId),
+					};
+					this.trustedIdentityByToken.set(tokenId, cached);
+					if (this.trustedIdentityByToken.size > 256) {
+						const oldestTokenId = this.trustedIdentityByToken.keys().next().value;
+						if (oldestTokenId !== undefined) this.trustedIdentityByToken.delete(oldestTokenId);
+					}
+				}
+				try {
+					trustedIdentity = await cached.identity;
+				} catch (error) {
+					this.trustedIdentityByToken.delete(tokenId);
+					throw error;
+				}
+			}
 			const turnScope: ScopeContext = {
 				tenantId: input.principal.tenantId,
 				publishedAppId: input.principal.publishedAppId,
 				publishedAppVersionId: record.publishedAppVersionId,
 				principalId: input.principal.principalId,
+				...(trustedIdentity !== undefined ? { trustedIdentity } : {}),
 				conversationId: input.conversationId,
 				requestId: input.requestId,
 				turnId,

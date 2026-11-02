@@ -207,16 +207,16 @@ describe("embed auth controller", () => {
 describe("embed conversation events", () => {
 	test("derives chat messages from persistent events", () => {
 		const messages = messagesFromEvents([
-			{ id: "e1", sequence: 1, eventType: "user.message", turnId: "t1", payload: { text: "hi" }, createdAt: "" },
+			{ id: "e1", sequence: 1, eventType: "user/message", turnId: "t1", payload: { text: "hi" }, createdAt: "" },
 			{
 				id: "e2",
 				sequence: 2,
-				eventType: "assistant.completed",
+				eventType: "assistant/message",
 				turnId: "t1",
 				payload: { text: "hello" },
 				createdAt: "",
 			},
-			{ id: "e3", sequence: 3, eventType: "turn.failed", turnId: "t2", payload: { error: "boom" }, createdAt: "" },
+			{ id: "e3", sequence: 3, eventType: "turn/failed", turnId: "t2", payload: { error: "boom" }, createdAt: "" },
 		]);
 		expect(messages).toEqual([
 			{ role: "user", text: "hi", sequence: 1 },
@@ -276,7 +276,7 @@ describe("embed conversation events", () => {
 						{
 							id: "e1",
 							sequence: 1,
-							eventType: "user.message",
+							eventType: "user/message",
 							turnId: "t1",
 							payload: { text: "hi" },
 							createdAt: "",
@@ -284,7 +284,7 @@ describe("embed conversation events", () => {
 						{
 							id: "e2",
 							sequence: 2,
-							eventType: "assistant.completed",
+							eventType: "assistant/message",
 							turnId: "t1",
 							payload: { text: "hello" },
 							createdAt: "",

@@ -85,6 +85,14 @@ export class EmbedApi {
 		});
 	}
 
+	async consumeTrustedCode(publicAppId: string, code: string, hostOrigin: string): Promise<ExchangeResponse> {
+		return this.request<ExchangeResponse>("/api/embed/v1/auth/consume", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ publicAppId, code, hostOrigin }),
+		});
+	}
+
 	async listConversations(token: string, limit = 20, cursor?: string): Promise<ConversationListResponse> {
 		const query = new URLSearchParams({ limit: String(limit) });
 		if (cursor !== undefined) query.set("cursor", cursor);
@@ -103,8 +111,17 @@ export class EmbedApi {
 		});
 	}
 
-	async getConversation(token: string, conversationId: string): Promise<ConversationDetailResponse> {
-		return this.request<ConversationDetailResponse>(`/api/embed/v1/conversations/${conversationId}`, {
+	async getConversation(
+		token: string,
+		conversationId: string,
+		afterSequence?: number,
+		limit?: number,
+	): Promise<ConversationDetailResponse> {
+		const query = new URLSearchParams();
+		if (afterSequence !== undefined) query.set("afterSequence", String(afterSequence));
+		if (limit !== undefined) query.set("limit", String(limit));
+		const suffix = query.size > 0 ? `?${query.toString()}` : "";
+		return this.request<ConversationDetailResponse>(`/api/embed/v1/conversations/${conversationId}${suffix}`, {
 			method: "GET",
 			token,
 		});

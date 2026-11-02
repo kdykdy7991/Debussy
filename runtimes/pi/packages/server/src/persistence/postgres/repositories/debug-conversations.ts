@@ -177,7 +177,7 @@ export function createDebugConversationRepository(client: PostgresClient): Debug
 				    and deleted_at is not null
 				    and deleted_at < $3
 				  order by deleted_at asc
-				  limit 10_000`,
+				  limit 10000`,
 				scope.tenantId,
 				scope.ownerPrincipalId,
 				cutoff,

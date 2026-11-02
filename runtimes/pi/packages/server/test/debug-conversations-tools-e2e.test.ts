@@ -899,9 +899,7 @@ describe.skipIf(!pgUp)("DebugConversation Phase 2A — Tool/MCP realtime + persi
 		const resultEvent = toolEvents.find((e) => e.eventType === "tool/result");
 		expect(resultEvent).toBeTruthy();
 		const content = (resultEvent!.payload as { content?: unknown[] }).content;
-		expect(content).toEqual(
-			expect.arrayContaining([expect.objectContaining({ type: "text", text: "FOR_F_TEST" })]),
-		);
+		expect(content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text", text: "FOR_F_TEST" })]));
 	});
 
 	it("G. headless execution uses the same tool lifecycle persistence core as realtime", async () => {

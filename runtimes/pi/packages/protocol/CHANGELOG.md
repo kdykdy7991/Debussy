@@ -9,4 +9,5 @@
 
 ### Added
 
+- Added the `api_key` MCP authentication mode for `X-Mcp-Api-Key` credentials.
 - Added transport-neutral CBOR protocol schemas, codecs, and length-prefixed framing for remote pi sessions.

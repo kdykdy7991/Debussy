@@ -11,9 +11,10 @@
  * page size) signals the end. A defensive page cap prevents an unbounded loop
  * from a malformed source without silently dropping data under normal input.
  */
-export interface ReplayPage<T extends { readonly sequence: number }> {
-	(afterSequence: number, limit: number): Promise<readonly T[]>;
-}
+export type ReplayPage<T extends { readonly sequence: number }> = (
+	afterSequence: number,
+	limit: number,
+) => Promise<readonly T[]>;
 
 /** Full page size the underlying repositories return at most. */
 export const REPLAY_PAGE_SIZE = 500;
@@ -28,7 +29,7 @@ export async function replayAllAfter<T extends { readonly sequence: number }>(
 	const out: T[] = [];
 	let cursor = afterSequence;
 	let pages = 0;
-	for (; ;) {
+	for (;;) {
 		const rows = await page(cursor, REPLAY_PAGE_SIZE);
 		out.push(...rows);
 		if (rows.length < REPLAY_PAGE_SIZE) break;

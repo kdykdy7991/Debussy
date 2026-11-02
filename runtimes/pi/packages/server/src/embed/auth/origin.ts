@@ -6,8 +6,7 @@
  * Exchange endpoint and the Realtime upgrade — never three different matchers.
  *
  * Rules:
- *  - only `http` / `https` schemes; production (non-loopback) hosts must use
- *    HTTPS, with localhost / 127.0.0.1 / ::1 as the explicit MVP exception,
+ *  - only `http` / `https` schemes, including explicitly allowlisted HTTP hosts,
  *  - no path, query, fragment, or userinfo,
  *  - host matching is case-insensitive (canonicalised to lowercase),
  *  - default ports are equivalent (`http://h` === `http://h:80`,
@@ -68,9 +67,6 @@ export function parseStrictOrigin(value: string): StrictOrigin | null {
 	const host = url.hostname.toLowerCase();
 	if (host === "") return null;
 	const scheme = url.protocol === "https:" ? "https" : "http";
-	// Production requires HTTPS; loopback is the explicit exception.
-	if (scheme === "http" && !isLoopbackHost(host)) return null;
-
 	// Default ports are equivalent to omitting the port.
 	const port = url.port === "" ? null : Number(url.port);
 	const effectivePort = port ?? DEFAULT_PORTS[scheme];
@@ -107,10 +103,11 @@ export function validateOriginList(list: readonly string[]): OriginListValidatio
 	return { ok: errors.length === 0, errors };
 }
 
-/** Strip an optional `https://` prefix and return the wildcard base host. */
-function wildcardBase(trimmed: string): string | null {
-	if (trimmed.startsWith("*.")) return trimmed.slice(2);
-	if (trimmed.startsWith("https://*.")) return trimmed.slice("https://*.".length);
+/** Return the scheme and base host of a supported wildcard entry. */
+function wildcardBase(trimmed: string): { scheme: OriginScheme; host: string } | null {
+	if (trimmed.startsWith("*.")) return { scheme: "https", host: trimmed.slice(2) };
+	if (trimmed.startsWith("https://*.")) return { scheme: "https", host: trimmed.slice("https://*.".length) };
+	if (trimmed.startsWith("http://*.")) return { scheme: "http", host: trimmed.slice("http://*.".length) };
 	return null;
 }
 
@@ -120,9 +117,9 @@ function entryError(entry: string): string | null {
 	const base = wildcardBase(trimmed);
 	const isWildcard = base !== null;
 	if (trimmed === "*" || (trimmed.startsWith("*") && !isWildcard)) return "bare wildcards are not allowed";
-	const concrete = isWildcard ? `https://${base}` : trimmed;
+	const concrete = base === null ? trimmed : `${base.scheme}://${base.host}`;
 	const parsed = parseStrictOrigin(concrete);
-	if (parsed === null) return "must be a valid http(s) origin without path/userinfo; production hosts require https";
+	if (parsed === null) return "must be a valid http(s) origin without path/userinfo";
 	if (isWildcard) {
 		const labels = parsed.host.split(".");
 		if (labels.length < 2 || labels.some((label) => label === "")) return "wildcard TLDs are not allowed";
@@ -145,9 +142,9 @@ function entryMatches(entry: string, request: StrictOrigin | null): boolean {
 	if (base !== null) {
 		// Only the leading label is wildcarded: `*.example.com` matches
 		// `a.example.com` but never `example.com` or `a.b.example.com.evil.com`.
-		const parsed = parseStrictOrigin(`https://${base}`);
+		const parsed = parseStrictOrigin(`${base.scheme}://${base.host}`);
 		if (parsed === null) return false;
-		if (request.scheme !== "https") return false;
+		if (request.scheme !== base.scheme) return false;
 		const expectedSuffix = `.${parsed.host}`;
 		if (request.host === parsed.host) return false;
 		return request.host.endsWith(expectedSuffix);

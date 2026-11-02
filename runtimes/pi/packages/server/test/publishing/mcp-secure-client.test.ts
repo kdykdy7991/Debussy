@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	connectSecureMcpClient,
 	isPublicMcpAddress,
 	McpNetworkPolicyError,
 	resolveApprovedMcpAddresses,
@@ -7,6 +8,19 @@ import {
 } from "../../src/publishing/mcp/secure-client.ts";
 
 describe("MCP outbound network policy", () => {
+	it.each(["", "secret\r\nInjected: value", "has space", "密钥"])(
+		"rejects invalid API Key header values before connecting",
+		async (apiKey) => {
+			await expect(connectSecureMcpClient({ endpoint: "https://mcp.example.com", apiKey })).rejects.toThrow(
+				"invalid header characters",
+			);
+		},
+	);
+	it("rejects ambiguous authentication before connecting", async () => {
+		await expect(
+			connectSecureMcpClient({ endpoint: "https://mcp.example.com", apiKey: "key", bearerToken: "token" }),
+		).rejects.toThrow("either Bearer or API Key");
+	});
 	it("accepts HTTPS on an approved port", () => {
 		expect(validateMcpEndpoint("https://mcp.example.com/rpc").toString()).toBe("https://mcp.example.com/rpc");
 	});

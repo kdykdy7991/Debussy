@@ -136,11 +136,16 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 			return client.transaction(async (tx) => {
 				const rows = await txRows(
 					tx,
-					"select current_revision from mcp_servers where tenant_id = $1 and id = $2 and deleted_at is null for update",
+					"select current_revision, status from mcp_servers where tenant_id = $1 and id = $2 and deleted_at is null for update",
 					input.scope.tenantId,
 					input.mcpServerId,
 				);
 				if (rows.length !== 1) return undefined;
+				if (
+					input.expectedRevision !== undefined &&
+					(Number(rows[0].current_revision) !== input.expectedRevision || rows[0].status !== "enabled")
+				)
+					return undefined;
 				const revision: McpServerRevisionRecord = {
 					...input.revision,
 					revision: Number(rows[0].current_revision) + 1,

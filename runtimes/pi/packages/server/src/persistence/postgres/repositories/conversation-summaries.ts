@@ -38,7 +38,8 @@ function rowToRecord(row: Record<string, unknown>): ConversationSummaryRecord {
 		body: row.body,
 		createdAt: row.created_at as Date,
 		previousSummaryId: (row.previous_summary_id ?? undefined) as ConversationSummaryId | undefined,
-		tokensBefore: row.tokens_before === null || row.tokens_before === undefined ? undefined : Number(row.tokens_before),
+		tokensBefore:
+			row.tokens_before === null || row.tokens_before === undefined ? undefined : Number(row.tokens_before),
 	};
 }
 

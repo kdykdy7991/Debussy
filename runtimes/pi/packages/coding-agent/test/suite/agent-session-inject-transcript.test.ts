@@ -1,5 +1,5 @@
+import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import type { AssistantMessage, ToolResultMessage, UserMessage, Usage } from "@earendil-works/pi-ai";
 import { createHarness, type Harness } from "./harness.ts";
 
 function zeroUsage(): Usage {
@@ -64,7 +64,12 @@ describe("AgentSession.injectTranscript (Phase-1 native history injection)", () 
 			const tc = h.session.messages[1];
 			if (tc.role !== "assistant") throw new Error("expected assistant");
 			expect((tc.content[0] as { type: string }).type).toBe("toolCall");
-			expect(tc.content[0]).toMatchObject({ type: "toolCall", id: "call-1", name: "readfile", arguments: { path: "a.txt" } });
+			expect(tc.content[0]).toMatchObject({
+				type: "toolCall",
+				id: "call-1",
+				name: "readfile",
+				arguments: { path: "a.txt" },
+			});
 			// toolCallId pairing with the following toolResult is preserved.
 			const tr = h.session.messages[2];
 			if (tr.role !== "toolResult") throw new Error("expected toolResult");

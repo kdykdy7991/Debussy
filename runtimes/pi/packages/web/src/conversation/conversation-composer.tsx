@@ -1,5 +1,12 @@
 import type { SessionSnapshot, VoiceCapability } from "@earendil-works/pi-protocol";
-import type { ChangeEventHandler, FocusEventHandler, FormEventHandler, KeyboardEventHandler, RefObject } from "react";
+import type {
+	ChangeEventHandler,
+	FocusEventHandler,
+	FormEventHandler,
+	KeyboardEventHandler,
+	ReactNode,
+	RefObject,
+} from "react";
 import type { VoiceAsrState } from "../embed/voice-asr-session.ts";
 import type { VoiceEngineStatus } from "../embed/voice-engine-transport.ts";
 import type { VoiceTtsPhase } from "../embed/voice-tts-session.ts";
@@ -25,6 +32,7 @@ export interface ConversationComposerProps {
 	readonly uploadsEnabled: boolean;
 	/** 已绑定 Skill（发布版本能力，review doc §4.6）：输入 `/skill:` 时补全。 */
 	readonly skills?: readonly { name: string; description?: string }[];
+	readonly submitInfo?: ReactNode;
 	readonly onVoiceChange: (enabled: boolean) => void;
 	/**
 	 * Voice Engine 同源 WS 反代的最小 UI（Task 5）。仅在发布页
@@ -231,7 +239,8 @@ export function ConversationComposer(props: ConversationComposerProps): React.Re
 							/>
 						</div>
 					) : null}
-					<div className="composer-submit">
+					<div className={`composer-submit${props.submitInfo ? " composer-submit-with-info" : ""}`}>
+						{props.submitInfo}
 						{textDisabled ? (
 							<button className="send-button" type="submit" disabled aria-label="语音模式下不可发送文字">
 								Send <span aria-hidden="true">↵</span>

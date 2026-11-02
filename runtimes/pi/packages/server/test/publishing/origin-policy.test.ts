@@ -2,8 +2,8 @@
  * TASK-014: Strict Origin policy (spec 13.1).
  *
  * Case-insensitivity, default-port equivalence, sub-domain wildcard only,
- * `null` origin rejection, malformed URLs, production-HTTPS enforcement with
- * the loopback exception, allow/deny matching, and CSP frame-ancestors
+ * `null` origin rejection, malformed URLs, HTTP and HTTPS support,
+ * allow/deny matching, and CSP frame-ancestors
  * generation — all from the single shared policy module.
  */
 import { describe, expect, test } from "vitest";
@@ -43,15 +43,23 @@ describe("parseStrictOrigin", () => {
 		expect(parsed?.canonical).toBe("https://example.com:8443");
 	});
 
-	test("http is rejected for non-loopback hosts (production requires https)", () => {
-		expect(parseStrictOrigin("http://project-a.example.com")).toBeNull();
-		expect(parseStrictOrigin("http://example.com")).toBeNull();
+	test("http is accepted for non-loopback hosts", () => {
+		expect(parseStrictOrigin("http://project-a.example.com")?.canonical).toBe("http://project-a.example.com");
+		expect(parseStrictOrigin("http://10.113.114.88:8003")?.canonical).toBe("http://10.113.114.88:8003");
 	});
 
 	test("http is allowed for loopback hosts", () => {
 		expect(parseStrictOrigin("http://localhost:5173")?.canonical).toBe("http://localhost:5173");
 		expect(parseStrictOrigin("http://127.0.0.1:5173")?.canonical).toBe("http://127.0.0.1:5173");
 		expect(parseStrictOrigin("http://[::1]:5173")?.host).toBe("[::1]");
+	});
+
+	test("non-loopback HTTP still requires an exact allowlist match", () => {
+		expect(validateOriginList(["http://10.113.114.88:8003", "http://127.0.0.1:5173"]).ok).toBe(true);
+		expect(originAllowed("http://10.113.114.88:8003", ["http://10.113.114.88:8003"])).toBe(true);
+		expect(originAllowed("http://10.113.114.88:8004", ["http://10.113.114.88:8003"])).toBe(false);
+		expect(originAllowed("http://10.113.114.89:8003", ["http://10.113.114.88:8003"])).toBe(false);
+		expect(parseStrictOrigin("http://10.113.114.88:8003/path")).toBeNull();
 	});
 
 	test("rejects paths, query, fragment and userinfo", () => {
@@ -101,6 +109,12 @@ describe("originAllowed", () => {
 		expect(originAllowed("https://internal.example.com.evil.com", allowlist)).toBe(false);
 	});
 
+	test("explicit HTTP wildcard matches HTTP hosts only", () => {
+		expect(validateOriginList(["http://*.internal.example.com"]).ok).toBe(true);
+		expect(originAllowed("http://api.internal.example.com", ["http://*.internal.example.com"])).toBe(true);
+		expect(originAllowed("https://api.internal.example.com", ["http://*.internal.example.com"])).toBe(false);
+	});
+
 	test("ports must match exactly", () => {
 		expect(originAllowed("http://localhost:5173", allowlist)).toBe(true);
 		expect(originAllowed("http://localhost:8080", allowlist)).toBe(false);
@@ -128,6 +142,7 @@ describe("validateOriginList", () => {
 			"https://a.example.com",
 			"https://*.sub.example.com",
 			"http://localhost:5173",
+			"http://10.113.114.88:8003",
 		]);
 		expect(result.ok).toBe(true);
 		expect(result.errors).toEqual([]);
@@ -139,8 +154,7 @@ describe("validateOriginList", () => {
 		expect(validateOriginList(["https://*.example.com:8443"]).ok).toBe(false);
 	});
 
-	test("rejects http non-loopback, paths, userinfo and junk", () => {
-		expect(validateOriginList(["http://a.example.com"]).ok).toBe(false);
+	test("rejects paths, userinfo and junk", () => {
 		expect(validateOriginList(["https://a.example.com/x"]).ok).toBe(false);
 		expect(validateOriginList(["https://u@a.example.com"]).ok).toBe(false);
 		expect(validateOriginList(["junk"]).ok).toBe(false);
@@ -159,8 +173,8 @@ describe("buildFrameAncestors", () => {
 	});
 
 	test("keeps sub-domain wildcards for CSP", () => {
-		const header = buildFrameAncestors(["https://*.internal.example.com"]);
-		expect(header).toBe("frame-ancestors 'self' https://*.internal.example.com");
+		const header = buildFrameAncestors(["https://*.internal.example.com", "http://*.internal.example.com"]);
+		expect(header).toBe("frame-ancestors 'self' https://*.internal.example.com http://*.internal.example.com");
 	});
 
 	test("drops invalid entries instead of weakening the policy", () => {

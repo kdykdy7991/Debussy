@@ -1,10 +1,16 @@
 import { describe, expect, test } from "vitest";
+import type {
+	ConversationId,
+	PrincipalId,
+	PublishedAppId,
+	PublishedAppVersionId,
+	TenantId,
+} from "../../src/publishing/domain/ids.ts";
 import type { RuntimeSpec } from "../../src/publishing/runtime-spec/schema.ts";
-import type { ConversationId, PublishedAppId, PublishedAppVersionId, PrincipalId, TenantId } from "../../src/publishing/domain/ids.ts";
-import type { ScopeContext } from "../../src/runtime/scope-context.ts";
-import { ConversationRuntime } from "../../src/runtime/conversation-runtime.ts";
-import type { PiSessionRuntime, PromptInput } from "../../src/types.ts";
 import type { RestoredContext } from "../../src/runtime/context-restore.ts";
+import { ConversationRuntime } from "../../src/runtime/conversation-runtime.ts";
+import type { ScopeContext } from "../../src/runtime/scope-context.ts";
+import type { PiSessionRuntime, PromptInput } from "../../src/types.ts";
 
 function chatOnlySpec(): RuntimeSpec {
 	return {
@@ -72,7 +78,10 @@ function makeSession() {
 /** Full restored history: the same object reused across turns (per-turn restore). */
 function fullHistory(): RestoredContext {
 	return {
-		messages: [{ role: "user", text: "prior" }, { role: "assistant", text: "done" }],
+		messages: [
+			{ role: "user", text: "prior" },
+			{ role: "assistant", text: "done" },
+		],
 		transcript: [
 			{ role: "user", content: [{ type: "text", text: "prior" }] },
 			{ role: "assistant", content: [{ type: "text", text: "done" }] },

@@ -1,0 +1,64 @@
+.tool-images {
+	margin-top: 20px;
+	font-size: 13px;
+}
+
+.tool-images-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 240px));
+	gap: 12px;
+	margin-top: 10px;
+}
+
+.tool-images figure {
+	margin: 0;
+}
+
+.tool-images figure > button {
+	width: 100%;
+	padding: 8px;
+	border: 1px solid #ddd;
+	border-radius: 8px;
+	background: white;
+	cursor: zoom-in;
+}
+
+.tool-images figure > button img {
+	display: block;
+	width: 100%;
+	height: 170px;
+	object-fit: contain;
+}
+
+.tool-images figcaption {
+	margin-top: 6px;
+	overflow-wrap: anywhere;
+}
+
+.tool-image-preview {
+	border: 0;
+	border-radius: 10px;
+	max-width: 95vw;
+	max-height: 95vh;
+	padding: 16px;
+	background: white;
+}
+
+.tool-image-preview[open] {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+}
+
+.tool-image-preview::backdrop {
+	background: rgb(0 0 0 / 75%);
+}
+
+.tool-image-preview > img {
+	max-width: 100%;
+	max-height: 85vh;
+	object-fit: contain;
+	background: white;
+}

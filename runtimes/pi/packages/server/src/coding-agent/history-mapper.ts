@@ -32,7 +32,7 @@ function zeroUsage(): Usage {
 
 function toTextOrImage(block: TranscriptContentBlock): TextContent | ImageContent | null {
 	if (block.type === "text") return { type: "text", text: block.text };
-	if (block.type === "image") return { type: "image", data: block.data, mimeType: block.mimeType };
+	if (block.type === "image") return { ...block };
 	return null; // toolCall never lands in user/text content
 }
 
@@ -44,10 +44,7 @@ export interface ToAgentMessagesOptions {
 	readonly now?: number;
 }
 
-export type HistoryAgentMessage =
-	| UserMessage
-	| AssistantMessage
-	| ToolResultMessage;
+export type HistoryAgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
 
 export function toAgentMessages(
 	transcript: readonly TranscriptMessage[],
@@ -68,8 +65,9 @@ export function toAgentMessages(
 			out.push({ role: "user", content, timestamp: now });
 		} else if (item.role === "assistant") {
 			const hasToolCall = item.content.some((block) => block.type === "toolCall");
-			const content: Array<TextContent | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }> =
-				[];
+			const content: Array<
+				TextContent | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }
+			> = [];
 			for (const block of item.content) {
 				if (block.type === "toolCall") {
 					content.push({

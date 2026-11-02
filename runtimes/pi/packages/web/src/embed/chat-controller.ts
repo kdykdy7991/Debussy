@@ -12,6 +12,7 @@
  *  - `citation.updated` 只做实时展示，不持久化（TASK-032 记录）。
  *  - 附件只在本会话内展示；服务端全 scope 授权，猜 ID 不可探测。
  */
+import type { ImageContent } from "@earendil-works/pi-protocol";
 import { type EmbedApi, EmbedApiError } from "./api.ts";
 import { messagesFromEvents } from "./conversation-controller.ts";
 import { EmbedRealtimeTransport, type WebSocketLike } from "./realtime-transport.ts";
@@ -118,6 +119,7 @@ export class EmbedChatController {
 	/** 工具事件可能先于第一段 assistant 文本到达，暂存到本次回复创建时再挂载。 */
 	private pendingTools: readonly ChatToolCall[] = [];
 	private contextUsageRequest = 0;
+	private conversationLoadRequest = 0;
 
 	constructor(options: EmbedChatControllerOptions) {
 		this.options = options;
@@ -161,7 +163,7 @@ export class EmbedChatController {
 		return this.state;
 	}
 
-	/** 初始化：读能力开关 + 会话列表 + 恢复最近会话（PD-02）。 */
+	/** 初始化：读能力开关 + 会话列表 + 打开最近有内容的会话。 */
 	async initialize(features?: { readonly uploads?: boolean; readonly newConversations?: boolean }): Promise<void> {
 		const newConversationsEnabled = features?.newConversations !== false;
 		this.setState({
@@ -169,30 +171,11 @@ export class EmbedChatController {
 			newConversationsEnabled,
 			error: null,
 		});
-		const response = await this.withToken((token) => this.options.api.listConversations(token));
+		const response = await this.withToken((token) => this.options.api.listConversations(token, 100));
 		this.setState({ conversations: response.items });
-		if (response.items.length > 0) await this.resumeInitialConversation(response.items[0]!.id);
+		const initial = response.items.find((item) => item.lastEventSequence > 0) ?? response.items[0];
+		if (initial !== undefined) await this.openConversation(initial.id);
 		else if (!newConversationsEnabled) await this.newConversation();
-	}
-
-	/**
-	 * P2 public-chat resume: open the most recent conversation, but route it
-	 * through the server resume endpoint so a stale-version conversation rolls
-	 * forward to a NEW conversation on the CURRENT version (the old one stays in
-	 * history, untouched). When the version is still current the same
-	 * conversation is resumed unchanged.
-	 */
-	private async resumeInitialConversation(conversationId: string): Promise<void> {
-		try {
-			const resumed = await this.withToken((token) => this.options.api.resumeConversation(token, conversationId));
-			const conversations = this.state.conversations.some((item) => item.id === resumed.conversation.id)
-				? this.state.conversations
-				: [resumed.conversation, ...this.state.conversations];
-			this.setState({ conversations });
-			await this.openConversation(resumed.conversation.id);
-		} catch (error) {
-			this.handleError(error);
-		}
 	}
 
 	/** 新建会话并打开（服务端固定当前版本）。 */
@@ -221,9 +204,26 @@ export class EmbedChatController {
 	/** 切换会话：加载消息 + 重连 Realtime（取消旧订阅，TASK-026）。 */
 	async openConversation(conversationId: string): Promise<void> {
 		if (conversationId === this.state.activeId) return;
+		const request = ++this.conversationLoadRequest;
 		try {
-			const detail = await this.withToken((token) => this.options.api.getConversation(token, conversationId));
-			const messages = messagesFromEvents(detail.events).map((message) => ({
+			const events = [] as Awaited<ReturnType<EmbedApi["getConversation"]>>["events"][number][];
+			let afterSequence = 0;
+			let latestSequence = 0;
+			do {
+				const detail = await this.withToken((token) =>
+					this.options.api.getConversation(token, conversationId, afterSequence, 200),
+				);
+				if (request !== this.conversationLoadRequest) return;
+				latestSequence = Math.max(latestSequence, detail.conversation.lastEventSequence);
+				events.push(...detail.events);
+				const lastSequence = detail.events.at(-1)?.sequence;
+				if (lastSequence === undefined || lastSequence <= afterSequence) {
+					if (afterSequence < latestSequence) throw new Error("会话历史加载不完整，请重试");
+					break;
+				}
+				afterSequence = lastSequence;
+			} while (afterSequence < latestSequence);
+			const messages = messagesFromEvents(events).map((message) => ({
 				...message,
 				id: `evt-${message.sequence}`,
 			}));
@@ -239,10 +239,10 @@ export class EmbedChatController {
 				sending: false,
 				error: null,
 			});
-			this.transport.connect(conversationId, detail.conversation.lastEventSequence);
+			this.transport.connect(conversationId, afterSequence);
 			void this.refreshContextUsage(conversationId);
 		} catch (error) {
-			this.handleError(error);
+			if (request === this.conversationLoadRequest) this.handleError(error);
 		}
 	}
 
@@ -284,6 +284,7 @@ export class EmbedChatController {
 		}
 		const echo: ChatMessage = { id: nextLocalId("user"), role: "user", text: trimmed, sequence: -1 };
 		this.streamingId = null;
+		this.pendingTools = [];
 		this.setState({ messages: [...this.state.messages, echo], sending: true, error: null });
 		const sent = this.transport.sendTurn(newRequestId(), conversationId, trimmed);
 		if (!sent) {
@@ -388,6 +389,7 @@ export class EmbedChatController {
 
 	/** 主动关闭（宿主 logout）：停止重连并清理连接状态。 */
 	close(): void {
+		this.conversationLoadRequest += 1;
 		this.closing = true;
 		this.streamingId = null;
 		this.pendingCitations = null;
@@ -398,6 +400,7 @@ export class EmbedChatController {
 
 	/** 认证失败（signed_user 无法刷新）时由调用方重置。 */
 	reset(): void {
+		this.conversationLoadRequest += 1;
 		this.closing = true;
 		this.streamingId = null;
 		this.pendingCitations = null;
@@ -471,6 +474,7 @@ export class EmbedChatController {
 								text: event.text,
 								...(event.thinking !== undefined ? { thinking: event.thinking } : {}),
 								sequence: event.sequence,
+								...(this.pendingTools.length > 0 ? { tools: this.pendingTools } : {}),
 							},
 						];
 				this.streamingId = null;
@@ -520,11 +524,23 @@ export class EmbedChatController {
 				break;
 			}
 			case "tool.started": {
-				this.updateTools(event.eventId, event.tool, "running");
+				this.updateTools(
+					event.toolCallId ?? event.eventId,
+					event.tool,
+					"running",
+					undefined,
+					event.toolCallId === undefined,
+				);
 				break;
 			}
 			case "tool.completed": {
-				this.updateTools(event.eventId, event.tool, event.ok ? "completed" : "failed");
+				this.updateTools(
+					event.toolCallId ?? event.eventId,
+					event.tool,
+					event.ok ? "completed" : "failed",
+					event.ok ? event.images : [],
+					event.toolCallId === undefined,
+				);
 				break;
 			}
 			case "turn.accepted":
@@ -548,13 +564,21 @@ export class EmbedChatController {
 		}
 	}
 
-	private updateTools(id: string, name: string, status: ChatToolCall["status"]): void {
+	private updateTools(
+		id: string,
+		name: string,
+		status: ChatToolCall["status"],
+		images?: readonly ImageContent[],
+		legacy = false,
+	): void {
 		const apply = (tools: readonly ChatToolCall[]): readonly ChatToolCall[] => {
 			const existing = tools.findIndex(
-				(tool) => tool.id === id || (tool.name === name && tool.status === "running"),
+				(tool) => tool.id === id || (legacy && tool.name === name && tool.status === "running"),
 			);
-			if (existing < 0) return [...tools, { id, name, status }];
-			return tools.map((tool, index) => (index === existing ? { ...tool, id, name, status } : tool));
+			if (existing < 0) return [...tools, { id, name, status, images }];
+			return tools.map((tool, index) =>
+				index === existing ? { ...tool, id, name, status, ...(images !== undefined ? { images } : {}) } : tool,
+			);
 		};
 		if (this.streamingId === null) {
 			this.pendingTools = apply(this.pendingTools);

@@ -19,10 +19,12 @@ import { createRedactingSink, createSecretRegistry, type SecretRegistry } from "
 import { createMetricRegistry, type MetricRegistry } from "../metrics/index.ts";
 import { S3ObjectStore } from "../persistence/object-store/s3.ts";
 import type { ObjectStore } from "../persistence/object-store/types.ts";
+import type { PostgresClient } from "../persistence/postgres/client.ts";
 import { RedisClient } from "../persistence/redis/client.ts";
 import { createRedisNonceStore } from "../persistence/redis/nonce-store.ts";
 import { createRedisTicketStore } from "../persistence/redis/ticket-store.ts";
 import type { PublishingConfig } from "../publishing/config.ts";
+import type { PrincipalId } from "../publishing/domain/ids.ts";
 import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import type { PreviewTicketService } from "../publishing/preview-ticket.ts";
 import type { PublishingRepositories, UploadQuotaLimits } from "../publishing/repositories.ts";
@@ -41,6 +43,7 @@ import { AccessTokenService, loadAccessTokenKeyMaterial } from "./auth/access-to
 import { createExchangeHttpHandler } from "./auth/exchange-http.ts";
 import { LaunchTokenVerifier } from "./auth/launch-token.ts";
 import { ExchangeService } from "./auth/principal.ts";
+import { createTrustedAppHttpHandlers } from "./auth/trusted-app-http.ts";
 import { createVoiceProxyTicketService, type VoiceProxyTicketService } from "./auth/voice-proxy-ticket.ts";
 import { createWsTicketService, type WsTicketService } from "./auth/ws-ticket.ts";
 import { createBootstrapHttpHandler } from "./bootstrap-http.ts";
@@ -67,6 +70,9 @@ export interface EmbedPlaneOptions {
 	readonly generateTitle?: (provider: string, modelId: string, source: string) => Promise<string | undefined>;
 	readonly publishing: PublishingConfig;
 	readonly repositories: PublishingRepositories;
+	readonly postgres?: PostgresClient;
+	readonly tenantId?: string;
+	readonly isAdmin?: (request: import("node:http").IncomingMessage) => boolean;
 	/** 底层会话工厂（真实组合接 CodingAgentPiSessionBackend.createSession）。 */
 	readonly createSession: RuntimeSessionFactory;
 	readonly mcpTools?: McpRuntimeToolFactory;
@@ -111,6 +117,8 @@ export interface EmbedPlaneOptions {
 export interface EmbedPlaneHandle {
 	readonly bootstrapHandler: HttpRequestHandler;
 	readonly exchangeHandler: HttpRequestHandler;
+	readonly trustedAppAdminHandler?: HttpRequestHandler;
+	readonly trustedAppPublicHandler?: HttpRequestHandler;
 	readonly voiceEngineTicketHandler: HttpRequestHandler;
 	readonly attachmentsHandler: HttpRequestHandler;
 	readonly conversationsHandler: HttpRequestHandler;
@@ -178,6 +186,14 @@ export interface EmbedServicesOptions {
 	readonly accessTokens: AccessTokenService;
 	readonly subjectPepper: string;
 	readonly repositories: PublishingRepositories;
+	readonly loadTrustedIdentity?: (principalId: PrincipalId) => Promise<
+		| {
+				readonly systemName: string;
+				readonly displayName: string;
+				readonly roles: readonly string[];
+		  }
+		| undefined
+	>;
 	readonly createSession: RuntimeSessionFactory;
 	readonly mcpTools?: McpRuntimeToolFactory;
 	/** WebSocket Ticket 服务（TASK-024/025）；未提供时 ws-ticket 端点 503。 */
@@ -297,6 +313,7 @@ export function createEmbedServices(options: EmbedServicesOptions): EmbedService
 	const authenticator = createEmbedAuthenticator({ accessTokens: options.accessTokens });
 	const conversationService = new ConversationService({
 		repositories: options.repositories,
+		...(options.loadTrustedIdentity !== undefined ? { loadTrustedIdentity: options.loadTrustedIdentity } : {}),
 		turnExecutor: managedTurnExecutor(runtimeManager),
 		...(conversationCitations !== undefined ? { citations: conversationCitations } : {}),
 		// Phase-3: after a Turn, reset the cached runtime unconditionally so the
@@ -441,12 +458,35 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	// uploads 显式 503，不静默退化为节点磁盘。
 	const objectStore = options.objectStore ?? createObjectStoreFromConfig(options.publishing);
 	const attachmentBucket = options.attachmentBucket ?? options.publishing.objectStore?.bucket;
+	const trustedIdentityPostgres = options.postgres;
+	const trustedIdentityTenantId = options.tenantId;
 
 	let realtimeUpgrade: UpgradeHandler | undefined;
 	const services = createEmbedServices({
 		accessTokens: config.accessTokens,
 		subjectPepper: config.subjectPepper,
 		repositories: options.repositories,
+		...(trustedIdentityPostgres !== undefined && trustedIdentityTenantId !== undefined
+			? {
+					loadTrustedIdentity: async (principalId) => {
+						const rows = await trustedIdentityPostgres.run(
+							"select app.name as system_name, profile.display_name, profile.roles from trusted_embed_identity_profiles profile join trusted_embed_apps app on app.id = profile.trusted_app_id where profile.principal_id = $1 and app.tenant_id = $2 and app.enabled = true",
+							principalId,
+							trustedIdentityTenantId,
+						);
+						const row = rows[0];
+						if (row === undefined || typeof row.system_name !== "string" || typeof row.display_name !== "string")
+							return undefined;
+						return {
+							systemName: row.system_name,
+							displayName: row.display_name,
+							roles: Array.isArray(row.roles)
+								? row.roles.filter((role): role is string => typeof role === "string")
+								: [],
+						};
+					},
+				}
+			: {}),
 		createSession: options.createSession,
 		...(options.mcpTools !== undefined ? { mcpTools: options.mcpTools } : {}),
 		wsTickets,
@@ -467,6 +507,22 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 		...(options.resolveModelMetadata !== undefined ? { resolveModelMetadata: options.resolveModelMetadata } : {}),
 		...(options.generateTitle !== undefined ? { generateTitle: options.generateTitle } : {}),
 	});
+	const trustedApps =
+		options.postgres !== undefined && options.tenantId !== undefined && options.isAdmin !== undefined
+			? createTrustedAppHttpHandlers({
+					client: options.postgres,
+					redis,
+					repositories: options.repositories,
+					exchange: new ExchangeService({
+						repositories: options.repositories,
+						accessTokens: config.accessTokens,
+						subjectPepper: config.subjectPepper,
+					}),
+					tenantId: options.tenantId,
+					isAdmin: options.isAdmin,
+					secrets,
+				})
+			: undefined;
 	// Realtime 依赖 ConversationService（由 createEmbedServices 内部构造），
 	// 因此 createSession 在此闭包内通过 services 暴露的连接工厂构建。
 	realtimeUpgrade = services.realtimeUpgrade;
@@ -547,6 +603,9 @@ export async function composeEmbedPlane(options: EmbedPlaneOptions): Promise<Emb
 	return {
 		bootstrapHandler: services.handlers[0],
 		exchangeHandler: services.handlers[1],
+		...(trustedApps === undefined
+			? {}
+			: { trustedAppAdminHandler: trustedApps.admin, trustedAppPublicHandler: trustedApps.public }),
 		voiceEngineTicketHandler: services.handlers[2],
 		attachmentsHandler: services.handlers[3],
 		conversationsHandler: services.handlers[4],

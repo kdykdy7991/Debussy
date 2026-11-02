@@ -1,0 +1,16 @@
+/*
+ * flowtoken 样式的本地入口（转发层）。
+ *
+ * 为什么需要这一层：直接在 TS 里 `import "flowtoken/dist/styles.css"`，Vite 会把
+ * 依赖文件解析成 /@fs/<repo>/node_modules/flowtoken/dist/styles.css 这种绝对路径
+ * 发给浏览器；而开发服务器对非 localhost 请求有 /@fs/ 白名单闸门（只放行
+ * packages/web/src、packages/client/src、packages/protocol/src 三个源码根），
+ * 局域网客户端因此拿到 403 —— 该 CSS 由预构建产物 flowtoken.js 引入，属于
+ * ES 模块图的必需节点，一旦失败整个模块图中断，embed 页不挂载、宿主收不到
+ * ready 消息，界面上表现为「连接超时」。
+ *
+ * 这里改为先 import 本地文件：Vite 用 postcss-import 把包内 CSS 内联后，
+ * 浏览器只会请求 /src/styles/flowtoken.css（在既有白名单内），无需放开
+ * node_modules 的局域网访问。
+ */
+@import "flowtoken/dist/styles.css";

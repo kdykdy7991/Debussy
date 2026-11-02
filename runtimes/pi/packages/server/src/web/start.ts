@@ -243,6 +243,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		const mcpTools = createMcpRuntimeToolFactory({
 			repositories: controlPlane.repositories,
 			secretBox: controlPlane.mcpSecretBox,
+			onToolsChanged: () => controlPlane?.requestMcpSync(),
 		});
 		const controlCatalog = controlPlane.catalog;
 		const resolveToolName: BuiltinToolNameResolver = (toolId) =>
@@ -256,6 +257,9 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		embedPlane = await composeEmbedPlane({
 			publishing,
 			repositories: controlPlane.repositories,
+			postgres: controlPlane.client,
+			tenantId: controlPlane.tenantId,
+			isAdmin: (request) => controlPlane!.isAuthorized(request),
 			mcpTools,
 			skillMaterializer,
 			runtimeAdapter: piRuntimeAdapter,
@@ -371,6 +375,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		httpHandlers.push(
 			embedPlane.bootstrapHandler,
 			embedPlane.exchangeHandler,
+			...(embedPlane.trustedAppAdminHandler === undefined ? [] : [embedPlane.trustedAppAdminHandler]),
+			...(embedPlane.trustedAppPublicHandler === undefined ? [] : [embedPlane.trustedAppPublicHandler]),
 			embedPlane.voiceEngineTicketHandler,
 			embedPlane.attachmentsHandler,
 			embedPlane.conversationsHandler,

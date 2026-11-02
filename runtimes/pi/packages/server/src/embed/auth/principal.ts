@@ -306,6 +306,60 @@ export class ExchangeService {
 		};
 	}
 
+	/** Identity was asserted by an authenticated trusted backend and carried in a consumed code. */
+	async exchangeTrustedUser(input: {
+		readonly publicAppId: PublicAppId;
+		readonly trustedAppId: string;
+		readonly externalUserId: string;
+		readonly origin: string;
+	}): Promise<ExchangeResult<SignedUserExchangeData>> {
+		const app = await this.repos.publishedApps.getByPublicAppId(input.publicAppId);
+		if (app === undefined) return { ok: false, error: appNotFound() };
+		if (app.status !== "active") return { ok: false, error: appSuspended("App is not active") };
+		if (app.accessMode !== "trusted_app") return { ok: false, error: forbidden("App does not allow trusted access") };
+		if (!originAllowed(input.origin, app.allowedOrigins)) return { ok: false, error: originNotAllowed() };
+		const subjectHash = createHmac("sha256", this.subjectPepper)
+			.update(
+				`trusted\n${app.tenantId}\n${app.publishedAppId}\n${input.trustedAppId}\n${input.externalUserId}`,
+				"utf8",
+			)
+			.digest("hex");
+		const principal = await this.repos.principals.upsert({
+			principalId: newPrincipalId(),
+			tenantId: app.tenantId,
+			publishedAppId: app.publishedAppId,
+			principalType: "external_user",
+			subjectHash,
+			status: "active",
+			createdAt: new Date(),
+			lastSeenAt: new Date(),
+		});
+		if (principal.status !== "active") return { ok: false, error: forbidden("Principal is not active") };
+		const signed = await this.accessTokens.sign({
+			tenantId: app.tenantId,
+			publishedAppId: app.publishedAppId,
+			principalId: principal.principalId,
+			principalType: principal.principalType,
+			scopes: [],
+			publishedAppVersionId: app.currentVersionId,
+		});
+		return {
+			ok: true,
+			data: {
+				accessToken: signed.token,
+				expiresAt: signed.expiresAt.toISOString(),
+				principal: { id: toPublicId("PrincipalId", principal.principalId), type: "external_user" },
+				app: {
+					publicAppId: app.publicAppId,
+					name: app.name,
+					currentVersionId:
+						app.currentVersionId === null ? null : toPublicId("PublishedAppVersionId", app.currentVersionId),
+					features: await this.readFeatures(app),
+				},
+			},
+		};
+	}
+
 	/**
 	 * WB-005: preview exchange. The ticket binds the conversation to a
 	 * pinned version (`pinnedVersionId`) — the existing current-version code

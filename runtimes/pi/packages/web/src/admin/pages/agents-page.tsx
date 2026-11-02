@@ -1,4 +1,5 @@
 /** Agent 列表与详情入口。列表只展示 Control API 返回的真实数据。 */
+
 import type {
 	AgentDefinitionAssociatedApp,
 	AgentDefinitionDetail,
@@ -10,6 +11,7 @@ import type {
 	SkillSummary,
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useDialogs } from "../components/use-dialogs.tsx";
 
 /**
  * MCP catalog 条目。`toolNames` 记录该 server 当前 revision 冻结的工具名,
@@ -65,6 +67,14 @@ type AppsState =
 	| { readonly kind: "loaded"; readonly items: readonly AgentDefinitionAssociatedApp[] }
 	| { readonly kind: "error"; readonly message: string };
 
+type TrustedSystem = {
+	readonly id: string;
+	readonly name: string;
+	readonly client_id: string;
+	readonly enabled: boolean;
+	readonly published_app_id: string;
+};
+
 /** Skill / MCP 目录：只用来把 detail 里的 id 引用翻译成可读名称。 */
 type CatalogState<T> =
 	| { readonly kind: "loading" }
@@ -96,6 +106,12 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	const [models, setModels] = useState<ModelsState>({ kind: "loading" });
 	const [revisions, setRevisions] = useState<RevisionsState>({ kind: "loading" });
 	const [apps, setApps] = useState<AppsState>({ kind: "loading" });
+	const [trustedSystems, setTrustedSystems] = useState<readonly TrustedSystem[]>([]);
+	const [trustedError, setTrustedError] = useState<string | null>(null);
+	const [trustedBusy, setTrustedBusy] = useState(false);
+	const [pendingRotation, setPendingRotation] = useState<string | null>(null);
+	const [newSecret, setNewSecret] = useState<{ readonly clientId: string; readonly value: string } | null>(null);
+	const [copiedSecret, setCopiedSecret] = useState(false);
 	const [skillCatalog, setSkillCatalog] = useState<CatalogState<SkillSummary>>({ kind: "loading" });
 	const [mcpCatalog, setMcpCatalog] = useState<CatalogState<McpCatalogServer>>({ kind: "loading" });
 	const [publishDrawerMode, setPublishDrawerMode] = useState<"closed" | "open">("closed");
@@ -126,11 +142,22 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 		);
 	}, [agentId, api]);
 
+	const loadTrustedSystems = useCallback(() => {
+		void api.listTrustedSystems().then(
+			(items) => {
+				setTrustedSystems(items);
+				setTrustedError(null);
+			},
+			(error: unknown) => setTrustedError(errorMessage(error)),
+		);
+	}, [api]);
+
 	useEffect(() => {
 		load();
 		loadRevisions();
 		loadApps();
-	}, [load, loadRevisions, loadApps]);
+		loadTrustedSystems();
+	}, [load, loadRevisions, loadApps, loadTrustedSystems]);
 
 	useEffect(() => {
 		setModels({ kind: "loading" });
@@ -150,31 +177,41 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 	}, [skillApi]);
 
 	useEffect(() => {
-		setMcpCatalog({ kind: "loading" });
-		void mcpApi
-			.list(100)
-			.then(async (result) => {
-				// 服务端会给绑定非空 allowlist,且发布时校验 allowlist 与冻结快照一致;
-				// 因此这里补拉每个 server 当前 revision 的工具名,供新增绑定时使用。
-				const items: McpCatalogServer[] = await Promise.all(
-					result.items.map(async (item) => {
-						try {
-							const detail = await mcpApi.get(item.id);
-							const current = detail.revisions.find((rev) => rev.revision === detail.currentRevision);
-							return {
-								...item,
-								toolNames: current?.tools.map((tool) => tool.name) ?? [],
-								connectionStatus:
-									detail.lastTest === null ? "untested" : detail.lastTest.ok ? "connected" : "failed",
-							} satisfies McpCatalogServer;
-						} catch {
-							return { ...item, connectionStatus: "untested" } satisfies McpCatalogServer;
-						}
-					}),
-				);
-				setMcpCatalog({ kind: "loaded", items });
-			})
-			.catch((error: unknown) => setMcpCatalog({ kind: "error", message: errorMessage(error) }));
+		let cancelled = false;
+		const refresh = () => {
+			void mcpApi
+				.list(100)
+				.then(async (result) => {
+					// 服务端会给绑定非空 allowlist,且发布时校验 allowlist 与冻结快照一致;
+					// 因此这里补拉每个 server 当前 revision 的工具名,供新增绑定时使用。
+					const items: McpCatalogServer[] = await Promise.all(
+						result.items.map(async (item) => {
+							try {
+								const detail = await mcpApi.get(item.id);
+								const current = detail.revisions.find((rev) => rev.revision === detail.currentRevision);
+								return {
+									...item,
+									toolNames: current?.tools.map((tool) => tool.name) ?? [],
+									connectionStatus:
+										detail.lastTest === null ? "untested" : detail.lastTest.ok ? "connected" : "failed",
+								} satisfies McpCatalogServer;
+							} catch {
+								return { ...item, connectionStatus: "untested" } satisfies McpCatalogServer;
+							}
+						}),
+					);
+					if (!cancelled) setMcpCatalog({ kind: "loaded", items });
+				})
+				.catch((error: unknown) => {
+					if (!cancelled) setMcpCatalog({ kind: "error", message: errorMessage(error) });
+				});
+		};
+		refresh();
+		const timer = setInterval(refresh, 60_000);
+		return () => {
+			cancelled = true;
+			clearInterval(timer);
+		};
 	}, [mcpApi]);
 	if (state.kind === "loading") {
 		return (
@@ -265,7 +302,12 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 				}))
 			: [];
 	const updatedAtLabel = new Date(state.detail.updatedAt).toLocaleString("zh-CN", { hour12: false });
-	const liveApp = apps.kind === "loaded" ? apps.items.find((app) => app.status === "active") : undefined;
+	const liveApp =
+		apps.kind === "loaded"
+			? [...apps.items]
+					.filter((app) => app.status === "active")
+					.sort((left, right) => (right.publishedAt ?? "").localeCompare(left.publishedAt ?? ""))[0]
+			: undefined;
 	const publishData: AgentPublishData = {
 		status: liveApp === undefined ? "draft" : "online",
 		draftRevision: `Revision ${currentRevision}`,
@@ -278,6 +320,97 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 		externalLink: liveApp?.embedUrl,
 		versionHistory,
 	};
+	const trustedAppIds = new Set(
+		apps.kind === "loaded"
+			? apps.items.filter((app) => app.accessMode === "trusted_app").map((app) => app.appId.slice(4))
+			: [],
+	);
+	const agentTrustedSystems = trustedSystems.filter((system) => trustedAppIds.has(system.published_app_id));
+	const trustedAccessPanel =
+		trustedAppIds.size > 0 ? (
+			<section className="ard-side-card ard-trusted-card" aria-label="受信任系统接入">
+				<h3>受信任系统接入</h3>
+				{trustedError !== null ? (
+					<p className="ard-trusted-error" role="alert">
+						{trustedError}
+					</p>
+				) : null}
+				{agentTrustedSystems.length === 0 ? <p className="ard-side-empty">尚未签发接入密钥</p> : null}
+				{agentTrustedSystems.map((system) => (
+					<div className="ard-trusted-system" key={system.id}>
+						<div className="ard-trusted-heading">
+							<strong>{system.name}</strong>
+							<span className={system.enabled ? "is-enabled" : ""}>{system.enabled ? "已启用" : "已停用"}</span>
+						</div>
+						<span className="ard-trusted-label">Client ID</span>
+						<code className="ard-trusted-value">{system.client_id}</code>
+						{pendingRotation === system.client_id ? (
+							<div className="ard-trusted-confirm">
+								<p>重新生成后，旧 Secret 立即失效。</p>
+								<div>
+									<button type="button" onClick={() => setPendingRotation(null)} disabled={trustedBusy}>
+										取消
+									</button>
+									<button
+										type="button"
+										className="ard-trusted-confirm-action"
+										disabled={trustedBusy}
+										onClick={() => {
+											setTrustedBusy(true);
+											setTrustedError(null);
+											void api.updateTrustedSystem(system.client_id, "rotate").then(
+												(result) => {
+													if (result.clientSecret !== undefined) {
+														setNewSecret({ clientId: system.client_id, value: result.clientSecret });
+														setCopiedSecret(false);
+													}
+													setPendingRotation(null);
+													setTrustedBusy(false);
+												},
+												(error: unknown) => {
+													setTrustedError(errorMessage(error));
+													setTrustedBusy(false);
+												},
+											);
+										}}
+									>
+										{trustedBusy ? "生成中…" : "确认重新生成"}
+									</button>
+								</div>
+							</div>
+						) : (
+							<button
+								className="ard-trusted-rotate"
+								type="button"
+								disabled={trustedBusy}
+								onClick={() => setPendingRotation(system.client_id)}
+							>
+								重新生成密钥
+							</button>
+						)}
+						{newSecret?.clientId === system.client_id ? (
+							<output className="ard-trusted-issued">
+								<span className="ard-trusted-label">新 Client Secret · 仅本次显示</span>
+								<code className="ard-trusted-value">{newSecret.value}</code>
+								<button
+									className="ard-trusted-copy"
+									type="button"
+									onClick={() => {
+										void navigator.clipboard.writeText(newSecret.value).then(
+											() => setCopiedSecret(true),
+											(error: unknown) => setTrustedError(errorMessage(error)),
+										);
+									}}
+								>
+									{copiedSecret ? "已复制" : "复制 Secret"}
+								</button>
+								<p>请保存到宿主后端。刷新页面后无法再次查看。</p>
+							</output>
+						) : null}
+					</div>
+				))}
+			</section>
+		) : null;
 
 	// ---- 主区：Skill / MCP 绑定，id 引用经目录翻译成可读名称 ----
 	const skillItems: readonly AgentResource[] = (state.detail.skills ?? []).map((ref) => {
@@ -329,6 +462,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 				createdBy={state.detail.updatedBy}
 				agentId={state.detail.id}
 				publishData={publishData}
+				trustedAccessPanel={trustedAccessPanel}
 				skills={skillItems}
 				mcpServers={mcpItems}
 				resourcesLoading={skillCatalog.kind === "loading" || mcpCatalog.kind === "loading"}
@@ -359,6 +493,10 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 			/>
 			<PublishDrawer
 				agentId={agentId}
+				apps={apps.kind === "loaded" ? apps.items : []}
+				appsLoading={apps.kind === "loading"}
+				appsError={apps.kind === "error" ? apps.message : undefined}
+				onReloadApps={loadApps}
 				hasDraft={hasUnsavedChanges}
 				mode={publishDrawerMode}
 				onClose={() => setPublishDrawerMode("closed")}
@@ -374,6 +512,7 @@ function RealAgentDetail({ agentId }: { readonly agentId: AgentPublicId }): Reac
 }
 
 function RealAgentList(): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const api = useMemo(() => new AgentApi({ auth: controller }), [controller]);
 	const [state, setState] = useState<ListState>({ kind: "loading" });
@@ -414,64 +553,76 @@ function RealAgentList(): React.ReactElement {
 			: [];
 
 	return (
-		<AgentListPreview
-			embedded
-			items={items}
-			loadState={state.kind === "loaded" ? "ready" : state.kind}
-			errorMessage={state.kind === "error" ? state.message : undefined}
-			onRetry={load}
-			createPending={creating}
-			onCreate={() => {
-				if (creating) return;
-				const name = window.prompt("请输入 Agent 名称：")?.trim();
-				if (!name) return;
-				setCreating(true);
-				void api
-					.createAgent(
-						{
-							name,
-							description: "",
-							modelId: null,
-							systemPrompt: "",
-							parameters: {},
-							toolIds: [],
-							knowledgeBaseIds: [],
-							capabilities: {
-								realtimeVoice: false,
-								liveSpeech: false,
-								avatar: false,
-								attachments: false,
-								citations: false,
-								realtime: false,
-								webSearch: false,
+		<>
+			{dialog}
+			<AgentListPreview
+				embedded
+				items={items}
+				loadState={state.kind === "loaded" ? "ready" : state.kind}
+				errorMessage={state.kind === "error" ? state.message : undefined}
+				onRetry={load}
+				createPending={creating}
+				onCreate={async () => {
+					if (creating) return;
+					const name = (
+						await dialogs.prompt("为新的 Agent 填写一个名称。", {
+							title: "新建 Agent",
+							inputLabel: "Agent 名称",
+							confirmLabel: "创建",
+							maxLength: 200,
+						})
+					)?.trim();
+					if (!name) return;
+					setCreating(true);
+					void api
+						.createAgent(
+							{
+								name,
+								description: "",
+								modelId: null,
+								systemPrompt: "",
+								parameters: {},
+								toolIds: [],
+								knowledgeBaseIds: [],
+								capabilities: {
+									realtimeVoice: false,
+									liveSpeech: false,
+									avatar: false,
+									attachments: false,
+									citations: false,
+									realtime: false,
+									webSearch: false,
+								},
+								skills: [],
+								mcpServers: [],
 							},
-							skills: [],
-							mcpServers: [],
-						},
-						newIdempotencyKey({ operation: "agent.create" }),
-					)
-					.then(
-						(created) => navigate(`/agents/${created.id}`),
-						(error: unknown) => {
-							setCreating(false);
-							window.alert(error instanceof Error ? error.message : String(error));
-						},
-					);
-			}}
-			onOpen={(agent) => navigate(`/agents/${agent.id as AgentPublicId}`)}
-			onDelete={(agent) => {
-				const confirmation = window.prompt(
-					`删除 Agent 前会检查关联应用。请输入 Agent 名称“${agent.name}”确认删除：`,
-				);
-				if (confirmation === null) return;
-				if (confirmation !== agent.name) {
-					window.alert("输入的 Agent 名称不匹配，未执行删除");
-					return;
-				}
-				void api.deleteAgent(agent.id as AgentPublicId, confirmation).then(load, (error: unknown) => {
-					window.alert(error instanceof Error ? error.message : String(error));
-				});
-			}}
-		/>
+							newIdempotencyKey({ operation: "agent.create" }),
+						)
+						.then(
+							(created) => navigate(`/agents/${created.id}`),
+							(error: unknown) => {
+								setCreating(false);
+								void dialogs.alert(error instanceof Error ? error.message : String(error), {
+									title: "创建失败",
+								});
+							},
+						);
+				}}
+				onOpen={(agent) => navigate(`/agents/${agent.id as AgentPublicId}`)}
+				onDelete={async (agent) => {
+					const confirmation = await dialogs.prompt("删除前会检查关联应用。请输入完整的 Agent 名称以确认。", {
+						title: "删除 Agent",
+						typeToConfirm: agent.name,
+						inputLabel: `Agent 名称：${agent.name}`,
+						confirmLabel: "确认删除",
+						destructive: true,
+					});
+					if (confirmation === null) return;
+					void api.deleteAgent(agent.id as AgentPublicId, confirmation).then(load, (error: unknown) => {
+						void dialogs.alert(error instanceof Error ? error.message : String(error), { title: "删除失败" });
+					});
+				}}
+			/>
+		</>
 	);
 }

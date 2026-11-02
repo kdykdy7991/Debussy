@@ -36,6 +36,9 @@ export type McpAddressResolver = (hostname: string) => Promise<readonly McpResol
 export interface SecureMcpClientOptions {
 	readonly endpoint: string;
 	readonly bearerToken?: string;
+	/** Raw credential for X-Mcp-Api-Key authentication. */
+	readonly apiKey?: string;
+	readonly onToolsChanged?: () => void;
 	readonly networkPolicy?: McpNetworkPolicy;
 	readonly signal?: AbortSignal;
 	/** Test seam. Production callers use the system resolver. */
@@ -43,6 +46,7 @@ export interface SecureMcpClientOptions {
 }
 
 export interface SecureMcpClientSession {
+	readonly readResource?: (uri: string, signal?: AbortSignal) => ReturnType<Client["readResource"]>;
 	readonly listTools: (signal?: AbortSignal) => Promise<readonly Tool[]>;
 	readonly callTool: (
 		name: string,
@@ -191,12 +195,17 @@ function createSecureFetch(
  * pinned into Undici's connector for the life of the session.
  */
 export async function connectSecureMcpClient(options: SecureMcpClientOptions): Promise<SecureMcpClientSession> {
+	if (options.apiKey !== undefined && (options.apiKey.length === 0 || !/^[\x21-\x7e]+$/.test(options.apiKey)))
+		throw new Error("MCP API Key contains invalid header characters");
+	if (options.apiKey !== undefined && options.bearerToken !== undefined)
+		throw new Error("MCP authentication must use either Bearer or API Key");
 	const policy = options.networkPolicy ?? {};
 	const url = validateMcpEndpoint(options.endpoint, policy);
 	const addresses = await resolveApprovedMcpAddresses(url, policy, options.resolveAddresses);
 	const { fetch: secureFetch, dispatcher } = createSecureFetch(url, addresses, policy);
 	const transport = new StreamableHTTPClientTransport(url, {
 		fetch: secureFetch,
+		requestInit: options.apiKey === undefined ? undefined : { headers: { "X-Mcp-Api-Key": options.apiKey } },
 		authProvider:
 			options.bearerToken === undefined
 				? undefined
@@ -211,7 +220,21 @@ export async function connectSecureMcpClient(options: SecureMcpClientOptions): P
 	});
 	const client = new Client(
 		{ name: "debussy-agent-runtime", version: "0.83.0" },
-		{ enforceStrictCapabilities: true, defaultCacheTtlMs: 0, listMaxPages: 16 },
+		{
+			enforceStrictCapabilities: true,
+			defaultCacheTtlMs: 0,
+			listMaxPages: 16,
+			listChanged:
+				options.onToolsChanged === undefined
+					? undefined
+					: {
+							tools: {
+								onChanged: (error) => {
+									if (!error) options.onToolsChanged?.();
+								},
+							},
+						},
+		},
 	);
 	let closed = false;
 	const close = async (): Promise<void> => {
@@ -235,6 +258,16 @@ export async function connectSecureMcpClient(options: SecureMcpClientOptions): P
 		throw error;
 	}
 	return {
+		readResource: (uri, signal) =>
+			client.readResource(
+				{ uri },
+				{
+					cacheMode: "bypass",
+					signal,
+					timeout: policy.timeoutMs ?? MCP_DEFAULT_TIMEOUT_MS,
+					maxTotalTimeout: policy.timeoutMs ?? MCP_DEFAULT_TIMEOUT_MS,
+				},
+			),
 		listTools: async (signal) => {
 			const result = await client.listTools(undefined, {
 				cacheMode: "bypass",

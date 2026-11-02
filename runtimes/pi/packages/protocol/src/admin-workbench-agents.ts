@@ -149,6 +149,10 @@ export interface AgentDefinitionAssociatedApp {
 	readonly appId: PublishedAppPublicId;
 	readonly publicAppId: PublishedAppLocator;
 	readonly name: string;
+	readonly accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
+	readonly allowedOrigins: readonly string[];
+	/** Whether a usable host signing key is registered for signed-user access. */
+	readonly launchKeyConfigured?: boolean;
 	readonly status: string;
 	readonly currentVersionId: PublishedAppVersionPublicId | null;
 	/**
@@ -167,9 +171,8 @@ export interface AgentDefinitionAssociatedApp {
 
 /**
  * P2 one-click publish (`POST /api/control/v1/agent-definitions/:id/publish`).
- * The server resolves the Agent's LATEST revision, reuses-or-creates the
- * single internal published_app, creates + activates a version, and returns
- * the live publish state. No client-supplied revision / application / version.
+ * The server resolves the Agent's latest revision and publishes it under the
+ * requested access mode, activating a version and returning the live state.
  */
 export interface AgentPublishResponse {
 	readonly agentId: PublishedAppPublicId;

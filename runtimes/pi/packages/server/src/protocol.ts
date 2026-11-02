@@ -20,6 +20,7 @@ import type {
 	Usage,
 	UserTranscriptItem,
 } from "@earendil-works/pi-protocol";
+import { imageProvenance } from "@earendil-works/pi-protocol";
 
 type Assert<T extends true> = T;
 type ExactKeys<T, Keys extends keyof T> = keyof T extends Keys ? true : false;
@@ -337,8 +338,10 @@ function toProtocolToolContent(content: Array<AiTextContent | AiImageContent>): 
 		switch (part.type) {
 			case "text":
 				return { type: "text", text: part.text };
-			case "image":
-				return { type: "image", data: part.data, mimeType: part.mimeType };
+			case "image": {
+				const provenance = imageProvenance("provenance" in part ? part.provenance : undefined);
+				return { type: "image", data: part.data, mimeType: part.mimeType, ...(provenance ? { provenance } : {}) };
+			}
 			default: {
 				const exhaustive: never = part;
 				return exhaustive;

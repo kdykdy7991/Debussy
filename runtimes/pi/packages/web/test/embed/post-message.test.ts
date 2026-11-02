@@ -59,6 +59,62 @@ describe("isAllowedHostOrigin", () => {
 });
 
 describe("EmbedPostMessageChannel", () => {
+	test("buffers early init until bootstrap validates its origin", () => {
+		const win = new FakeWindow();
+		const parent = new FakeParent();
+		const onTrustedInit = vi.fn();
+		const channel = new EmbedPostMessageChannel({
+			window: win,
+			parent,
+			allowedOrigins: [],
+			deferUntilAllowedOrigins: true,
+			onInit: vi.fn(),
+			onTrustedInit,
+			onLogout: vi.fn(),
+		});
+		channel.start();
+		win.dispatch({
+			source: parent,
+			origin: ALLOWED_ORIGIN,
+			data: envelope("init", { exchangeCode: "a".repeat(43) }),
+		});
+		expect(onTrustedInit).not.toHaveBeenCalled();
+		channel.setAllowedOrigins([ALLOWED_ORIGIN]);
+		expect(onTrustedInit).toHaveBeenCalledWith("a".repeat(43), ALLOWED_ORIGIN);
+		expect(JSON.stringify(channel)).not.toContain("a".repeat(43));
+	});
+
+	test("rejects buffered init from an unapproved origin and clears it on stop", () => {
+		const win = new FakeWindow();
+		const parent = new FakeParent();
+		const onInit = vi.fn();
+		const channel = new EmbedPostMessageChannel({
+			window: win,
+			parent,
+			allowedOrigins: [],
+			deferUntilAllowedOrigins: true,
+			onInit,
+			onLogout: vi.fn(),
+		});
+		channel.start();
+		win.dispatch({ source: parent, origin: OTHER_ORIGIN, data: envelope("init", { launchToken: "secret" }) });
+		channel.setAllowedOrigins([ALLOWED_ORIGIN]);
+		expect(onInit).not.toHaveBeenCalled();
+		const pending = new EmbedPostMessageChannel({
+			window: win,
+			parent,
+			allowedOrigins: [],
+			deferUntilAllowedOrigins: true,
+			onInit,
+			onLogout: vi.fn(),
+		});
+		pending.start();
+		win.dispatch({ source: parent, origin: ALLOWED_ORIGIN, data: envelope("init", { launchToken: "secret" }) });
+		pending.stop();
+		expect(JSON.stringify(pending)).not.toContain("secret");
+		pending.setAllowedOrigins([ALLOWED_ORIGIN]);
+		expect(onInit).toHaveBeenCalledTimes(1); // only the already configured channel received it
+	});
 	test("forged window (source mismatch) is dropped", () => {
 		const win = new FakeWindow();
 		const parent = new FakeParent();

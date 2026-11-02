@@ -15,6 +15,7 @@
  *
  * Requires the local test database.
  */
+import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { PostgresClient } from "../../src/persistence/postgres/client.ts";
 import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
@@ -84,7 +85,12 @@ describe.skipIf(!pgUp)("P1 agent one-click publish (publishAgent)", () => {
 		await client.run(`create schema ${SCHEMA}`);
 		await runMigrations(client);
 		repos = createPublishingRepositories(client);
-		service = new ControlService({ repositories: repos, catalog: CATALOG, embedBaseUrl: "https://embed.test" });
+		service = new ControlService({
+			repositories: repos,
+			catalog: CATALOG,
+			embedBaseUrl: "https://embed.test",
+			launchTokenAllowedIssuers: ["ticket-system"],
+		});
 		const boot = await service.bootstrapTenant({ tenantId, tenantName: "p1-tenant" });
 		expect(boot.ok).toBe(true);
 	});
@@ -96,6 +102,66 @@ describe.skipIf(!pgUp)("P1 agent one-click publish (publishAgent)", () => {
 
 	const debugCompile = (agentDefinitionId: AgentDefinitionId) =>
 		compileDebugAgentRevision({ repositories: repos, catalog: CATALOG }, { tenantId }, agentDefinitionId);
+
+	test("rejects signed-user publishing while the issuer allowlist is disabled", async () => {
+		const imported = await service.importAgent({ tenantId }, source(baseConfig(), "disabled-signed-agent"));
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const unconfigured = new ControlService({
+			repositories: repos,
+			catalog: CATALOG,
+			embedBaseUrl: "https://embed.test",
+		});
+		const result = await unconfigured.publishAgent({
+			tenantId,
+			agentDefinitionId: imported.data.agentDefinitionId,
+			accessMode: "signed_user",
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.code).toBe("INVALID_LAUNCH_KEY");
+	});
+
+	test("publishes signed-user access separately and reuses it by mode", async () => {
+		const imported = await service.importAgent({ tenantId }, source(baseConfig(), "signed-publish-agent"));
+		expect(imported.ok).toBe(true);
+		if (!imported.ok) return;
+		const agentDefinitionId = imported.data.agentDefinitionId;
+		const anonymous = await service.publishAgent({ tenantId, agentDefinitionId });
+		expect(anonymous.ok).toBe(true);
+		if (!anonymous.ok) return;
+		const publicKeyPem = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString();
+		const signed = await service.publishAgent({
+			tenantId,
+			agentDefinitionId,
+			accessMode: "signed_user",
+			allowedOrigins: ["http://127.0.0.1:5173", "http://127.0.0.1:8003"],
+			signedIdentity: { issuer: "ticket-system", keyId: "ticket-key-1", publicKeyPem },
+		});
+		expect(signed.ok).toBe(true);
+		if (!signed.ok) return;
+		expect(signed.data.publishedApp.accessMode).toBe("signed_user");
+		expect(signed.data.publishedApp.allowedOrigins).toEqual(["http://127.0.0.1:5173", "http://127.0.0.1:8003"]);
+		expect(signed.data.publishedApp.publishedAppId).not.toBe(anonymous.data.publishedApp.publishedAppId);
+		const registeredKeys = await repos.launchKeys.list({
+			tenantId,
+			publishedAppId: signed.data.publishedApp.publishedAppId,
+		});
+		expect(registeredKeys[0]?.keyId).toBe("ticket-key-1");
+		expect(registeredKeys[0]?.publicKeyPem).toBe(publicKeyPem.trim());
+		const republished = await service.publishAgent({
+			tenantId,
+			agentDefinitionId,
+			accessMode: "signed_user",
+		});
+		expect(republished.ok).toBe(true);
+		if (republished.ok) expect(republished.data.version.versionNumber).toBe(2);
+		const anonymousAgain = await service.publishAgent({ tenantId, agentDefinitionId, accessMode: "anonymous" });
+		expect(anonymousAgain.ok).toBe(true);
+		if (anonymousAgain.ok) {
+			expect(anonymousAgain.data.publishedApp.publishedAppId).toBe(anonymous.data.publishedApp.publishedAppId);
+			expect(anonymousAgain.data.version.versionNumber).toBe(2);
+		}
+	});
 
 	test("publishAgent(latest N) activates a version whose RuntimeSpec equals the Debug spec (ignoring versionId)", async () => {
 		const imported = await service.importAgent({ tenantId }, source(baseConfig(), "p1-agent-a"));

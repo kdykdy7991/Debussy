@@ -351,7 +351,9 @@ function fakeSession(capture: Capture, promptError?: string): (opts: unknown) =>
 	};
 }
 
-function textOfTranscript(messages: ReadonlyArray<{ content?: ReadonlyArray<{ type: string; text?: string }>; text?: string }>): string[] {
+function textOfTranscript(
+	messages: ReadonlyArray<{ content?: ReadonlyArray<{ type: string; text?: string }>; text?: string }>,
+): string[] {
 	const out: string[] = [];
 	for (const m of messages) {
 		if (typeof m.content === "string") {
@@ -436,7 +438,11 @@ describe("DebugConversationService (Phase 1)", () => {
 		expect(texts.join(" ")).toMatch(/echo:TurnTwo/);
 		// No tool events were persisted in this test, so no toolCall blocks:
 		// assistant messages carry only text.
-		expect(turn3Prompt.transcript!.some((m) => (m as { content: readonly { type: string }[] }).content.some((b) => b.type === "toolCall"))).toBe(false);
+		expect(
+			turn3Prompt.transcript!.some((m) =>
+				(m as { content: readonly { type: string }[] }).content.some((b) => b.type === "toolCall"),
+			),
+		).toBe(false);
 	});
 
 	it("persists turn/start + user/message BEFORE execution and turn/failed (same turnId, no turn/end) when the model throws", async () => {

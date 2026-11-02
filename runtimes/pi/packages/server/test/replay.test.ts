@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { replayAllAfter, REPLAY_PAGE_SIZE } from "../src/runtime/replay.ts";
+import { REPLAY_PAGE_SIZE, replayAllAfter } from "../src/runtime/replay.ts";
 
 function seqRows(from: number, count: number) {
 	return Array.from({ length: count }, (_, i) => ({ sequence: from + i + 1, data: `e${from + i + 1}` }));
@@ -10,7 +10,7 @@ describe("replayAllAfter (cursor pagination, Phase-1)", () => {
 		// Simulate a post-summary window of 10_000 events across 500-row pages.
 		const total = 10_000;
 		const pageCalls: number[] = [];
-		let cursor = 0;
+		const cursor = 0;
 		const page = async (after: number, limit: number) => {
 			pageCalls.push(after);
 			return seqRows(after, Math.min(limit, total - after));
@@ -40,8 +40,7 @@ describe("replayAllAfter (cursor pagination, Phase-1)", () => {
 	});
 
 	it("honours a non-zero starting cursor (afterSequence)", async () => {
-		const page = async (after: number, limit: number) =>
-			after === 1234 ? seqRows(1234, 60) : [];
+		const page = async (after: number, limit: number) => (after === 1234 ? seqRows(1234, 60) : []);
 		const all = await replayAllAfter(page, 1234);
 		expect(all.length).toBe(60);
 		expect(all[0].sequence).toBe(1235);

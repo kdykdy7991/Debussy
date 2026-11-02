@@ -816,14 +816,59 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			handler: async ({ requestId, body, params }) => {
 				const agentDefinitionId = parseAgentId(params[0]);
 				if (agentDefinitionId === null) return badRequest("agentId must be a bare agent_<uuid> id", requestId);
-				// P1: publish the Agent's current LATEST revision. The client must
-				// NOT supply sourceAgentRevision / application / version.
-				if (body !== null && typeof body === "object" && Object.keys(body as Record<string, unknown>).length > 0) {
-					return badRequest("publish accepts no request body; it always publishes the latest revision", requestId);
+				const payload = body === null ? {} : body;
+				if (typeof payload !== "object" || Array.isArray(payload))
+					return badRequest("invalid publish body", requestId);
+				const fields = payload as Record<string, unknown>;
+				if (Object.keys(fields).some((key) => !["accessMode", "allowedOrigins", "signedIdentity"].includes(key)))
+					return badRequest("unknown publish field", requestId);
+				if (
+					fields.accessMode !== undefined &&
+					fields.accessMode !== "anonymous" &&
+					fields.accessMode !== "signed_user" &&
+					fields.accessMode !== "trusted_app"
+				)
+					return badRequest("invalid access mode", requestId);
+				if (
+					fields.allowedOrigins !== undefined &&
+					(!Array.isArray(fields.allowedOrigins) ||
+						!fields.allowedOrigins.every((origin) => typeof origin === "string"))
+				)
+					return badRequest("invalid allowed origins", requestId);
+				if (fields.allowedOrigins !== undefined && fields.accessMode === undefined)
+					return badRequest("access mode is required with allowed origins", requestId);
+				let signedIdentity: Parameters<typeof service.publishAgent>[0]["signedIdentity"];
+				if (fields.signedIdentity !== undefined) {
+					if (
+						fields.accessMode !== "signed_user" ||
+						fields.signedIdentity === null ||
+						typeof fields.signedIdentity !== "object" ||
+						Array.isArray(fields.signedIdentity)
+					)
+						return badRequest("invalid signed identity", requestId);
+					const identity = fields.signedIdentity as Record<string, unknown>;
+					if (
+						typeof identity.issuer !== "string" ||
+						!identity.issuer.trim() ||
+						typeof identity.keyId !== "string" ||
+						!identity.keyId.trim() ||
+						typeof identity.publicKeyPem !== "string" ||
+						!identity.publicKeyPem.trim() ||
+						Object.keys(identity).some((key) => !["issuer", "keyId", "publicKeyPem"].includes(key))
+					)
+						return badRequest("invalid signed identity", requestId);
+					signedIdentity = {
+						issuer: identity.issuer.trim(),
+						keyId: identity.keyId.trim(),
+						publicKeyPem: identity.publicKeyPem,
+					};
 				}
 				const result = await service.publishAgent({
 					tenantId,
 					agentDefinitionId,
+					accessMode: fields.accessMode as "anonymous" | "signed_user" | "trusted_app" | undefined,
+					allowedOrigins: fields.allowedOrigins as readonly string[] | undefined,
+					signedIdentity,
 					requestId: requestId as RequestId,
 				});
 				if (!result.ok) return serviceError(result.error, requestId);
@@ -1231,9 +1276,11 @@ function parseMcpConfig(value: unknown): McpStreamableHttpConfig {
 	if (
 		config.transport !== "streamable_http" ||
 		typeof config.endpoint !== "string" ||
-		(config.authentication !== "none" && config.authentication !== "bearer")
+		(config.authentication !== "none" && config.authentication !== "bearer" && config.authentication !== "api_key")
 	) {
-		throw new HttpValidationError("body.config requires streamable_http, endpoint, and none | bearer authentication");
+		throw new HttpValidationError(
+			"body.config requires streamable_http, endpoint, and none | bearer | api_key authentication",
+		);
 	}
 	return { transport: config.transport, endpoint: config.endpoint, authentication: config.authentication };
 }

@@ -881,6 +881,7 @@ export function AgentDetailPreview({
 	extensionPanel,
 	externallyDirty = false,
 	onDiscardExternal,
+	trustedAccessPanel,
 	resourcesLoading = false,
 	skillCatalog,
 	mcpCatalog,
@@ -908,6 +909,7 @@ export function AgentDetailPreview({
 	readonly extensionPanel?: ReactNode;
 	readonly externallyDirty?: boolean;
 	readonly onDiscardExternal?: () => void;
+	readonly trustedAccessPanel?: ReactNode;
 	/** Skill / MCP 绑定与目录仍在拉取：此时不要渲染「尚未关联」这种误导文案。 */
 	readonly resourcesLoading?: boolean;
 	/** 可绑定的 Skill / MCP 目录（用于「添加」选择器）。 */
@@ -1353,8 +1355,42 @@ export function AgentDetailPreview({
 								draftMcpServers.map((item) => (
 									<ResourceRow
 										key={item.id}
-										item={item}
+										item={{
+											...item,
+											outdated:
+												mcpCatalog?.some(
+													(entry) => entry.id === item.id && entry.currentRevision > (item.revision ?? 0),
+												) ?? item.outdated,
+										}}
 										kind="mcp"
+										onUpdate={
+											mcpCatalog?.some(
+												(entry) =>
+													entry.id === item.id &&
+													entry.currentRevision > (item.revision ?? 0) &&
+													entry.enabled &&
+													(entry.toolNames?.length ?? 0) > 0,
+											)
+												? () => {
+														const latest = mcpCatalog?.find((entry) => entry.id === item.id);
+														if (!latest?.toolNames?.length) return;
+														setDraftMcpServers((current) =>
+															current.map((entry) =>
+																entry.id === item.id
+																	? {
+																			...entry,
+																			revision: latest.currentRevision,
+																			version: `v${latest.currentRevision}`,
+																			toolNames: latest.toolNames,
+																			toolCount: latest.toolNames!.length,
+																			outdated: false,
+																		}
+																	: entry,
+															),
+														);
+													}
+												: undefined
+										}
 										onRemove={() =>
 											setDraftMcpServers((current) => current.filter((it) => it.id !== item.id))
 										}
@@ -1410,6 +1446,7 @@ export function AgentDetailPreview({
 						realtimeVoice={realtimeVoice}
 					/>
 					<ExternalAccessCard link={publishData.externalLink} />
+					{trustedAccessPanel}
 					<MoreCard history={publishData.versionHistory} />
 				</aside>
 			</div>
@@ -1421,10 +1458,12 @@ function ResourceRow({
 	item,
 	kind,
 	onRemove,
+	onUpdate,
 }: {
 	readonly item: AgentResource;
 	readonly kind: "skill" | "mcp";
 	readonly onRemove?: () => void;
+	readonly onUpdate?: () => void;
 }): React.ReactElement {
 	const detail: string = [item.description, item.toolCount === undefined ? undefined : `工具 ${item.toolCount} 个`]
 		.filter((part): part is string => part !== undefined && part !== "")
@@ -1452,6 +1491,16 @@ function ResourceRow({
 				<i aria-hidden="true" />
 				{kind === "mcp" ? mcpStatus.label : item.enabled ? "已启用" : "未启用"}
 			</span>
+			{onUpdate ? (
+				<button
+					type="button"
+					className="ard-resource-remove"
+					onClick={onUpdate}
+					title="更新到最新版本并使用该服务的全部工具，保存后生效"
+				>
+					更新并启用全部工具
+				</button>
+			) : null}
 			{onRemove === undefined ? null : (
 				<button type="button" className="ard-resource-remove" aria-label={`移除 ${item.name}`} onClick={onRemove}>
 					移除

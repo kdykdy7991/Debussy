@@ -55,7 +55,7 @@ export interface BootstrapResponse {
 	readonly publicAppId: string;
 	readonly name: string;
 	readonly status: string;
-	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 	readonly allowedOrigins: readonly string[];
 	readonly currentVersionId: string | null;
 	readonly features: {

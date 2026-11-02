@@ -110,7 +110,8 @@ function createRouter(
 	if (!state.details.has("conv_1")) state.details.set("conv_1", detail(SUMMARY_1, []));
 	if (!state.details.has("conv_2")) state.details.set("conv_2", detail(SUMMARY_2, []));
 	const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-		const path = new URL(String(url), "http://embed.invalid").pathname;
+		const requestUrl = new URL(String(url), "http://embed.invalid");
+		const path = requestUrl.pathname;
 		const method = (init?.method ?? "GET").toUpperCase();
 		const headers = (init?.headers ?? {}) as Record<string, string>;
 		const token = headers.authorization?.replace(/^Bearer /, "");
@@ -155,9 +156,14 @@ function createRouter(
 		const detailMatch = path.match(/^\/api\/embed\/v1\/conversations\/([^/]+)$/);
 		if (method === "GET" && detailMatch !== null) {
 			const found = state.details.get(detailMatch[1]!);
-			return found === undefined
-				? jsonResponse({ error: { code: "CONVERSATION_NOT_FOUND" } }, 404)
-				: jsonResponse(found);
+			if (found === undefined) return jsonResponse({ error: { code: "CONVERSATION_NOT_FOUND" } }, 404);
+			const conversationDetail = found as { conversation: unknown; events: { sequence: number }[] };
+			const afterSequence = Number(requestUrl.searchParams.get("afterSequence") ?? 0);
+			const limit = Number(requestUrl.searchParams.get("limit") ?? 50);
+			return jsonResponse({
+				conversation: conversationDetail.conversation,
+				events: conversationDetail.events.filter((event) => event.sequence > afterSequence).slice(0, limit),
+			});
 		}
 		if (method === "POST" && path.endsWith("/archive")) {
 			const id = path.split("/")[5]!;
@@ -254,6 +260,50 @@ afterEach(() => {
 });
 
 describe("embed chat controller", () => {
+	test("keeps parallel image reads separate and attaches them when completion arrives without deltas", async () => {
+		const harness = makeHarness();
+		await harness.controller.initialize();
+		await connectFirstSocket(harness);
+		harness.controller.send("请展示流程图");
+		const image = {
+			type: "image",
+			data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ZkAAAAASUVORK5CYII=",
+			mimeType: "image/png",
+		};
+		for (const toolCallId of ["read-a", "read-b"]) {
+			harness.sockets[0]!.emit("message", {
+				data: JSON.stringify(baseEvent({ type: "tool.started", sequence: 0, tool: "read_resource", toolCallId })),
+			});
+		}
+		for (const toolCallId of ["read-b", "read-a", "read-b"]) {
+			harness.sockets[0]!.emit("message", {
+				data: JSON.stringify(
+					baseEvent({
+						type: "tool.completed",
+						sequence: 0,
+						tool: "read_resource",
+						toolCallId,
+						ok: true,
+						images: [image],
+					}),
+				),
+			});
+		}
+		harness.sockets[0]!.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "message.completed", text: "流程如下", sequence: 5 })),
+		});
+		const reply = harness.controller.getState().messages.at(-1);
+		expect(reply?.tools).toHaveLength(2);
+		expect(reply?.tools?.map((tool) => tool.id)).toEqual(["read-a", "read-b"]);
+		expect(reply?.tools?.every((tool) => tool.images?.[0]?.data === image.data)).toBe(true);
+		harness.controller.send("下一个问题");
+		harness.sockets[0]!.emit("message", {
+			data: JSON.stringify(baseEvent({ type: "message.completed", text: "没有图片", sequence: 7 })),
+		});
+		expect(harness.controller.getState().messages.at(-1)?.tools).toBeUndefined();
+		harness.controller.close();
+	});
+
 	test("manual compaction refreshes a generated title even when no new summary was needed", async () => {
 		const harness = makeHarness({ conversations: [{ ...SUMMARY_1, title: "" }] });
 		harness.router.state.compactResult = false;
@@ -300,8 +350,9 @@ describe("embed chat controller", () => {
 		harness.controller.close();
 	});
 
-	test("P2 initialize rolls a stale-version conversation forward to a NEW conversation on the current version", async () => {
+	test("initialization opens the existing history without creating an empty same-title conversation", async () => {
 		const harness = makeHarness({
+			conversations: [{ ...SUMMARY_1, lastEventSequence: 2 }],
 			rollForwardTo: {
 				id: "conv_new_current",
 				publishedAppVersionId: "pav_new",
@@ -311,20 +362,52 @@ describe("embed chat controller", () => {
 				createdAt: "2026-01-03T00:00:00Z",
 			},
 		});
+		harness.router.state.details.set(
+			"conv_1",
+			detail({ ...SUMMARY_1, lastEventSequence: 2 }, [
+				baseEvent({ sequence: 1, eventType: "user/message", payload: { text: "历史问题" } }),
+				baseEvent({ sequence: 2, eventType: "assistant/message", payload: { text: "历史回答" } }),
+			]),
+		);
 		await harness.controller.initialize({ uploads: true });
 		await flush();
 		const state = harness.controller.getState();
-		// The server rolled the stale conversation forward: the active surface
-		// opens the NEW current-version conversation, and the stale one stays
-		// in history (prepended list contains both).
-		expect(state.activeId).toBe("conv_new_current");
-		expect(state.conversations.some((item) => item.id === "conv_1")).toBe(true);
-		expect(state.conversations.some((item) => item.id === "conv_new_current")).toBe(true);
+		expect(state.activeId).toBe("conv_1");
+		expect(state.messages.map((message) => message.text)).toEqual(["历史问题", "历史回答"]);
+		expect(state.conversations.map((item) => item.id)).toEqual(["conv_1"]);
 		expect(
 			harness.router.state.calls.some(
 				(call) => call.method === "POST" && call.path.endsWith("/conversations/conv_1/resume"),
 			),
-		).toBe(true);
+		).toBe(false);
+		await connectFirstSocket(harness);
+		harness.controller.send("继续提问");
+		expect(harness.sockets[0]?.lastMessage()).toMatchObject({ type: "turn.start", conversationId: "conv_1" });
+		expect(
+			harness.router.state.calls.some(
+				(call) => call.method === "POST" && call.path === "/api/embed/v1/conversations",
+			),
+		).toBe(false);
+		harness.controller.close();
+	});
+
+	test("initialization skips an empty rollover duplicate ahead of a historical conversation", async () => {
+		const historical = { ...SUMMARY_1, lastEventSequence: 2, title: "同名会话" };
+		const emptyDuplicate = { ...SUMMARY_2, lastEventSequence: 0, title: "同名会话" };
+		const harness = makeHarness({ conversations: [emptyDuplicate, historical] });
+		harness.router.state.details.set(
+			"conv_1",
+			detail(historical, [
+				baseEvent({ sequence: 1, eventType: "user/message", payload: { text: "之前的内容" } }),
+				baseEvent({ sequence: 2, eventType: "assistant/message", payload: { text: "之前的回复" } }),
+			]),
+		);
+		await harness.controller.initialize();
+		expect(harness.controller.getState().activeId).toBe("conv_1");
+		expect(harness.controller.getState().messages.map((message) => message.text)).toEqual([
+			"之前的内容",
+			"之前的回复",
+		]);
 		harness.controller.close();
 	});
 
@@ -619,6 +702,26 @@ describe("embed chat controller", () => {
 		// 新连接 open 后发 sync 订阅。
 		harness.sockets[1]?.emit("open");
 		expect(harness.sockets[1]?.lastMessage()).toMatchObject({ type: "conversation.sync", conversationId: "conv_2" });
+		harness.controller.close();
+	});
+
+	test("switching back restores messages beyond the first event page", async () => {
+		const harness = makeHarness({ conversations: [SUMMARY_1, SUMMARY_2] });
+		const events = Array.from({ length: 205 }, (_, index) =>
+			baseEvent({
+				sequence: index + 1,
+				eventType: index === 203 ? "user/message" : index === 204 ? "assistant/message" : "turn/started",
+				payload: { text: index === 203 ? "最新问题" : "最新回答" },
+			}),
+		);
+		harness.router.state.details.set("conv_1", detail({ ...SUMMARY_1, lastEventSequence: 205 }, events));
+		await harness.controller.initialize();
+		await harness.controller.openConversation("conv_2");
+		await harness.controller.openConversation("conv_1");
+		expect(harness.controller.getState().messages.map((message) => message.text)).toEqual(["最新问题", "最新回答"]);
+		expect(
+			harness.router.state.calls.filter((call) => call.path === "/api/embed/v1/conversations/conv_1"),
+		).toHaveLength(4);
 		harness.controller.close();
 	});
 

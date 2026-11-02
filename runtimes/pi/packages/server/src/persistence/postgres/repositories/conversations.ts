@@ -25,7 +25,7 @@ function rowToRecord(row: Record<string, unknown>): ConversationRecord {
 		publishedAppId: row.published_app_id as PublishedAppId,
 		publishedAppVersionId: row.published_app_version_id as PublishedAppVersionId,
 		ownerPrincipalId: row.owner_principal_id as PrincipalId,
-		title: String(row.title),
+		title: String(row.display_title ?? row.title),
 		status: row.status as ConversationRecord["status"],
 		lastEventSequence: Number(row.last_event_sequence),
 		eventCount: Number(row.event_count ?? 0),
@@ -96,7 +96,7 @@ export function createConversationRepository(client: PostgresClient): Conversati
 		},
 		async get(scope: OwnerScope, conversationId) {
 			const rows = await client.run(
-				`select * from conversations
+				`select c.* from conversations c
 				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
 				   and deleted_at is null`,
 				conversationId,

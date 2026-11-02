@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { ConfirmModal } from "../components/confirm-modal.tsx";
+import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 import styles from "./conversation-detail.module.css";
 
@@ -36,6 +37,7 @@ interface TimelineItem {
 }
 
 export function AdminConversationDetail({ conversationId }: { conversationId: string }): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
 	const [detail, setDetail] = useState<DetailState>({ kind: "loading" });
@@ -86,6 +88,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 				setFullExportOpen(false);
 			} catch (error) {
 				setExportError(error instanceof Error ? error.message : String(error));
+				if (mode === "full") throw error;
 			} finally {
 				setExporting(null);
 			}
@@ -109,7 +112,14 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 			action === "archive"
 				? "结束后用户将不能继续在此会话中发送消息，确定结束会话吗？"
 				: "删除后会话会标记为已删除，但审计记录仍会保留。确定删除吗？";
-		if (!window.confirm(message)) return;
+		if (
+			!(await dialogs.confirm(message, {
+				title: action === "archive" ? "结束会话" : "删除会话",
+				confirmLabel: action === "archive" ? "确认结束" : "确认删除",
+				destructive: true,
+			}))
+		)
+			return;
 		setLifecycleBusy(action);
 		setExportError(null);
 		try {
@@ -125,6 +135,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 
 	return (
 		<section className={styles.page}>
+			{dialog}
 			<ConfirmModal
 				open={fullExportOpen}
 				title="确认完整导出"

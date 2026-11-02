@@ -2,6 +2,7 @@ import type { SkillDetail, SkillSummary, SkillValidationDiagnostic } from "@eare
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SkillApi, SkillApiError } from "../api/skill-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 import styles from "./skills-page.module.css";
 
@@ -56,6 +57,7 @@ function DiagnosticLabel({
 }
 
 export function AdminSkillsPage(): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller, snapshot } = useAdminAuth();
 	const apiRef = useRef<SkillApi | null>(null);
 	if (apiRef.current === null) apiRef.current = new SkillApi({ auth: controller });
@@ -135,7 +137,7 @@ export function AdminSkillsPage(): React.ReactElement {
 					: await api.import(file.name, content);
 			setSelectedId(result.id);
 			await loadList();
-			window.alert(
+			await dialogs.alert(
 				result.warnings.length > 0
 					? `上传成功，创建 Revision r${result.revision}，存在 ${result.warnings.length} 条警告`
 					: `上传成功，创建 Revision r${result.revision}`,
@@ -162,7 +164,7 @@ export function AdminSkillsPage(): React.ReactElement {
 		try {
 			const result = await api.validate(selectedId);
 			await refreshDetail();
-			window.alert(result.diagnostics.length ? `校验完成：${result.diagnostics.length} 条诊断` : "校验通过");
+			await dialogs.alert(result.diagnostics.length ? `校验完成：${result.diagnostics.length} 条诊断` : "校验通过");
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -171,7 +173,15 @@ export function AdminSkillsPage(): React.ReactElement {
 	};
 	const toggle = async () => {
 		if (!detail) return;
-		if (detail.enabled && !window.confirm(`确定停用 Skill“${detail.name}”吗？`)) return;
+		if (
+			detail.enabled &&
+			!(await dialogs.confirm(`确定停用 Skill“${detail.name}”吗？`, {
+				title: "停用 Skill",
+				confirmLabel: "确认停用",
+				destructive: true,
+			}))
+		)
+			return;
 		setBusy("status");
 		try {
 			await api.setEnabled(detail.id, !detail.enabled);
@@ -184,7 +194,15 @@ export function AdminSkillsPage(): React.ReactElement {
 		}
 	};
 	const remove = async () => {
-		if (!detail || !window.confirm(`确定删除 Skill“${detail.name}”吗？存在发布引用时将无法删除。`)) return;
+		if (
+			!detail ||
+			!(await dialogs.confirm(`确定删除 Skill“${detail.name}”吗？存在发布引用时将无法删除。`, {
+				title: "删除 Skill",
+				confirmLabel: "确认删除",
+				destructive: true,
+			}))
+		)
+			return;
 		setBusy("delete");
 		try {
 			await api.delete(detail.id);
@@ -199,6 +217,7 @@ export function AdminSkillsPage(): React.ReactElement {
 
 	return (
 		<section className={styles.page} aria-labelledby="skills-title">
+			{dialog}
 			<header className={styles.pageHeader}>
 				<div>
 					<h1 id="skills-title">Skills 管理</h1>

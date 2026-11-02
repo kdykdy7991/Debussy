@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toAgentMessages } from "../src/coding-agent/history-mapper.ts";
-import { mergeRestored, restoreContext } from "../src/runtime/context-restore.ts";
 import type { ConversationEventRecord } from "../src/publishing/repositories.ts";
+import { mergeRestored, restoreContext } from "../src/runtime/context-restore.ts";
 import { toToolCallEventPayload, toToolResultEventPayload } from "../src/runtime/tool-event-payload.ts";
 
 function evt(

@@ -76,7 +76,9 @@ describe("normalizeToolResultImages", () => {
 	});
 
 	it("resizes oversized images and reports the original dimensions", async () => {
-		const content: ToolResultContent[] = [imageBlock(createPng(2400, 4800), "image/png")];
+		const provenance = { documentTitle: "管理办法.docx", title: "处理流程图" };
+		const sourced = { ...imageBlock(createPng(2400, 4800), "image/png"), provenance };
+		const content: ToolResultContent[] = [sourced];
 
 		const normalized = await normalizeToolResultImages(content);
 
@@ -84,6 +86,7 @@ describe("normalizeToolResultImages", () => {
 		expect(normalized).toHaveLength(2);
 		const image = normalized[0];
 		expect(image.type).toBe("image");
+		expect(image).toMatchObject({ provenance });
 		if (image.type !== "image") return;
 		const { width, height } = readPngDimensions(image.data);
 		expect(width).toBeLessThanOrEqual(2000);
@@ -103,12 +106,14 @@ describe("normalizeToolResultImages", () => {
 	});
 
 	it("converts unsupported image formats even when auto-resize is disabled", async () => {
-		const content: ToolResultContent[] = [imageBlock(createTinyBmp1x1Red24bpp(), "image/bmp")];
+		const provenance = { documentTitle: "转换示例.docx" };
+		const sourced = { ...imageBlock(createTinyBmp1x1Red24bpp(), "image/bmp"), provenance };
+		const content: ToolResultContent[] = [sourced];
 
 		const normalized = await normalizeToolResultImages(content, { autoResizeImages: false });
 
 		expect(normalized).not.toBe(content);
-		expect(normalized[0]).toMatchObject({ type: "image", mimeType: "image/png" });
+		expect(normalized[0]).toMatchObject({ type: "image", mimeType: "image/png", provenance });
 		expect(normalized[1]).toMatchObject({
 			type: "text",
 			text: "[Image converted from image/bmp to image/png.]",

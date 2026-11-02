@@ -89,6 +89,13 @@ export const ImageContentSchema = StrictObject({
 	type: Type.Literal("image"),
 	data: Type.String(),
 	mimeType: Type.String({ minLength: 1 }),
+	/** Display metadata attached by the platform to a successfully read image. */
+	provenance: Type.Optional(
+		StrictObject({
+			documentTitle: Type.Optional(Type.String({ minLength: 1, maxLength: 240 })),
+			title: Type.Optional(Type.String({ minLength: 1, maxLength: 240 })),
+		}),
+	),
 });
 export const ToolCallContentSchema = StrictObject({
 	type: Type.Literal("toolCall"),

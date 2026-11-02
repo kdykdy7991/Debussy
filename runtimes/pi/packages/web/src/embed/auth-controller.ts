@@ -32,7 +32,7 @@ export class EmbedAuthController {
 	private token: string | null = null;
 	private principalId: string | null = null;
 	private expiresAt: string | null = null;
-	private mode: "anonymous" | "signed_user" | "preview" | null = null;
+	private mode: "anonymous" | "signed_user" | "trusted_app" | "preview" | null = null;
 	private readonly storage: ReturnType<typeof createVisitorStorage>;
 	private readonly api: EmbedApi;
 
@@ -73,6 +73,12 @@ export class EmbedAuthController {
 		return this.accept(response);
 	}
 
+	async signInWithTrustedCode(publicAppId: string, code: string, hostOrigin: string): Promise<EmbedAuthState> {
+		const response = await this.api.consumeTrustedCode(publicAppId, code, hostOrigin);
+		this.mode = "trusted_app";
+		return this.accept(response);
+	}
+
 	/**
 	 * WB-005: preview exchange. The ticket is a single-use JWS issued by
 	 * Control Service. Tokens are short-lived (≤1h) and pinned to a specific
@@ -95,7 +101,7 @@ export class EmbedAuthController {
 	 * （PD-18），无法静默刷新，抛 `AUTH_EXPIRED` 由宿主重新 `init`。
 	 */
 	async refresh(publicAppId: string, hostOrigin: string): Promise<EmbedAuthState> {
-		if (this.mode === "signed_user") {
+		if (this.mode === "signed_user" || this.mode === "trusted_app") {
 			throw new EmbedApiError("AUTH_EXPIRED", "登录已过期，请刷新页面或由宿主重新初始化", false);
 		}
 		if (this.mode === "anonymous") {

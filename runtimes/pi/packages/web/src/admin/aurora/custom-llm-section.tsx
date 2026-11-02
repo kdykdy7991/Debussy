@@ -2,6 +2,7 @@ import type { CustomLlmApi, CustomLlmProvider, LlmAvailableModel } from "@earend
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LlmApi } from "../api/llm-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { useDialogs } from "../components/use-dialogs.tsx";
 import styles from "./settings-view.module.css";
 
 type ReasoningEffort = "low" | "medium" | "high";
@@ -53,6 +54,7 @@ interface ProviderDraft {
 const EMPTY: ProviderDraft = { id: "", name: "", baseUrl: "", api: "openai-completions", models: [], apiKey: "" };
 
 export function CustomLlmSection(): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const api = useRef(new LlmApi({ auth: controller })).current;
 	const [providers, setProviders] = useState<readonly CustomLlmProvider[]>([]);
@@ -240,7 +242,15 @@ export function CustomLlmSection(): React.ReactElement {
 	}
 
 	async function remove(): Promise<void> {
-		if (!selectedId || !window.confirm(`确定删除模型服务 ${draft.name || selectedId}？`)) return;
+		if (
+			!selectedId ||
+			!(await dialogs.confirm(`确定删除模型服务 ${draft.name || selectedId}？`, {
+				title: "删除模型服务",
+				confirmLabel: "确认删除",
+				destructive: true,
+			}))
+		)
+			return;
 		setBusy("delete");
 		setMessage(null);
 		try {
@@ -258,6 +268,7 @@ export function CustomLlmSection(): React.ReactElement {
 
 	return (
 		<section className={styles.modelSettings}>
+			{dialog}
 			<header className={styles.pageHeader}>
 				<div>
 					<h1>

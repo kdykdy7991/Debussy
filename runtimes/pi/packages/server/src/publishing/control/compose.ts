@@ -17,6 +17,7 @@ import type { PublishingRepositories } from "../../publishing/repositories.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import type { PublishingConfig } from "../config.ts";
 import { parseIdOrThrow, type TenantId } from "../domain/ids.ts";
+import { startMcpAutoSync } from "../mcp/auto-sync.ts";
 import { McpSecretBox } from "../mcp/secret-box.ts";
 import { PreviewTicketService } from "../preview-ticket.ts";
 import type { CapabilityCatalog } from "../runtime-spec/compiler.ts";
@@ -40,6 +41,7 @@ export interface ControlPlaneHandle {
 	readonly previewTicketService: PreviewTicketService;
 	readonly mcpSecretBox: McpSecretBox | undefined;
 	readonly tenantId: TenantId;
+	requestMcpSync(): void;
 	/** Reuse control-plane bearer authentication without exposing the token. */
 	isAuthorized(request: IncomingMessage): boolean;
 	close(): Promise<void>;
@@ -120,6 +122,7 @@ export async function composeControlPlane(options: {
 		metricsEnabled: agentV2MetricsEnabled(),
 		mcpSecretBox,
 		mcpNetworkPolicy,
+		launchTokenAllowedIssuers: publishing.launchTokenAllowedIssuers,
 	});
 
 	const bootstrapped = await controlService.bootstrapTenant({
@@ -142,6 +145,7 @@ export async function composeControlPlane(options: {
 		tenantName: bootstrapTenantName,
 		source,
 	});
+	const mcpAutoSync = startMcpAutoSync({ tenantId, repositories, service: controlService, log });
 
 	return {
 		handler,
@@ -152,11 +156,15 @@ export async function composeControlPlane(options: {
 		previewTicketService,
 		mcpSecretBox,
 		tenantId,
+		requestMcpSync: () => mcpAutoSync.request(),
 		isAuthorized(request) {
 			const header = request.headers.authorization ?? "";
 			const match = header.match(/^Bearer\s+(.+)$/);
 			return match !== null && secureEqual(match[1]!.trim(), adminToken);
 		},
-		close: () => client.close(),
+		close: async () => {
+			await mcpAutoSync.close();
+			await client.close();
+		},
 	};
 }

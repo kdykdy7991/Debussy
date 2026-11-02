@@ -14,7 +14,7 @@ import { cleanupVoiceMode, type PublishedChatMode } from "./voice-mode.ts";
 import { currentVisibleAssistant, type VoiceTtsPhase, VoiceTtsSession } from "./voice-tts-session.ts";
 
 type Phase = "loading" | "error" | "ready";
-type EmbedMode = "anonymous" | "signed_user" | "preview";
+type EmbedMode = "anonymous" | "signed_user" | "trusted_app" | "preview";
 
 export interface EmbedAppProps {
 	readonly publicAppId: string;
@@ -169,15 +169,20 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			if (mode === "signed_user" && launchToken === undefined) {
 				throw new EmbedApiError("INVALID_INIT", "宿主未提供 Launch Token", false);
 			}
+			if (mode === "trusted_app" && launchToken === undefined) {
+				throw new EmbedApiError("INVALID_INIT", "宿主未提供一次性 Code", false);
+			}
 			if (mode !== "preview" && hostOrigin === undefined) {
 				throw new EmbedApiError("INVALID_INIT", "无法确认宿主 Origin", false);
 			}
 			const state =
-				mode === "signed_user"
-					? await controllers.auth.signInWithLaunchToken(props.publicAppId, launchToken!, hostOrigin!)
-					: mode === "preview"
-						? await controllers.auth.signInWithPreviewTicket(props.publicAppId, props.previewTicket ?? "")
-						: await controllers.auth.signIn(props.publicAppId, hostOrigin!);
+				mode === "trusted_app"
+					? await controllers.auth.signInWithTrustedCode(props.publicAppId, launchToken!, hostOrigin!)
+					: mode === "signed_user"
+						? await controllers.auth.signInWithLaunchToken(props.publicAppId, launchToken!, hostOrigin!)
+						: mode === "preview"
+							? await controllers.auth.signInWithPreviewTicket(props.publicAppId, props.previewTicket ?? "")
+							: await controllers.auth.signIn(props.publicAppId, hostOrigin!);
 			// PD-18：launchToken 即用即弃（此处不留存任何引用）。
 			await controllers.chat.initialize(state.features);
 			setRealtimeVoiceEnabled(state.features.realtimeVoice === true);
@@ -283,6 +288,51 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		let channel: EmbedPostMessageChannel | undefined;
 		let mode: EmbedMode = "anonymous";
 
+		let disposed = false;
+		if (props.previewTicket === undefined) {
+			channel = new EmbedPostMessageChannel({
+				window: window,
+				parent: window.parent,
+				allowedOrigins: [],
+				deferUntilAllowedOrigins: true,
+				onInit: (launchToken, hostOrigin) => {
+					hostOriginRef.current = hostOrigin;
+					// anonymous/mixed：MVP 不切换身份（HANDOFF 记录）；signed_user
+					// 身份只来自宿主 init 的 Launch Token（AD-11）。
+					if (mode !== "signed_user") return;
+					void signInAndLoad("signed_user", launchToken, hostOrigin).catch((caught: unknown) => {
+						const message = caught instanceof EmbedApiError ? caught.message : "宿主初始化失败";
+						channel?.send({
+							type: "error",
+							code: caught instanceof EmbedApiError ? caught.code : "INVALID_INIT",
+							message,
+						});
+						setError(message);
+						setPhase("error");
+					});
+				},
+				onTrustedInit: (exchangeCode, hostOrigin) => {
+					hostOriginRef.current = hostOrigin;
+					if (mode !== "trusted_app") return;
+					void signInAndLoad("trusted_app", exchangeCode, hostOrigin).catch((caught: unknown) => {
+						const message = caught instanceof EmbedApiError ? caught.message : "宿主初始化失败";
+						channel?.send({
+							type: "error",
+							code: caught instanceof EmbedApiError ? caught.code : "INVALID_INIT",
+							message,
+						});
+						setError(message);
+						setPhase("error");
+					});
+				},
+				onLogout: () => void handleLogout(mode),
+				onFocus: focusComposer,
+				onResizeRequest: reportHeight,
+			});
+			channelRef.current = channel;
+			channel.start();
+		}
+
 		async function boot(): Promise<void> {
 			if (props.previewTicket !== undefined) {
 				// WB-005: preview mode skips postMessage channel (no host).
@@ -293,30 +343,15 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 				return;
 			}
 			const summary = await api.bootstrap(props.publicAppId);
+			if (disposed) return;
 			if (summary.status !== "active") throw new EmbedApiError("APP_SUSPENDED", "应用当前不可用", false);
 			setBootstrap(summary);
 			hostOriginRef.current = originFromReferrer(document.referrer, summary.allowedOrigins);
-			mode = summary.accessMode === "signed_user" ? "signed_user" : "anonymous";
-			channel = new EmbedPostMessageChannel({
-				window: window,
-				parent: window.parent,
-				allowedOrigins: summary.allowedOrigins,
-				onInit: (launchToken, hostOrigin) => {
-					hostOriginRef.current = hostOrigin;
-					// anonymous/mixed：MVP 不切换身份（HANDOFF 记录）；signed_user
-					// 身份只来自宿主 init 的 Launch Token（AD-11）。
-					if (mode !== "signed_user") return;
-					void signInAndLoad("signed_user", launchToken, hostOrigin).catch((caught: unknown) => {
-						setError(caught instanceof EmbedApiError ? caught.message : "宿主初始化失败");
-						setPhase("error");
-					});
-				},
-				onLogout: () => void handleLogout(mode),
-				onFocus: focusComposer,
-				onResizeRequest: reportHeight,
-			});
-			channelRef.current = channel;
-			channel.start();
+			mode =
+				summary.accessMode === "signed_user" || summary.accessMode === "trusted_app"
+					? summary.accessMode
+					: "anonymous";
+			channel?.setAllowedOrigins(summary.allowedOrigins);
 			if (mode === "anonymous") {
 				// anonymous / mixed：直接匿名进入；若嵌在宿主页中回发 ready。
 				const hostOrigin = hostOriginRef.current;
@@ -326,7 +361,16 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 			// signed_user：身份只来自宿主 postMessage init（AD-11），等待 onInit。
 		}
 		void boot().catch((caught: unknown) => {
-			setError(caught instanceof EmbedApiError ? caught.message : "加载失败");
+			const message = caught instanceof EmbedApiError ? caught.message : "加载失败";
+			// 宿主（工单系统）等到 ready 为止只会显示「连接超时」，看不到原因；
+			// 这里把失败回传。send() 在尚未收到合法宿主消息时会静默跳过，
+			// 不放宽来源校验。
+			channel?.send({
+				type: "error",
+				code: caught instanceof EmbedApiError ? caught.code : "BOOT_FAILED",
+				message,
+			});
+			setError(message);
 			setPhase("error");
 		});
 		const onWindowResize = (): void => {
@@ -335,6 +379,7 @@ export function EmbedApp(props: EmbedAppProps): React.JSX.Element {
 		};
 		window.addEventListener("resize", onWindowResize);
 		return () => {
+			disposed = true;
 			window.removeEventListener("resize", onWindowResize);
 			channel?.stop();
 			chat.close();

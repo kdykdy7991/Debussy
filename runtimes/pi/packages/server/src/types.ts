@@ -3,6 +3,7 @@ import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
 	Citation,
+	ImageContent,
 	ModelMetadata,
 	ModelRef,
 	SessionPhase,
@@ -95,7 +96,7 @@ export interface RetrievalInput {
  */
 export type TranscriptContentBlock =
 	| { readonly type: "text"; readonly text: string }
-	| { readonly type: "image"; readonly data: string; readonly mimeType: string }
+	| ImageContent
 	| {
 			readonly type: "toolCall";
 			readonly toolCallId: string;

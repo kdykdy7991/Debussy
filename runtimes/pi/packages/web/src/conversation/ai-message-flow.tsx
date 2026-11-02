@@ -20,7 +20,6 @@ import type {
 	UserTranscriptItem,
 } from "@earendil-works/pi-protocol";
 import { AnimatedMarkdown } from "flowtoken";
-import "flowtoken/dist/styles.css";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
 	type AgentAvatarState,
@@ -38,8 +37,12 @@ import type { LivePlaybackState } from "../features/voice/live-types.ts";
 import type { PlaybackArbiter } from "../features/voice/playback-arbiter.ts";
 import { SpeechButton } from "../features/voice/speech-button.tsx";
 import type { SpeechController } from "../features/voice/speech-controller.ts";
+import "../styles/flowtoken.css";
 import type { AgentReaction } from "./agent-reaction.ts";
+import { copyTextToClipboard } from "./copy-text.ts";
 import { wrapSpeechButtonApi } from "./speech-wrap.ts";
+import { ToolImages } from "./tool-images.tsx";
+import "./answer-typography.css";
 
 const SHOW_AGENT_STATE_DEBUG = true;
 
@@ -250,6 +253,7 @@ function TurnView({
 			{unit.assistant ? (
 				<AssistantTurn
 					item={unit.assistant}
+					tools={tools}
 					rail={rail}
 					speech={speech}
 					arbiter={arbiter}
@@ -288,6 +292,7 @@ function CitationBlock({ citation }: { citation: Citation }): React.ReactElement
 
 function AssistantTurn({
 	item,
+	tools,
 	rail,
 	speech,
 	arbiter,
@@ -296,6 +301,7 @@ function AssistantTurn({
 	onStopLive,
 }: {
 	item: AssistantTranscriptItem;
+	tools: readonly ToolTranscriptItem[];
 	rail: React.ReactNode;
 	speech: SpeechController | undefined;
 	arbiter: PlaybackArbiter | undefined;
@@ -312,6 +318,12 @@ function AssistantTurn({
 	const hasCopyableText = textBlocks.some((block) => block.text.trim().length > 0);
 	const plain = textBlocks.length <= 1 && textBlocks.join("").length <= 120 && thinkingBlock === undefined;
 	const cardClass = cx("assistant-output-card", errored && "is-error", aborted && "is-aborted");
+	const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+	useEffect(() => {
+		if (copyStatus === "idle") return undefined;
+		const timer = window.setTimeout(() => setCopyStatus("idle"), 2000);
+		return () => window.clearTimeout(timer);
+	}, [copyStatus]);
 	return (
 		<AssistantResponse rail={rail}>
 			<div className={cardClass}>
@@ -319,9 +331,24 @@ function AssistantTurn({
 					<button
 						className="assistant-output-copy"
 						type="button"
-						onClick={() => void copyText(item)}
-						aria-label="复制本条回答正文，不含思考过程和工具调用"
-						title="复制本条回答正文"
+						onClick={() => {
+							const text = textBlocks.map((block) => block.text).join("\n");
+							void copyTextToClipboard(text).then((copied) => setCopyStatus(copied ? "copied" : "failed"));
+						}}
+						aria-label={
+							copyStatus === "idle"
+								? "复制本条回答正文，不含思考过程和工具调用"
+								: copyStatus === "copied"
+									? "已复制"
+									: "复制失败"
+						}
+						title={
+							copyStatus === "idle"
+								? "复制本条回答正文"
+								: copyStatus === "copied"
+									? "已复制"
+									: "复制失败，请手动选择文字"
+						}
 					>
 						<svg viewBox="0 0 16 16" fill="none" focusable="false" aria-hidden="true">
 							<title>复制本条回答正文</title>
@@ -333,6 +360,11 @@ function AssistantTurn({
 								strokeLinecap="round"
 							/>
 						</svg>
+						{copyStatus !== "idle" ? (
+							<span className="assistant-output-copy-status">
+								{copyStatus === "copied" ? "已复制" : "复制失败"}
+							</span>
+						) : null}
 					</button>
 				) : null}
 				{thinkingBlock ? (
@@ -349,6 +381,7 @@ function AssistantTurn({
 					</details>
 				) : null}
 
+				<ToolImages tools={tools} />
 				<div className="ai-reading-content">
 					{textBlocks.length > 0 ? (
 						<Prose plain={plain} streaming={streaming}>
@@ -449,16 +482,4 @@ function userAttachments(item: UserTranscriptItem): string[] | undefined {
 function toolDetail(tool: ToolTranscriptItem): string | undefined {
 	const status = tool.status === "running" ? "执行中" : tool.status === "error" ? "失败" : "完成";
 	return status;
-}
-
-async function copyText(item: TranscriptItem): Promise<void> {
-	const text = item.content
-		.filter((content) => content.type === "text")
-		.map((content) => content.text)
-		.join("\n");
-	try {
-		await navigator.clipboard.writeText(text);
-	} catch {
-		// clipboard unavailable; ignore.
-	}
 }

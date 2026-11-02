@@ -13,6 +13,7 @@ import type { ConversationAdminListResponse } from "@earendil-works/pi-protocol"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ConversationListArgs, ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 import { readInitialQueryParam } from "../user-conversations/query-params.ts";
 import styles from "./conversations-index-view.module.css";
@@ -393,6 +394,7 @@ function statusBadge(status: string): React.ReactNode {
 }
 
 export function AdminConversationsIndexView(): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
 	const requestSequence = useRef(0);
@@ -538,14 +540,21 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	const updateLifecycle = async (row: DisplayConversation) => {
 		if (useMock || row.status === "deleted") return;
 		const archive = row.status === "active";
-		if (!window.confirm(archive ? "确定结束这条会话吗？" : "确定软删除这条会话吗？审计记录仍会保留。")) return;
+		if (
+			!(await dialogs.confirm(archive ? "确定结束这条会话吗？" : "确定软删除这条会话吗？审计记录仍会保留。", {
+				title: archive ? "结束会话" : "删除会话",
+				confirmLabel: archive ? "确认结束" : "确认删除",
+				destructive: true,
+			}))
+		)
+			return;
 		setLifecycleBusy(row.id);
 		try {
 			if (archive) await api.archive(row.id);
 			else await api.delete(row.id);
 			load(apiFilters);
 		} catch (error) {
-			window.alert(error instanceof Error ? error.message : String(error));
+			await dialogs.alert(error instanceof Error ? error.message : String(error));
 		} finally {
 			setLifecycleBusy(null);
 		}
@@ -553,6 +562,7 @@ export function AdminConversationsIndexView(): React.ReactElement {
 
 	return (
 		<section className={styles.shell} aria-label="用户会话列表">
+			{dialog}
 			<header className={styles.header}>
 				<div>
 					<h1>Session 日志</h1>

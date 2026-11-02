@@ -267,6 +267,7 @@ export interface ControlServiceOptions {
 	/** Required for MCP bearer-secret write/read operations. */
 	readonly mcpSecretBox?: McpSecretBox;
 	readonly mcpNetworkPolicy?: McpNetworkPolicy;
+	readonly launchTokenAllowedIssuers?: readonly string[];
 }
 
 export type ControlErrorCode =
@@ -410,6 +411,9 @@ export interface CreatePublishedAppVersionResult {
 export interface PublishAgentInput {
 	readonly tenantId: TenantId;
 	readonly agentDefinitionId: AgentDefinitionId;
+	readonly accessMode?: "anonymous" | "signed_user" | "trusted_app";
+	readonly allowedOrigins?: readonly string[];
+	readonly signedIdentity?: { readonly issuer: string; readonly keyId: string; readonly publicKeyPem: string };
 	readonly requestId?: RequestId;
 }
 
@@ -491,6 +495,7 @@ export class ControlService {
 	private readonly metricsEnabled: boolean;
 	private readonly mcpSecretBox: McpSecretBox | undefined;
 	private readonly mcpNetworkPolicy: McpNetworkPolicy;
+	private readonly launchTokenAllowedIssuers: readonly string[];
 
 	constructor(options: ControlServiceOptions) {
 		this.repos = options.repositories;
@@ -501,6 +506,7 @@ export class ControlService {
 		this.metricsEnabled = options.metricsEnabled ?? false;
 		this.mcpSecretBox = options.mcpSecretBox;
 		this.mcpNetworkPolicy = options.mcpNetworkPolicy ?? {};
+		this.launchTokenAllowedIssuers = options.launchTokenAllowedIssuers ?? [];
 	}
 
 	/** Bootstrap the MVP tenant idempotently (spec 33.1). */
@@ -786,11 +792,11 @@ export class ControlService {
 				: fail("MCP_BINDING_VIOLATION", 409, resolved.error);
 		}
 		const { agent: draftConfig, skills, mcpServers } = resolved.data;
-		// Publish control gate: every bound bearer MCP Server needs a secret at
+		// Publish control gate: every authenticated MCP Server needs a secret at
 		// publish time. (Resolution deliberately leaves credentials out; a
 		// missing secret is a publish/release gate, not a config input.)
 		for (const server of mcpServers) {
-			if (server.authentication !== "bearer") continue;
+			if (server.authentication === "none") continue;
 			const serverId = fromPublicId("McpServerId", server.mcpServerId);
 			if (serverId !== null && !(await this.repos.mcpSecrets.has(agentScope, serverId))) {
 				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "a bound MCP Server credential is not configured");
@@ -823,7 +829,7 @@ export class ControlService {
 			mcpServers: mcpServers.map((server) => ({
 				mcpServerId: fromPublicId("McpServerId", server.mcpServerId)!,
 				revision: server.revision,
-				requiresSecret: server.authentication === "bearer",
+				requiresSecret: server.authentication !== "none",
 			})),
 		});
 		if (created === undefined)
@@ -843,41 +849,117 @@ export class ControlService {
 	}
 
 	/**
-	 * P1 one-click publish: takes the Agent's CURRENT latest revision and turns
-	 * it into an activated Published Version in ONE backend operation. No
-	 * client-supplied `sourceAgentRevision` / application / version — the caller
-	 * only names the Agent.
+	 * Publish the Agent's current latest revision under the requested access
+	 * mode in one backend operation. The caller cannot select a revision.
 	 *
 	 * Call chain (all backend): getLatest → resolveAgentRevisionConfig →
 	 * compileRuntimeSpec → find-or-create internal published_app →
 	 * create published_app_version → activate (currentVersionId flip).
 	 *
-	 * published_app resolution rule (see `PublishedAppRepository
-	 * .listByAgentDefinition`):
-	 *   - 0 apps for the Agent → auto-create a draft internal app;
-	 *   - exactly 1 app → reuse it;
-	 *   - >1 apps → NOT allowed to pick one arbitrarily → fail
-	 *     `CONFLICTING_PUBLISHED_APPS` (the legacy schema permits 1:N).
+	 * When an access mode is supplied, resolve the internal publication by
+	 * Agent and mode. The legacy empty-body path retains the original 0/1/N
+	 * resolution behavior for existing clients.
 	 */
 	async publishAgent(input: PublishAgentInput): Promise<ControlResult<PublishAgentResult>> {
 		const agentScope = { tenantId: input.tenantId };
 		const latest = await this.repos.agentDefinitions.getLatest(agentScope, input.agentDefinitionId);
 		if (latest === undefined) return fail("AGENT_NOT_FOUND", 404, "agent definition not found in tenant scope");
+		if (input.accessMode === "signed_user") {
+			if (this.launchTokenAllowedIssuers.length === 0)
+				return fail(
+					"INVALID_LAUNCH_KEY",
+					409,
+					"signed-user access is disabled: configure PI_EMBED_LAUNCH_TOKEN_ALLOWED_ISSUERS and restart Debussy",
+				);
+			if (
+				input.signedIdentity !== undefined &&
+				!this.launchTokenAllowedIssuers.includes(input.signedIdentity.issuer)
+			)
+				return fail("INVALID_LAUNCH_KEY", 400, "issuer is not in the platform allowlist");
+		}
 
-		const internal = this.newInternalPublishedApp(input.tenantId, input.agentDefinitionId, latest.name);
-		const appOutcome = await this.repos.publishedApps.findOrCreateInternal(agentScope, internal);
-		if (appOutcome.status === "agent_unavailable") {
-			return fail("AGENT_NOT_FOUND", 404, "agent definition is unavailable to publish");
+		let app: PublishedAppRecord;
+		if (input.accessMode !== undefined) {
+			const existing = (
+				await this.repos.publishedApps.listByAgentDefinition(agentScope, input.agentDefinitionId)
+			).filter((candidate) => candidate.accessMode === input.accessMode);
+			if (existing.length > 1)
+				return fail("CONFLICTING_PUBLISHED_APPS", 409, "Agent has multiple publications in this access mode");
+			if (existing.length === 1) {
+				app = existing[0];
+			} else {
+				if (
+					(input.accessMode === "signed_user" || input.accessMode === "trusted_app") &&
+					!input.allowedOrigins?.length
+				)
+					return fail("INVALID_ORIGINS", 400, "host origin is required");
+				const created = await this.createPublishedApp({
+					tenantId: input.tenantId,
+					agentDefinitionId: input.agentDefinitionId,
+					name: latest.name,
+					accessMode: input.accessMode,
+					allowedOrigins: input.allowedOrigins,
+				});
+				if (!created.ok) return created;
+				app = created.data.app;
+			}
+		} else {
+			const internal = this.newInternalPublishedApp(input.tenantId, input.agentDefinitionId, latest.name);
+			const appOutcome = await this.repos.publishedApps.findOrCreateInternal(agentScope, internal);
+			if (appOutcome.status === "agent_unavailable")
+				return fail("AGENT_NOT_FOUND", 404, "agent definition is unavailable to publish");
+			if (appOutcome.status === "conflict")
+				return fail("CONFLICTING_PUBLISHED_APPS", 409, "Agent has multiple published apps; select a target app");
+			app = appOutcome.app;
 		}
-		if (appOutcome.status === "conflict") {
-			return fail(
-				"CONFLICTING_PUBLISHED_APPS",
-				409,
-				`Agent has ${appOutcome.count} published apps; one-click publish requires exactly one (or none). ` +
-					"Refusing to pick one automatically — resolve the ambiguity before publishing.",
+		if (input.accessMode === "signed_user") {
+			const scope = { tenantId: input.tenantId, publishedAppId: app.publishedAppId };
+			const keys = await this.repos.launchKeys.list(scope);
+			const hasUsableKey = keys.some(
+				(key) =>
+					(key.status === "active" || key.status === "retiring") &&
+					key.notBefore.getTime() <= Date.now() &&
+					(key.expiresAt === null || key.expiresAt.getTime() > Date.now()),
 			);
+			if (!hasUsableKey) {
+				if (input.signedIdentity === undefined)
+					return fail(
+						"INVALID_LAUNCH_KEY",
+						400,
+						"signed-user access requires a host Ed25519 public key and issuer",
+					);
+				const registered = await this.createLaunchKey({
+					tenantId: input.tenantId,
+					publishedAppId: app.publishedAppId,
+					keyId: input.signedIdentity.keyId,
+					publicKeyPem: input.signedIdentity.publicKeyPem,
+					requestId: input.requestId,
+				});
+				if (!registered.ok) return registered;
+			}
+			if (input.allowedOrigins !== undefined && app.allowedOrigins.join("\n") !== input.allowedOrigins.join("\n")) {
+				const validation = validateOriginList(input.allowedOrigins);
+				if (!validation.ok) return fail("INVALID_ORIGINS", 400, validation.errors.join("; "));
+				await this.repos.publishedApps.updateMutable(scope, app.publishedAppId, {
+					allowedOrigins: input.allowedOrigins,
+				});
+				app = { ...app, allowedOrigins: input.allowedOrigins };
+			}
 		}
-		const app = appOutcome.app;
+		if (
+			input.accessMode === "trusted_app" &&
+			input.allowedOrigins !== undefined &&
+			app.allowedOrigins.join("\n") !== input.allowedOrigins.join("\n")
+		) {
+			const validation = validateOriginList(input.allowedOrigins);
+			if (!validation.ok) return fail("INVALID_ORIGINS", 400, validation.errors.join("; "));
+			await this.repos.publishedApps.updateMutable(
+				{ tenantId: input.tenantId, publishedAppId: app.publishedAppId },
+				app.publishedAppId,
+				{ allowedOrigins: input.allowedOrigins },
+			);
+			app = { ...app, allowedOrigins: input.allowedOrigins };
+		}
 
 		const versionResult = await this.createPublishedAppVersion({
 			tenantId: input.tenantId,
@@ -1350,10 +1432,22 @@ export class ControlService {
 		// app, so a per-row current-version read is cheap.
 		const items: AgentDefinitionAssociatedApp[] = [];
 		for (const row of filtered) {
+			const launchKeys =
+				row.accessMode === "signed_user"
+					? await this.repos.launchKeys.list({ tenantId: input.tenantId, publishedAppId: row.publishedAppId })
+					: [];
 			const base: AgentDefinitionAssociatedApp = {
 				appId: toPublicId("PublishedAppId", row.publishedAppId) as AgentDefinitionAssociatedApp["appId"],
 				publicAppId: row.publicAppId as AgentDefinitionAssociatedApp["publicAppId"],
 				name: row.name,
+				accessMode: row.accessMode,
+				allowedOrigins: row.allowedOrigins,
+				launchKeyConfigured: launchKeys.some(
+					(key) =>
+						(key.status === "active" || key.status === "retiring") &&
+						key.notBefore.getTime() <= Date.now() &&
+						(key.expiresAt === null || key.expiresAt.getTime() > Date.now()),
+				),
 				status: row.status as string,
 				currentVersionId:
 					row.currentVersionId === null
@@ -1797,6 +1891,7 @@ export class ControlService {
 				boundAgents: bindings.map((binding) => ({
 					agentId: toPublicId("AgentDefinitionId", binding.agentDefinitionId) as AgentPublicId,
 					agentRevision: binding.agentRevision,
+					mcpRevision: binding.mcpRevision,
 				})),
 				lastTest:
 					server.lastTestAt === null || server.lastTestOk === null
@@ -1815,8 +1910,16 @@ export class ControlService {
 		if (server === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
 		if (this.mcpSecretBox === undefined)
 			return fail("MCP_SECRET_NOT_CONFIGURED", 503, "MCP secret store is unavailable");
-		if (input.bearerToken.length < 1 || input.bearerToken.length > 16_384)
-			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MCP bearer token length is invalid");
+		if (
+			input.bearerToken.length < 1 ||
+			input.bearerToken.length > 16_384 ||
+			!/^[\x21-\x7e]+$/.test(input.bearerToken)
+		)
+			return fail(
+				"MCP_CONFIG_NOT_APPROVED",
+				422,
+				"MCP credential must be 1-16384 visible ASCII characters without whitespace",
+			);
 		const sealed = this.mcpSecretBox.seal(input.tenantId, input.mcpServerId, input.bearerToken);
 		await this.repos.mcpSecrets.put({
 			secretId: newMcpSecretId(),
@@ -1892,9 +1995,6 @@ export class ControlService {
 		if (!connected.ok) return connected;
 		try {
 			const discovered = await connected.data.session.listTools(input.signal);
-			if (discovered.length === 0) {
-				return fail("MCP_SYNC_FAILED", 422, "MCP Tool discovery returned no Tools");
-			}
 			const oldTools = await this.repos.mcpServers.listTools(
 				{ tenantId: input.tenantId },
 				input.mcpServerId,
@@ -1929,6 +2029,7 @@ export class ControlService {
 			const created = await this.repos.mcpServers.addRevision({
 				scope: { tenantId: input.tenantId },
 				mcpServerId: input.mcpServerId,
+				expectedRevision: connected.data.revision.revision,
 				revision: {
 					mcpServerId: connected.data.revision.mcpServerId,
 					tenantId: connected.data.revision.tenantId,
@@ -1939,7 +2040,7 @@ export class ControlService {
 				},
 				tools: nextTools.map(({ mcpRevision: _mcpRevision, ...tool }) => tool),
 			});
-			if (created === undefined) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+			if (created === undefined) return fail("CONFLICT", 409, "MCP Server changed during synchronization; retry");
 			await this.writeAudit({
 				tenantId: input.tenantId,
 				action: "mcp-server.tools-synced",
@@ -2001,8 +2102,8 @@ export class ControlService {
 	private validateMcpConfig(config: McpStreamableHttpConfig): ControlResult<McpStreamableHttpConfig> {
 		if (config.transport !== "streamable_http")
 			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MVP supports streamable_http transport only");
-		if (config.authentication !== "none" && config.authentication !== "bearer")
-			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MCP authentication must be none or bearer");
+		if (config.authentication !== "none" && config.authentication !== "bearer" && config.authentication !== "api_key")
+			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MCP authentication must be none, bearer, or api_key");
 		try {
 			const endpoint = validateMcpEndpoint(config.endpoint, this.mcpNetworkPolicy).toString();
 			return { ok: true, data: { ...config, endpoint } };
@@ -2027,22 +2128,22 @@ export class ControlService {
 		if (revision === undefined)
 			return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server revision not found in tenant scope");
 		let bearerToken: string | undefined;
-		if (revision.authentication === "bearer") {
+		if (revision.authentication !== "none") {
 			if (this.mcpSecretBox === undefined)
-				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP bearer credential is not configured");
+				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP credential is not configured");
 			const secret = await this.repos.mcpSecrets.get(scope, input.mcpServerId);
-			if (secret === undefined)
-				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP bearer credential is not configured");
+			if (secret === undefined) return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP credential is not configured");
 			try {
 				bearerToken = this.mcpSecretBox.open(input.tenantId, input.mcpServerId, secret);
 			} catch {
-				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP bearer credential cannot be opened");
+				return fail("MCP_SECRET_NOT_CONFIGURED", 409, "MCP credential cannot be opened");
 			}
 		}
 		try {
 			const session = await connectSecureMcpClient({
 				endpoint: revision.endpoint,
-				bearerToken,
+				bearerToken: revision.authentication === "bearer" ? bearerToken : undefined,
+				apiKey: revision.authentication === "api_key" ? bearerToken : undefined,
 				networkPolicy: this.mcpNetworkPolicy,
 				signal: input.signal,
 			});

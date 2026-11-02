@@ -26,9 +26,13 @@ describe("redesigned Agent publish wiring", () => {
 		);
 	});
 
-	it("publishes with a single-one-click publishAgent call (no app/revision selection, no manual create-version/activate UI)", () => {
-		expect(publishDrawerSource).toContain("const result = await agentApi.publishAgent(agentId)");
-		expect(publishDrawerSource).not.toContain("select-app");
+	it("offers signed-user mode while publishing the Agent", () => {
+		expect(publishDrawerSource).toContain('value="signed_user"');
+		expect(publishDrawerSource).toContain("const result = await agentApi.publishAgent(agentId, {");
+		expect(publishDrawerSource).toContain("signedIdentity:");
+		expect(publishDrawerSource).toContain("Ed25519 公钥");
+		expect(publishDrawerSource).not.toContain("目标应用");
+		expect(publishDrawerSource).not.toContain("新建应用");
 		expect(publishDrawerSource).not.toContain("select-revision");
 		expect(publishDrawerSource).not.toContain("appApi.createVersion");
 		expect(publishDrawerSource).not.toContain("activateVersion");

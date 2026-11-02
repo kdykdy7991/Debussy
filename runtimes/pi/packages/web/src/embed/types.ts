@@ -5,7 +5,7 @@
  * embed 子模块（common/realtime/public-http），Web 与 Server 不各自复制。
  * 仅保留 Web 展示层专用类型（ChatMessage/ChatAttachment）。
  */
-import type { Citation } from "@earendil-works/pi-protocol";
+import type { Citation, ImageContent } from "@earendil-works/pi-protocol";
 
 export type { Citation };
 
@@ -50,6 +50,7 @@ export interface ChatToolCall {
 	readonly id: string;
 	readonly name: string;
 	readonly status: "running" | "completed" | "failed";
+	readonly images?: readonly ImageContent[];
 }
 
 /** 会话内展示用消息（由事件推导；Web 展示层专用）。 */

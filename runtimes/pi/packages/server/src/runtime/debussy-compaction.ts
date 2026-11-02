@@ -85,6 +85,8 @@ export interface DebussyCompactionOptions {
 	readonly model?: { readonly contextWindow?: number; readonly maxTokens?: number };
 	/** When set, forces a compaction decision (tests / headless override). */
 	readonly budgetOverride?: number;
+	/** Manual compaction may keep only the newest complete Turn verbatim. */
+	readonly keepRecentTokens?: number;
 	/**
 	 * Space kept for the as-yet-unknown next user message. turn/end passes a
 	 * default; the pre-prompt guard passes 0 (its current user message is already
@@ -113,7 +115,7 @@ export interface DebussyCompactionOptions {
  * back to a conservative fraction of the window when no usage exists yet. Never
  * a fixed magic constant.
  */
-function resolveBudget(
+export function resolveWorkingContextBudget(
 	spec: RuntimeSpec,
 	options: DebussyCompactionOptions,
 	recentEvents: readonly ConversationEventRecord[],
@@ -151,10 +153,11 @@ export async function runDebussyCompaction(
 	if (recentEvents.length === 0) return { compacted: false, throughSequence: null };
 
 	const summaryText = textOf(latest?.body);
-	const budget = options.budgetOverride ?? resolveBudget(spec, options, recentEvents, summaryText);
+	const budget = options.budgetOverride ?? resolveWorkingContextBudget(spec, options, recentEvents, summaryText);
 	const plan = planCompaction(recentEvents, {
 		budget,
 		summaryText,
+		...(options.keepRecentTokens !== undefined ? { keepRecentTokens: options.keepRecentTokens } : {}),
 		extraEstimateTokens: options.currentUserText !== undefined ? estimateMessageTokens(options.currentUserText) : 0,
 	});
 	if (!plan.shouldCompact || plan.throughSequence <= 0) return { compacted: false, throughSequence: null };

@@ -51,10 +51,10 @@ export interface AppDetailSnapshot {
 export type PublishedAppStatusFilter = "" | "draft" | "active" | "suspended" | "archived";
 
 /** Allowed access mode values for create-app form (mirrors server union). */
-export type AccessModeValue = "anonymous" | "signed_user" | "mixed";
+export type AccessModeValue = "anonymous" | "signed_user" | "mixed" | "trusted_app";
 
 export const PUBLISHED_APP_STATUSES = ["draft", "active", "suspended", "archived"] as const;
-export const ACCESS_MODES = ["anonymous", "signed_user", "mixed"] as const;
+export const ACCESS_MODES = ["anonymous", "signed_user", "mixed", "trusted_app"] as const;
 export const LAUNCH_KEY_STATUSES = ["active", "retiring", "revoked"] as const;
 
 /** A typed error returned from every Publishing API call. */

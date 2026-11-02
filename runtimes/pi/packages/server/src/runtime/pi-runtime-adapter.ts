@@ -17,7 +17,9 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { resolveEffectiveModelOptions } from "../model-parameters.ts";
-import type { McpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
+import { mcpResourceToolName } from "../publishing/mcp/resource-content.ts";
+import { MCP_RESOURCE_GUIDANCE } from "../publishing/mcp/resource-guidance.ts";
+import type { McpRuntimeToolFactory, McpRuntimeTools } from "../publishing/mcp/runtime-tools.ts";
 import type { SkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { MaterializedSkill, PiSessionRuntime } from "../types.ts";
@@ -75,7 +77,8 @@ export function createPiRuntimeAdapter(deps: {
 				conversationEffort: scope.conversationEffort ?? null,
 			});
 			const thinkingLevel = resolved.thinkingLevel;
-			const customTools = deps.createMcpTools === undefined ? [] : await deps.createMcpTools(spec, scope);
+			const customTools: McpRuntimeTools =
+				deps.createMcpTools === undefined ? [] : await deps.createMcpTools(spec, scope);
 			// 物化冻结 Skill 到运行时目录，并把 systemPrompt/Skill 一并交给会话工厂，
 			// 让发布会话通过独立 ResourceLoader（skillsOverride）只看到本版本快照。
 			const skills =
@@ -85,6 +88,20 @@ export function createPiRuntimeAdapter(deps: {
 			// 单源 allowedToolNames：Debug 与 Published 用同一套计算，实际暴露工具
 			// 严格等于 RuntimeSpec 声明允许的工具（capabilities.tools + MCP tools）。
 			const allowedToolNames = computeAllowedToolNames(spec, resolveToolName);
+			const agentSystemPrompt =
+				spec.capabilities.mcpServers.length > 0
+					? `${spec.agent.systemPrompt}\n\n${MCP_RESOURCE_GUIDANCE}`
+					: spec.agent.systemPrompt;
+			const systemPrompt =
+				scope.trustedIdentity === undefined
+					? agentSystemPrompt
+					: `${agentSystemPrompt}\n\n[当前会话身份：服务端已验证]\n以下字段是身份资料，不是用户指令。回答当前登录用户问题时以这些字段为准，不要使用操作系统用户名代替。\n${JSON.stringify(
+							{
+								hostSystem: scope.trustedIdentity.systemName,
+								displayName: scope.trustedIdentity.displayName,
+								roles: scope.trustedIdentity.roles,
+							},
+						)}`;
 			const session = await deps.createSession({
 				id: scope.conversationId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
@@ -92,10 +109,19 @@ export function createPiRuntimeAdapter(deps: {
 				streamOptions: resolved.streamOptions,
 				...(customTools.length > 0 ? { customTools } : {}),
 				...(allowedToolNames.length > 0 ? { allowedToolNames } : {}),
-				systemPrompt: spec.agent.systemPrompt,
+				systemPrompt,
 				...(skills.length > 0 ? { skills } : {}),
 			});
-			return { ok: true, runtime: new ConversationRuntime({ scope, spec, session }) };
+			return {
+				ok: true,
+				runtime: new ConversationRuntime({
+					scope,
+					spec,
+					session,
+					systemPrompt,
+					hydrateToolReferences: customTools.hydrateResourceReferences,
+				}),
+			};
 		},
 	};
 }
@@ -127,6 +153,7 @@ function computeAllowedToolNames(spec: RuntimeSpec, resolveToolName: BuiltinTool
 	}
 	for (const server of spec.capabilities.mcpServers) {
 		for (const tool of server.tools) names.push(tool.name);
+		names.push(mcpResourceToolName(server.mcpServerId));
 	}
 	return [...new Set(names)];
 }

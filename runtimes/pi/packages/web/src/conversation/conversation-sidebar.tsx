@@ -22,6 +22,11 @@ export interface ConversationSidebarProps {
 }
 
 export function ConversationSidebar(props: ConversationSidebarProps): React.ReactElement {
+	const currentDraft =
+		props.sessions.activeSession !== undefined &&
+		!props.sessions.sessions.some((session) => session.id === props.sessions.activeSessionId)
+			? props.sessions.activeSession
+			: undefined;
 	return (
 		<aside className={`chat-sidebar ${props.open ? "open" : ""}`} aria-label="会话导航">
 			<div className="sidebar-actions">
@@ -76,6 +81,29 @@ export function ConversationSidebar(props: ConversationSidebarProps): React.Reac
 					aria-label="搜索会话"
 				/>
 			</label>
+
+			{currentDraft ? (
+				<>
+					<div className="sidebar-section-label">
+						<span>当前对话</span>
+					</div>
+					<nav className="conversation-list conversation-list--current" aria-label="当前新对话">
+						<button
+							className="active"
+							type="button"
+							aria-current="page"
+							onClick={() => props.onSelect(currentDraft.id)}
+						>
+							<i className="conversation-icon" aria-hidden="true">
+								◇
+							</i>
+							<span>
+								<strong>{currentDraft.name || "新对话"}</strong>
+							</span>
+						</button>
+					</nav>
+				</>
+			) : null}
 
 			<div className="sidebar-section-label">
 				<span>Conversations</span>

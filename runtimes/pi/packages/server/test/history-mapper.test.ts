@@ -25,7 +25,12 @@ describe("toAgentMessages (structured -> native Pi messages, Phase-1)", () => {
 		const toolCallMsg = msgs[1];
 		expect(toolCallMsg.role).toBe("assistant");
 		if (toolCallMsg.role !== "assistant") throw new Error("shape");
-		expect(toolCallMsg.content[0]).toMatchObject({ type: "toolCall", id: "call-1", name: "read", arguments: { path: "a" } });
+		expect(toolCallMsg.content[0]).toMatchObject({
+			type: "toolCall",
+			id: "call-1",
+			name: "read",
+			arguments: { path: "a" },
+		});
 		expect(toolCallMsg.stopReason).toBe("toolUse");
 
 		const toolResultMsg = msgs[2];
@@ -46,7 +51,13 @@ describe("toAgentMessages (structured -> native Pi messages, Phase-1)", () => {
 	it("preserves tool error semantics", () => {
 		const msgs = toAgentMessages(
 			[
-				{ role: "toolResult", toolCallId: "e", toolName: "x", isError: true, content: [{ type: "text", text: "boom" }] },
+				{
+					role: "toolResult",
+					toolCallId: "e",
+					toolName: "x",
+					isError: true,
+					content: [{ type: "text", text: "boom" }],
+				},
 			] as TranscriptMessage[],
 			{ now: 2 },
 		);

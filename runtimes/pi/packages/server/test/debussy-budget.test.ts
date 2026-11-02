@@ -81,6 +81,21 @@ function makeSpec(policy: number): RuntimeSpec {
 }
 
 describe("runDebussyCompaction budget (Phase-3.6 measured runtime overhead)", () => {
+	it("manual compaction persists older complete turns and keeps the newest turn", async () => {
+		const store = new MemStore();
+		store.events = [...turn(1, "one", "first", "answer one"), ...turn(4, "two", "second", "answer two")];
+		const result = await runDebussyCompaction(store, makeSpec(100_000), {
+			budgetOverride: 0,
+			keepRecentTokens: 0,
+		});
+		expect(result).toEqual({ compacted: true, throughSequence: 2 });
+		expect(store.latest?.throughSequence).toBe(2);
+		const again = await runDebussyCompaction(store, makeSpec(100_000), {
+			budgetOverride: 0,
+			keepRecentTokens: 0,
+		});
+		expect(again.compacted).toBe(false);
+	});
 	// Prior context large enough to make the conservative fallback vs measured
 	// overhead budgets meaningfully different (needs c0 > ~26k tokens).
 	const priorCount = 60;

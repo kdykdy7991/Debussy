@@ -11,7 +11,7 @@ export type TenantStatus = "active" | "suspended" | "archived";
 
 export type PublishedAppStatus = "draft" | "active" | "suspended" | "archived";
 
-export type AccessMode = "anonymous" | "signed_user" | "mixed";
+export type AccessMode = "anonymous" | "signed_user" | "mixed" | "trusted_app";
 
 /**
  * `validating` is a transient in-memory state during version creation; only
@@ -41,7 +41,7 @@ export const TENANT_STATUS_VALUES: readonly TenantStatus[] = ["active", "suspend
 
 export const PUBLISHED_APP_STATUS_VALUES: readonly PublishedAppStatus[] = ["draft", "active", "suspended", "archived"];
 
-export const ACCESS_MODE_VALUES: readonly AccessMode[] = ["anonymous", "signed_user", "mixed"];
+export const ACCESS_MODE_VALUES: readonly AccessMode[] = ["anonymous", "signed_user", "mixed", "trusted_app"];
 
 export const PUBLISHED_APP_VERSION_STATUS_VALUES: readonly PublishedAppVersionStatus[] = [
 	"validating",

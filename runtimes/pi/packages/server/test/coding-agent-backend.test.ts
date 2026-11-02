@@ -18,7 +18,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { CodingAgentPiSessionBackend } from "../src/coding-agent/index.ts";
-import { CodingAgentPiSessionRuntime } from "../src/coding-agent/runtime.ts";
+import type { CodingAgentPiSessionRuntime } from "../src/coding-agent/runtime.ts";
 import type { PiServer } from "../src/index.ts";
 import { connectWebSocketTestClient, type ProtocolTestClient } from "../src/testing/index.ts";
 import { createWebSocketServer } from "../src/transports/websocket/index.ts";

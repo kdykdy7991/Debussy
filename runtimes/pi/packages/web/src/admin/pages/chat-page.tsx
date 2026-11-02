@@ -19,6 +19,7 @@ import { LlmApi } from "../api/llm-api.ts";
 import { SkillApi } from "../api/skill-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { DebugHistoryPanel, type DebugHistoryState } from "../components/debug-history-panel.tsx";
+import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 
 interface AgentOption {
@@ -250,6 +251,7 @@ function ChatConnectionState({
 }
 
 export function AdminChatPage(): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller, snapshot: auth } = useAdminAuth();
 	const agentApiRef = useRef(new AgentApi({ auth: controller })).current;
 	const llmApiRef = useRef(new LlmApi({ auth: controller })).current;
@@ -707,15 +709,19 @@ export function AdminChatPage(): React.ReactElement {
 	// The control API has no `clearList` operation, so the button is wired
 	// to a confirm dialog + optimistic local clear. Refusing here keeps the
 	// UX honest — there is no server-side wipe hidden behind this button.
-	const handleClearHistory = useCallback(() => {
-		if (typeof window !== "undefined") {
-			const ok = window.confirm("确定要清空当前 Agent 的对话列表吗？此操作仅影响本地视图。");
-			if (!ok) return;
-		}
+	const handleClearHistory = useCallback(async () => {
+		if (
+			!(await dialogs.confirm("确定要清空当前 Agent 的对话列表吗？此操作仅影响本地视图。", {
+				title: "清空对话列表",
+				confirmLabel: "确认清空",
+				destructive: true,
+			}))
+		)
+			return;
 		setHistoryCleared(true);
 		setHistory({ kind: "loaded", items: [] });
 		setHistoryOpen(false);
-	}, []);
+	}, [dialogs.confirm]);
 
 	// Click-outside-to-close: the floating panel is not a docked sidebar, so
 	// there is no `scrim` overlay. Listen for clicks on the document and close
@@ -770,6 +776,7 @@ export function AdminChatPage(): React.ReactElement {
 
 	return (
 		<div className="admin-debug-shell">
+			{dialog}
 			<DebugHistoryPanel
 				open={historyOpen}
 				state={visibleHistory}

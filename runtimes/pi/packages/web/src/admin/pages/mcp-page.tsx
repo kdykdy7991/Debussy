@@ -2,6 +2,10 @@ import type { McpServerDetail, McpServerSummary, McpStreamableHttpConfig } from 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { McpApi, McpApiError } from "../api/mcp-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import dialogStyles from "../components/dialog.module.css";
+import { Dialog } from "../components/dialog.tsx";
+import { McpTokenDialog, type McpTokenTarget } from "../components/mcp-token-dialog.tsx";
+import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 import styles from "./mcp-page.module.css";
 
@@ -36,6 +40,7 @@ function Connection({ detail }: { readonly detail: McpServerDetail }): React.Rea
 }
 
 export function AdminMcpPage(): React.ReactElement {
+	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const apiRef = useRef<McpApi | null>(null);
 	if (apiRef.current === null) apiRef.current = new McpApi({ auth: controller });
@@ -51,10 +56,13 @@ export function AdminMcpPage(): React.ReactElement {
 	const [error, setError] = useState<string | null>(null);
 	const [tab, setTab] = useState<DetailTab>("overview");
 	const [showCreate, setShowCreate] = useState(false);
+	const [editingId, setEditingId] = useState<string | null>(null);
 	const [name, setName] = useState("");
 	const [endpoint, setEndpoint] = useState("");
-	const [authentication, setAuthentication] = useState<"none" | "bearer">("none");
+	const [authentication, setAuthentication] = useState<McpStreamableHttpConfig["authentication"]>("none");
 	const [bearerToken, setBearerToken] = useState("");
+	const [tokenTarget, setTokenTarget] = useState<McpTokenTarget | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
 
 	const load = useCallback(
 		async (showLoading = true) => {
@@ -78,6 +86,10 @@ export function AdminMcpPage(): React.ReactElement {
 		[api],
 	);
 	useEffect(() => void load(), [load]);
+	useEffect(() => {
+		const timer = setInterval(() => void load(false), 60_000);
+		return () => clearInterval(timer);
+	}, [load]);
 
 	const selected = selectedId ? (details.get(selectedId) ?? null) : null;
 	const visible = useMemo(
@@ -116,21 +128,32 @@ export function AdminMcpPage(): React.ReactElement {
 			setBusy(null);
 		}
 	};
-	const toggleServer = (detail: McpServerDetail): void => {
+	const toggleServer = async (detail: McpServerDetail): Promise<void> => {
 		if (
 			detail.status === "enabled" &&
-			!window.confirm(`停用后，${detail.boundAgents.length} 个 Agent Revision 将无法使用此 MCP，确定继续吗？`)
+			!(await dialogs.confirm(
+				`停用后，${detail.boundAgents.length} 个 Agent Revision 将无法使用此 MCP，确定继续吗？`,
+				{ title: "停用 MCP Server", confirmLabel: "确认停用", destructive: true },
+			))
 		)
 			return;
 		void act(`toggle-${detail.id}`, () => api.setEnabled(detail.id, detail.status !== "enabled"));
 	};
 	const create = async () => {
 		if (!name.trim() || !endpoint.trim()) return;
+		if (authentication !== "none" && bearerToken.trim() && !/^[\x21-\x7e]+$/.test(bearerToken.trim())) {
+			setError("密钥只能包含可见英文字符，不能包含空格或换行。");
+			return;
+		}
 		await act("create", async () => {
-			const detail = await api.create(name, { transport: "streamable_http", endpoint, authentication });
-			if (authentication === "bearer" && bearerToken) await api.replaceSecret(detail.id, bearerToken);
-			setSelectedId(detail.id);
+			const config: McpStreamableHttpConfig = { transport: "streamable_http", endpoint, authentication };
+			const id = editingId ?? (await api.create(name, config)).id;
+			if (editingId) await api.createRevision(id, config);
+			setEditingId(id);
+			if (authentication !== "none" && bearerToken.trim()) await api.replaceSecret(id, bearerToken.trim());
+			setSelectedId(id);
 			setShowCreate(false);
+			setEditingId(null);
 			setName("");
 			setEndpoint("");
 			setAuthentication("none");
@@ -140,33 +163,37 @@ export function AdminMcpPage(): React.ReactElement {
 	const editConfig = async () => {
 		if (!selected) return;
 		const config = currentConfig(selected);
-		const nextEndpoint = window.prompt("请输入新的 Streamable HTTP 地址", config?.endpoint ?? "");
-		if (!nextEndpoint) return;
-		await act("edit", () =>
-			api.createRevision(selected.id, {
-				transport: "streamable_http",
-				endpoint: nextEndpoint,
-				authentication: config?.authentication ?? "none",
-			}),
-		);
-	};
-	const replaceSecret = async () => {
-		if (!selected) return;
-		const token = window.prompt("请输入新的 Bearer Token（保存后不会回显）");
-		if (!token) return;
-		await act("secret", () => api.replaceSecret(selected.id, token));
+		setEditingId(selected.id);
+		setName(selected.name);
+		setEndpoint(config?.endpoint ?? "");
+		setAuthentication(config?.authentication ?? "none");
+		setBearerToken("");
+		setShowCreate(true);
 	};
 
 	return (
 		<section className={styles.page} aria-labelledby="mcp-title">
+			{dialog}
 			<header className={styles.header}>
 				<div>
 					<h1 id="mcp-title">MCP 管理</h1>
 				</div>
-				<button type="button" className={styles.createButton} onClick={() => setShowCreate(true)}>
+				<button
+					type="button"
+					className={styles.createButton}
+					onClick={() => {
+						setEditingId(null);
+						setName("");
+						setEndpoint("");
+						setAuthentication("none");
+						setBearerToken("");
+						setShowCreate(true);
+					}}
+				>
 					＋ 新建 MCP Server
 				</button>
 			</header>
+			{notice ? <output className={styles.successPanel}>{notice}</output> : null}
 			{error ? (
 				<div className={styles.error} role="alert">
 					{error}
@@ -309,10 +336,26 @@ export function AdminMcpPage(): React.ReactElement {
 									})
 								}
 								onEdit={() => void editConfig()}
-								onSecret={() => void replaceSecret()}
+								onSecret={() => {
+									setNotice(null);
+									setTokenTarget({
+										id: selected.id,
+										name: selected.name,
+										endpoint: currentConfig(selected)?.endpoint ?? "",
+										credentialLabel:
+											currentConfig(selected)?.authentication === "api_key" ? "API Key" : "Bearer Token",
+									});
+								}}
 								onToggle={() => toggleServer(selected)}
-								onDelete={() => {
-									if (!window.confirm(`确定删除 MCP Server“${selected.name}”吗？`)) return;
+								onDelete={async () => {
+									if (
+										!(await dialogs.confirm(`确定删除 MCP Server“${selected.name}”吗？`, {
+											title: "删除 MCP Server",
+											confirmLabel: "确认删除",
+											destructive: true,
+										}))
+									)
+										return;
 									void act("delete", () => api.delete(selected.id));
 								}}
 							/>
@@ -340,65 +383,123 @@ export function AdminMcpPage(): React.ReactElement {
 							<h3>说明</h3>
 							<ul>
 								<li>全局停用后，所有 Agent 将无法使用该 MCP。</li>
-								<li>更新配置或同步 Tools 会创建新的 Revision。</li>
+								<li>系统每分钟检查工具变化，有变化时创建新的 Revision。</li>
+								<li>工具删除或参数变化可能导致旧 Agent 调用失败，请更新绑定。</li>
 								<li>已发布的 Agent Revision 不会被自动变更。</li>
 							</ul>
 						</section>
 					</aside>
 				</section>
 			) : null}
+			{tokenTarget ? (
+				<McpTokenDialog
+					key={tokenTarget.id}
+					target={tokenTarget}
+					onClose={() => setTokenTarget(null)}
+					onSave={async (token) => {
+						await api.replaceSecret(tokenTarget.id, token);
+						setNotice(`已更新「${tokenTarget.name}」的 Token，请测试连接确认。`);
+						await load(false);
+					}}
+				/>
+			) : null}
 			{showCreate ? (
-				<div className={styles.overlay}>
-					<section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="create-mcp-title">
-						<h2 id="create-mcp-title">新建 MCP Server</h2>
-						<label>
-							名称
-							<input value={name} onChange={(event) => setName(event.currentTarget.value)} />
-						</label>
-						<label>
-							Streamable HTTP 地址
-							<input
-								value={endpoint}
-								onChange={(event) => setEndpoint(event.currentTarget.value)}
-								placeholder="https://mcp.example.com/mcp"
-							/>
-						</label>
-						<label>
-							认证方式
-							<select
-								value={authentication}
-								onChange={(event) => setAuthentication(event.currentTarget.value as typeof authentication)}
+				<Dialog
+					title={editingId ? "编辑 MCP Server" : "新建 MCP Server"}
+					busy={busy !== null}
+					onClose={() => {
+						setShowCreate(false);
+						setBearerToken("");
+					}}
+					onSubmit={() => {
+						if (
+							busy === null &&
+							name.trim() &&
+							endpoint.trim() &&
+							(authentication === "none" ||
+								bearerToken.trim() ||
+								(editingId && details.get(editingId)?.secretConfigured))
+						)
+							void create();
+					}}
+					footer={
+						<>
+							<button
+								type="button"
+								disabled={busy !== null}
+								onClick={() => {
+									setShowCreate(false);
+									setBearerToken("");
+								}}
 							>
-								<option value="none">无认证</option>
-								<option value="bearer">Bearer Token</option>
-							</select>
-						</label>
-						{authentication === "bearer" ? (
-							<label>
-								Bearer Token
-								<input
-									type="password"
-									value={bearerToken}
-									onChange={(event) => setBearerToken(event.currentTarget.value)}
-									autoComplete="new-password"
-								/>
-							</label>
-						) : null}
-						<div>
-							<button type="button" onClick={() => setShowCreate(false)}>
 								取消
 							</button>
 							<button
-								type="button"
-								className={styles.createButton}
-								disabled={busy !== null || !name.trim() || !endpoint.trim()}
-								onClick={() => void create()}
+								type="submit"
+								className={dialogStyles.primary}
+								disabled={
+									busy !== null ||
+									!name.trim() ||
+									!endpoint.trim() ||
+									(authentication !== "none" &&
+										!bearerToken.trim() &&
+										!(editingId && details.get(editingId)?.secretConfigured))
+								}
 							>
-								{busy === "create" ? "创建中…" : "创建"}
+								{busy === "create" ? "保存中…" : editingId ? "保存" : "创建"}
 							</button>
-						</div>
-					</section>
-				</div>
+						</>
+					}
+				>
+					{error ? (
+						<p className={dialogStyles.error} role="alert">
+							{error}
+						</p>
+					) : null}
+					<label className={dialogStyles.field}>
+						名称
+						<input
+							value={name}
+							disabled={editingId !== null || busy !== null}
+							onChange={(event) => setName(event.currentTarget.value)}
+						/>
+					</label>
+					<label className={dialogStyles.field}>
+						Streamable HTTP 地址
+						<input
+							disabled={busy !== null}
+							value={endpoint}
+							onChange={(event) => setEndpoint(event.currentTarget.value)}
+							placeholder="https://mcp.example.com/mcp"
+						/>
+					</label>
+					<label className={dialogStyles.field}>
+						认证方式
+						<select
+							disabled={busy !== null}
+							value={authentication}
+							onChange={(event) => setAuthentication(event.currentTarget.value as typeof authentication)}
+						>
+							<option value="none">无认证</option>
+							<option value="bearer">Bearer Token</option>
+							<option value="api_key">API Key（X-Mcp-Api-Key）</option>
+						</select>
+					</label>
+					{authentication !== "none" ? (
+						<label className={dialogStyles.field}>
+							{authentication === "api_key" ? "API Key" : "Bearer Token"}
+							<input
+								type="password"
+								disabled={busy !== null}
+								value={bearerToken}
+								onChange={(event) => setBearerToken(event.currentTarget.value)}
+								autoComplete="new-password"
+								maxLength={16384}
+								placeholder={editingId ? "留空沿用已保存的凭证" : "仅填写密钥值"}
+							/>
+						</label>
+					) : null}
+				</Dialog>
 			) : null}
 		</section>
 	);
@@ -436,7 +537,13 @@ function Overview({
 				</div>
 				<div>
 					<dt>认证方式</dt>
-					<dd>{config?.authentication === "bearer" ? "Bearer Token" : "无认证"}</dd>
+					<dd>
+						{config?.authentication === "api_key"
+							? "API Key（X-Mcp-Api-Key）"
+							: config?.authentication === "bearer"
+								? "Bearer Token"
+								: "无认证"}
+					</dd>
 				</div>
 				<div>
 					<dt>认证状态</dt>
@@ -471,7 +578,7 @@ function Overview({
 				<button type="button" disabled={busy !== null} onClick={onEdit}>
 					{busy === "edit" ? "保存中…" : "编辑配置"}
 				</button>
-				{config?.authentication === "bearer" ? (
+				{config && config.authentication !== "none" ? (
 					<button type="button" disabled={busy !== null} onClick={onSecret}>
 						{busy === "secret" ? "保存中…" : "替换 Token"}
 					</button>
@@ -553,7 +660,10 @@ function Agents({ detail }: { readonly detail: McpServerDetail }): React.ReactEl
 					<div className={styles.agentLine} key={`${binding.agentId}-${binding.agentRevision}`}>
 						<div>
 							<strong>{binding.agentId}</strong>
-							<small>Revision r{binding.agentRevision}</small>
+							<small>
+								Agent r{binding.agentRevision} · MCP v{binding.mcpRevision}
+								{binding.mcpRevision < detail.currentRevision ? " · 工具已更新，请检查并更新绑定" : ""}
+							</small>
 						</div>
 						<button type="button" onClick={() => navigate(`/agents/${binding.agentId}`)}>
 							查看 Agent

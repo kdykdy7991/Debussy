@@ -33,7 +33,7 @@ export interface PublishedAppSummary {
 	readonly publicAppId: string;
 	readonly name: string;
 	readonly status: "draft" | "active" | "suspended" | "archived";
-	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 	readonly allowedOrigins: readonly string[];
 	readonly currentVersionId: string | null;
 	readonly embedUrl: string;
@@ -57,7 +57,7 @@ export interface PublishedAppDetail {
 	readonly publicAppId: string;
 	readonly name: string;
 	readonly status: "draft" | "active" | "suspended" | "archived";
-	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 	readonly allowedOrigins: readonly string[];
 	readonly createdAt: string;
 	readonly updatedAt: string;

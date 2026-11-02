@@ -51,7 +51,7 @@ export async function normalizeToolResultImages(
 			continue;
 		}
 
-		normalized.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
+		normalized.push({ ...block, data: processed.data, mimeType: processed.mimeType });
 		if (processed.hints.length > 0) {
 			normalized.push({ type: "text", text: processed.hints.join("\n") });
 		}

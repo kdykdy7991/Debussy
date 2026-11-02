@@ -84,6 +84,49 @@ describe("embed ConversationWorkspace adapter", () => {
 		unsubscribe();
 	});
 
+	test("shows an active empty conversation separately from history", () => {
+		const draft = {
+			id: "conv_draft",
+			publishedAppVersionId: "pav_2",
+			status: "active" as const,
+			title: "",
+			lastEventSequence: 0,
+			createdAt: "2026-10-14T00:00:00.000Z",
+		};
+		const history = { ...draft, id: "conv_history", title: "旧会话", lastEventSequence: 4 };
+		const state: EmbedChatState = {
+			conversations: [draft, history],
+			activeId: draft.id,
+			messages: [],
+			sending: false,
+			uploading: false,
+			connectionStatus: "connected",
+			attachments: [],
+			uploadsEnabled: false,
+			error: null,
+			rolloverNotice: null,
+		};
+		const stores = createEmbedWorkspaceStores(controllerWith(state));
+		expect(stores.sessions.getSnapshot().sessions.map((session) => session.id)).toEqual([history.id]);
+		const markup = renderToStaticMarkup(
+			<EmbedConversationWorkspace title="已发布 Agent" controller={controllerWith(state)} />,
+		);
+		expect(markup).toContain('aria-label="当前新对话"');
+		expect(markup).toContain('aria-current="page"');
+		expect(markup).toContain("新对话");
+		expect(markup).toContain("旧会话");
+		const afterFirstMessage: EmbedChatState = {
+			...state,
+			messages: [{ id: "user-1", role: "user", text: "新的问题", sequence: -1 }],
+		};
+		const activeHistory = createEmbedWorkspaceStores(controllerWith(afterFirstMessage)).sessions.getSnapshot();
+		expect(activeHistory.sessions.map((session) => session.id)).toEqual([draft.id, history.id]);
+		const updatedMarkup = renderToStaticMarkup(
+			<EmbedConversationWorkspace title="已发布 Agent" controller={controllerWith(afterFirstMessage)} />,
+		);
+		expect(updatedMarkup).not.toContain('aria-label="当前新对话"');
+	});
+
 	test("renders published data through the shared control Chat workspace", () => {
 		const state: EmbedChatState = {
 			conversations: [
@@ -99,7 +142,27 @@ describe("embed ConversationWorkspace adapter", () => {
 			activeId: "conv_1",
 			messages: [
 				{ id: "user-1", role: "user", text: "真实问题", sequence: 1 },
-				{ id: "assistant-1", role: "assistant", text: "真实回答", thinking: "真实思考", sequence: 2 },
+				{
+					id: "assistant-1",
+					role: "assistant",
+					text: "真实回答",
+					thinking: "真实思考",
+					sequence: 2,
+					tools: [
+						{
+							id: "image-read",
+							name: "read_resource",
+							status: "completed",
+							images: [
+								{
+									type: "image",
+									data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ZkAAAAASUVORK5CYII=",
+									mimeType: "image/png",
+								},
+							],
+						},
+					],
+				},
 			],
 			sending: false,
 			uploading: false,
@@ -108,6 +171,13 @@ describe("embed ConversationWorkspace adapter", () => {
 			uploadsEnabled: false,
 			error: null,
 			rolloverNotice: null,
+			contextUsage: {
+				usedTokens: 1200,
+				workingBudget: 4000,
+				contextWindow: 8000,
+				usagePercent: 30,
+				summaryThroughSequence: 8,
+			},
 		};
 		const markup = renderToStaticMarkup(
 			<EmbedConversationWorkspace title="已发布 Agent" controller={controllerWith(state)} />,
@@ -117,11 +187,19 @@ describe("embed ConversationWorkspace adapter", () => {
 		expect(markup).toContain("真实会话");
 		expect(markup).toContain("真实问题");
 		expect(markup).toContain("真实回答");
+		expect(markup).toContain("data:image/png;base64,iVBORw0KGgo");
+		expect(markup).toContain("相关图片");
 		expect(markup).toContain("思考过程");
 		expect(markup).toContain("真实思考");
 		expect(markup).toContain("active-agent-presence");
 		expect(markup).toContain("editorial-composer");
 		expect(markup).toContain("PUBLISHED CHAT");
+		expect(markup).toContain("上下文已用 15.0%，查看详情");
+		expect(markup).not.toContain("压缩预算");
+		expect(markup).not.toContain("摘要状态");
+		expect(markup).toContain("当前会话上下文");
+		expect(markup).toContain("主动压缩上下文");
+		expect(markup).toContain("8,000 tokens");
 		expect(markup).not.toContain("PublishedConversationWorkspace");
 		const textarea = /<textarea[^>]*>/.exec(markup)?.[0];
 		expect(textarea).toBeDefined();

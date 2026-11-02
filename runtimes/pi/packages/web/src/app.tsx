@@ -66,6 +66,8 @@ export interface AppProps {
 	};
 	enableUploads?: boolean;
 	showSidebar?: boolean;
+	submitInfo?: React.ReactNode;
+	closeSidebarOnSelect?: boolean;
 	/**
 	 * Render-only slot inserted directly above the composer dock.
 	 * Used by the admin debug page to mount the collapsible "思考过程"
@@ -108,6 +110,8 @@ export function ConversationWorkspace({
 	voiceEngine,
 	enableUploads = true,
 	showSidebar = true,
+	submitInfo,
+	closeSidebarOnSelect = true,
 	preComposer,
 	postComposer,
 	skills,
@@ -228,7 +232,7 @@ export function ConversationWorkspace({
 	};
 	const selectSession = (sessionId: string) => {
 		resetComposerPresence();
-		setSidebarOpen(false);
+		if (closeSidebarOnSelect) setSidebarOpen(false);
 		void sessions.selectSession(sessionId).catch(() => {});
 	};
 	const submitConversationText = useCallback(
@@ -686,6 +690,7 @@ export function ConversationWorkspace({
 							? { ...voiceEngine, enabled: voiceEngine.mode === "voice" }
 							: undefined
 					}
+					submitInfo={submitInfo}
 					onSubmit={submitMessage}
 					onMessageChange={handleMessageChange}
 					onMessageKeyDown={handleMessageKeyDown}

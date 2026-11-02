@@ -19,7 +19,7 @@
  */
 import type { ModelParameterCapabilities } from "@earendil-works/pi-protocol";
 import { canonicalJson, sha256Hex } from "./hash.ts";
-import { parseRuntimeSpec, type RuntimeSpec } from "./schema.ts";
+import { PLATFORM_LIMITS, parseRuntimeSpec, type RuntimeSpec } from "./schema.ts";
 
 /** Platform whitelist entries (TASK-010: explicit capability catalog). */
 export interface ToolCatalogEntry {
@@ -94,7 +94,7 @@ export interface CompilerInput {
 		readonly revision: number;
 		readonly transport: "streamable_http";
 		readonly endpoint: string;
-		readonly authentication: "none" | "bearer";
+		readonly authentication: "none" | "bearer" | "api_key";
 		readonly tools: readonly {
 			readonly name: string;
 			readonly description: string | null;
@@ -120,7 +120,10 @@ export function compileRuntimeSpec(input: CompilerInput): CompileResult {
 	const skills = input.skills ?? [];
 	const mcpServers = input.mcpServers ?? [];
 	const mcpToolNames = mcpServers.flatMap((server) => server.tools.map((tool) => tool.name));
-	if (mcpToolNames.length > 32) errors.push("MCP Tool allowlist exceeds the platform limit of 32");
+	if (mcpToolNames.length > PLATFORM_LIMITS.maxMcpTools)
+		errors.push(
+			`MCP Tool allowlist has ${mcpToolNames.length} tools, exceeding the platform limit of ${PLATFORM_LIMITS.maxMcpTools}`,
+		);
 	if (new Set(mcpToolNames).size !== mcpToolNames.length)
 		errors.push("MCP Tool names must be unique across all bound Servers");
 	// Skills are NOT spliced into the frozen system prompt. The runtime

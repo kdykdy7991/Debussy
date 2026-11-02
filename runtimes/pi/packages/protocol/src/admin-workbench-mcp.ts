@@ -5,7 +5,8 @@ import type { AgentBindingRef } from "./admin-workbench-skills.ts";
 export interface McpStreamableHttpConfig {
 	readonly transport: "streamable_http";
 	readonly endpoint: string;
-	readonly authentication: "none" | "bearer";
+	/** api_key sends the encrypted credential in X-Mcp-Api-Key. */
+	readonly authentication: "none" | "bearer" | "api_key";
 }
 
 export interface McpToolRef {
@@ -36,7 +37,7 @@ export interface McpServerRevisionSummary {
 
 export interface McpServerDetail extends McpServerSummary {
 	readonly revisions: readonly McpServerRevisionSummary[];
-	readonly boundAgents: readonly AgentBindingRef[];
+	readonly boundAgents: readonly (AgentBindingRef & { readonly mcpRevision: number })[];
 	readonly lastTest: {
 		readonly ok: boolean;
 		readonly latencyMs: number | null;
@@ -55,6 +56,7 @@ export interface McpServerRevisionCreateRequest {
 
 /** Secret values are write-only and never appear in a response DTO. */
 export interface McpSecretReplaceRequest {
+	/** Credential value for either Bearer or API Key authentication. */
 	readonly bearerToken: string;
 }
 

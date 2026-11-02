@@ -29,6 +29,7 @@ import type {
 	ToolTranscriptItem,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
+import { imageProvenance } from "@earendil-works/pi-protocol";
 
 /** Listeners receive one normalised `TranscriptProgress` per AgentSession event. */
 export type ProgressListener = (progress: TranscriptProgress) => void;
@@ -259,12 +260,13 @@ function extractToolContent(result: unknown): ToolTranscriptItem["content"] {
 
 function mapToolContentItem(item: unknown): ToolTranscriptItem["content"][number] | undefined {
 	if (!item || typeof item !== "object") return undefined;
-	const obj = item as { type?: string; text?: unknown; data?: unknown; mimeType?: unknown };
+	const obj = item as { type?: string; text?: unknown; data?: unknown; mimeType?: unknown; provenance?: unknown };
 	if (obj.type === "text" && typeof obj.text === "string") {
 		return { type: "text", text: obj.text };
 	}
 	if (obj.type === "image" && typeof obj.data === "string" && typeof obj.mimeType === "string") {
-		return { type: "image", data: obj.data, mimeType: obj.mimeType };
+		const provenance = imageProvenance(obj.provenance);
+		return { type: "image", data: obj.data, mimeType: obj.mimeType, ...(provenance ? { provenance } : {}) };
 	}
 	return undefined;
 }

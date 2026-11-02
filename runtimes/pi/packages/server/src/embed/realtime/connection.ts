@@ -17,6 +17,7 @@ import {
 	type EmbedServerEvent,
 	type RealtimeDecodeError,
 	type TranscriptProgress,
+	toolImagesFromContent,
 } from "@earendil-works/pi-protocol";
 import { WebSocket } from "ws";
 import type { ConversationId, RequestId, TurnId } from "../../publishing/domain/ids.ts";
@@ -305,7 +306,12 @@ export class EmbedRealtimeConnection {
 			return;
 		}
 		if (progress.type === "item_started" && progress.item.role === "tool") {
-			this.send({ type: "tool.started", ...this.eventBase(0, turnId), tool: progress.item.toolName });
+			this.send({
+				type: "tool.started",
+				...this.eventBase(0, turnId),
+				tool: progress.item.toolName,
+				toolCallId: progress.item.toolCallId,
+			});
 			return;
 		}
 		if (
@@ -318,6 +324,8 @@ export class EmbedRealtimeConnection {
 				...this.eventBase(0, turnId),
 				tool: progress.item.toolName,
 				ok: progress.item.status === "complete",
+				toolCallId: progress.item.toolCallId,
+				images: progress.item.status === "complete" ? toolImagesFromContent(progress.item.content) : [],
 			});
 		}
 	}
@@ -351,6 +359,26 @@ export class EmbedRealtimeConnection {
 				afterSequence: lastSeenSequence,
 			});
 			for (const event of events) {
+				if (event.eventType === "tool/result" || event.eventType === "tool/error") {
+					const payload = event.payload as {
+						toolName?: string;
+						toolCallId?: string;
+						content?: unknown;
+						isError?: boolean;
+					};
+					this.send({
+						type: "tool.completed",
+						...this.eventBase(event.sequence, event.turnId),
+						tool: payload.toolName ?? "MCP",
+						toolCallId: payload.toolCallId,
+						ok: event.eventType !== "tool/error" && payload.isError !== true,
+						images:
+							event.eventType === "tool/result" && payload.isError !== true
+								? toolImagesFromContent(payload.content)
+								: [],
+					});
+					continue;
+				}
 				if (event.eventType !== "assistant.completed" && event.eventType !== "assistant/message") continue;
 				const payload = (event.payload ?? {}) as { text?: unknown; thinking?: unknown };
 				this.send({

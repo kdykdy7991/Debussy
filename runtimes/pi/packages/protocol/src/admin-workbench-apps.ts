@@ -65,7 +65,7 @@ export interface PreviewTicket {
 export interface CreatePublishedAppRequest {
 	readonly agentDefinitionId: string;
 	readonly name: string;
-	readonly accessMode: "anonymous" | "signed_user" | "mixed";
+	readonly accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 	readonly allowedOrigins?: readonly string[];
 	readonly theme?: { readonly primaryColor?: string; readonly welcomeMessage?: string };
 }

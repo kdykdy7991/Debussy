@@ -25,7 +25,8 @@ export const PLATFORM_LIMITS = {
 	maxKnowledgeBases: 8,
 	maxSkills: 16,
 	maxMcpServers: 8,
-	maxMcpTools: 32,
+	/** Total selected MCP tools across all bound servers. */
+	maxMcpTools: 128,
 	maxTurns: 100,
 	maxContextTokens: 100_000,
 	maxToolResultBytes: 65_536,
@@ -134,7 +135,7 @@ const mcpServerRevisionSpec = z
 		revision: z.number().int().min(1),
 		transport: z.literal("streamable_http"),
 		endpoint: z.string().url(),
-		authentication: z.enum(["none", "bearer"]),
+		authentication: z.enum(["none", "bearer", "api_key"]),
 		tools: z.array(mcpToolSpec).min(1).max(PLATFORM_LIMITS.maxMcpTools),
 	})
 	.strict();
@@ -144,7 +145,15 @@ const capabilitiesSpec = z
 		tools: referenceArray(PLATFORM_LIMITS.maxTools).default([]),
 		knowledgeBases: referenceArray(PLATFORM_LIMITS.maxKnowledgeBases).default([]),
 		skills: z.array(skillRevisionSpec).max(PLATFORM_LIMITS.maxSkills).default([]),
-		mcpServers: z.array(mcpServerRevisionSpec).max(PLATFORM_LIMITS.maxMcpServers).default([]),
+		mcpServers: z
+			.array(mcpServerRevisionSpec)
+			.max(PLATFORM_LIMITS.maxMcpServers)
+			.refine(
+				(servers) =>
+					servers.reduce((count, server) => count + server.tools.length, 0) <= PLATFORM_LIMITS.maxMcpTools,
+				`MCP Tool allowlist exceeds the platform limit of ${PLATFORM_LIMITS.maxMcpTools}`,
+			)
+			.default([]),
 		uploads: uploadsCapability.default(PLATFORM_DEFAULTS.uploads),
 		speech: booleanCapability.default(PLATFORM_DEFAULTS.speech),
 		realtimeVoice: booleanCapability.default(PLATFORM_DEFAULTS.realtimeVoice),

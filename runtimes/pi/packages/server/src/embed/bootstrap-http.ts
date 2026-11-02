@@ -77,7 +77,7 @@ async function appSummary(
 	publicAppId: string;
 	name: string;
 	status: string;
-	accessMode: "anonymous" | "signed_user" | "mixed";
+	accessMode: "anonymous" | "signed_user" | "mixed" | "trusted_app";
 	allowedOrigins: readonly string[];
 	currentVersionId: string | null;
 	features: {

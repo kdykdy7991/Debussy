@@ -25,6 +25,12 @@ export interface ScopeContext {
 	readonly publishedAppId: PublishedAppId;
 	readonly publishedAppVersionId: PublishedAppVersionId;
 	readonly principalId: PrincipalId;
+	/** Verified host identity loaded by the server for this turn. */
+	readonly trustedIdentity?: {
+		readonly systemName: string;
+		readonly displayName: string;
+		readonly roles: readonly string[];
+	};
 	readonly conversationId: ConversationId;
 	/** Correlation id for the client request that started the current Turn. */
 	readonly requestId?: RequestId;

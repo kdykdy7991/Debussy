@@ -83,7 +83,7 @@ export interface DebugEventDto {
 }
 
 interface RequestOptions {
-	readonly method: "GET" | "POST" | "DELETE";
+	readonly method: "GET" | "POST" | "PATCH" | "DELETE";
 	readonly path: string;
 	readonly body?: unknown;
 	readonly idempotencyKey?: string;
@@ -347,16 +347,55 @@ export class AgentApi {
 	}
 
 	/**
-	 * P2 one-click publish: freezes the Agent's CURRENT latest revision into an
-	 * activated Published Version in one backend operation. No revision /
-	 * application / version selection — the server resolves all of it.
+	 * Publishes the Agent's latest revision under the selected access mode.
+	 * The server resolves the internal publication and activates a version.
 	 */
-	publishAgent(agentId: AgentPublicId): Promise<AgentPublishResponse> {
+	publishAgent(
+		agentId: AgentPublicId,
+		options?: {
+			readonly accessMode: "anonymous" | "signed_user" | "trusted_app";
+			readonly allowedOrigins?: readonly string[];
+			readonly signedIdentity?: { readonly issuer: string; readonly keyId: string; readonly publicKeyPem: string };
+		},
+	): Promise<AgentPublishResponse> {
 		return this.request<AgentPublishResponse>({
 			method: "POST",
 			path: `/api/control/v1/agent-definitions/${agentId}/publish`,
-			body: {},
+			body: options ?? {},
 			idempotencyKey: newIdempotencyKey({ operation: "agent.publish" }),
+		});
+	}
+
+	listTrustedSystems(): Promise<
+		readonly {
+			readonly id: string;
+			readonly name: string;
+			readonly client_id: string;
+			readonly enabled: boolean;
+			readonly allowed_origins: readonly string[];
+			readonly published_app_id: string;
+		}[]
+	> {
+		return this.request({ method: "GET", path: "/api/admin/v1/trusted-apps" });
+	}
+
+	createTrustedSystem(input: {
+		readonly publicAppId: string;
+		readonly name: string;
+		readonly allowedOrigins: readonly string[];
+	}): Promise<{ readonly id: string; readonly clientId: string; readonly clientSecret: string }> {
+		return this.request({ method: "POST", path: "/api/admin/v1/trusted-apps", body: input });
+	}
+
+	updateTrustedSystem(
+		clientId: string,
+		action: "rotate" | "enable" | "disable" | "update",
+		configuration?: { readonly name: string; readonly allowedOrigins: readonly string[] },
+	): Promise<{ readonly clientId: string; readonly clientSecret?: string; readonly enabled?: boolean }> {
+		return this.request({
+			method: "PATCH",
+			path: "/api/admin/v1/trusted-apps",
+			body: { clientId, action, ...configuration },
 		});
 	}
 

@@ -162,6 +162,7 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .sidebar-section-label small { font: 9px var(--font-mono); }
 
 .conversation-list { min-height: 0; flex: 1; padding: 0 10px 12px; overflow-y: auto; }
+.conversation-list.conversation-list--current { flex: none; padding-bottom: 16px; overflow: visible; }
 .conversation-list button {
 	position: relative;
 	display: grid;

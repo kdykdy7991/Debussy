@@ -1,0 +1,35 @@
+.dialog {
+	box-sizing: border-box;
+	width: min(480px, calc(100vw - 32px));
+	max-height: calc(100dvh - 48px);
+	margin: auto;
+	padding: 0;
+	overflow: auto;
+	border: 1px solid #e2e6ec;
+	border-radius: 16px;
+	background: #fff;
+	color: #171b22;
+	font-family: inherit;
+	box-shadow: 0 24px 80px #10182830;
+}
+.dialog::backdrop { background: #10182866; backdrop-filter: blur(3px); }
+.form { display: flex; flex-direction: column; margin: 0; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px 24px 0; }
+.header h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
+.header p, .message { margin: 10px 0 0; color: #707b8e; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.close { flex-shrink: 0; display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #707b8e; font-size: 23px; cursor: pointer; }
+.close:hover { background: #f0f1f3; }
+.body { display: grid; gap: 18px; padding: 20px 24px 24px; }
+.message { margin: 0; color: #586477; }
+.field { display: grid; gap: 8px; font-size: 13px; font-weight: 500; }
+.field input, .field select { box-sizing: border-box; width: 100%; min-width: 0; height: 42px; padding: 0 12px; border: 1px solid #d9dfe7; border-radius: 8px; background: #fff; color: inherit; font: inherit; }
+.field input:focus-visible, .field select:focus-visible { outline: 3px solid #10182814; border-color: #667085; }
+.field small { color: #707b8e; font-weight: 400; line-height: 1.6; }
+.footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid #e8ebef; }
+.footer button { height: 38px; padding: 0 18px; border: 1px solid #d9dfe7; border-radius: 8px; background: #fff; color: #171b22; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.footer .primary { border-color: #11151b; background: #11151b; color: #fff; }
+.footer .danger { border-color: #b4232c; background: #b4232c; color: #fff; }
+.error { margin: 0; padding: 10px 12px; border: 1px solid #f1c5c5; border-radius: 8px; background: #fff5f5; color: #b4232c; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.dialog button:disabled { opacity: .45; cursor: not-allowed; }
+.dialog button:focus-visible { outline: 3px solid #66708566; outline-offset: 3px; }
+@media (max-width: 480px) { .header { padding: 20px 20px 0; } .body { padding: 18px 20px 20px; } .footer { padding: 16px 20px; } }

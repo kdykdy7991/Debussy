@@ -40,6 +40,8 @@ function readPngDimensions(base64Data: string): { width: number; height: number 
 }
 
 const OVERSIZED_PNG_BASE64 = createPng(2400, 4800).toString("base64");
+const provenance = { documentTitle: "管理办法.docx", title: "处理流程图" };
+const screenshotImage = { type: "image" as const, data: OVERSIZED_PNG_BASE64, mimeType: "image/png", provenance };
 
 /** Stands in for extension, MCP bridge, or screenshot tools that return images they produced. */
 const screenshotTool: AgentTool = {
@@ -48,10 +50,7 @@ const screenshotTool: AgentTool = {
 	description: "Return an oversized screenshot",
 	parameters: Type.Object({}),
 	execute: async () => ({
-		content: [
-			{ type: "text", text: "captured" },
-			{ type: "image", data: OVERSIZED_PNG_BASE64, mimeType: "image/png" },
-		],
+		content: [{ type: "text", text: "captured" }, screenshotImage],
 		details: {},
 	}),
 };
@@ -84,6 +83,7 @@ describe("AgentSession tool result images", () => {
 
 		const images = getToolResultImages(harness);
 		expect(images).toHaveLength(1);
+		expect(images[0]).toMatchObject({ provenance });
 		const { width, height } = readPngDimensions(images[0].data);
 		expect(width).toBeLessThanOrEqual(2000);
 		expect(height).toBeLessThanOrEqual(2000);

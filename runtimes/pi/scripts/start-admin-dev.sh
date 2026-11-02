@@ -76,7 +76,7 @@ export PI_MCP_SECRET_MASTER_KEY
 PI_MCP_SECRET_MASTER_KEY=$(<"$mcp_secret_master_key_file")
 # Embed/preview URLs are browser pages served by Vite, not Control API URLs.
 # The backend port remains the proxy target below.
-export PI_EMBED_ISSUER="http://127.0.0.1:${web_ui_port}"
+export PI_EMBED_ISSUER="${PI_EMBED_ISSUER:-http://${PI_WEB_PUBLIC_HOST:-127.0.0.1}:${web_ui_port}}"
 export PI_EMBED_SUBJECT_PEPPER
 PI_EMBED_SUBJECT_PEPPER=$(<"$pepper_file")
 export PI_EMBED_ACCESS_TOKEN_PRIVATE_KEY_FILE="$private_key_file"
@@ -87,6 +87,7 @@ docker compose --project-name pi-admin-dev --file "$compose_file" up --detach --
 
 echo
 echo "Admin Workbench: http://127.0.0.1:${web_ui_port}/"
+echo "Embed: ${PI_EMBED_ISSUER}/embed/<public-app-id>"
 echo "Admin Token: $(<"$admin_token_file")"
 echo "Local PostgreSQL: 127.0.0.1:${postgres_port}"
 echo "Local Redis: 127.0.0.1:${redis_port}"

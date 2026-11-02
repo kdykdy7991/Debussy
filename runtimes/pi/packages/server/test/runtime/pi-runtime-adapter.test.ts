@@ -26,6 +26,7 @@ class FakeSession implements PiSessionRuntime {
 	readonly sessionIdValue: string;
 	readonly model: ModelRef;
 	prompted: string[] = [];
+	prompts: PromptInput[] = [];
 	disposed = 0;
 	aborted = 0;
 	constructor(id: string, model: ModelRef) {
@@ -56,6 +57,7 @@ class FakeSession implements PiSessionRuntime {
 	}
 	async prompt(input: PromptInput): Promise<void> {
 		this.prompted.push(input.text);
+		this.prompts.push(input);
 	}
 	async steer(_input: SteerInput): Promise<void> {}
 	async abort(): Promise<void> {
@@ -121,6 +123,80 @@ function scope(conversationId: string): ScopeContext {
 }
 
 describe("pi runtime adapter", () => {
+	test("adds platform MCP resource rules to every turn without modifying the saved Agent prompt", async () => {
+		let created: RuntimeSessionOptions | undefined;
+		let session: FakeSession | undefined;
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				created = options;
+				session = new FakeSession(options.id, options.model);
+				return session;
+			},
+		});
+		const base = chatOnlySpec();
+		const spec: RuntimeSpec = {
+			...base,
+			capabilities: {
+				...base.capabilities,
+				mcpServers: [
+					{
+						mcpServerId: "mcp_00000000-0000-7000-8000-000000000002",
+						revision: 1,
+						transport: "streamable_http",
+						endpoint: "https://mcp.example.com/mcp",
+						authentication: "none",
+						tools: [
+							{
+								name: "search_chunks",
+								description: "Search",
+								inputSchema: { type: "object" },
+								inputSchemaHash: "a".repeat(64),
+							},
+						],
+					},
+				],
+			},
+		};
+		const result = await adapter.open(spec, scope("conv-resource-guidance"));
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		await result.runtime.prompt("查一下处理流程");
+		await result.runtime.prompt("把对应的图给我");
+		expect(created?.systemPrompt).toContain(base.agent.systemPrompt);
+		expect(created?.systemPrompt).toContain("resources.read_tool");
+		expect(created?.systemPrompt).toContain("不要把同一个错误地址轮流发给其他服务");
+		expect(session?.prompts.map((prompt) => prompt.systemPrompt)).toEqual([
+			created?.systemPrompt,
+			created?.systemPrompt,
+		]);
+		expect(spec.agent.systemPrompt).toBe(base.agent.systemPrompt);
+		await result.runtime.close();
+	});
+
+	test("injects verified host identity into every model prompt", async () => {
+		let created: RuntimeSessionOptions | undefined;
+		let session: FakeSession | undefined;
+		const adapter = createPiRuntimeAdapter({
+			createSession: async (options) => {
+				created = options;
+				session = new FakeSession(options.id, options.model);
+				return session;
+			},
+		});
+		const opened = await adapter.open(chatOnlySpec(), {
+			...scope("conversation-identity"),
+			trustedIdentity: { systemName: "客服工单系统", displayName: "张三", roles: ["admin"] },
+		});
+		expect(opened.ok).toBe(true);
+		if (!opened.ok) return;
+		await opened.runtime.prompt("当前登录用户是谁？");
+		await opened.runtime.prompt("我的角色是什么？");
+		expect(created?.systemPrompt).toContain('"displayName":"张三"');
+		expect(session?.prompts).toHaveLength(2);
+		expect(session?.prompts[0]?.systemPrompt).toBe(created?.systemPrompt);
+		expect(session?.prompts[1]?.systemPrompt).toBe(created?.systemPrompt);
+		await opened.runtime.close();
+	});
 	test("passes the frozen prompt and materialized Skills when opening a session", async () => {
 		const calls: RuntimeSessionOptions[] = [];
 		const materializeCalls: { spec: RuntimeSpec; tenantId: string }[] = [];

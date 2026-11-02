@@ -19,7 +19,7 @@
  * 既有消费方使用；新增 `turns` / `transcript`（结构化原生消息列表）供新的
  * Context 注入路径使用。
  */
-import type { SessionLogLevel } from "@earendil-works/pi-protocol";
+import { type ImageContent, imageProvenance, type SessionLogLevel } from "@earendil-works/pi-protocol";
 import type { ConversationEventRecord } from "../publishing/repositories.ts";
 
 /** 当前支持的事件 schema 版本（conversation_events.event_schema_version）。 */
@@ -35,7 +35,7 @@ const TOOL_ERROR_TYPES = new Set(["tool.error", "tool/error"]);
 /** Native content blocks for the reconstructed transcript. */
 export type RestoredContent =
 	| { readonly type: "text"; readonly text: string }
-	| { readonly type: "image"; readonly data: string; readonly mimeType: string }
+	| ImageContent
 	| { readonly type: "toolCall"; readonly toolCallId: string; readonly toolName: string; readonly input?: unknown };
 
 /** One reconstructed native model message. */
@@ -256,11 +256,19 @@ function contentBlocksFromPayload(payload: Record<string, unknown>): RestoredCon
 	const blocks: RestoredContent[] = [];
 	for (const block of raw) {
 		if (block === null || typeof block !== "object") continue;
-		const b = block as { type?: unknown; text?: unknown; image?: unknown; data?: unknown; mimeType?: unknown };
+		const b = block as {
+			type?: unknown;
+			text?: unknown;
+			image?: unknown;
+			data?: unknown;
+			mimeType?: unknown;
+			provenance?: unknown;
+		};
 		if (b.type === "text" && typeof b.text === "string") {
 			blocks.push({ type: "text", text: b.text });
 		} else if (b.type === "image" && typeof b.data === "string" && typeof b.mimeType === "string") {
-			blocks.push({ type: "image", data: b.data, mimeType: b.mimeType });
+			const provenance = imageProvenance(b.provenance);
+			blocks.push({ type: "image", data: b.data, mimeType: b.mimeType, ...(provenance ? { provenance } : {}) });
 		}
 	}
 	return blocks;

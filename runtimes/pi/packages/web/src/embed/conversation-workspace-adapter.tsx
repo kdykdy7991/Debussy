@@ -16,6 +16,7 @@ import type {
 	SessionSendResult,
 } from "../lib/session-controller.ts";
 import type { EmbedChatController, EmbedChatState } from "./chat-controller.ts";
+import { ContextUsageRing } from "./context-usage-ring.tsx";
 import type { ChatAttachment, ChatMessage, ConversationSummary } from "./types.ts";
 import type { VoiceAsrState } from "./voice-asr-session.ts";
 import type { VoiceEngineStatus } from "./voice-engine-transport.ts";
@@ -59,11 +60,22 @@ export function EmbedConversationWorkspace(props: {
 			sessions={stores.sessions}
 			variant="admin"
 			showSidebar={state.newConversationsEnabled !== false}
+			closeSidebarOnSelect={false}
 			enableVoice={false}
 			enableRealtimeVoice={props.voiceEngine !== undefined}
 			voiceEngine={props.voiceEngine}
 			enableUploads={state.uploadsEnabled}
 			skills={props.skills}
+			submitInfo={
+				state.contextUsage != null ? (
+					<ContextUsageRing
+						key={state.activeId}
+						{...state.contextUsage}
+						busy={state.sending}
+						onCompact={() => props.controller.compactContext()}
+					/>
+				) : undefined
+			}
 			contextHeader={
 				<>
 					<div>
@@ -243,7 +255,7 @@ function transcriptFromMessages(messages: readonly ChatMessage[], conversation: 
 				toolCallId: tool.id,
 				toolName: tool.name,
 				input: {},
-				content: [],
+				content: [...(tool.images ?? [])],
 				timestamp,
 			};
 			transcript.push(
