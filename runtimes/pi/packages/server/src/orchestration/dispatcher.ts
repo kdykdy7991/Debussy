@@ -72,6 +72,16 @@ export async function startOrchestrationDispatcher(service: OrchestrationService
 			"update orchestration_credentials set sealed='{}'::jsonb where tenant_id=$1 and expires_at<now() and sealed<>'{}'::jsonb",
 			store.tenantId,
 		);
+		// The database is the cross-process cancellation signal. Retry while the
+		// execution remains active, including while its runtime is still opening.
+		for (const id of active.keys()) {
+			const rows = await store.client.run(
+				"select state from orchestration_work_items where tenant_id=$1 and id=$2",
+				store.tenantId,
+				id,
+			);
+			if (rows[0]?.state === "cancelled") await service.abort(id).catch(onError);
+		}
 		while (!stopped && active.size < 3) {
 			const assignment = await store.claim();
 			if (!assignment) break;

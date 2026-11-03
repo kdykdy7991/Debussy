@@ -124,7 +124,13 @@ test.skipIf(!url)(
 			const before = await client.run(
 				"select w.id,w.state,w.published_app_version_id,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
 			);
-			expect((await runMigrations(client)).applied).toEqual(["0027_orchestration_configuration_domain.sql"]);
+			await copyFile(
+				join(dir, "0027_orchestration_configuration_domain.sql"),
+				join(older, "0027_orchestration_configuration_domain.sql"),
+			);
+			expect((await runMigrations(client, { migrationsDir: older })).applied).toEqual([
+				"0027_orchestration_configuration_domain.sql",
+			]);
 			expect(
 				await client.run(
 					"select w.id,w.state,w.published_app_version_id,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
@@ -141,6 +147,19 @@ test.skipIf(!url)(
 				),
 			).toBe(true);
 			expect((await client.run("select count(*)::int as n from orchestration_versions"))[0]!.n).toBe(0);
+			const before0028 = await client.run(
+				"select w.*,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
+			);
+			expect((await runMigrations(client)).applied).toEqual(["0028_aaas_business_context.sql"]);
+			const after0028 = await client.run(
+				"select w.*,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
+			);
+			expect(
+				after0028.map(({ external_ref_id, external_ref_type, metadata, ...old }) => {
+					expect([external_ref_id, external_ref_type, metadata]).toEqual([null, null, null]);
+					return old;
+				}),
+			).toEqual(before0028);
 			expect((await runMigrations(client)).applied).toEqual([]);
 		} finally {
 			await client.run(`drop schema ${schema} cascade`);

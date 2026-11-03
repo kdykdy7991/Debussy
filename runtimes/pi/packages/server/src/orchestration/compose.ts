@@ -57,7 +57,7 @@ export async function composeOrchestration(options: {
 	const conversations = new ConversationService({
 		repositories: control.repositories,
 		resolveExecutionConfiguration: orchestrationExecutionConfigResolver(store, control.repositories),
-		turnExecutor: createOrchestrationTurnExecutor(manager),
+		turnExecutor: createOrchestrationTurnExecutor(manager, store),
 		resetRuntime: (id) => manager.reset(id),
 		resolveModelMetadata: options.resolveModelMetadata,
 	});

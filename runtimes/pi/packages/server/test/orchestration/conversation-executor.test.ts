@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { createOrchestrationTurnExecutor } from "../../src/orchestration/conversation-executor.ts";
+import type { OrchestrationStore } from "../../src/orchestration/store.ts";
 import { parseRuntimeSpec } from "../../src/publishing/runtime-spec/schema.ts";
 import {
 	type ConversationRuntimeManager,
@@ -8,6 +9,8 @@ import {
 import { createPiRuntimeAdapter } from "../../src/runtime/pi-runtime-adapter.ts";
 import type { TurnExecutionInput } from "../../src/runtime/turn-executor.ts";
 import type { PiSessionRuntime, PromptInput } from "../../src/types.ts";
+
+const store = { tenantId: "tenant", client: { run: async () => [{ ok: 1 }] } } as unknown as OrchestrationStore;
 
 test.each([true, false])(
 	"runtime reset after a turn (failure=%s) prevents stale credential closures on retry",
@@ -28,7 +31,7 @@ test.each([true, false])(
 			release,
 			reset,
 		} as unknown as ConversationRuntimeManager;
-		const execute = createOrchestrationTurnExecutor(manager);
+		const execute = createOrchestrationTurnExecutor(manager, store);
 		const result = await execute({
 			scope: { conversationId: "context" },
 			spec: {},
@@ -50,7 +53,7 @@ test("the executor forwards resolved per-task specs without a second prompt over
 		agent: { systemPrompt: "published default", model: { provider: "fake", modelId: "test" } },
 		capabilities: { mcpServers: [{ tools: ["query"] }] },
 	};
-	const execute = createOrchestrationTurnExecutor(manager);
+	const execute = createOrchestrationTurnExecutor(manager, store);
 	await Promise.all(
 		["A", "B"].map((conversationId) =>
 			execute({
@@ -102,7 +105,7 @@ test("the real runtime adapter passes the task prompt into the session system ro
 			capabilities: {},
 		});
 		if (!parsed.ok) throw new Error("Invalid fixture");
-		const execute = createOrchestrationTurnExecutor(manager);
+		const execute = createOrchestrationTurnExecutor(manager, store);
 		await execute({
 			scope: { conversationId: "run-system-role" },
 			spec: parsed.spec,
@@ -119,4 +122,38 @@ test("the real runtime adapter passes the task prompt into the session system ro
 	} finally {
 		await manager.close();
 	}
+});
+
+test("cancellation while the runtime opens prevents prompt execution", async () => {
+	const prompt = vi.fn(async () => {});
+	let releaseOpen!: () => void;
+	const opening = new Promise<void>((resolve) => {
+		releaseOpen = resolve;
+	});
+	let cancelledDuringOpen = false;
+	const manager = {
+		acquire: async () => {
+			await opening;
+			return { created: true, runtime: { subscribe: () => () => {}, prompt } };
+		},
+		release: vi.fn(),
+		reset: vi.fn(async () => {}),
+	} as unknown as ConversationRuntimeManager;
+	const cancelled = {
+		tenantId: "tenant",
+		client: { run: async () => (cancelledDuringOpen ? [] : [{ ok: 1 }]) },
+	} as unknown as OrchestrationStore;
+	const pending = createOrchestrationTurnExecutor(
+		manager,
+		cancelled,
+	)({
+		scope: { conversationId: "cancelled" },
+		spec: {},
+		text: "input",
+	} as TurnExecutionInput);
+	cancelledDuringOpen = true;
+	releaseOpen();
+	const result = await pending;
+	expect(result.ok).toBe(false);
+	expect(prompt).not.toHaveBeenCalled();
 });

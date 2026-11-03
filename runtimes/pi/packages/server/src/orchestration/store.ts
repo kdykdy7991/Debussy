@@ -188,6 +188,8 @@ export class OrchestrationStore {
 			legacyRequestHash?: string;
 			taskPrompt?: string;
 			requestContract?: "input_v1" | "legacy_prompt";
+			externalRef?: { type?: string; id: string };
+			metadata?: Record<string, unknown>;
 		} = {},
 	) {
 		const origin = options.origin ?? "orchestration";
@@ -300,6 +302,14 @@ export class OrchestrationStore {
 					current.configurationId,
 					current.configurationId ? current.versionId : null,
 					options.requestContract ?? "orchestration_event",
+				);
+				await txRows(
+					tx,
+					"update orchestration_work_items set external_ref_type=$2,external_ref_id=$3,metadata=$4::jsonb where id=$1",
+					workId,
+					options.externalRef?.type ?? null,
+					options.externalRef?.id ?? null,
+					options.metadata ?? null,
 				);
 				await txRows(
 					tx,
@@ -418,7 +428,7 @@ export class OrchestrationStore {
 	/** A single SQL snapshot of the original execution, never the work's latest successful report. */
 	async run(id: string, integrationId: string): Promise<AaasRun> {
 		const rows = await this.client.run(
-			`select w.id,w.integration_id,w.published_app_version_id,w.orchestration_version_id,w.configuration_revision,w.created_at,
+			`select w.id,w.integration_id,w.external_ref_type,w.external_ref_id,w.metadata,w.published_app_version_id,w.orchestration_version_id,w.configuration_revision,w.created_at,
 		 a.state,a.report,a.error,a.started_at,a.ended_at
 		 from orchestration_work_items w join lateral (
 		 select * from orchestration_assignments where work_item_id=w.id and tenant_id=w.tenant_id order by created_at,id limit 1
@@ -433,6 +443,14 @@ export class OrchestrationStore {
 		return {
 			run_id: id,
 			integration_id: integrationId,
+			external_ref:
+				row.external_ref_id === null
+					? null
+					: {
+							...(row.external_ref_type === null ? {} : { type: String(row.external_ref_type) }),
+							id: String(row.external_ref_id),
+						},
+			metadata: row.metadata as Record<string, unknown> | null,
 			agent_version: row.orchestration_version_id
 				? `orv_${String(row.orchestration_version_id)}`
 				: `pav_${String(row.published_app_version_id)}`,

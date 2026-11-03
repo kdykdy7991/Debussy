@@ -19,6 +19,8 @@ describe("official MCP SDK Streamable HTTP prototype", () => {
 		async (authentication) => {
 			const credential = "test-mcp-secret";
 			let authenticatedRequests = 0;
+			let slowStarted = false;
+			let slowCancelled = false;
 			const handler = createMcpHandler(
 				() => {
 					const server = new McpServer({ name: "debussy-test", version: "1.0.0" });
@@ -49,13 +51,32 @@ describe("official MCP SDK Streamable HTTP prototype", () => {
 							description: "Wait forever",
 							inputSchema: fromJsonSchema<Record<string, never>>({ type: "object" }),
 						},
-						async () => new Promise(() => undefined),
+						async (_args, ctx) => {
+							slowStarted = true;
+							await new Promise<void>((resolve) => {
+								const timer = setTimeout(resolve, 45000);
+								ctx.mcpReq.signal.addEventListener(
+									"abort",
+									() => {
+										slowCancelled = true;
+										clearTimeout(timer);
+										resolve();
+									},
+									{ once: true },
+								);
+							});
+							return { content: [{ type: "text", text: "finished" }] };
+						},
 					);
 					return server;
 				},
 				{ responseMode: "json", keepAliveMs: 0 },
 			);
 			const httpServer = createServer(async (request, response) => {
+				const disconnected = new AbortController();
+				response.on("close", () => {
+					if (!response.writableEnded) disconnected.abort();
+				});
 				const authorized =
 					authentication === "api_key"
 						? request.headers["x-mcp-api-key"] === credential && request.headers.authorization === undefined
@@ -81,6 +102,7 @@ describe("official MCP SDK Streamable HTTP prototype", () => {
 					method: request.method,
 					headers,
 					body: chunks.length === 0 ? undefined : Buffer.concat(chunks),
+					signal: disconnected.signal,
 				});
 				const webResponse = await handler.fetch(webRequest);
 				response.statusCode = webResponse.status;
@@ -160,8 +182,10 @@ describe("official MCP SDK Streamable HTTP prototype", () => {
 
 			const controller = new AbortController();
 			const pending = session.callTool("slow", {}, controller.signal);
+			await expect.poll(() => slowStarted, { timeout: 3000 }).toBe(true);
 			controller.abort();
 			await expect(pending).rejects.toThrow();
+			await expect.poll(() => slowCancelled, { timeout: 2500 }).toBe(true);
 			await session.close();
 			expect(authenticatedRequests).toBeGreaterThanOrEqual(4);
 		},

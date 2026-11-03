@@ -134,6 +134,8 @@ export interface AnalysisWorkItem {
 export interface AaasRun {
 	readonly run_id: string;
 	readonly integration_id: string;
+	readonly external_ref: { readonly type?: string; readonly id: string } | null;
+	readonly metadata: Record<string, unknown> | null;
 	readonly agent_version: string;
 	readonly configuration_revision: number;
 	readonly status: "queued" | "running" | "completed" | "failed" | "cancelled";

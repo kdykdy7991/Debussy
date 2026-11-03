@@ -50,6 +50,11 @@ export function createOrchestrationHttp(
 					status = 202;
 				} else if (parts[0] === "runs" && parts.length === 2 && method === "GET") {
 					data = await service.store.run(z.string().uuid().parse(parts[1]), integration.id);
+				} else if (parts[0] === "runs" && parts.length === 3 && parts[2] === "cancel" && method === "POST") {
+					const id = z.string().uuid().parse(parts[1]);
+					await service.store.run(id, integration.id);
+					await service.store.cancel(id, integration.id);
+					data = await service.store.run(id, integration.id);
 				} else throw new OrchestrationError(404, "NOT_FOUND", "接口不存在");
 			} else if (admin && parts[0] === "catalog" && parts.length === 1 && method === "GET")
 				data = await service.catalog();

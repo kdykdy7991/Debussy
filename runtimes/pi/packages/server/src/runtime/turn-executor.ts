@@ -72,7 +72,10 @@ export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
  * close——空闲回收由 manager 的空闲 TTL 负责，Runtime 生命周期不再跟随单次
  * HTTP 请求。
  */
-export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnExecutor {
+export function managedTurnExecutor(
+	manager: ConversationRuntimeManager,
+	beforePrompt?: (input: TurnExecutionInput) => Promise<void>,
+): TurnExecutor {
 	const execute: TurnExecutor = async ({ scope, spec, text, history, retrieval, onProgress }) => {
 		const acquired = await manager.acquire(spec, scope);
 		const runtime = acquired.runtime;
@@ -80,6 +83,7 @@ export function managedTurnExecutor(manager: ConversationRuntimeManager): TurnEx
 			if (event.event.type === "progress") onProgress?.(event.event.progress);
 		});
 		try {
+			await beforePrompt?.({ scope, spec, text, history, retrieval, onProgress });
 			await runtime.prompt(text, { history, retrieval });
 			const result = lastAssistantResult(runtime.snapshot());
 			return {

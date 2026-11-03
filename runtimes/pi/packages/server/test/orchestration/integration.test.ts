@@ -1,7 +1,11 @@
+import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AaasRun } from "@earendil-works/pi-protocol";
+import { createMcpHandler, fromJsonSchema, McpServer } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { ConversationService } from "../../src/embed/conversations/service.ts";
 import { settingsSchema } from "../../src/orchestration/contracts.ts";
@@ -411,6 +415,326 @@ describe.skipIf(!url)("orchestration with real isolated Postgres and Fake model"
 		expect((await runRequest(path, "POST", body, randomUUID(), "Bearer invalid")).status).toBe(401);
 		expect((await runRequest("/runs/x/retry", "POST", {}, randomUUID())).status).toBe(404);
 	});
+
+	test("AaaS persists business context, retains idempotency and cancels queued runs", async () => {
+		const path = `/integrations/${i.id}/runs`;
+		const key = randomUUID();
+		const body = {
+			input: { ticket: "TK001" },
+			external_ref: { type: "ticket", id: "TK001" },
+			metadata: { source: "ticket" },
+		};
+		const first = await runRequest(path, "POST", body, key);
+		const id = first.body.data.run_id!;
+		expect(first.status).toBe(202);
+		expect((await runRequest(path, "POST", body, key)).body.data.run_id).toBe(id);
+		expect((await runRequest(path, "POST", { ...body, metadata: { source: "manual" } }, key)).status).toBe(409);
+		const next = await runRequest(path, "POST", body, randomUUID());
+		expect(next.body.data.run_id).not.toBe(id);
+		const run = await store.run(id, i.id);
+		expect(run.external_ref).toEqual(body.external_ref);
+		expect(run.metadata).toEqual(body.metadata);
+		await expect(store.run(id, randomUUID())).rejects.toMatchObject({ status: 404 });
+		const cancelled = await runRequest(`/runs/${id}/cancel`, "POST", {});
+		expect(cancelled.body.data.status).toBe("cancelled");
+		expect((await runRequest(`/runs/${id}/cancel`, "POST", {})).body.data.status).toBe("cancelled");
+		await store.cancel(next.body.data.run_id!);
+		expect((await runRequest(path, "POST", { input: {}, metadata: { token: "secret" } }, randomUUID())).status).toBe(
+			400,
+		);
+		expect(
+			(await runRequest(path, "POST", { input: {}, metadata: { text: "x".repeat(8193) } }, randomUUID())).status,
+		).toBe(400);
+	});
+
+	test("another process executing a run receives the durable cancellation signal", async () => {
+		const queued = await runRequest(
+			`/integrations/${i.id}/runs`,
+			"POST",
+			{ input: { task: "queued-cancel" } },
+			randomUUID(),
+		);
+		const queuedId = queued.body.data.run_id!;
+		expect((await runRequest(`/runs/${queuedId}/cancel`, "POST", {})).body.data.status).toBe("cancelled");
+		const worker = fork(new URL("./cancel-worker.ts", import.meta.url), [], {
+			execArgv: ["--import", "tsx"],
+			env: { ...process.env, TEST_DB: url!, TEST_SCHEMA: schema, TEST_TENANT: tenantId },
+			stdio: ["ignore", "ignore", "inherit", "ipc"],
+		});
+		const messages: unknown[] = [];
+		worker.on("message", (message) => messages.push(message));
+		try {
+			await expect.poll(() => messages.includes("ready"), { timeout: 10000 }).toBe(true);
+			await new Promise((resolve) => setTimeout(resolve, 1200));
+			expect(messages).not.toContain("running");
+			expect((await store.run(queuedId, i.id)).started_at).toBeNull();
+			const created = await runRequest(
+				`/integrations/${i.id}/runs`,
+				"POST",
+				{ input: { task: "cancel" } },
+				randomUUID(),
+			);
+			const id = created.body.data.run_id!;
+			await expect.poll(() => messages.includes("running"), { timeout: 10000 }).toBe(true);
+			expect((await runRequest(`/runs/${id}/cancel`, "POST", {})).body.data.status).toBe("cancelled");
+			await expect.poll(() => messages.includes("stopped"), { timeout: 10000 }).toBe(true);
+			await expect.poll(async () => (await store.run(id, i.id)).status).toBe("cancelled");
+			expect((await store.run(id, i.id)).result).toBeNull();
+			expect(messages).not.toContain("error");
+		} finally {
+			worker.send("close");
+			await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+		}
+	}, 30000);
+
+	test.skipIf(process.env.PI_AAAS_QWEN_ACCEPTANCE !== "1")(
+		"real Qwen request is aborted by cancellation from another process",
+		async () => {
+			const original = (
+				await client.run("select runtime_spec,runtime_spec_hash from published_app_versions where id=$1", versionId)
+			)[0]!;
+			const spec = parseRuntimeSpec({
+				...(original.runtime_spec as object),
+				agent: { systemPrompt: "Follow the user's instructions.", model: { provider: "oneapi", modelId: "Qwen" } },
+			});
+			if (!spec.ok) throw new Error("Qwen fixture spec invalid");
+			await client.run(
+				"update published_app_versions set runtime_spec=$2::jsonb,runtime_spec_hash=$3 where id=$1",
+				versionId,
+				spec.spec,
+				sha256Hex(canonicalJson(spec.spec)),
+			);
+			const sessions = await mkdtemp(join(tmpdir(), "aaas-qwen-session-"));
+			const worker = fork(new URL("./qwen-worker.ts", import.meta.url), [], {
+				execArgv: ["--import", "tsx"],
+				env: {
+					...process.env,
+					TEST_DB: url!,
+					TEST_SCHEMA: schema,
+					TEST_TENANT: tenantId,
+					TEST_CWD: process.cwd(),
+					TEST_AGENT_DIR: process.env.PI_AAAS_QWEN_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
+					TEST_SESSION_DIR: sessions,
+				},
+				stdio: ["ignore", "ignore", "inherit", "ipc"],
+			});
+			const messages: unknown[] = [];
+			worker.on("message", (message) => messages.push(message));
+			try {
+				await expect.poll(() => messages.includes("ready"), { timeout: 15000 }).toBe(true);
+				const created = await runRequest(
+					`/integrations/${i.id}/runs`,
+					"POST",
+					{ input: { request: "详细分析一个复杂的排队系统，逐步推导并列出大量边界条件。" } },
+					randomUUID(),
+				);
+				const id = created.body.data.run_id!;
+				await expect.poll(() => messages.includes("model-request"), { timeout: 30000 }).toBe(true);
+				expect((await runRequest(`/runs/${id}/cancel`, "POST", {})).body.data.status).toBe("cancelled");
+				await expect.poll(() => messages.includes("model-request-aborted"), { timeout: 10000 }).toBe(true);
+				await expect.poll(() => messages.includes("runtime-disposed"), { timeout: 10000 }).toBe(true);
+				expect((await store.run(id, i.id)).result).toBeNull();
+			} finally {
+				if (worker.connected) worker.send("close");
+				await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+				await client.run(
+					"update published_app_versions set runtime_spec=$2::jsonb,runtime_spec_hash=$3 where id=$1",
+					versionId,
+					original.runtime_spec as Record<string, unknown>,
+					String(original.runtime_spec_hash),
+				);
+				await rm(sessions, { recursive: true, force: true });
+			}
+		},
+		60000,
+	);
+
+	test.skipIf(process.env.PI_AAAS_QWEN_ACCEPTANCE !== "1")(
+		"real runtime cancellation reaches a running MCP tool",
+		async () => {
+			let started = false,
+				stopped = false,
+				slow = true,
+				toolCalls = 0;
+			const handler = createMcpHandler(
+				() => {
+					const mcp = new McpServer({ name: "cancel-acceptance", version: "1.0.0" });
+					mcp.registerTool(
+						"slow_test_tool",
+						{
+							description: "Required test tool; waits for external evidence",
+							inputSchema: fromJsonSchema<Record<string, never>>({ type: "object", properties: {} }),
+						},
+						async (_args, ctx) => {
+							toolCalls++;
+							if (!slow) return { content: [{ type: "text", text: "The test evidence is available." }] };
+							started = true;
+							await new Promise<void>((resolve) => {
+								const timer = setTimeout(resolve, 45000);
+								ctx.mcpReq.signal.addEventListener(
+									"abort",
+									() => {
+										clearTimeout(timer);
+										stopped = true;
+										resolve();
+									},
+									{ once: true },
+								);
+							});
+							return { content: [{ type: "text", text: "finished" }] };
+						},
+					);
+					return mcp;
+				},
+				{ responseMode: "json", keepAliveMs: 0 },
+			);
+			const mcpServer = createServer(async (req, res) => {
+				const disconnected = new AbortController();
+				res.on("close", () => {
+					if (!res.writableEnded) disconnected.abort();
+				});
+				const chunks: Buffer[] = [];
+				for await (const chunk of req) chunks.push(Buffer.from(chunk));
+				const address = mcpServer.address();
+				if (!address || typeof address === "string") throw new Error("MCP server not listening");
+				const headers = new Headers();
+				for (const [name, value] of Object.entries(req.headers))
+					if (typeof value === "string") headers.set(name, value);
+				const response = await handler.fetch(
+					new Request(`http://127.0.0.1:${address.port}${req.url ?? "/"}`, {
+						method: req.method,
+						headers,
+						body: chunks.length ? Buffer.concat(chunks) : undefined,
+						signal: disconnected.signal,
+					}),
+				);
+				res.statusCode = response.status;
+				response.headers.forEach((value, name) => {
+					res.setHeader(name, value);
+				});
+				res.end(Buffer.from(await response.arrayBuffer()));
+			});
+			await new Promise<void>((resolve) => mcpServer.listen(0, "127.0.0.1", resolve));
+			const addr = mcpServer.address();
+			if (!addr || typeof addr === "string") throw new Error("MCP server not listening");
+			const mcpId = randomUUID(),
+				endpoint = `http://127.0.0.1:${addr.port}/mcp`,
+				inputSchema = { type: "object", properties: {} };
+			const original = (
+				await client.run("select runtime_spec,runtime_spec_hash from published_app_versions where id=$1", versionId)
+			)[0]!;
+			const old = original.runtime_spec as { capabilities: Record<string, unknown> };
+			await client.run(
+				"insert into mcp_servers(id,tenant_id,name,status,current_revision,created_by) values ($1,$2,'cancel-test','enabled',1,$2)",
+				mcpId,
+				tenantId,
+			);
+			await client.run(
+				"insert into mcp_server_revisions(mcp_server_id,tenant_id,revision,transport,endpoint,authentication,created_by) values ($1,$2,1,'streamable_http',$3,'none',$2)",
+				mcpId,
+				tenantId,
+				endpoint,
+			);
+			const spec = parseRuntimeSpec({
+				...old,
+				agent: {
+					systemPrompt: "You must call slow_test_tool before answering any request.",
+					model: { provider: "oneapi", modelId: "Qwen" },
+				},
+				capabilities: {
+					...old.capabilities,
+					mcpServers: [
+						{
+							mcpServerId: `mcp_${mcpId}`,
+							revision: 1,
+							transport: "streamable_http",
+							endpoint,
+							authentication: "none",
+							tools: [
+								{
+									name: "slow_test_tool",
+									description: "Required test tool; waits for external evidence",
+									inputSchema,
+									inputSchemaHash: sha256Hex(canonicalJson(inputSchema)),
+								},
+							],
+						},
+					],
+				},
+			});
+			if (!spec.ok) throw new Error("MCP fixture spec invalid");
+			await client.run(
+				"update published_app_versions set runtime_spec=$2::jsonb,runtime_spec_hash=$3 where id=$1",
+				versionId,
+				spec.spec,
+				sha256Hex(canonicalJson(spec.spec)),
+			);
+			const sessions = await mkdtemp(join(tmpdir(), "aaas-qwen-mcp-"));
+			const worker = fork(new URL("./qwen-worker.ts", import.meta.url), [], {
+				execArgv: ["--import", "tsx"],
+				env: {
+					...process.env,
+					TEST_DB: url!,
+					TEST_SCHEMA: schema,
+					TEST_TENANT: tenantId,
+					TEST_CWD: process.cwd(),
+					TEST_AGENT_DIR: process.env.PI_AAAS_QWEN_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
+					TEST_SESSION_DIR: sessions,
+				},
+				stdio: ["ignore", "ignore", "inherit", "ipc"],
+			});
+			const messages: unknown[] = [];
+			worker.on("message", (message) => messages.push(message));
+			try {
+				await expect.poll(() => messages.includes("ready"), { timeout: 15000 }).toBe(true);
+				const run = await runRequest(
+					`/integrations/${i.id}/runs`,
+					"POST",
+					{ input: { instruction: "Call slow_test_tool immediately and wait for its result." } },
+					randomUUID(),
+				);
+				await expect.poll(() => started, { timeout: 45000 }).toBe(true);
+				expect((await runRequest(`/runs/${run.body.data.run_id}/cancel`, "POST", {})).body.data.status).toBe(
+					"cancelled",
+				);
+				await expect.poll(() => messages.includes("tool-signal-aborted"), { timeout: 10000 }).toBe(true);
+				await expect
+					.poll(() => stopped, { timeout: 10000, message: "MCP server must receive cancellation" })
+					.toBe(true);
+				await expect.poll(() => messages.includes("runtime-disposed"), { timeout: 10000 }).toBe(true);
+				expect((await store.run(run.body.data.run_id!, i.id)).result).toBeNull();
+				slow = false;
+				const completed = await runRequest(
+					`/integrations/${i.id}/runs`,
+					"POST",
+					{
+						input: { instruction: "Call slow_test_tool and summarize its result." },
+					},
+					randomUUID(),
+				);
+				const completedId = completed.body.data.run_id!;
+				await expect
+					.poll(async () => (await store.run(completedId, i.id)).status, { timeout: 60000 })
+					.toBe("completed");
+				expect(toolCalls).toBeGreaterThanOrEqual(2);
+				expect((await store.run(completedId, i.id)).result).toBeTruthy();
+			} finally {
+				if (worker.connected) worker.send("close");
+				await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+				await client.run(
+					"update published_app_versions set runtime_spec=$2::jsonb,runtime_spec_hash=$3 where id=$1",
+					versionId,
+					original.runtime_spec as Record<string, unknown>,
+					String(original.runtime_spec_hash),
+				);
+				await rm(sessions, { recursive: true, force: true });
+				await handler.close();
+				mcpServer.closeAllConnections();
+				await new Promise<void>((resolve) => mcpServer.close(() => resolve()));
+			}
+		},
+		120000,
+	);
 
 	test("AaaS concurrent replay is stable without an explicit empty-credential expiry and new requests create new runs", async () => {
 		const path = `/integrations/${i.id}/runs`,
