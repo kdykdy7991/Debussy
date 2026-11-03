@@ -70,6 +70,21 @@
 
 ## 当前规格
 
+- [编排配置域最小解耦设计](./orchestration-config-decoupling-design-2026-11-03.md)（实施中，正式代码与隔离测试完成，现网切换待执行）
+
+- [AaaS 两分钟超时诊断](./aaas-execution-timeout-2026-11-03.md)（草案，只读事实与后续修复边界）
+
+- [编排侧 PublishedApp 依赖审计](./orchestration-published-dependency-audit-2026-11-03.md)（已完成，只读分类与影响分析，非解耦实现）
+
+- [AaaS 按任务提供系统提示词](./aaas-task-prompt-2026-11-03.md)（历史阶段记录，现行双契约见配置解耦设计）
+
+- [AaaS 返回模型原文](./aaas-raw-output-2026-11-03.md)（已完成，接入说明已更新）
+
+- [外部配置生命周期与授权入口](./external-configuration-lifecycle-2026-11-03.md)（已完成，接入契约已回写编排接入说明）
+
+- [Agent 编排：工单告警首期实现](./agent-orchestration-2026-11-02.md)（实施中）
+  - [AaaS 最小入口：现状映射](./aaas-current-state-mapping-2026-11-03.md)（实施中，代码盘点与薄适配边界）
+
 - [Chat 与 Agent 形象状态映射](./chat-agent-state-mapping-2026-08-21.md)（草案）
 - [Agent 平台 MVP 实施规格](./agent-platform-mvp-2026-08-26.md)（实施中）
   - [后端任务](./agent-platform-mvp-backend-2026-08-26.md)

@@ -1,0 +1,221 @@
+// Experimental source copies are intentionally transpile-only, not a production type migration.
+import { randomUUID } from 'node:crypto';
+import { readFile, mkdtemp, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeAll, afterAll, expect, test, vi } from 'vitest';
+import { ConversationService } from './service.ts';
+import { createConversationRepository } from './conversations.ts';
+import { createConversationEventRepository } from './conversation-events.ts';
+import { createConversationSummaryRepository } from './conversation-summaries.ts';
+import { PostgresClient } from '@SOURCE@/persistence/postgres/client.ts';
+import { runMigrations } from '@SOURCE@/persistence/postgres/migrate.ts';
+import { createPublishingRepositories } from '@SOURCE@/persistence/postgres/repositories/index.ts';
+import { compileRuntimeSpec } from '@SOURCE@/publishing/runtime-spec/compiler.ts';
+import { canonicalJson, sha256Hex } from '@SOURCE@/publishing/runtime-spec/hash.ts';
+import { createSkillMaterializer } from '@SOURCE@/publishing/runtime/skill-materializer.ts';
+import { createPiRuntimeAdapter } from '@SOURCE@/runtime/pi-runtime-adapter.ts';
+import { createConversationRuntimeManager } from '@SOURCE@/runtime/conversation-runtime-manager.ts';
+import { managedTurnExecutor } from '@SOURCE@/runtime/turn-executor.ts';
+import { estimateContextSnapshot } from '@SOURCE@/agent-v2/context.ts';
+
+const schema = `decoupling_proof_${process.pid}_${Date.now()}`;
+const client = new PostgresClient({url: process.env.PI_ORCHESTRATION_TEST_DATABASE_URL, searchPath: schema});
+const ids = Object.fromEntries(['tenant','otherTenant','config','otherConfig','integration','otherIntegration','versionA','versionB','principal','otherPrincipal','conversation','work','turn'].map(k => [k,randomUUID()]));
+let root, taskRepos, chatRepos;
+const inputSchema = { type:'object', properties:{ticket_id:{type:'string'}}, required:['ticket_id'] };
+function compile(id, body='A', prefix='orv') {
+ const result = compileRuntimeSpec({
+  publishedAppVersionId: `${prefix}_${id}`,
+  agent:{prompt:`Task rules ${body}`,model:{provider:'fake',modelId:'test'},contextPolicy:{maxContextTokens:16000}},
+  catalog:{models:[{provider:'fake',modelId:'test'}],tools:[],knowledgeBases:[]},
+  skills:[{skillId:'skill_proof',revision:body==='A'?1:2,sourceHash:sha256Hex(body),name:'analyze',description:'Analysis',instructionText:`# ${body}`,disableModelInvocation:false}],
+  mcpServers:[{mcpServerId:'mcp_proof',revision:1,transport:'streamable_http',endpoint:'https://unused.invalid/mcp',authentication:'bearer',tools:[{name:'getAlertStats',description:'Read stats',inputSchema,inputSchemaHash:sha256Hex(canonicalJson(inputSchema))}]}],
+ });
+ if (!result.ok) throw new Error(result.errors.join('\n'));
+ return result;
+}
+const a=compile(ids.versionA), b=compile(ids.versionB,'B');
+const owner={tenantId:ids.tenant,integrationId:ids.integration,principalId:ids.principal};
+const principal={...owner,publishedAppId:null,tokenId:'proof',principalType:'service'};
+const request={principal,conversationId:ids.conversation,turnId:ids.turn,text:'{"ticket_id":"TK001"}'};
+const trace=[];
+const resolveTask=vi.fn(async(scope,record,turnId)=>{
+ trace.push('resolve');
+ const rows=await client.run(`select v.* , w.request_contract from orchestration_work_items w
+ join prototype_versions v on v.tenant_id=w.tenant_id and v.id=w.orchestration_version_id and v.configuration_id=w.configuration_id
+ where w.tenant_id=$1 and w.integration_id=$2 and w.principal_id=$3 and w.conversation_id=$4 and w.execution_turn_id=$5
+ and w.orchestration_version_id=$6`,scope.tenantId,scope.integrationId,scope.principalId,record.conversationId,turnId,record.orchestrationVersionId);
+ if(rows.length!==1) return undefined;
+ const row=rows[0];
+ return {runtimeSpec:row.runtime_spec,runtimeSpecHash:row.runtime_spec_hash,sourceAgentRevision:null,
+ source:{kind:'orchestration',ownerId:scope.integrationId,versionId:`orv_${row.id}`,contract:row.request_contract}};
+});
+function runtimeHarness() {
+ const sessions=[];
+ const createMcpTools=vi.fn(async()=>[]); // MCP transport/tool execution deliberately excluded from this experiment.
+ const adapter=createPiRuntimeAdapter({skillMaterializer:createSkillMaterializer({root}),createMcpTools,
+  createSession:async options=>{
+   const session={options,prompt:vi.fn(async()=>{trace.push('prompt')}),dispose:vi.fn(async()=>{}),subscribe:()=>()=>{},snapshot:()=>({id:options.id,transcript:[{role:'assistant',status:'complete',content:[{type:'text',text:'  raw result\n'}]}]})};
+   sessions.push(session);return session;
+  }});
+ const manager=createConversationRuntimeManager({autoSweep:false,opener:async(spec,scope)=>{
+  const opened=await adapter.open(spec,scope);if(!opened.ok)throw new Error(opened.reason);return opened.runtime;
+ }});
+ return {manager,sessions,createMcpTools};
+}
+beforeAll(async()=>{
+ await client.run(`create schema ${schema}`);
+ await runMigrations(client);
+ await client.run("insert into tenants(id,name,status) values ($1,'proof','active'),($2,'other','active')",ids.tenant,ids.otherTenant);
+ // Negative baseline: unchanged storage cannot create a task execution context without Chat.
+ await expect(client.run("insert into conversations(id,tenant_id,owner_principal_id,status) values ($1,$2,$3,'active')",ids.conversation,ids.tenant,ids.principal)).rejects.toMatchObject({code:'23502'});
+ await client.withDriver(sql=>sql.unsafe(readSql));
+ for(const [config,tenant] of [[ids.config,ids.tenant],[ids.otherConfig,ids.otherTenant]])
+  await client.run("insert into prototype_configurations values ($1,$2,'{}')",config,tenant);
+ for(const [id,compiled] of [[ids.versionA,a],[ids.versionB,b]])
+  await client.run('insert into prototype_versions values ($1,$2,$3,$4::jsonb,$5)',id,ids.tenant,ids.config,compiled.spec,compiled.sha256);
+ for(const integration of [ids.integration,ids.otherIntegration])
+  await client.run(`insert into orchestration_integrations(id,tenant_id,name,secret_hash,settings,configuration_id,orchestration_version_id)
+  values ($1,$2,'proof','not-a-real-token','{}',$3,$4)`,integration,ids.tenant,ids.config,ids.versionA);
+ for(const [id,integration] of [[ids.principal,ids.integration],[ids.otherPrincipal,ids.otherIntegration]])
+  await client.run(`insert into principals(id,tenant_id,integration_id,principal_type,subject_hash,status) values ($1,$2,$3,'service',$4,'active')`,id,ids.tenant,integration,'a'.repeat(64));
+ await client.run(`insert into conversations(id,tenant_id,source,integration_id,configuration_id,orchestration_version_id,owner_principal_id,status,title)
+ values ($1,$2,'orchestration',$3,$4,$5,$6,'active','proof')`,ids.conversation,ids.tenant,ids.integration,ids.config,ids.versionA,ids.principal);
+ await client.run(`insert into orchestration_work_items(id,tenant_id,integration_id,alarm_id,state,configuration_revision,settings,principal_id,conversation_id,configuration_id,orchestration_version_id,request_contract,execution_turn_id)
+ values ($1,$2,$3,'ALM001','running',1,'{}',$4,$5,$6,$7,'input_v1',$8)`,ids.work,ids.tenant,ids.integration,ids.principal,ids.conversation,ids.config,ids.versionA,ids.turn);
+ root=await mkdtemp(join(tmpdir(),'proof-skills-'));
+ chatRepos=createPublishingRepositories(client);
+ taskRepos={...chatRepos,conversations:createConversationRepository(client),events:createConversationEventRepository(client),summaries:createConversationSummaryRepository(client),
+ publishedAppVersions:{get:vi.fn(()=>{throw new Error('Unexpected Chat configuration read')})},
+ publishedApps:{get:vi.fn(()=>{throw new Error('Unexpected Chat availability read')})},
+ conversationReasoning:{get:vi.fn(()=>{throw new Error('Unexpected Chat reasoning read')})}};
+},30000);
+const readSql=await readFile('@EXPERIMENT@/storage.sql','utf8');
+afterAll(async()=>{
+ vi.unstubAllEnvs();
+ try{await client.run(`drop schema ${schema} cascade`)}finally{await client.close();if(root)await rm(root,{recursive:true,force:true})}
+});
+
+test('1: no Chat rows; task Principal/Conversation/Event/Summary can be stored and read',async()=>{
+ for(const table of ['agent_definitions','published_apps','published_app_versions'])
+  expect((await client.run(`select count(*)::int as n from ${table}`))[0].n).toBe(0);
+ expect((await taskRepos.conversations.get(owner,ids.conversation)).orchestrationVersionId).toBe(ids.versionA);
+ const event=await taskRepos.events.append(owner,{conversationId:ids.conversation,eventType:'proof',payload:{text:'evidence'}});
+ expect(event.sequence).toBe(1);
+ expect((await taskRepos.summaries.insert(owner,{id:randomUUID(),conversationId:ids.conversation,throughSequence:1,modelId:'test',sourceEventCount:1,sourceBytes:10,body:{text:'frozen summary'},createdAt:new Date()})).outcome).toBe('inserted');
+ expect((await taskRepos.summaries.getLatest(owner,ids.conversation)).body.text).toBe('frozen summary');
+});
+test('1: reject cross-tenant/integration/principal reads, appends and composite FK writes',async()=>{
+ for(const bad of [{...owner,tenantId:ids.otherTenant},{...owner,integrationId:ids.otherIntegration},{...owner,principalId:ids.otherPrincipal}]){
+  expect(await taskRepos.conversations.get(bad,ids.conversation)).toBeUndefined();
+  expect(await taskRepos.events.list(bad,ids.conversation,{limit:100})).toEqual([]);
+  expect(await taskRepos.summaries.getLatest(bad,ids.conversation)).toBeUndefined();
+  expect(await taskRepos.events.append(bad,{conversationId:ids.conversation,eventType:'proof',payload:{}})).toBeUndefined();
+ }
+ for(const [tenant,integration,ownerId] of [[ids.otherTenant,ids.integration,ids.principal],[ids.tenant,ids.otherIntegration,ids.principal],[ids.tenant,ids.integration,ids.otherPrincipal]])
+  await expect(client.run(`insert into conversation_events(id,tenant_id,source,integration_id,owner_principal_id,conversation_id,sequence,event_type,payload)
+  values ($1,$2,'orchestration',$3,$4,$5,99,'proof','{}')`,randomUUID(),tenant,integration,ownerId,ids.conversation)).rejects.toMatchObject({code:'23503'});
+ await expect(client.run(`insert into conversations(id,tenant_id,source,integration_id,configuration_id,orchestration_version_id,owner_principal_id,status)
+ values ($1,$2,'orchestration',$3,$4,$5,$6,'active')`,randomUUID(),ids.tenant,ids.otherIntegration,ids.config,ids.versionA,ids.principal)).rejects.toMatchObject({code:'23503'});
+});
+test('1: platform service and Chat principal checks still apply',async()=>{
+ const q=`insert into principals(id,tenant_id,principal_type,subject_hash,status) values ($1,$2,$3,$4,'active')`;
+ await client.run(q,randomUUID(),ids.tenant,'service','a'.repeat(64));
+ await expect(client.run(q,randomUUID(),ids.tenant,'service','a'.repeat(64))).rejects.toMatchObject({code:'23505'});
+ await expect(client.run(q,randomUUID(),ids.tenant,'external_user','b'.repeat(64))).rejects.toMatchObject({code:'23514'});
+});
+test('2: pure independent compilation freezes model/context/MCP/Skill and rejects unapproved model',()=>{
+ expect(a.spec.publishedAppVersionId).toBe(`orv_${ids.versionA}`);
+ expect(a.spec.capabilities.mcpServers[0].tools[0].name).toBe('getAlertStats');
+ expect(a.spec.capabilities.skills[0].instructionText).toBe('# A');
+ expect(a.spec.contextPolicy.maxContextTokens).toBe(16000);
+ expect(a.sha256).toBe(compile(ids.versionA).sha256);
+ expect(compileRuntimeSpec({publishedAppVersionId:'orv_bad',agent:{prompt:'bad',model:{provider:'fake',modelId:'forbidden'}},catalog:{models:[],tools:[],knowledgeBases:[]}}).ok).toBe(false);
+});
+test('3: early task resolution enters shared history/context/Runtime/event workflow using frozen version',async()=>{
+ vi.stubEnv('PI_AGENT_V2_METRICS','1'); trace.length=0;
+ // Integration advances to B; this work remains frozen at A.
+ await client.run('update orchestration_integrations set orchestration_version_id=$1 where id=$2',ids.versionB,ids.integration);
+ const h=runtimeHarness();
+ const list=vi.spyOn(taskRepos.events,'list').mockImplementation(async(...args)=>{
+  expect(trace[0]).toBe('resolve');trace.push('history');return createConversationEventRepository(client).list(...args);
+ });
+ const execute=vi.fn(managedTurnExecutor(h.manager));
+ const service=new ConversationService({repositories:taskRepos,resolveExecutionConfiguration:resolveTask,turnExecutor:execute});
+ try{
+  const result=await service.executeTurn(request);
+  expect(result.ok).toBe(true);expect(result.data.outputText).toBe('  raw result\n');
+  expect(h.sessions[0].options.systemPrompt).toContain('Task rules A');
+  expect(h.sessions[0].options.systemPrompt).not.toContain('Task rules B');
+  expect(h.sessions[0].prompt.mock.calls[0][0].text).toBe(request.text);
+  const events=await taskRepos.events.list(owner,ids.conversation,{limit:100});
+  expect(events.map(e=>e.eventType)).toEqual(expect.arrayContaining(['turn/start','context/snapshot','user/message','assistant/message','turn/end']));
+  expect(events.find(e=>e.eventType==='turn/start').payload).toMatchObject({runtimeSpecHash:a.sha256,executionSource:{versionId:`orv_${ids.versionA}`,contract:'input_v1'}});
+  const snapshot=events.find(e=>e.eventType==='context/snapshot').payload.snapshot;
+  const actual=execute.mock.calls[0][0];
+  expect(actual.spec).toEqual(a.spec);
+  expect(snapshot).toEqual(estimateContextSnapshot({contextWindow:16000,systemPromptText:a.spec.agent.systemPrompt,conversationMessagesText:[...actual.history.messages.map(m=>m.text),request.text].join('\n'),retrievalContextText:undefined,toolDefinitionsText:''}));
+  expect(h.createMcpTools.mock.calls[0][0]).toEqual(a.spec);
+  expect(h.createMcpTools.mock.calls[0][1]).toMatchObject({publishedAppId:null,integrationId:ids.integration,publishedAppVersionId:`orv_${ids.versionA}`,executionSource:{kind:'orchestration'}});
+  expect(h.sessions[0].options.skills[0].filePath).toContain(`orv_${ids.versionA}`);
+  for(const table of ['agent_definitions','published_apps','published_app_versions'])
+   expect((await client.run(`select count(*)::int as n from ${table}`))[0].n).toBe(0);
+  expect(trace.indexOf('resolve')).toBeLessThan(trace.indexOf('history'));
+  expect(trace.indexOf('history')).toBeLessThan(trace.indexOf('prompt'));
+ }finally{list.mockRestore();await h.manager.close()}
+});
+test('3: ownership precedes resolver; bad turn/version/hash cannot start Runtime or restore history',async()=>{
+ const executor=vi.fn();
+ const service=new ConversationService({repositories:taskRepos,resolveExecutionConfiguration:resolveTask,turnExecutor:executor});
+ const before=resolveTask.mock.calls.length;
+ expect((await service.executeTurn({...request,principal:{...principal,integrationId:ids.otherIntegration}})).ok).toBe(false);
+ expect(resolveTask.mock.calls.length).toBe(before);
+ expect((await service.executeTurn({...request,turnId:randomUUID()})).ok).toBe(false);
+ await client.run("update prototype_versions set runtime_spec_hash=$1 where id=$2",'0'.repeat(64),ids.versionA);
+ const events=vi.spyOn(taskRepos.events,'list');
+ try{expect((await service.executeTurn(request)).ok).toBe(false);expect(executor).not.toHaveBeenCalled();expect(events).not.toHaveBeenCalled()}
+ finally{events.mockRestore();await client.run('update prototype_versions set runtime_spec_hash=$1 where id=$2',a.sha256,ids.versionA)}
+});
+test('3: Chat resolver uses same executeTurn body; Chat suspension does not gate task resolution',async()=>{
+ const app=randomUUID(),version=randomUUID(),agent=randomUUID(),p=randomUUID(),conv=randomUUID();
+ await client.run("insert into agent_definitions(id,tenant_id,name,revision,draft_config,created_by) values ($1,$2,'chat',1,'{}',$2)",agent,ids.tenant);
+ await client.run("insert into published_apps(id,tenant_id,agent_definition_id,public_app_id,name,status,access_mode,created_by) values ($1,$2,$3,$4,'chat','active','anonymous',$2)",app,ids.tenant,agent,`pub_${app}`);
+ const chat=compile(version,'CHAT','pav');
+ await client.run("insert into published_app_versions(id,tenant_id,published_app_id,version_number,source_agent_revision,snapshot,runtime_spec,runtime_spec_hash,status,created_by) values ($1,$2,$3,1,1,'{}',$4::jsonb,$5,'ready',$2)",version,ids.tenant,app,chat.spec,chat.sha256);
+ await client.run("insert into principals(id,tenant_id,published_app_id,principal_type,subject_hash,status) values ($1,$2,$3,'service',$4,'active')",p,ids.tenant,app,'c'.repeat(64));
+ await client.run("insert into conversations(id,tenant_id,published_app_id,published_app_version_id,owner_principal_id,status,title) values ($1,$2,$3,$4,$5,'active','chat')",conv,ids.tenant,app,version,p);
+ const h=runtimeHarness();
+ const chatService=new ConversationService({repositories:chatRepos,turnExecutor:managedTurnExecutor(h.manager),resolveExecutionConfiguration:async(scope,record)=>{
+  const v=await chatRepos.publishedAppVersions.get(scope,record.publishedAppVersionId);
+  const app=await chatRepos.publishedApps.get(scope,record.publishedAppId);
+  return {...v,agentId:app.agentDefinitionId,source:{kind:'chat',versionId:record.publishedAppVersionId}};
+ }});
+ try{
+  expect((await chatService.executeTurn({principal:{...principal,publishedAppId:app,integrationId:undefined,principalId:p},conversationId:conv,text:'hello'})).ok).toBe(true);
+  expect(h.sessions[0].options.systemPrompt).toContain('Task rules CHAT');
+  await client.run("update published_apps set status='suspended' where id=$1",app);
+  const taskService=new ConversationService({repositories:taskRepos,resolveExecutionConfiguration:resolveTask,turnExecutor:managedTurnExecutor(h.manager)});
+  expect((await taskService.executeTurn(request)).ok).toBe(true);
+  expect(h.sessions.at(-1).options.systemPrompt).toContain('Task rules A');
+ }finally{await h.manager.close()}
+});
+test('4: real cache reuses A, rebuilds A to B; Skill directories/hash remain isolated',async()=>{
+ const h=runtimeHarness();
+ const scope={...owner,conversationId:randomUUID(),publishedAppId:null,publishedAppVersionId:a.spec.publishedAppVersionId};
+ try{
+  const first=await h.manager.acquire(a.spec,scope);
+  expect((await h.manager.acquire(a.spec,scope)).created).toBe(false);
+  const second=await h.manager.acquire(b.spec,{...scope,publishedAppVersionId:b.spec.publishedAppVersionId});
+  expect(second.created).toBe(true);expect(second.runtime).not.toBe(first.runtime);
+  expect(h.sessions[0].dispose).toHaveBeenCalledTimes(1);
+  const [pa,pb]=h.sessions.map(s=>s.options.skills[0].filePath);
+  expect(pa).not.toBe(pb);expect(await readFile(pa,'utf8')).toBe('# A');expect(await readFile(pb,'utf8')).toBe('# B');
+  const mtime=(await stat(pa)).mtimeMs;
+  await createSkillMaterializer({root}).materialize(a.spec);
+  expect((await stat(pa)).mtimeMs).toBe(mtime);
+  expect(a.sha256).not.toBe(b.sha256);
+  const sameBody=compile(ids.versionB);
+  expect(a.sha256).not.toBe(sameBody.sha256); // version identity itself participates in hash
+ }finally{await h.manager.close()}
+});

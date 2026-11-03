@@ -91,6 +91,14 @@
 - 容量、故障注入和安全测试达到确认后的目标值。
 - [`RELEASE-SOP.md`](./RELEASE-SOP.md) 和 [`INCIDENT-SOP.md`](./INCIDENT-SOP.md) 经至少一次演练。
 
+## 已确认扩展：Agent 事件编排
+
+2026-11-02 经产品负责人在开发会话确认，新增事件驱动的 Agent 编排能力，以工单告警分析为首个场景。实现确定性 Router、工作项与派工、配置版本、任务级 Tool 凭据和结果查询接口；复用既有发布与 Conversation 执行。2026-11-03 确认输出由接入方提示词控制，平台返回模型原文字符串，不强制固定报告结构。首期不包含工作流 DAG、常驻模型 Router 或分布式 Worker。
+
+实施与验收见 [Agent 编排规格](../development/agent-orchestration-2026-11-02.md)。本扩展不表示 R1/R2 的其他门禁已完成。
+
+2026-11-03 进一步确认 Chat 与编排只共享 Runtime，不共享配置事实或发布生命周期。独立配置域、早期解析器及 input/legacy_prompt 双契约已迁入分支并通过隔离验证，现网部署与真实接入迁移尚未执行，见[迁入记录](../development/orchestration-config-decoupling-design-2026-11-03.md#13-正式迁入记录2026-11-03)。
+
 ## R3：实时语音与数字人体验（P2）
 
 目标：在不破坏文本主链路的前提下，提供可降级的实时语音和 Agent 形象反馈。
