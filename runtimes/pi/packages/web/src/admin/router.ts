@@ -27,6 +27,7 @@ export type AdminRouteId =
 	| "skills"
 	| "mcp"
 	| "usage"
+	| "orchestration"
 	| "user-conversations"
 	| "user-conversation-detail"
 	| "settings";
@@ -54,6 +55,7 @@ function readHash(): string {
 }
 
 export function parseRoute(path: string): AdminRoute {
+	if (path === "/orchestration") return { id: "orchestration", path, params: {} };
 	const r = ADMIN_WORKBENCH_ROUTES;
 	// 默认入口：空路径 / `/` 走 Agent 列表。Chat 入口已从侧边栏移除，
 	// 不再让未带路径的工作台落进一个没有导航的孤岛页面。
