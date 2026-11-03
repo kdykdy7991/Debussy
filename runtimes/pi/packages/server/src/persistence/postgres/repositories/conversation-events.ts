@@ -30,13 +30,14 @@ import type {
 	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient, SqlParameter } from "../client.ts";
+import { executionOwnerColumn, executionOwnerId } from "./execution-owner.ts";
 import { txRows } from "./tx.ts";
 
 function rowToRecord(row: Record<string, unknown>): ConversationEventRecord {
 	return {
 		eventId: row.id as ConversationEventId,
 		tenantId: row.tenant_id as TenantId,
-		publishedAppId: row.published_app_id as PublishedAppId,
+		publishedAppId: row.published_app_id as PublishedAppId | null,
 		conversationId: row.conversation_id as ConversationId,
 		sequence: Number(row.sequence),
 		eventType: String(row.event_type),
@@ -83,12 +84,12 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					     end,
 					     updated_at = now(),
 					     last_active_at = now()
-					 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+					 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $4
 					   and deleted_at is null
 					 returning last_event_sequence`,
 					input.conversationId,
 					scope.tenantId,
-					scope.publishedAppId,
+					executionOwnerId(scope),
 					scope.principalId,
 					payloadBytes,
 					turnId,
@@ -99,8 +100,8 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					tx,
 					`insert into conversation_events
 					 (id, tenant_id, published_app_id, conversation_id, sequence, event_type,
-					  event_schema_version, turn_id, payload, payload_bytes, created_at)
-					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+					  event_schema_version, turn_id, payload, payload_bytes, created_at,source,integration_id,owner_principal_id)
+					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(),$11,$12,$13)`,
 					eventId,
 					scope.tenantId,
 					scope.publishedAppId,
@@ -111,6 +112,9 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					turnId,
 					input.payload as SqlParameter,
 					payloadBytes,
+					scope.integrationId ? "orchestration" : "chat",
+					scope.integrationId ?? null,
+					scope.integrationId ? scope.principalId : null,
 				);
 				return {
 					eventId,
@@ -134,15 +138,15 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 			// empty page, indistinguishable from a conversation with no events.
 			const rows = await client.run(
 				`select e.* from conversation_events e
-				 join conversations c on c.id = e.conversation_id and c.published_app_id = e.published_app_id
-				 where e.conversation_id = $1 and e.tenant_id = $2 and e.published_app_id = $3
+				 join conversations c on c.id = e.conversation_id and c.published_app_id is not distinct from e.published_app_id and c.integration_id is not distinct from e.integration_id and c.tenant_id=e.tenant_id
+				 where e.conversation_id = $1 and e.tenant_id = $2 and e.${executionOwnerColumn(scope)} = $3
 				   and c.owner_principal_id = $4 and c.deleted_at is null
 				   and e.sequence > $5
 				 order by e.sequence asc
 				 limit $6`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 				params.afterSequence ?? 0,
 				limit,
@@ -158,7 +162,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 			// events (uniform 404).
 			const rows = await client.run(
 				`select e.* from conversation_events e
-				 join conversations c on c.id = e.conversation_id and c.published_app_id = e.published_app_id
+				 join conversations c on c.id = e.conversation_id and c.published_app_id is not distinct from e.published_app_id and c.integration_id is not distinct from e.integration_id and c.tenant_id=e.tenant_id
 				 where e.conversation_id = $1 and e.tenant_id = $2
 				   and c.deleted_at is null
 				   and e.sequence > $3
@@ -191,7 +195,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				        count(*)::bigint as request_count
 				 from conversation_events e
 				 join conversations c
-				   on c.id = e.conversation_id and c.published_app_id = e.published_app_id
+				   on c.id = e.conversation_id and c.published_app_id is not distinct from e.published_app_id and c.integration_id is not distinct from e.integration_id and c.tenant_id=e.tenant_id
 				 join published_app_versions pav on pav.id = c.published_app_version_id
 				 join published_apps pa on pa.id = c.published_app_id
 				 left join agent_definitions ad

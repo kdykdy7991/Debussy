@@ -82,11 +82,18 @@ import type { RetrievalInput } from "../../types.ts";
 import type { ConversationCitationService } from "../citations/service.ts";
 import type { EmbedAuthContext } from "../middleware/authenticate.ts";
 
+import {
+	chatExecutionConfigResolver,
+	type ExecutionConfigResolver,
+	type ExecutionPrincipal,
+} from "./execution-configuration.ts";
+
 export type ConversationResult<T> =
 	| { readonly ok: true; readonly data: T }
 	| { readonly ok: false; readonly error: EmbedError };
 
 export interface ConversationServiceOptions {
+	readonly resolveExecutionConfiguration?: ExecutionConfigResolver;
 	readonly repositories: PublishingRepositories;
 	readonly loadTrustedIdentity?: (
 		principalId: ScopeContext["principalId"],
@@ -177,6 +184,7 @@ export interface ListEventsInput extends GetConversationInput {
 }
 
 export class ConversationService {
+	private readonly resolveExecutionConfiguration: ExecutionConfigResolver;
 	private readonly repos: PublishingRepositories;
 	private readonly turnExecutor: TurnExecutor;
 	private readonly citations: ConversationCitationService | undefined;
@@ -195,6 +203,8 @@ export class ConversationService {
 
 	constructor(options: ConversationServiceOptions) {
 		this.repos = options.repositories;
+		this.resolveExecutionConfiguration =
+			options.resolveExecutionConfiguration ?? chatExecutionConfigResolver(options.repositories);
 		this.turnExecutor = options.turnExecutor;
 		this.citations = options.citations;
 		this.onCompacted = options.resetRuntime;
@@ -369,7 +379,8 @@ export class ConversationService {
 	/** 读取本人会话；越权/不存在统一 CONVERSATION_NOT_FOUND。 */
 	async getConversation(input: GetConversationInput): Promise<ConversationResult<ConversationRecord>> {
 		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
-		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		if (record === undefined || record.publishedAppId === null || record.publishedAppVersionId === null)
+			return { ok: false, error: conversationNotFound() };
 		return { ok: true, data: record };
 	}
 
@@ -385,7 +396,12 @@ export class ConversationService {
 	> {
 		const scope = ownerScope(input.principal);
 		const conversation = await this.repos.conversations.get(scope, input.conversationId);
-		if (conversation === undefined) return { ok: false, error: conversationNotFound() };
+		if (
+			conversation === undefined ||
+			conversation.publishedAppId === null ||
+			conversation.publishedAppVersionId === null
+		)
+			return { ok: false, error: conversationNotFound() };
 		const version = await this.repos.publishedAppVersions.get(scope, conversation.publishedAppVersionId);
 		if (version === undefined) return { ok: false, error: versionUnavailable() };
 		const parsed = parseRuntimeSpec(version.runtimeSpec);
@@ -423,7 +439,12 @@ export class ConversationService {
 	async compactContext(input: GetConversationInput): Promise<ConversationResult<{ readonly compacted: boolean }>> {
 		const scope = ownerScope(input.principal);
 		const conversation = await this.repos.conversations.get(scope, input.conversationId);
-		if (conversation === undefined || conversation.status !== "active")
+		if (
+			conversation === undefined ||
+			conversation.publishedAppId === null ||
+			conversation.publishedAppVersionId === null ||
+			conversation.status !== "active"
+		)
 			return { ok: false, error: conversationNotFound() };
 		if (this.runningTurns.has(input.conversationId) || this.compactingConversations.has(input.conversationId)) {
 			return { ok: false, error: turnAlreadyRunning() };
@@ -498,7 +519,8 @@ export class ConversationService {
 	async resumeOrRollForward(input: GetConversationInput): Promise<ConversationResult<ResumeConversationResult>> {
 		const scope = ownerScope(input.principal);
 		const record = await this.repos.conversations.get(scope, input.conversationId);
-		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		if (record === undefined || record.publishedAppId === null || record.publishedAppVersionId === null)
+			return { ok: false, error: conversationNotFound() };
 		const app = await this.repos.publishedApps.get(
 			{ tenantId: record.tenantId, publishedAppId: record.publishedAppId },
 			record.publishedAppId,
@@ -544,7 +566,8 @@ export class ConversationService {
 	/** 恢复会话事件（sequence 升序，增量回放）。 */
 	async listEvents(input: ListEventsInput): Promise<ConversationResult<ConversationEventRecord[]>> {
 		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
-		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		if (record === undefined || record.publishedAppId === null || record.publishedAppVersionId === null)
+			return { ok: false, error: conversationNotFound() };
 		const events = await this.repos.events.list(ownerScope(input.principal), input.conversationId, {
 			limit: input.limit,
 			afterSequence: input.afterSequence,
@@ -555,7 +578,8 @@ export class ConversationService {
 	/** 归档本人会话（active -> archived）。 */
 	async archiveConversation(input: GetConversationInput): Promise<ConversationResult<ConversationRecord>> {
 		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
-		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		if (record === undefined || record.publishedAppId === null || record.publishedAppVersionId === null)
+			return { ok: false, error: conversationNotFound() };
 		if (record.status === "active") {
 			await this.repos.conversations.updateStatus(ownerScope(input.principal), input.conversationId, "archived");
 			// WB-007: 归档本身是事实变化，持久化 conversation/archived。
@@ -583,7 +607,8 @@ export class ConversationService {
 		readonly requestId?: RequestId;
 	}): Promise<ConversationResult<ConversationReasoningState>> {
 		const record = await this.repos.conversations.get(ownerScope(input.principal), input.conversationId);
-		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		if (record === undefined || record.publishedAppId === null || record.publishedAppVersionId === null)
+			return { ok: false, error: conversationNotFound() };
 		const result = await applyConversationReasoning({
 			repos: this.repos,
 			tenantId: input.principal.tenantId,
@@ -616,7 +641,8 @@ export class ConversationService {
 	}): Promise<ConversationResult<ConversationReasoningState>> {
 		const scope = ownerScope(input.principal);
 		const record = await this.repos.conversations.get(scope, input.conversationId);
-		if (record === undefined) return { ok: false, error: conversationNotFound() };
+		if (record === undefined || record.publishedAppId === null || record.publishedAppVersionId === null)
+			return { ok: false, error: conversationNotFound() };
 		const state = await this.repos.conversationReasoning.get(scope, input.conversationId);
 		const pinnedCapability = await reasoningCapabilitiesForVersion(
 			this.repos,
@@ -845,11 +871,10 @@ export class ConversationService {
 		// 单调+墙上基准，供 turn/end / turn/failed 写入 TurnMetrics。
 		const metricsTiming = agentV2MetricsEnabled() ? startTurnTiming() : undefined;
 		try {
-			const version = await this.repos.publishedAppVersions.get(scope, record.publishedAppVersionId);
+			const turnId = input.turnId ?? newTurnId();
+			const version = await this.resolveExecutionConfiguration(scope, record, turnId);
 			if (version === undefined) return { ok: false, error: versionUnavailable() };
-			// TURN-TASK：Turn 配置快照需要 agentId（App 归属的 AgentDefinition）。
-			// 读失败仅省略该字段（用于历史追溯，非执行必需），不阻断 Turn。
-			const agentId = (await this.repos.publishedApps.get(scope, record.publishedAppId))?.agentDefinitionId;
+			const effectiveText = version.text ?? input.text;
 			const parsed = parseRuntimeSpec(version.runtimeSpec);
 			if (!parsed.ok) return { ok: false, error: runtimeUnavailable("RuntimeSpec is invalid") };
 			const spec = parsed.spec;
@@ -865,10 +890,12 @@ export class ConversationService {
 			// TURN-TASK：优先采用调用方（Realtime connection）预生成的 turnId，
 			// 使 turn 内所有事件（含 realtime 转发）共享同一 turnId，不依赖
 			// "当前连接只运行一个 Turn"；缺省时服务端自生成。
-			const turnId = input.turnId ?? newTurnId();
 			const logLevel: SessionLogLevel = spec.contextPolicy.logLevel;
 			// Agent V2 §4.3：会话级 reasoning effort 覆盖（事实源；缺省=Revision 默认）。
-			const conversationReasoning = await this.repos.conversationReasoning.get(scope, input.conversationId);
+			const conversationReasoning =
+				version.source.kind === "chat"
+					? await this.repos.conversationReasoning.get(scope, input.conversationId)
+					: undefined;
 			let trustedIdentity: ScopeContext["trustedIdentity"];
 			if (this.loadTrustedIdentity !== undefined) {
 				const tokenId = input.principal.tokenId;
@@ -894,7 +921,9 @@ export class ConversationService {
 			const turnScope: ScopeContext = {
 				tenantId: input.principal.tenantId,
 				publishedAppId: input.principal.publishedAppId,
-				publishedAppVersionId: record.publishedAppVersionId,
+				publishedAppVersionId: version.versionKey,
+				integrationId: scope.integrationId,
+				executionSource: version.source,
 				principalId: input.principal.principalId,
 				...(trustedIdentity !== undefined ? { trustedIdentity } : {}),
 				conversationId: input.conversationId,
@@ -920,9 +949,9 @@ export class ConversationService {
 				payload: {
 					model: spec.agent.model.modelId,
 					logLevel,
-					agentRevisionId: version.sourceAgentRevision,
+					...version.audit,
+					executionSource: version.source,
 					...(version.runtimeSpecHash !== null ? { runtimeSpecHash: version.runtimeSpecHash } : {}),
-					...(agentId !== undefined ? { agentId } : {}),
 				},
 			});
 			if (turnStart === undefined) return { ok: false, error: conversationNotFound() };
@@ -930,13 +959,13 @@ export class ConversationService {
 			// TASK-032：先计算会话级引用检索（RuntimeSpec 门控），使上下文快照能覆盖
 			// retrieval context。这里只做检索，不落事件；citation/updated 仍在 user/message
 			// 之后落（保持既有事件顺序）。
-			const retrieval = await this.prepareRetrieval(scope, spec, input, turnId);
+			const retrieval = await this.prepareRetrieval(scope, spec, { ...input, text: effectiveText }, turnId);
 
 			// Agent V2 M1：写上下文快照（turn/start 之后、user/message 之前，符合契约顺序）。
 			// 开关关（默认）不采集；开时用 chars→tokens 估算为 `ContextUsageSnapshot`。
 			// 快照覆盖最终请求上下文：system prompt + 已恢复历史 + 当前用户消息 + retrieval。
 			if (metricsTiming !== undefined) {
-				const conversationMessagesText = [...history.messages.map((m) => m.text), input.text].join("\n");
+				const conversationMessagesText = [...history.messages.map((m) => m.text), effectiveText].join("\n");
 				const snapshot = estimateContextSnapshot({
 					contextWindow: spec.contextPolicy.maxContextTokens,
 					systemPromptText: spec.agent.systemPrompt,
@@ -956,7 +985,7 @@ export class ConversationService {
 				conversationId: input.conversationId,
 				eventType: "user/message",
 				turnId,
-				payload: this.safePayload({ text: input.text }, 64 * 1024),
+				payload: this.safePayload({ text: effectiveText }, 64 * 1024),
 			});
 			if (userEvent === undefined) return { ok: false, error: conversationNotFound() };
 
@@ -998,13 +1027,13 @@ export class ConversationService {
 				spec,
 				input.conversationId,
 				turnId,
-				input.text,
+				effectiveText,
 				history,
 			);
 			const result = await this.turnExecutor({
 				scope: turnScope,
 				spec,
-				text: input.text,
+				text: effectiveText,
 				history: historyForRequest,
 				retrieval,
 				onProgress,
@@ -1087,13 +1116,13 @@ export class ConversationService {
 								: "",
 							true,
 						);
-				} else if (!/^(你好|您好|hi|hello|嗨)[!！。\s]*$/i.test(input.text.trim())) {
+				} else if (!/^(你好|您好|hi|hello|嗨)[!！。\s]*$/i.test(effectiveText.trim())) {
 					await this.updateGeneratedTitle(
 						scope,
 						input.conversationId,
 						spec,
-						`${input.text}\n${result.outputText}`,
-						input.text,
+						`${effectiveText}\n${result.outputText}`,
+						effectiveText,
 						false,
 					);
 				}
@@ -1156,7 +1185,10 @@ export class ConversationService {
 	 * 中止当前会话正在执行的 Turn。先按 owner scope 校验，避免通过取消接口
 	 * 枚举会话；只有底层执行器实际接受中止时才报告 cancelled。
 	 */
-	async cancelTurn(input: GetConversationInput): Promise<ConversationResult<{ readonly cancelled: boolean }>> {
+	async cancelTurn(input: {
+		readonly principal: ExecutionPrincipal;
+		readonly conversationId: ConversationId;
+	}): Promise<ConversationResult<{ readonly cancelled: boolean }>> {
 		const scope = ownerScope(input.principal);
 		const record = await this.repos.conversations.get(scope, input.conversationId);
 		if (record === undefined || record.status !== "active") return { ok: false, error: conversationNotFound() };
@@ -1169,7 +1201,7 @@ export class ConversationService {
 }
 
 export interface ExecuteTurnInput {
-	readonly principal: EmbedAuthContext;
+	readonly principal: ExecutionPrincipal;
 	readonly conversationId: ConversationId;
 	readonly requestId?: RequestId;
 	readonly text: string;
@@ -1188,10 +1220,17 @@ export interface ExecuteTurnData {
 	readonly citations: readonly Citation[];
 }
 
-function ownerScope(principal: EmbedAuthContext) {
+function ownerScope(principal: EmbedAuthContext): {
+	tenantId: EmbedAuthContext["tenantId"];
+	publishedAppId: EmbedAuthContext["publishedAppId"];
+	principalId: EmbedAuthContext["principalId"];
+};
+function ownerScope(principal: ExecutionPrincipal): OwnerScope;
+function ownerScope(principal: ExecutionPrincipal) {
 	return {
 		tenantId: principal.tenantId,
 		publishedAppId: principal.publishedAppId,
+		...(principal.publishedAppId === null ? { integrationId: principal.integrationId } : {}),
 		principalId: principal.principalId,
 	};
 }

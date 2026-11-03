@@ -3,7 +3,7 @@
  *
  * 所有 Runtime/Provider 解析函数必须显式接收足够的 Scope Context，禁止从
  * 全局「当前用户/当前会话」隐式读取。MVP 不实现通用 Scope 框架，这里只
- * 定义最小层级（Process -> Tenant -> PublishedAppVersion -> Principal ->
+ * 定义最小层级（Process -> Tenant -> 执行来源/配置版本 -> Principal ->
  * Conversation -> Turn），字段来自已授权的调用方（TASK-016 的
  * `EmbedAuthContext` + 会话/版本解析结果），Runtime 层只消费、不推导。
  */
@@ -13,7 +13,6 @@ import type {
 	ConversationId,
 	PrincipalId,
 	PublishedAppId,
-	PublishedAppVersionId,
 	RequestId,
 	TenantId,
 	TurnId,
@@ -22,8 +21,15 @@ import type {
 /** 一个 ConversationRuntime 执行期间可见的最小 Scope（10.2 层级）。 */
 export interface ScopeContext {
 	readonly tenantId: TenantId;
-	readonly publishedAppId: PublishedAppId;
-	readonly publishedAppVersionId: PublishedAppVersionId;
+	readonly publishedAppId: PublishedAppId | null;
+	readonly integrationId?: string;
+	readonly executionSource?: {
+		readonly kind: "chat" | "orchestration" | "legacy_orchestration";
+		readonly ownerId: string;
+		readonly versionId: string;
+	};
+	/** Technical Runtime version key: Chat UUID or namespaced orv_ key. Not a Chat foreign key. */
+	readonly publishedAppVersionId: string;
 	readonly principalId: PrincipalId;
 	/** Verified host identity loaded by the server for this turn. */
 	readonly trustedIdentity?: {

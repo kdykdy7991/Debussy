@@ -3436,7 +3436,11 @@ export class ControlService {
 			{ tenantId: input.tenantId },
 			input.conversationId,
 		);
-		if (conversation === undefined)
+		if (
+			conversation === undefined ||
+			conversation.publishedAppId === null ||
+			conversation.publishedAppVersionId === null
+		)
 			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
 		const state = await this.repos.conversationReasoning.get(
 			{
@@ -3485,7 +3489,11 @@ export class ControlService {
 			{ tenantId: input.tenantId },
 			input.conversationId,
 		);
-		if (conversation === undefined)
+		if (
+			conversation === undefined ||
+			conversation.publishedAppId === null ||
+			conversation.publishedAppVersionId === null
+		)
 			return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
 		const result = await applyConversationReasoning({
 			repos: this.repos,
@@ -3684,18 +3692,23 @@ function summarizeCapabilities(runtimeSpec: unknown): PublishedAppDetail["capabi
 function toConversationAdminSummary(row: AdminConversationListRow): ConversationAdminSummary {
 	const principalType = mapPrincipalType(row.principalType);
 	return {
+		configurationSource: row.source ?? "chat",
+		...(row.integrationId
+			? { integrationId: row.integrationId, orchestrationVersionId: `orv_${row.orchestrationVersionId}` }
+			: {}),
 		id: toPublicId("ConversationId", row.conversationId) as ConversationPublicId,
-		appId: toPublicId("PublishedAppId", row.publishedAppId) as PublishedAppPublicId,
+		appId: (row.publishedAppId === null
+			? ""
+			: toPublicId("PublishedAppId", row.publishedAppId)) as PublishedAppPublicId,
 		publicAppId: row.publicAppId as PublishedAppLocator,
 		appName: row.appName,
 		agentId:
 			row.agentId === null ? ("" as AgentPublicId) : (toPublicId("AgentDefinitionId", row.agentId) as AgentPublicId),
 		principalDisplayId: row.principalDisplayId,
 		principalType,
-		publishedAppVersionId: toPublicId(
-			"PublishedAppVersionId",
-			row.publishedAppVersionId,
-		) as PublishedAppVersionPublicId,
+		publishedAppVersionId: (row.publishedAppVersionId === null
+			? ""
+			: toPublicId("PublishedAppVersionId", row.publishedAppVersionId)) as PublishedAppVersionPublicId,
 		title: row.title,
 		status: row.status,
 		messageCount: row.messageCount,

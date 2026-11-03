@@ -308,8 +308,8 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 			await client.run(
 				`insert into mcp_call_audits
 				 (id, tenant_id, conversation_id, published_app_version_id, mcp_server_id, mcp_revision,
-				  tool_name, outcome, latency_ms, result_bytes, result_truncated, error_code, request_id, created_at)
-				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+				  tool_name, outcome, latency_ms, result_bytes, result_truncated, error_code, request_id, created_at,integration_id,orchestration_version_id)
+				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,$15,$16)`,
 				record.mcpCallAuditId,
 				record.tenantId,
 				record.conversationId,
@@ -324,6 +324,8 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 				record.errorCode,
 				record.requestId,
 				record.createdAt,
+				record.integrationId ?? null,
+				record.orchestrationVersionId ?? null,
 			);
 		},
 	};

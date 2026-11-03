@@ -23,12 +23,13 @@ import type {
 	OwnerScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient, SqlParameter } from "../client.ts";
+import { executionOwnerColumn, executionOwnerId } from "./execution-owner.ts";
 
 function rowToRecord(row: Record<string, unknown>): ConversationSummaryRecord {
 	return {
 		id: row.id as ConversationSummaryId,
 		tenantId: row.tenant_id as TenantId,
-		publishedAppId: row.published_app_id as PublishedAppId,
+		publishedAppId: row.published_app_id as PublishedAppId | null,
 		ownerPrincipalId: row.owner_principal_id as PrincipalId,
 		conversationId: row.conversation_id as ConversationId,
 		throughSequence: Number(row.through_sequence),
@@ -51,8 +52,8 @@ export function createConversationSummaryRepository(client: PostgresClient): Con
 					`insert into conversation_summaries
 					 (id, tenant_id, published_app_id, owner_principal_id, conversation_id,
 					  through_sequence, model_id, source_event_count, source_bytes, body, created_at,
-					  previous_summary_id, tokens_before)
-					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+					  previous_summary_id, tokens_before,source,integration_id)
+					 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,$14,$15)`,
 					record.id,
 					scope.tenantId,
 					scope.publishedAppId,
@@ -66,6 +67,8 @@ export function createConversationSummaryRepository(client: PostgresClient): Con
 					record.createdAt,
 					record.previousSummaryId ?? null,
 					record.tokensBefore ?? null,
+					scope.integrationId ? "orchestration" : "chat",
+					scope.integrationId ?? null,
 				);
 				return { outcome: "inserted" as const };
 			} catch (error) {
@@ -84,13 +87,13 @@ export function createConversationSummaryRepository(client: PostgresClient): Con
 		async getLatest(scope: OwnerScope, conversationId: ConversationId) {
 			const rows = await client.run(
 				`select * from conversation_summaries
-				 where conversation_id = $1 and tenant_id = $2 and published_app_id = $3
+				 where conversation_id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3
 				   and owner_principal_id = $4
 				 order by through_sequence desc
 				 limit 1`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 			);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
@@ -98,12 +101,12 @@ export function createConversationSummaryRepository(client: PostgresClient): Con
 		async list(scope: OwnerScope, conversationId: ConversationId) {
 			const rows = await client.run(
 				`select * from conversation_summaries
-				 where conversation_id = $1 and tenant_id = $2 and published_app_id = $3
+				 where conversation_id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3
 				   and owner_principal_id = $4
 				 order by through_sequence desc`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 			);
 			return rows.map((row) => rowToRecord(row));

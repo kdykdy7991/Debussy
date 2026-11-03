@@ -142,7 +142,7 @@ export class AttachmentService {
 			principalId: input.principal.principalId,
 		};
 		const conversation = await this.repositories.conversations.get(ownerScope, input.conversationId);
-		if (conversation === undefined) {
+		if (conversation === undefined || conversation.publishedAppVersionId === null) {
 			return { ok: false, error: conversationNotFound() };
 		}
 		// 会话固定版本是上传能力的权威来源（spec 5.5 / PD-09）：enabled、
@@ -362,7 +362,11 @@ export class AttachmentService {
 		versionId: PublishedAppVersionId,
 		scope: OwnerScope,
 	): Promise<{ readonly enabled: boolean; readonly maxFiles: number; readonly maxFileBytes: number } | undefined> {
-		const version = await this.repositories.publishedAppVersions.get(scope, versionId);
+		if (scope.publishedAppId === null) return undefined;
+		const version = await this.repositories.publishedAppVersions.get(
+			{ tenantId: scope.tenantId, publishedAppId: scope.publishedAppId },
+			versionId,
+		);
 		if (version === undefined) return undefined;
 		const parsed = parseRuntimeSpec(version.runtimeSpec);
 		if (!parsed.ok) return undefined;

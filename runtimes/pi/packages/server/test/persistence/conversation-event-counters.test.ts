@@ -167,7 +167,7 @@ function seedConversation(client: FakeClient, scope: OwnerScope, id: string): vo
 	client.conversations.set(id, {
 		id,
 		tenant_id: scope.tenantId,
-		published_app_id: scope.publishedAppId,
+		published_app_id: scope.publishedAppId!,
 		owner_principal_id: scope.principalId,
 		last_event_sequence: 0,
 		event_count: 0,

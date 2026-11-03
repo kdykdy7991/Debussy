@@ -627,7 +627,7 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 
 	function conversationView(record: {
 		conversationId: ConversationId;
-		publishedAppVersionId: PublishedAppVersionId;
+		publishedAppVersionId: PublishedAppVersionId | null;
 		status: string;
 		title: string;
 		lastEventSequence: number;
@@ -635,7 +635,10 @@ export function createConversationsHttpHandler(options: ConversationsHttpHandler
 	}): Record<string, unknown> {
 		return {
 			id: toPublicId("ConversationId", record.conversationId),
-			publishedAppVersionId: toPublicId("PublishedAppVersionId", record.publishedAppVersionId),
+			publishedAppVersionId:
+				record.publishedAppVersionId === null
+					? null
+					: toPublicId("PublishedAppVersionId", record.publishedAppVersionId),
 			status: record.status,
 			title: record.title,
 			lastEventSequence: record.lastEventSequence,

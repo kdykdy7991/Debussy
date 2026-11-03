@@ -4,10 +4,22 @@
 
 ### Breaking Changes
 
+- Removed `credential_expires_at` from the AaaS Run request. Task authorization now defaults to 30 minutes internally, including requests with tool credentials; idempotent replays do not extend it.
+- Changed new orchestration Integration creation to accept independent task configuration instead of a Chat publication locator. Historical Integrations require explicit administrator migration before configuration edits.
+- Changed AaaS `result` and orchestration `report` to verbatim model output strings instead of fixed report objects. Removed injected report instructions, JSON/schema validation and the obsolete report schema setting; migration 0025 preserves historical report data as JSON text.
+- Rejected Integration use tokens on the legacy external orchestration configuration GET/PUT endpoints. External configuration now requires independent grants and Draft/Publish APIs; the administrator save-and-activate path is retained.
 - Changed `toProtocolToolResultMessage()` to require the original `ToolCall` and verify tool result association.
 - Removed the app-centric Application control API (`published-apps.*`): create/update app, manual create-version, activate, rollback, suspend, delete, app list/get/list-versions, launch-key admin, and preview-ticket admin. All publishing now flows through `POST /api/control/v1/agent-definitions/:id/publish`. The `published_apps` / `published_app_versions` tables and the `PublishedApp*` repository/service layer are retained as internal per-Agent publication persistence, and existing embed launch keys and embed/auth tokens keep working unchanged.
 
 ### Added
+
+- Added independent orchestration configuration/immutable version storage and an early execution configuration resolver. Task execution no longer requires Chat publication rows, shares the existing Runtime, and preserves frozen versions and original request semantics for historical work.
+- Added JSON `input` tasks alongside deprecated `prompt` system overrides; requests must select exactly one contract. Persisted contract-aware idempotency retains original hashes for historical replays.
+- Added explicit Integration ownership for task contexts, events and summaries, version-separated Skill/cache identities, and task-specific MCP audit attribution.
+- Added external configuration drafts, immutable publication through the existing compiler, dual revision/version concurrency checks, independently scoped view/edit/publish grants, field allowlists and a short-session embedded configuration page.
+- Added thin AaaS Run create/query APIs over orchestration, with JSON inputs, idempotent requests, pinned versions and durable origin guards against legacy supplement/retry mutations.
+
+- Added backend Agent orchestration APIs and console integration management, with durable alarm events, work items, serialized assignments, versioned configuration, persisted model output, isolated tool credentials and restart reconciliation.
 
 - Added periodic MCP tool discovery with immutable revision updates and stale tool compatibility checks.
 - Added MCP API Key authentication through `X-Mcp-Api-Key`, using encrypted credentials for connection tests, tool discovery, and runtime calls.

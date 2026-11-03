@@ -158,7 +158,9 @@ describe.skipIf(!pgUp)("conversation-scoped citations (TASK-032)", () => {
 			createdAt: now,
 			lastSeenAt: now,
 		});
-		return principal(appId, principalId);
+		const app = await repos.publishedApps.get({ tenantId, publishedAppId: appId }, appId);
+		if (!app?.currentVersionId) throw new Error("fixture has no published version");
+		return { ...principal(appId, principalId), publishedAppVersionId: app.currentVersionId };
 	}
 
 	function buildSpec(versionId: string, uploadsEnabled: boolean): unknown {
@@ -389,7 +391,13 @@ describe.skipIf(!pgUp)("conversation-scoped citations (TASK-032)", () => {
 			conv.conversationId,
 			{ limit: 10, afterSequence: 0 },
 		);
-		expect(events.map((event) => event.eventType)).toEqual(["user.message", "assistant.completed"]);
+		expect(events.map((event) => event.eventType)).toEqual([
+			"turn/start",
+			"user/message",
+			"citation/updated",
+			"assistant/message",
+			"turn/end",
+		]);
 	});
 
 	test("two users with same-named files get isolated citations", async () => {
@@ -485,7 +493,7 @@ describe.skipIf(!pgUp)("conversation-scoped citations (TASK-032)", () => {
 		const p2 = await makePrincipal(appBId);
 		const conv = await createConversation(p2, "no-citations");
 		// 该版本的 RuntimeSpec：uploads.enabled=false -> citations 关闭。
-		const disabledParsed = parseRuntimeSpec(buildSpec(conv.publishedAppVersionId, false));
+		const disabledParsed = parseRuntimeSpec(buildSpec(conv.publishedAppVersionId!, false));
 		expect(disabledParsed.ok).toBe(true);
 		if (!disabledParsed.ok) return;
 		expect(conversationCitations.citationsEnabled(disabledParsed.spec)).toBe(false);

@@ -26,6 +26,7 @@ import { CodingAgentPiSessionBackend } from "../coding-agent/backend.ts";
 import { composeEmbedPlane, type EmbedPlaneHandle } from "../embed/start.ts";
 import type { VoiceEngineConfig } from "../embed/voice-engine/config.ts";
 import { PiServerError } from "../errors.ts";
+import { composeOrchestration } from "../orchestration/compose.ts";
 import { createDebugRepositories } from "../persistence/postgres/repositories/debug.ts";
 import { type PublishingConfig, parsePublishingConfig } from "../publishing/config.ts";
 import { type ControlPlaneHandle, composeControlPlane } from "../publishing/control/compose.ts";
@@ -183,6 +184,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	let debugRealtime: DebugConversationRealtime | undefined;
 	let debugSweepTimer: ReturnType<typeof setInterval> | undefined;
 	let voicePoc: VoicePocUpgradeHandle | undefined;
+	let orchestration: Awaited<ReturnType<typeof composeOrchestration>> | undefined;
 	if (publishing.enabled) {
 		// 33.1/33.2: missing token / db / bootstrap config fails startup.
 		controlPlane = await composeControlPlane({
@@ -336,6 +338,28 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		// DebugConversationAdapter so the existing Chat streaming UI can attach to
 		// a persistent Debug Conversation without a new frontend protocol.
 		debugRealtime = new DebugConversationRealtime(debugConversationService);
+		if (publishing.mcpSecretMasterKey !== undefined) {
+			orchestration = await composeOrchestration({
+				control: controlPlane,
+				masterKey: publishing.mcpSecretMasterKey,
+				networkPolicy:
+					publishing.mcpNetworkPolicy === undefined
+						? undefined
+						: {
+								allowHttp: publishing.mcpNetworkPolicy.allowHttp,
+								allowPrivateNetwork: publishing.mcpNetworkPolicy.allowPrivateNetwork,
+								allowedPorts:
+									publishing.mcpNetworkPolicy.allowedPorts === undefined
+										? undefined
+										: new Set(publishing.mcpNetworkPolicy.allowedPorts),
+							},
+				createSession: makeRuntimeSession,
+				skillMaterializer,
+				resolveModelMetadata: (provider, modelId) =>
+					(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),
+				onError: () => log("orchestration background operation failed; pending work remains persisted"),
+			});
+		}
 	}
 
 	const httpHandlers: HttpRequestHandler[] = [
@@ -371,6 +395,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 	if (debugSessions !== undefined) httpHandlers.push(debugSessions.handler);
 	if (debugConversationHandler !== undefined) httpHandlers.push(debugConversationHandler);
 	if (controlPlane !== undefined) httpHandlers.push(controlPlane.handler);
+	if (orchestration !== undefined) httpHandlers.push(orchestration.handler);
 	if (embedPlane !== undefined) {
 		httpHandlers.push(
 			embedPlane.bootstrapHandler,
@@ -454,6 +479,13 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		if (closing) return closing;
 		closing = (async () => {
 			log("pi web server shutting down");
+			if (orchestration !== undefined) {
+				try {
+					await orchestration.close();
+				} catch {
+					log("error during orchestration shutdown");
+				}
+			}
 			if (voicePoc !== undefined) {
 				try {
 					await voicePoc.close();

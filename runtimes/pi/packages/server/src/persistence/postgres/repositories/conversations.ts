@@ -17,13 +17,22 @@ import type {
 	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
+import { executionOwnerColumn, executionOwnerId } from "./execution-owner.ts";
 
 function rowToRecord(row: Record<string, unknown>): ConversationRecord {
 	return {
 		conversationId: row.id as ConversationId,
+		source: row.source as "chat" | "orchestration",
+		...(row.integration_id
+			? {
+					integrationId: String(row.integration_id),
+					configurationId: String(row.configuration_id),
+					orchestrationVersionId: String(row.orchestration_version_id),
+				}
+			: {}),
 		tenantId: row.tenant_id as TenantId,
-		publishedAppId: row.published_app_id as PublishedAppId,
-		publishedAppVersionId: row.published_app_version_id as PublishedAppVersionId,
+		publishedAppId: row.published_app_id as PublishedAppId | null,
+		publishedAppVersionId: row.published_app_version_id as PublishedAppVersionId | null,
 		ownerPrincipalId: row.owner_principal_id as PrincipalId,
 		title: String(row.display_title ?? row.title),
 		status: row.status as ConversationRecord["status"],
@@ -79,8 +88,8 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			await client.run(
 				`insert into conversations
 				 (id, tenant_id, published_app_id, published_app_version_id, owner_principal_id,
-				  title, status, last_event_sequence, created_at, updated_at, last_active_at)
-				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+				  title, status, last_event_sequence, created_at, updated_at, last_active_at,source,integration_id,configuration_id,orchestration_version_id)
+				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,$12,$13,$14,$15)`,
 				record.conversationId,
 				record.tenantId,
 				record.publishedAppId,
@@ -92,16 +101,20 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				record.createdAt,
 				record.updatedAt,
 				record.lastActiveAt,
+				record.source ?? "chat",
+				record.integrationId ?? null,
+				record.configurationId ?? null,
+				record.orchestrationVersionId ?? null,
 			);
 		},
 		async get(scope: OwnerScope, conversationId) {
 			const rows = await client.run(
 				`select c.* from conversations c
-				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $4
 				   and deleted_at is null`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 			);
 			return rows.length === 1 ? rowToRecord(rows[0]) : undefined;
@@ -121,13 +134,13 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			const limitIndex = cursorParams.length > 0 ? 6 : 4;
 			const rows = await client.run(
 				`select c.* from conversations c
-				 where tenant_id = $1 and published_app_id = $2 and owner_principal_id = $3
+				 where tenant_id = $1 and ${executionOwnerColumn(params.scope)} = $2 and owner_principal_id = $3
 				   and deleted_at is null and status = 'active' and last_event_sequence > 0
 				   ${cursorWhere}
 				 order by last_active_at desc, id desc
 				 limit $${limitIndex}`,
 				params.scope.tenantId,
-				params.scope.publishedAppId,
+				executionOwnerId(params.scope),
 				params.scope.principalId,
 				...cursorParams,
 				limit + 1,
@@ -137,11 +150,11 @@ export function createConversationRepository(client: PostgresClient): Conversati
 		async setTitle(scope: OwnerScope, conversationId, title) {
 			await client.run(
 				`update conversations set title = $5, updated_at = now()
-				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $4
 				   and deleted_at is null`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 				title,
 			);
@@ -149,11 +162,11 @@ export function createConversationRepository(client: PostgresClient): Conversati
 		async updateStatus(scope: OwnerScope, conversationId, status) {
 			await client.run(
 				`update conversations set status = $4, updated_at = now()
-				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $5
+				 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $5
 				   and deleted_at is null`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				status,
 				scope.principalId,
 			);
@@ -162,12 +175,12 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			const rows = await client.run(
 				`update conversations
 				 set last_event_sequence = last_event_sequence + 1, updated_at = now(), last_active_at = now()
-				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $4
 				   and deleted_at is null
 				 returning last_event_sequence`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 			);
 			return rows.length === 1 ? Number(rows[0].last_event_sequence) : undefined;
@@ -189,12 +202,12 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				     next_conversation_id = $5,
 				     rolled_over_at = now(),
 				     updated_at = now()
-				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $4
 				   and deleted_at is null and status = 'active'
 				 returning id`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 				fields.nextConversationId,
 			);
@@ -206,13 +219,13 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				`update conversations
 				 set latest_summary_sequence = $5,
 				     updated_at = now()
-				 where id = $1 and tenant_id = $2 and published_app_id = $3 and owner_principal_id = $4
+				 where id = $1 and tenant_id = $2 and ${executionOwnerColumn(scope)} = $3 and owner_principal_id = $4
 				   and deleted_at is null
 				   and latest_summary_sequence < $5
 				 returning id`,
 				conversationId,
 				scope.tenantId,
-				scope.publishedAppId,
+				executionOwnerId(scope),
 				scope.principalId,
 				atSequence,
 			);
@@ -275,7 +288,7 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				`select c.*,
 				        p.principal_type as principal_type,
 				        p.subject_hash as principal_subject_hash,
-				        a.name as app_name,
+				        coalesce(a.name,i.name) as app_name,
 				        a.public_app_id as public_app_id,
 				        a.agent_definition_id as agent_definition_id,
 				        (select count(*)::int from conversation_events e
@@ -287,9 +300,10 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				            and e.tenant_id = c.tenant_id
 				            and e.event_type in ('user/message','assistant/message','user.message','assistant.completed')) as message_count
 				   from conversations c
-				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id = c.published_app_id
-				   join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
-				   join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
+				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id is not distinct from c.published_app_id and p.integration_id is not distinct from c.integration_id
+				   left join orchestration_integrations i on i.id=c.integration_id and i.tenant_id=c.tenant_id
+ left join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
+				   left join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
 				  where ${conditions.join(" and ")}
 				  order by c.last_active_at desc, c.id desc
 				  limit $${values.length}`,
@@ -302,7 +316,7 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				`select c.*,
 				        p.principal_type as principal_type,
 				        p.subject_hash as principal_subject_hash,
-				        a.name as app_name,
+				        coalesce(a.name,i.name) as app_name,
 				        a.public_app_id as public_app_id,
 				        a.agent_definition_id as agent_definition_id,
 				        (select count(*)::int from conversation_events e
@@ -314,9 +328,10 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				            and e.tenant_id = c.tenant_id
 				            and e.event_type in ('user/message','assistant/message','user.message','assistant.completed')) as message_count
 				   from conversations c
-				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id = c.published_app_id
-				   join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
-				   join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
+				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id is not distinct from c.published_app_id and p.integration_id is not distinct from c.integration_id
+				   left join orchestration_integrations i on i.id=c.integration_id and i.tenant_id=c.tenant_id
+ left join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
+				   left join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
 				  where c.id = $1 and c.tenant_id = $2 and c.deleted_at is null`,
 				conversationId,
 				scope.tenantId,

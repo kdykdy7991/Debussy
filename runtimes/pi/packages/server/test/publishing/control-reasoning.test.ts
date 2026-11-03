@@ -331,7 +331,7 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 		const ownerScope = { ...appScope, principalId };
 		const before = await repos.conversations.get(ownerScope, conversationId);
 		if (before === undefined) throw new Error("conversation missing");
-		const pinnedV1 = before.publishedAppVersionId;
+		const pinnedV1 = before.publishedAppVersionId!;
 		const v1 = await repos.publishedAppVersions.get(appScope, pinnedV1);
 		if (v1 === undefined) throw new Error("version 1 missing");
 		// Publish version 2 for the same app with a different model + params.
@@ -402,7 +402,7 @@ describe.skipIf(!pgUp)("control conversation reasoning service", () => {
 		const caps = await reasoningCapabilitiesForVersion(
 			repos,
 			{ tenantId, publishedAppId: appId },
-			conv!.publishedAppVersionId,
+			conv!.publishedAppVersionId!,
 		);
 		expect(caps?.reasoning.supported).toBe(true);
 		expect(caps?.reasoning.efforts).toEqual(["low", "medium", "high"]);

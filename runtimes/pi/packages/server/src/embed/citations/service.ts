@@ -58,6 +58,8 @@ export class ConversationCitationService {
 
 	/** 索引一个刚 ready 的会话附件（文本类型才建 source；幂等，可安全并发）。 */
 	async indexReadyAttachment(scope: ConversationScope, record: AttachmentRecord, data: Buffer): Promise<void> {
+		if (scope.publishedAppId === null) throw new Error("Task contexts do not support Chat attachments");
+		const chatScope = { ...scope, publishedAppId: scope.publishedAppId };
 		if (!isTextMediaType(record.contentType)) return;
 		const attachment: Attachment = {
 			id: record.attachmentId,
@@ -69,28 +71,34 @@ export class ConversationCitationService {
 			status: "ready",
 			createdAt: record.createdAt.getTime(),
 		};
-		await this.citations.ensureConversationSource(scope, attachment, data);
+		await this.citations.ensureConversationSource(chatScope, attachment, data);
 	}
 
 	/** 会话级检索：只考虑本会话 ready 附件的 sources。 */
 	async retrieveForTurn(scope: ConversationScope, query: string, turnId: TurnId): Promise<RetrievalResult> {
+		if (scope.publishedAppId === null) throw new Error("Task contexts do not support Chat attachments");
+		const chatScope = { ...scope, publishedAppId: scope.publishedAppId };
 		const records = await this.repositories.attachments.listReadyByConversation(scope);
 		const sourceIds: string[] = [];
 		for (const record of records) {
-			const source = this.citations.getConversationSourceByAttachment(scope, record.attachmentId);
+			const source = this.citations.getConversationSourceByAttachment(chatScope, record.attachmentId);
 			if (source !== undefined && source.status === "ready") sourceIds.push(source.id);
 		}
 		if (sourceIds.length === 0) return emptyRetrievalResult();
-		return this.citations.retrieveForConversation(scope, { sourceIds, query, turnId });
+		return this.citations.retrieveForConversation(chatScope, { sourceIds, query, turnId });
 	}
 
 	/** 附件删除时移除其 source（scoped，幂等）。 */
 	async removeAttachment(scope: ConversationScope, attachmentId: AttachmentId): Promise<void> {
-		await this.citations.removeConversationSource(scope, attachmentId);
+		if (scope.publishedAppId === null) throw new Error("Task contexts do not support Chat attachments");
+		const chatScope = { ...scope, publishedAppId: scope.publishedAppId };
+		await this.citations.removeConversationSource(chatScope, attachmentId);
 	}
 
 	/** 会话 sources（测试/可观测）。 */
 	listSources(scope: ConversationScope): Source[] {
-		return this.citations.listConversationSources(scope);
+		if (scope.publishedAppId === null) throw new Error("Task contexts do not support Chat attachments");
+		const chatScope = { ...scope, publishedAppId: scope.publishedAppId };
+		return this.citations.listConversationSources(chatScope);
 	}
 }

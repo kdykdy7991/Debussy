@@ -2,7 +2,7 @@ import { type TSchema, Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import type { TranscriptMessage } from "../../types.ts";
-import { fromPublicId, newMcpCallAuditId } from "../domain/ids.ts";
+import { fromPublicId, newMcpCallAuditId, parseIdOrThrow } from "../domain/ids.ts";
 import type { PublishingRepositories } from "../repositories.ts";
 import type { RuntimeSpec } from "../runtime-spec/schema.ts";
 import { McpResourceReferences, mcpResourceToolName, mcpResultContent } from "./resource-content.ts";
@@ -21,6 +21,13 @@ export interface McpRuntimeToolFactoryOptions {
 	readonly secretBox?: McpSecretBox;
 	readonly networkPolicy?: McpNetworkPolicy;
 	readonly onToolsChanged?: () => void;
+	/** Server-only adapter; optional so existing chat/debug tools are unchanged. */
+	readonly protectTool?: (
+		scope: ScopeContext,
+		serverId: string,
+		tool: ToolDefinition,
+		schema: Readonly<Record<string, unknown>>,
+	) => Promise<ToolDefinition>;
 	/** Test seam; production uses the official SDK-backed secure connector. */
 	readonly connect?: typeof connectSecureMcpClient;
 }
@@ -215,7 +222,22 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 								mcpCallAuditId: newMcpCallAuditId(),
 								tenantId: scope.tenantId,
 								conversationId: scope.conversationId,
-								publishedAppVersionId: scope.publishedAppVersionId,
+								publishedAppVersionId:
+									scope.executionSource?.kind === "orchestration"
+										? null
+										: parseIdOrThrow(
+												"PublishedAppVersionId",
+												scope.publishedAppVersionId,
+												"Chat audit version",
+											),
+								integrationId:
+									scope.executionSource && scope.executionSource.kind !== "chat"
+										? scope.executionSource.ownerId
+										: null,
+								orchestrationVersionId:
+									scope.executionSource?.kind === "orchestration"
+										? scope.publishedAppVersionId.slice(4)
+										: null,
 								mcpServerId,
 								mcpRevision: frozenServer.revision,
 								toolName: frozenTool.name,
@@ -232,7 +254,25 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 				});
 			}
 		}
-		return Object.assign(definitions, {
+		const protectedDefinitions =
+			options.protectTool === undefined
+				? definitions
+				: await Promise.all(
+						definitions.map(async (tool) => {
+							const server = spec.capabilities.mcpServers.find((entry) =>
+								entry.tools.some((candidate) => candidate.name === tool.name),
+							);
+							return server === undefined
+								? tool
+								: options.protectTool!(
+										scope,
+										server.mcpServerId,
+										tool,
+										server.tools.find((candidate) => candidate.name === tool.name)!.inputSchema,
+									);
+						}),
+					);
+		return Object.assign(protectedDefinitions, {
 			hydrateResourceReferences: (transcript: readonly TranscriptMessage[]) =>
 				restoreMcpResourceReferences(bindings, transcript),
 		});

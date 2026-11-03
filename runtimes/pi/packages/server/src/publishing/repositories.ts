@@ -58,7 +58,9 @@ export interface TenantScope {
 export interface AppScope extends TenantScope {
 	readonly publishedAppId: PublishedAppId;
 }
-export interface OwnerScope extends AppScope {
+export interface OwnerScope extends TenantScope {
+	readonly publishedAppId: PublishedAppId | null;
+	readonly integrationId?: string;
 	readonly principalId: PrincipalId;
 }
 export interface ConversationScope extends OwnerScope {
@@ -244,6 +246,8 @@ export interface AgentRevisionMcpBindingRecord {
 }
 
 export interface McpCallAuditRecord {
+	readonly integrationId?: string | null;
+	readonly orchestrationVersionId?: string | null;
 	readonly mcpCallAuditId: McpCallAuditId;
 	readonly tenantId: TenantId;
 	readonly conversationId: ConversationId | null;
@@ -399,10 +403,14 @@ export interface PrincipalRecord {
 
 /** Conversation record. */
 export interface ConversationRecord {
+	readonly source?: "chat" | "orchestration";
+	readonly integrationId?: string;
+	readonly orchestrationVersionId?: string;
+	readonly configurationId?: string;
 	readonly conversationId: ConversationId;
 	readonly tenantId: TenantId;
-	readonly publishedAppId: PublishedAppId;
-	readonly publishedAppVersionId: PublishedAppVersionId;
+	readonly publishedAppId: PublishedAppId | null;
+	readonly publishedAppVersionId: PublishedAppVersionId | null;
 	readonly ownerPrincipalId: PrincipalId;
 	readonly title: string;
 	readonly status: ConversationStatus;
@@ -1017,7 +1025,7 @@ export type { Principal, ResourceScope };
 export interface ConversationEventRecord {
 	readonly eventId: ConversationEventId;
 	readonly tenantId: TenantId;
-	readonly publishedAppId: PublishedAppId;
+	readonly publishedAppId: PublishedAppId | null;
 	readonly conversationId: ConversationId;
 	readonly sequence: number;
 	readonly eventType: string;
@@ -1116,7 +1124,7 @@ export interface ConversationEventRepository {
 export interface ConversationSummaryRecord {
 	readonly id: string;
 	readonly tenantId: TenantId;
-	readonly publishedAppId: PublishedAppId;
+	readonly publishedAppId: PublishedAppId | null;
 	readonly ownerPrincipalId: PrincipalId;
 	readonly conversationId: ConversationId;
 	readonly throughSequence: number;

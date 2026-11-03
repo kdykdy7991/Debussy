@@ -15,6 +15,7 @@ export * from "./embed/post-message.ts";
 export * from "./embed/public-http.ts";
 export * from "./embed/realtime.ts";
 export * from "./framing.ts";
+export * from "./orchestration.ts";
 export * from "./publishing/control-http.ts";
 export * from "./schemas.ts";
 export * from "./session-events.ts";

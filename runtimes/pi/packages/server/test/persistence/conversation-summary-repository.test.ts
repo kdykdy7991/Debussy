@@ -162,7 +162,7 @@ function seedConversation(
 	client.conversations.set(id, {
 		id,
 		tenant_id: scope.tenantId,
-		published_app_id: scope.publishedAppId,
+		published_app_id: scope.publishedAppId!,
 		owner_principal_id: scope.principalId,
 		previous_conversation_id: null,
 		next_conversation_id: null,

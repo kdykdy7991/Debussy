@@ -66,6 +66,9 @@ export interface AgentRevisionSummary {
 
 /** Published-user Conversation row for the administrator list; no message body or raw subject is included. */
 export interface ConversationAdminSummary {
+	readonly configurationSource?: "chat" | "orchestration";
+	readonly integrationId?: string;
+	readonly orchestrationVersionId?: string;
 	readonly id: ConversationPublicId;
 	readonly appId: PublishedAppPublicId;
 	readonly publicAppId: PublishedAppLocator;
