@@ -30,13 +30,51 @@ generated_web_token=$(node -p "require(\"node:crypto\").randomBytes(32).toString
 export PI_WEB_TOKEN="${PI_WEB_TOKEN:-$generated_web_token}"
 export VITE_PI_WEB_TOKEN="${VITE_PI_WEB_TOKEN:-$PI_WEB_TOKEN}"
 
+port_open() {
+	node -e "const socket=require('node:net').connect($1, '127.0.0.1'); socket.once('connect', () => { socket.end(); process.exit(0); }); socket.once('error', () => process.exit(1));"
+}
+
+# 端口预检：上一套 dev 栈如果没退干净（常见于只杀掉外层 npm，留下孤儿 vite），
+# 再跑一次 dev:admin 就会变成"新 backend + 旧 vite"的裂脑状态：两次启动各自随机
+# 生成了不同的 PI_WEB_TOKEN，浏览器仍用旧 token 握手，WS 被 401 拒绝，页面只显示
+# "WebSocket transport failed"。这里宁可整体失败，也不要启动半套。
+for occupied_port in "$server_port" "$web_ui_port"; do
+	if port_open "$occupied_port"; then
+		echo "Port ${occupied_port} is already in use: a previous dev stack (backend or vite) is still running." >&2
+		echo "Kill it first, then re-run dev:admin:" >&2
+		echo "  pkill -f 'packages/server/src/web/cli.ts'; pkill -f 'vite --host'" >&2
+		exit 1
+	fi
+done
+
 server_pid=""
 web_pid=""
+
+# `npm run dev` 中间还隔着一层 npm/sh，只 kill 顶层 pid 会留下孤儿 vite 继续占端口，
+# 因此按进程树自底向上收拾子进程。
+kill_tree() {
+	local target="$1" child
+	for child in $(pgrep -P "$target" 2>/dev/null); do
+		kill_tree "$child"
+	done
+	kill "$target" 2>/dev/null || true
+}
+
 cleanup() {
 	trap - INT TERM EXIT
-	if [[ -n "$web_pid" ]]; then kill "$web_pid" 2>/dev/null || true; fi
-	if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; fi
-	wait "$web_pid" "$server_pid" 2>/dev/null || true
+	if [[ -n "$web_pid" ]]; then kill_tree "$web_pid"; fi
+	if [[ -n "$server_pid" ]]; then kill_tree "$server_pid"; fi
+	# 优雅关闭最多等 5 秒，超时强杀：后端 drain 会话时可能长时间不退出。
+	for _ in $(seq 1 50); do
+		still_alive=false
+		if [[ -n "$web_pid" ]] && kill -0 "$web_pid" 2>/dev/null; then still_alive=true; fi
+		if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then still_alive=true; fi
+		if [[ "$still_alive" == "false" ]]; then break; fi
+		sleep 0.1
+	done
+	if [[ -n "$web_pid" ]]; then kill -9 "$web_pid" 2>/dev/null || true; fi
+	if [[ -n "$server_pid" ]]; then kill -9 "$server_pid" 2>/dev/null || true; fi
+	wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
 
