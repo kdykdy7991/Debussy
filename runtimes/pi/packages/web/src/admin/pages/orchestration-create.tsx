@@ -268,15 +268,18 @@ export function OrchestrationCreate({
 							<small>由平台配置，外部调用方不能更改。</small>
 						</label>
 						<label className={styles.field}>
-							系统提示词
+							默认系统提示词
 							<textarea
 								rows={8}
 								maxLength={60000}
 								value={systemPrompt}
 								onChange={(event) => setSystemPrompt(event.target.value)}
-								placeholder="任务规则、分析要求与输出格式"
+								placeholder="默认背景规则；每次请求可通过 prompt 覆盖"
 							/>
-							<small>新 input 请求作为任务消息；旧 prompt 请求在兼容期保留系统提示词覆盖语义。</small>
+							<small>
+								编排提供模型、思考强度、MCP/Skill 等执行能力；外部每次请求通过 prompt
+								提供完整任务规则与数据，并覆盖此默认提示词。input 形式仅作为任务消息，不覆盖。
+							</small>
 						</label>
 
 						<label className={styles.field}>

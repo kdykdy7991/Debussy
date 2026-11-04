@@ -1083,6 +1083,7 @@ export class ConversationService {
 					payload: {
 						ok: true,
 						...(result.usage ? { usage: result.usage } : {}),
+						...(result.llmUsage ? { llmUsage: result.llmUsage } : {}),
 						...(turnMetrics ? { metrics: turnMetrics } : {}),
 					},
 				});

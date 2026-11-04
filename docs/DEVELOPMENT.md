@@ -54,6 +54,41 @@ npm run dev:admin:down
 npm run dev:web
 ```
 
+### 由 systemd 用户单元托管（本机 5176 / 8768）
+
+本机 5176（Web）与 8768（后端）当前由 systemd 用户单元 `pi-dev-stack` 托管，不再来自终端里的前台进程：
+
+```bash
+# 查看状态与日志
+systemctl --user status pi-dev-stack
+journalctl --user -u pi-dev-stack -f
+
+# 重启（等价于重新执行 scripts/start-admin-dev.sh）
+systemctl --user restart pi-dev-stack
+
+# 交回手动管理前先停掉单元，避免两套进程抢端口
+systemctl --user stop pi-dev-stack
+cd runtimes/pi && npm run dev:admin
+```
+
+该单元的等价启动命令：
+
+```bash
+systemd-run --user --unit=pi-dev-stack --collect \
+  --working-directory=/home/hello/workspace/skdy-agent-acceptance/runtimes/pi \
+  --setenv=PATH=/home/hello/.nvm/versions/node/v22.23.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  bash scripts/start-admin-dev.sh
+```
+
+`--setenv=PATH` 必须包含当前 Node（本机为 nvm 安装的 v22.23.2）。systemd 用户环境不会继承交互 shell 的 nvm PATH；缺少时单元会立即失败，日志为 `Unable to determine Node.js version`，端口也不会起来。
+
+注意事项：
+
+- `scripts/start-web-dev.sh` 启动前会预检 8768/5176，端口被占用时直接退出。因此手动 `npm run dev:admin` 前必须先停掉 `pi-dev-stack`，否则会出现端口冲突或“新旧两套服务并存”的裂脑状态。
+- `.env.web.local` 已固定 `PI_WEB_TOKEN`，托管启动会沿用它。绕过启动脚本单独重启 Vite 或后端，容易再次出现 `WebSocket transport failed`。
+- 后端以 `tsx` 前台方式运行、非 watch 模式，修改服务端代码后必须 `systemctl --user restart pi-dev-stack`，仅刷新浏览器不会加载新路由或新投影。
+- 这是当前用户会话下的临时单元；用户会话完全退出后可能停止，需要长期常驻时应另行配置 lingering 或系统级服务。
+
 ## 依赖更新
 
 - 按锁文件完整安装：`npm ci --ignore-scripts`
@@ -127,6 +162,8 @@ git submodule update --init --recursive
 ### 本地服务端口冲突
 
 在 `.env.web.local` 调整 `PI_WEB_UI_PORT`、`PI_WEB_SERVER_PORT`，必要时同时调整 Admin PostgreSQL 和 Redis 端口。修改后完整重启开发环境。
+
+若本机由 `pi-dev-stack` 托管，先 `systemctl --user stop pi-dev-stack` 再改端口并重新启动，避免旧单元继续占用 5176/8768。
 
 ## 代码与文档规则
 

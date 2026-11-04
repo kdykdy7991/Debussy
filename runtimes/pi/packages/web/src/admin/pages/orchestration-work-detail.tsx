@@ -7,7 +7,21 @@ import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 import { OrchestrationDrawer } from "./orchestration-drawer.tsx";
 import styles from "./orchestration-page.module.css";
-import { displayTime, errorMessage, failureMessage, WORK_STATUS } from "./orchestration-ui.ts";
+import {
+	displayTime,
+	errorMessage,
+	externalRefLabel,
+	failureMessage,
+	shortVersion,
+	WORK_STATUS,
+} from "./orchestration-ui.ts";
+
+const CONTRACT_LABELS: Record<string, string> = {
+	input_v1: "input 任务数据（不覆盖系统提示词）",
+	legacy_prompt: "动态 Prompt（覆盖系统提示词）",
+	legacy_input: "早期输入（历史）",
+	orchestration_event: "事件任务（历史）",
+};
 
 export function OrchestrationWorkDetail({
 	api,
@@ -126,7 +140,13 @@ export function OrchestrationWorkDetail({
 		>
 			<div className={styles.detailStatus}>
 				<AuroraPill tone={WORK_STATUS[item.state].tone}>{WORK_STATUS[item.state].label}</AuroraPill>
-				<span>配置 v{item.configurationRevision}</span>
+				<span>接入修订 v{item.configurationRevision}</span>
+				{item.versionId && (
+					<span title={item.versionId}>
+						冻结版本 {shortVersion(item.versionId)}
+						{item.versionId.startsWith("pav_") ? "（历史快照）" : ""}
+					</span>
+				)}
 				<button type="button" className={styles.textButton} onClick={() => setRefresh((previous) => previous + 1)}>
 					刷新详情
 				</button>
@@ -140,6 +160,18 @@ export function OrchestrationWorkDetail({
 				<div>
 					<dt>接入来源</dt>
 					<dd>{sourceName}</dd>
+				</div>
+				<div>
+					<dt>业务标识</dt>
+					<dd>{externalRefLabel(item.externalRef)}</dd>
+				</div>
+				<div>
+					<dt>冻结版本</dt>
+					<dd title={item.versionId ?? undefined}>{item.versionId ? shortVersion(item.versionId) : "—"}</dd>
+				</div>
+				<div>
+					<dt>请求契约</dt>
+					<dd>{(item.requestContract && CONTRACT_LABELS[item.requestContract]) ?? item.requestContract ?? "—"}</dd>
 				</div>
 				<div>
 					<dt>创建时间</dt>
@@ -226,7 +258,7 @@ export function OrchestrationWorkDetail({
 				</ol>
 			</section>
 			<details className={styles.technical}>
-				<summary>工作项标识</summary>
+				<summary>Run 标识（与外部调用返回的 run_id 相同）</summary>
 				<code>{item.id}</code>
 			</details>
 			{dialogs.dialog}

@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AaasRun } from "@earendil-works/pi-protocol";
+import type { AaasRun, AnalysisWorkItem, OrchestrationIntegration } from "@earendil-works/pi-protocol";
 import { createMcpHandler, fromJsonSchema, McpServer } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { ConversationService } from "../../src/embed/conversations/service.ts";
@@ -289,6 +289,98 @@ describe.skipIf(!url)("orchestration with real isolated Postgres and Fake model"
 		await store.cancel(accepted.body.data.workItemId);
 		const listed = await request("/api/admin/v1/orchestration/integrations", "GET", undefined, "Bearer admin-test");
 		expect(JSON.stringify(listed.body)).not.toContain(token);
+	});
+
+	test("admin projections expose run identity, frozen version and server-side filters", async () => {
+		const accepted = await runRequest(
+			`/integrations/${i.id}/runs`,
+			"POST",
+			{ input: { ticket_id: "TK-ADMIN-1" }, external_ref: { type: "ticket", id: "TK-ADMIN-1" } },
+			randomUUID(),
+		);
+		expect(accepted.status).toBe(202);
+		const runId = accepted.body.data.run_id!;
+		const admin = async <T>(path: string): Promise<T> => {
+			const response = await fetch(`${base}${path}`, { headers: { Authorization: "Bearer admin-test" } });
+			return ((await response.json()) as { data: T }).data;
+		};
+		const detail = await admin<AnalysisWorkItem>(`/api/admin/v1/orchestration/work-items/${runId}`);
+		expect(detail).toMatchObject({
+			id: runId,
+			origin: "aaas",
+			externalRef: { type: "ticket", id: "TK-ADMIN-1" },
+			versionId: `pav_${versionId}`,
+			requestContract: "input_v1",
+		});
+		const filtered = await admin<readonly AnalysisWorkItem[]>("/api/admin/v1/orchestration/work-items?q=TK-ADMIN-1");
+		expect(filtered.map((work) => work.id)).toContain(runId);
+		const otherState = detail.state === "queued" ? "succeeded" : "queued";
+		expect(
+			await admin<readonly AnalysisWorkItem[]>(
+				`/api/admin/v1/orchestration/work-items?q=TK-ADMIN-1&state=${otherState}`,
+			),
+		).toEqual([]);
+		const integrations = await admin<readonly OrchestrationIntegration[]>("/api/admin/v1/orchestration/integrations");
+		expect(integrations.find((integration) => integration.id === i.id)).toMatchObject({
+			configurationSource: "legacy_orchestration",
+			chatAppName: "test",
+			versionId: `pav_${versionId}`,
+			legacyVersionId: `pav_${versionId}`,
+		});
+		await store.cancel(runId);
+	});
+
+	test("admin debug runs reuse AaaS acceptance and cannot be forged by external callers", async () => {
+		const prompt = "你是告警研判 Agent，请输出本次结论。";
+		const requestId = randomUUID();
+		const body = { requestId, prompt, credentials: {} };
+		const created = await request(
+			`/api/admin/v1/orchestration/integrations/${i.id}/debug-runs`,
+			"POST",
+			body,
+			"Bearer admin-test",
+		);
+		expect(created.status).toBe(202);
+		const runId = (created.body.data as unknown as { id: string }).id;
+		expect(runId).toBeTruthy();
+		try {
+			const rows = await client.run(
+				"select origin,request_contract,external_ref_type,external_ref_id,task_prompt from orchestration_work_items where id=$1",
+				runId,
+			);
+			expect(rows[0]).toMatchObject({
+				origin: "aaas",
+				request_contract: "legacy_prompt",
+				external_ref_type: "console_debug",
+				external_ref_id: requestId,
+				task_prompt: prompt,
+			});
+			const replay = await request(
+				`/api/admin/v1/orchestration/integrations/${i.id}/debug-runs`,
+				"POST",
+				body,
+				"Bearer admin-test",
+			);
+			expect(replay.status).toBe(202);
+			expect((replay.body.data as unknown as { id: string }).id).toBe(runId);
+			const forged = await runRequest(
+				`/integrations/${i.id}/runs`,
+				"POST",
+				{ prompt, external_ref: { type: "console_debug", id: "forged" } },
+				randomUUID(),
+			);
+			expect(forged.status).toBe(400);
+			expect(forged.body.error?.code).toBe("RESERVED_EXTERNAL_REF_TYPE");
+			const listed = await request(
+				`/api/admin/v1/orchestration/work-items?externalRefType=console_debug`,
+				"GET",
+				undefined,
+				"Bearer admin-test",
+			);
+			expect((listed.body.data as unknown as { id: string }[]).map((row) => row.id)).toContain(runId);
+		} finally {
+			await store.cancel(runId);
+		}
 	});
 
 	test("system credential rotation and disable revoke authentication independently of tool credentials", async () => {

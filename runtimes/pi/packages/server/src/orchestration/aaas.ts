@@ -33,7 +33,7 @@ const requestSchema = z
 	.strict()
 	.refine(
 		(request) => (request.input !== undefined) !== (request.prompt !== undefined),
-		"Provide input or legacy prompt, never both",
+		"Provide prompt or input, never both",
 	);
 
 export async function createRun(
@@ -41,9 +41,16 @@ export async function createRun(
 	integration: IntegrationRecord,
 	key: unknown,
 	body: unknown,
+	options: { readonly internalConsoleDebug?: boolean } = {},
 ) {
 	const eventId = z.string().min(1).max(200).parse(key);
 	const request = requestSchema.parse(body);
+	// The admin console marks its debug runs with a reserved external_ref type.
+	// External callers may not forge it; it is an identifier, never an authorization grant.
+	if (request.external_ref?.type === "console_debug" && options.internalConsoleDebug !== true)
+		throw new OrchestrationError(400, "RESERVED_EXTERNAL_REF_TYPE", "external_ref.type 为管理端保留值");
+	// `legacy_prompt` 是动态 Prompt 契约的持久化标识：外部每次请求提供完整 Prompt 并覆盖系统提示词。
+	// 该值写进 WorkItem 与幂等 hash，历史 Run 依赖它，不能改名；它不是淘汰状态。
 	const contract = request.prompt === undefined ? "input_v1" : "legacy_prompt";
 	const input = request.prompt ?? canonicalJson(request.input);
 	const metadata = request.metadata === undefined ? "" : canonicalJson(request.metadata);
@@ -84,8 +91,6 @@ export async function createRun(
 				: {}),
 		},
 	);
-	if (contract === "legacy_prompt")
-		console.info("AaaS deprecated contract", { integrationId: integration.id, contract });
 	const run = await store.run(accepted.workItemId, integration.id);
 	return { run_id: run.run_id, status: run.status, duplicate: accepted.duplicate };
 }

@@ -210,11 +210,21 @@ export function OrchestrationConfiguration({
 					</p>
 					{original.versionId.startsWith("pav_") && (
 						<>
-							<p>这是历史发布配置。先迁移为独立编排配置，再保存修改。</p>
+							<p>
+								这是历史发布配置
+								{integration.chatAppName ? `，来源 Chat Agent「${integration.chatAppName}」` : ""}
+								。先迁移为独立编排配置，再保存修改。
+							</p>
 							<AuroraButton disabled={busy} onClick={() => void migrate()}>
 								迁移为独立配置
 							</AuroraButton>
 						</>
+					)}
+					{original.versionId.startsWith("orv_") && integration.legacyVersionId && (
+						<p>
+							历史来源：Chat Agent「{integration.chatAppName ?? "未知"}」·
+							<code>{integration.legacyVersionId}</code>（仅溯源，非当前配置来源）
+						</p>
 					)}
 				</div>
 			)}

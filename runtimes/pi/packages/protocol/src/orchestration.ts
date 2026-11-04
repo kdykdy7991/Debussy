@@ -69,11 +69,16 @@ export interface ToolCredentialBinding {
 export interface OrchestrationIntegration {
 	readonly configurationId?: string | null;
 	readonly configurationSource?: "orchestration" | "legacy_orchestration";
+	/** 历史溯源：接入最初来源的 Chat Agent 名称。迁移后仍保留，但不代表当前配置来源。 */
+	readonly chatAppName?: string | null;
+	/** 历史溯源：该接入冻结过的 Chat 发布版本键，格式 pav_ 加 UUID。 */
+	readonly legacyVersionId?: string | null;
 	readonly id: string;
 	readonly name: string;
 	readonly publicAppId: string;
 	readonly enabled: boolean;
 	readonly revision: number;
+	/** 当前生效版本键，始终带命名空间前缀：orv_ 加 UUID（独立编排）或 pav_ 加 UUID（历史快照）。 */
 	readonly versionId: string;
 	readonly allowedModels: readonly string[];
 	readonly bindings: readonly ToolCredentialBinding[];
@@ -117,12 +122,20 @@ export interface AnalysisAssignmentView {
 }
 
 export interface AnalysisWorkItem {
+	/** AaaS Run 标识；与外部调用返回的 run_id 相同。 */
 	readonly id: string;
 	readonly origin: "orchestration" | "aaas";
 	readonly integrationId: string;
 	readonly alarmId: string;
 	readonly state: AnalysisWorkState;
+	/** 接入修订号，不含编排版本语义。 */
 	readonly configurationRevision: number;
+	/** 该 Run 实际冻结的版本键：orv_ 加 UUID 或 pav_ 加 UUID。 */
+	readonly versionId?: string | null;
+	/** 外部业务标识（AaaS external_ref）；历史事件任务为空。 */
+	readonly externalRef?: { readonly type?: string; readonly id: string } | null;
+	/** 接受时冻结的请求契约标识；legacy_prompt 是动态 Prompt 正式契约的历史命名。 */
+	readonly requestContract?: string | null;
 	readonly conversationId: string;
 	readonly createdAt: string;
 	readonly updatedAt: string;

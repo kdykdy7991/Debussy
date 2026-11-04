@@ -19,6 +19,8 @@ export interface IntegrationRecord {
 	tenantId: string;
 	appId: string | null;
 	versionId: string;
+	/** 历史 Chat 发布版本；迁移后仅作溯源，不再作为配置来源。 */
+	publishedVersionId: string | null;
 	configurationId: string | null;
 	revision: number;
 	name: string;
@@ -49,11 +51,20 @@ function integration(row: Record<string, unknown>): IntegrationRecord {
 		appId: row.published_app_id === null ? null : String(row.published_app_id),
 		configurationId: row.configuration_id ? String(row.configuration_id) : null,
 		versionId: String(row.orchestration_version_id ?? row.published_app_version_id),
+		publishedVersionId:
+			row.published_app_version_id === null || row.published_app_version_id === undefined
+				? null
+				: String(row.published_app_version_id),
 		revision: Number(row.revision),
 		name: String(row.name),
 		enabled: row.enabled === true,
 		settings: settingsSchema.parse(row.settings),
 	};
+}
+
+/** 命名空间是版本键的一部分：orv_ 为独立编排，pav_ 为历史 Chat 发布快照。 */
+function versionKey(configurationId: string | null, versionId: string | null): string | null {
+	return versionId === null ? null : `${configurationId ? "orv" : "pav"}_${versionId}`;
 }
 
 const notFound = () => new OrchestrationError(404, "NOT_FOUND", "接入或工作项不存在");
@@ -137,7 +148,7 @@ export class OrchestrationStore {
 
 	async listIntegrations(): Promise<readonly OrchestrationIntegration[]> {
 		const rows = await this.client.run(
-			`select i.*,a.public_app_id from orchestration_integrations i left join published_apps a
+			`select i.*,a.public_app_id,a.name as chat_app_name from orchestration_integrations i left join published_apps a
 		 on a.id=i.published_app_id and a.tenant_id=i.tenant_id where i.tenant_id=$1 order by i.created_at desc`,
 			this.tenantId,
 		);
@@ -147,11 +158,13 @@ export class OrchestrationStore {
 				id: i.id,
 				name: i.name,
 				publicAppId: row.public_app_id ? String(row.public_app_id) : "",
+				chatAppName: row.chat_app_name ? String(row.chat_app_name) : null,
+				legacyVersionId: versionKey(null, i.publishedVersionId),
 				configurationId: i.configurationId,
 				configurationSource: i.configurationId ? "orchestration" : "legacy_orchestration",
 				enabled: i.enabled,
 				revision: i.revision,
-				versionId: i.versionId,
+				versionId: versionKey(i.configurationId, i.versionId) ?? "",
 				allowedModels: i.settings.allowedModels,
 				bindings: i.settings.bindings,
 			};
@@ -185,8 +198,11 @@ export class OrchestrationStore {
 		options: {
 			origin?: "orchestration" | "aaas";
 			requestHash?: string;
+			/** 仅用于早期幂等 hash 版本 1 的重投校验，与动态 Prompt 是否为正式契约无关。 */
 			legacyRequestHash?: string;
+			/** 本次请求的完整 Prompt，覆盖编排版本的 System Prompt。 */
 			taskPrompt?: string;
+			/** 持久化契约标识，`legacy_prompt` 为动态 Prompt 正式契约，沿用历史命名。 */
 			requestContract?: "input_v1" | "legacy_prompt";
 			externalRef?: { type?: string; id: string };
 			metadata?: Record<string, unknown>;
@@ -372,13 +388,26 @@ export class OrchestrationStore {
 		});
 	}
 
-	async listWorkItems(integrationId?: string, alarmId?: string): Promise<readonly AnalysisWorkItem[]> {
+	/** Server-side filter over the newest 100 work items; archive still lives in the business system. */
+	async listWorkItems(
+		integrationId?: string,
+		alarmId?: string,
+		filter: { state?: string; query?: string; externalRefType?: string } = {},
+	): Promise<readonly AnalysisWorkItem[]> {
 		const rows = await this.client.run(
 			`select id from orchestration_work_items where tenant_id=$1
-		and ($2::uuid is null or integration_id=$2) and ($3::text is null or alarm_id=$3) order by created_at desc,id desc limit 100`,
+		and ($2::uuid is null or integration_id=$2) and ($3::text is null or alarm_id=$3)
+		and ($4::text is null or state=$4)
+		and ($5::text is null or position(lower($5) in lower(alarm_id))>0
+			or position(lower($5) in lower(coalesce(external_ref_id,'')))>0 or position(lower($5) in id::text)>0)
+		and ($6::text is null or external_ref_type=$6)
+		order by created_at desc,id desc limit 100`,
 			this.tenantId,
 			integrationId ?? null,
 			alarmId ?? null,
+			filter.state ?? null,
+			filter.query?.trim() ? filter.query.trim() : null,
+			filter.externalRefType ?? null,
 		);
 		return Promise.all(rows.map((row) => this.workItem(String(row.id), integrationId)));
 	}
@@ -409,6 +438,12 @@ export class OrchestrationStore {
 			createdAt: (a.created_at as Date).toISOString(),
 		}));
 		const latest = assignments.filter((a) => a.report !== null).at(-1);
+		const configurationId = row.configuration_id ? String(row.configuration_id) : null;
+		const frozenVersionId = row.orchestration_version_id
+			? String(row.orchestration_version_id)
+			: row.published_app_version_id
+				? String(row.published_app_version_id)
+				: null;
 		return {
 			id,
 			origin: row.origin as AnalysisWorkItem["origin"],
@@ -416,6 +451,14 @@ export class OrchestrationStore {
 			alarmId: String(row.alarm_id),
 			state: row.state as AnalysisWorkItem["state"],
 			configurationRevision: Number(row.configuration_revision),
+			versionId: versionKey(configurationId, frozenVersionId),
+			externalRef: row.external_ref_id
+				? {
+						...(row.external_ref_type ? { type: String(row.external_ref_type) } : {}),
+						id: String(row.external_ref_id),
+					}
+				: null,
+			requestContract: row.request_contract ? String(row.request_contract) : null,
 			conversationId: `conv_${String(row.conversation_id)}`,
 			createdAt: (row.created_at as Date).toISOString(),
 			updatedAt: (row.updated_at as Date).toISOString(),

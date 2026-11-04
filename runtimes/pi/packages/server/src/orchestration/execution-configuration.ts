@@ -67,10 +67,11 @@ export function orchestrationExecutionConfigResolver(
 		const contract = String(work.request_contract);
 		if (!["input_v1", "legacy_prompt", "legacy_input", "orchestration_event"].includes(contract))
 			throw new OrchestrationError(409, "UNKNOWN_REQUEST_CONTRACT", "任务契约无法解释");
-		const legacyPrompt = contract === "legacy_prompt";
-		if (legacyPrompt && typeof work.task_prompt !== "string")
-			throw new OrchestrationError(409, "INVALID_REQUEST_CONTRACT", "历史提示词快照缺失");
-		const effective = legacyPrompt
+		// 动态 Prompt 契约：本次请求的完整 Prompt 覆盖编排版本的 System Prompt，是该 Run 的执行规则。
+		const promptOverride = contract === "legacy_prompt";
+		if (promptOverride && typeof work.task_prompt !== "string")
+			throw new OrchestrationError(409, "INVALID_REQUEST_CONTRACT", "请求提示词快照缺失");
+		const effective = promptOverride
 			? { ...parsed.spec, agent: { ...parsed.spec.agent, systemPrompt: String(work.task_prompt) } }
 			: parsed.spec;
 		return {
@@ -88,7 +89,7 @@ export function orchestrationExecutionConfigResolver(
 				...(independent ? { configurationId: String(work.configuration_id) } : {}),
 				baseRuntimeSpecHash: hash,
 			},
-			...(legacyPrompt ? { text: "执行当前系统提示词指定的任务。" } : {}),
+			...(promptOverride ? { text: "执行当前系统提示词指定的任务。" } : {}),
 		};
 	};
 }

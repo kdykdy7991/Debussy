@@ -97,7 +97,7 @@
 
 实施与验收见 [Agent 编排规格](../development/agent-orchestration-2026-11-02.md)。本扩展不表示 R1/R2 的其他门禁已完成。
 
-2026-11-03 进一步确认 Chat 与编排只共享 Runtime，不共享配置事实或发布生命周期。独立配置域、早期解析器及 input/legacy_prompt 双契约已迁入分支并通过隔离验证，现网部署与真实接入迁移尚未执行，见[迁入记录](../development/orchestration-config-decoupling-design-2026-11-03.md#13-正式迁入记录2026-11-03)。
+2026-11-03 进一步确认 Chat 与编排只共享 Runtime，不共享配置事实或发布生命周期。独立配置域、早期解析器及请求契约分流已迁入分支并通过隔离验证，现网部署与真实接入迁移尚未执行，见[迁入记录](../development/orchestration-config-decoupling-design-2026-11-03.md#13-正式迁入记录2026-11-03)。2026-11-04 确认 AaaS 只有动态任务型 Agent 模式：每次请求提供完整 Prompt 并覆盖系统提示词，为正式支持的契约；`input` 仅为可选任务数据形式，无迁移或下线计划。
 
 ## R3：实时语音与数字人体验（P2）
 

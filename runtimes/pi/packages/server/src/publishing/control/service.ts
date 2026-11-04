@@ -2515,6 +2515,13 @@ export class ControlService {
 			from: input.from,
 			to: input.to,
 		});
+		const orchestration = this.repos.events.summarizeOrchestrationUsage
+			? await this.repos.events.summarizeOrchestrationUsage({
+					scope: { tenantId: input.tenantId },
+					from: input.from,
+					to: input.to,
+				})
+			: undefined;
 		const totals = rows.reduce(
 			(acc, row) => ({
 				inputTokens: acc.inputTokens + row.inputTokens,
@@ -2550,6 +2557,7 @@ export class ControlService {
 					requestCount: row.requestCount,
 				})),
 				bySource: rows.length === 0 ? [] : [{ source: "embed", ...totals }],
+				...(orchestration ? { orchestration } : {}),
 				generatedAt: new Date().toISOString(),
 			},
 		};

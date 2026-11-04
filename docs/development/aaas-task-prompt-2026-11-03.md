@@ -2,7 +2,7 @@
 
 状态：已完成。创建日期：2026-11-03。
 
-本文保留早期 prompt-only 阶段的事实。后续[配置域解耦](./orchestration-config-decoupling-design-2026-11-03.md)已将 input_v1 与 legacy_prompt 分开，覆盖发生在上下文准备之前；现行契约以[接入说明](../../runtimes/pi/docs/aaas-api-integration.md)为准。
+本文保留 prompt-only 阶段的事实。后续[配置域解耦](./orchestration-config-decoupling-design-2026-11-03.md)将 input_v1 与 legacy_prompt 分开，覆盖发生在上下文准备之前。2026-11-04 确认：动态 Prompt（持久化标识 `legacy_prompt`）是正式支持的契约，不是待淘汰的兼容功能；`input` 仅为可选任务数据形式，不作接入方迁移目标。现行契约以[接入说明](../../runtimes/pi/docs/aaas-api-integration.md)为准。
 
 用户确认将任务请求简化为顶层 prompt 字符串，作为本次任务的系统提示词，替换已发布 Agent 的业务系统提示词。模型、思考参数、MCP/工具授权、Skill 和凭据注入继续来自冻结发布版本。返回结果继续为原文字符串。本次覆盖不保存 Draft、不发布、不影响其他任务或普通聊天。
 

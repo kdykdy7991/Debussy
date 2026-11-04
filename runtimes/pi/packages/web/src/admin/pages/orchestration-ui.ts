@@ -23,20 +23,14 @@ export function displayTime(value: string): string {
 export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : "操作未完成，请稍后重试";
 }
-export function workMatches(
-	item: AnalysisWorkItem,
-	query: string,
-	state: string,
-	integration: string,
-	sourceName: string,
-): boolean {
-	return (
-		(!state || item.state === state) &&
-		(!integration || item.integrationId === integration) &&
-		`${item.alarmId} ${item.report ?? ""} ${sourceName}`
-			.toLocaleLowerCase()
-			.includes(query.trim().toLocaleLowerCase())
-	);
+/** 版本键带命名空间前缀；列表里保留前缀并截断尾部，完整值放到 title。 */
+export function shortVersion(versionId: string | null | undefined): string {
+	if (!versionId) return "—";
+	return versionId.length <= 14 ? versionId : `${versionId.slice(0, 14)}…`;
+}
+export function externalRefLabel(ref: AnalysisWorkItem["externalRef"]): string {
+	if (!ref) return "—";
+	return ref.type ? `${ref.type}:${ref.id}` : ref.id;
 }
 export function failureMessage(code: string | null): string {
 	const messages: Record<string, string> = {
@@ -46,7 +40,7 @@ export function failureMessage(code: string | null): string {
 		EXECUTION_FAILED: "分析执行失败，请检查模型或工具服务后重试。",
 		EXECUTION_TIMEOUT: "分析执行超时，可检查工具响应情况后重试。",
 		QUEUE_TIMEOUT: "等待执行的时间过长，可重试原分析。",
-		APP_UNAVAILABLE: "关联 Agent 或接入已停用，请先恢复服务。",
+		APP_UNAVAILABLE: "接入或编排配置已停用，请先恢复服务。",
 	};
 	return code ? (messages[code] ?? "本次分析未完成，请查看执行记录并检查服务状态。") : "";
 }

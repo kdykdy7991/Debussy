@@ -79,6 +79,36 @@ export function createOrchestrationHttp(
 					expected.expected_revision,
 					expected.expected_active_version,
 				);
+			} else if (
+				admin &&
+				parts[0] === "integrations" &&
+				parts.length === 3 &&
+				parts[2] === "debug-runs" &&
+				method === "POST"
+			) {
+				const debug = z
+					.object({
+						requestId: z.string().min(1).max(160),
+						prompt: z.string().min(1).max(48_000),
+						credentials: eventSchema.shape.credentials,
+					})
+					.strict()
+					.parse(body);
+				const current = await service.store.getIntegration(z.string().uuid().parse(parts[1]));
+				const created = await createRun(
+					service.store,
+					current,
+					`console_debug:${debug.requestId}`,
+					{
+						prompt: debug.prompt,
+						credentials: debug.credentials,
+						external_ref: { type: "console_debug", id: debug.requestId },
+						metadata: { source: "admin_console_debug" },
+					},
+					{ internalConsoleDebug: true },
+				);
+				data = await service.store.workItem(created.run_id, current.id);
+				status = 202;
 			} else if (admin && parts[0] === "integrations" && parts.length === 2 && method === "PATCH") {
 				data = await service.store.updateAccess(
 					z.string().uuid().parse(parts[1]),
@@ -105,8 +135,22 @@ export function createOrchestrationHttp(
 				data = await service.store.accept(integration, input);
 				status = 202;
 			} else if (parts[0] === "work-items" && parts.length === 1 && method === "GET") {
-				const query = new URL(request.url!, "http://localhost").searchParams;
-				data = await service.store.listWorkItems(integration?.id, query.get("alarmId") ?? undefined);
+				const params = new URL(request.url!, "http://localhost").searchParams;
+				const requested = admin ? z.string().uuid().safeParse(params.get("integrationId")) : undefined;
+				const state = params.get("state"),
+					q = params.get("q")?.trim(),
+					externalRefType = params.get("externalRefType")?.trim();
+				data = await service.store.listWorkItems(
+					integration?.id ?? (requested?.success ? requested.data : undefined),
+					params.get("alarmId") ?? undefined,
+					{
+						...(state && ["queued", "running", "succeeded", "failed", "cancelled"].includes(state)
+							? { state }
+							: {}),
+						...(q ? { query: q.slice(0, 200) } : {}),
+						...(externalRefType ? { externalRefType: externalRefType.slice(0, 100) } : {}),
+					},
+				);
 			} else if (parts[0] === "work-items" && parts.length === 2 && method === "GET") {
 				data = await service.store.workItem(z.string().uuid().parse(parts[1]), integration?.id);
 			} else if (parts[0] === "work-items" && parts.length === 3 && method === "POST") {

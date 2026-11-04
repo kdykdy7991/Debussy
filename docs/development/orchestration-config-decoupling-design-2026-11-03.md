@@ -2,6 +2,8 @@
 
 状态：实施中（正式代码已迁入，部署与真实业务联调待执行）。创建日期：2026-11-03。
 
+> **2026-11-04 方向更正（覆盖本文 §7～§9 中关于契约淘汰的描述）**：AaaS 已确认只有动态任务型 Agent 模式。外部业务系统每次调用提供完整 `prompt`（分析要求、任务内容、输出要求），按已有覆盖语义作为该 Run 的系统提示词；编排负责 Model、Thinking、MCP、Skill、Runtime 等执行能力。`prompt` 是正式支持的契约，不是待淘汰的兼容功能；没有「把规则迁入编排 System Prompt、接入方切 `input_v1`」的计划，也没有兼容下线日期。实现与执行链路不变，持久化标识 `legacy_prompt` 沿用历史命名。本文其余关于配置域解耦、版本冻结、幂等与归属隔离的结论继续有效。
+
 ## 1. 目标与约束
 
 依据用户确认及 [依赖审计](./orchestration-published-dependency-audit-2026-11-03.md)，编排拥有独立的配置事实与不可变版本，Chat 编辑/发布/停用不改变编排配置或可用性；只共享编译产物与执行能力。
@@ -151,7 +153,7 @@ input 第一版为通用 JSON 对象，保留当前请求体大小/字段隔离�
 | 接受契约 | 固定语义 |
 | --- | --- |
 | input_v1 | 编排版本系统规则 + input 任务消息，不覆盖系统提示词 |
-| legacy_prompt | 兼容窗口内保留旧 prompt 系统覆盖语义，标记 deprecated；只记接入 ID/契约类型等元数据，不记录秘密或完整正文 |
+| legacy_prompt | 动态 Prompt 正式契约：本次请求的完整 Prompt 覆盖编排版本系统提示词；该持久化标识沿用历史命名，不代表淘汰。只记接入 ID/契约类型等元数据，不记录秘密或完整正文 |
 | input 和 prompt 同时提供 | HTTP 400；不设置优先级 |
 
 WorkItem 持久化 request_contract，与 configuration_source 分开；前者决定输入解释，后者决定冻结配置来自编排还是历史发布快照。不能用输入看起来像 JSON 来判定。
@@ -168,7 +170,7 @@ GET 的 agent_version 字段名可继续保留，但新 Run 返回真实编排�
 
 旧排队/执行中任务继续按原冻结来源解释；为读取历史事实可以保留明确的 legacy 分支，但不能读取 Chat 最新版本或用新 input 语义解释它们。Chat 当前 active 状态不应成为任务 gate；确实缺失历史冻结数据时明确失败，不能改绑新版本掩盖缺失。
 
-执行 Token、Integration ID、Run ID 和两个 API 路径保持。双契约窗口在代码启用后才开始，对方完成迁移再约定截止时间；本设计不指定未经确认的下线日期。测试台和主接入指南只推荐 input，含凭据的私有说明在实际上线后同步，不提前把草案当已生效接口。
+执行 Token、Integration ID、Run ID 和两个 API 路径保持。动态 Prompt 为正式契约，无兼容窗口或下线日期；`input` 是平台保留的可选任务数据形式，不覆盖系统提示词，接入方无需切换。含凭据的私有说明在实际上线后同步，不提前把草案当已生效接口。
 
 外部配置页不恢复、不新增外部配置权限。内部旧保存入口要切向编排发布逻辑，不能保留一个仍写 Chat Revision 的旁路。
 
@@ -178,7 +180,7 @@ GET 的 agent_version 字段名可继续保留，但新 Run 返回真实编排�
 2. **编排配置与编译**：独立定义/版本仓库及管理员保存发布，复用编译器、资源目录与凭据治理。断言 Chat 两张修订/发布表零增量。
 3. **提前解析端口与执行来源**：接入 ConversationService 的配置消费起点，连接真实冻结版本、有效 hash、归属 scope、缓存/Skill/审计适配。复用现有 Dispatcher/Runtime。
 4. **Run 契约及存量切换**：input/legacy_prompt 分流与冻结、幂等兼容、历史读取和现有 Integration 显式迁移。
-5. **现有管理页与联调资料**：去掉创建时选择 Chat Agent，显示真实编排版本；测试台使用 input；完善取消/日志入口和统计归属。不做额外 UI 重设计。
+5. **现有管理页与联调资料**：去掉创建时选择 Chat Agent，显示真实编排版本；测试台与接入示例使用动态 prompt；完善取消/日志入口和统计归属。不做额外 UI 重设计。
 
 每步的失败应暴露为可定位错误；不通过退回 Chat 最新配置维持表面成功。第一步如需复制完整执行服务、绕过归属校验或制造 Chat 版本才能通过，应停止扩展并重新缩小/选择适配边界。
 
@@ -247,8 +249,8 @@ GET 的 agent_version 字段名可继续保留，但新 Run 返回真实编排�
 - 较广回归为 19 文件、133 通过/21 失败；两个失败套件是旧 `embed/conversations.test.ts`、`embed/turns.test.ts`。对未修改的 HEAD 使用临时源码副本复跑，确认同名 21 项失败，未改变认证来放行错误测试 Token。另修正已触及 citation 测试的过期夹具：Token 固定真实已发布版本，事件预期使用现有斜杠事件名。
 - `npm run check` 已执行，仍为既有 Biome 16 errors / 16 warnings / 4 infos，后续阶段被短路；独立 tsgo 为既有 9 项错误，未新增诊断。没有修补无关全仓问题。
 
-复现正式专项：在 `runtimes/pi/packages/server` 设置测试数据库变量后运行 `node ../../node_modules/vitest/dist/cli.js --run test/orchestration`。主接入说明已更新为新 input 推荐契约，同时明确旧 prompt 保留兼容且现网尚未切换；含凭据的本机私有交接文件和 8080 测试服务保持原状。
+复现正式专项：在 `runtimes/pi/packages/server` 设置测试数据库变量后运行 `node ../../node_modules/vitest/dist/cli.js --run test/orchestration`。主接入说明以动态 prompt 为正式契约；含凭据的本机私有交接文件和 8080 测试服务保持原状。
 
-尚待上线验证：部署新后端、管理员核对并显式迁移真实 Integration、与接入方约定 input 迁移，再做真实 Qwen/MCP 联调。不自动修改真实工单或重试历史 Run。
+尚待上线验证：部署新后端、管理员核对并显式迁移真实 Integration，再做真实 Qwen/MCP 联调。不要求接入方切换契约，不自动修改真实工单或重试历史 Run。
 
 另行记录本轮只读排查的[两分钟超时问题](./aaas-execution-timeout-2026-11-03.md)：固定 120 秒截止与空成功 Turn 的状态传播没有混入本次配置解耦改造。

@@ -30,8 +30,32 @@ export interface TurnExecutionInput {
 	readonly onProgress?: (progress: TranscriptProgress) => void;
 }
 
+export interface TurnLlmCallUsage {
+	readonly model: string;
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead: number;
+	readonly cacheWrite: number;
+	readonly totalTokens: number;
+}
+
+/** All provider-reported LLM calls of one Turn, collected at the model-call completion boundary. */
+export interface TurnLlmUsage {
+	readonly calls: readonly TurnLlmCallUsage[];
+	readonly total: Omit<TurnLlmCallUsage, "model">;
+	readonly callCount: number;
+	/** True when at least one completed model call had no provider usage. */
+	readonly partial: boolean;
+}
+
 export type TurnExecutionResult =
-	| { readonly ok: true; readonly outputText: string; readonly thinkingText?: string; readonly usage?: Usage }
+	| {
+			readonly ok: true;
+			readonly outputText: string;
+			readonly thinkingText?: string;
+			readonly usage?: Usage;
+			readonly llmUsage?: TurnLlmUsage;
+	  }
 	| { readonly ok: false; readonly error: string };
 
 export type TurnExecutor = ((input: TurnExecutionInput) => Promise<TurnExecutionResult>) & {
@@ -39,23 +63,82 @@ export type TurnExecutor = ((input: TurnExecutionInput) => Promise<TurnExecution
 	cancel?(conversationId: ScopeContext["conversationId"]): Promise<boolean>;
 };
 
+/**
+ * Collect one usage record per completed model call from `item_finished`
+ * progress events. This is the model-call completion boundary: restored
+ * history is injected into the session without emitting progress, so it is
+ * never counted; context compaction cannot remove records already collected;
+ * repeated events for the same message id are de-duplicated.
+ */
+export function createLlmUsageCollector(): {
+	observe(progress: TranscriptProgress): void;
+	result(): TurnLlmUsage | undefined;
+} {
+	const calls = new Map<string, TurnLlmCallUsage>();
+	let partial = false;
+	return {
+		observe(progress) {
+			if (progress.type !== "item_finished") return;
+			const item = progress.item;
+			if (item.role !== "assistant" || item.status !== "complete") return;
+			const completed: AssistantTranscriptItem = item;
+			if (calls.has(completed.id)) return;
+			const usage = completed.usage;
+			if (usage === undefined) {
+				partial = true;
+				return;
+			}
+			calls.set(completed.id, {
+				model: completed.responseModel ?? completed.model.id,
+				input: usage.input,
+				output: usage.output,
+				cacheRead: usage.cacheRead,
+				cacheWrite: usage.cacheWrite,
+				totalTokens: usage.totalTokens,
+			});
+		},
+		result() {
+			if (calls.size === 0 && !partial) return undefined;
+			const values = [...calls.values()];
+			const total = values.reduce(
+				(acc, call) => ({
+					input: acc.input + call.input,
+					output: acc.output + call.output,
+					cacheRead: acc.cacheRead + call.cacheRead,
+					cacheWrite: acc.cacheWrite + call.cacheWrite,
+					totalTokens: acc.totalTokens + call.totalTokens,
+				}),
+				{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+			);
+			return { calls: values, total, callCount: values.length, partial };
+		},
+	};
+}
+
 /** 基于 PiRuntimeAdapter 的默认执行器（open -> prompt -> 提取输出 -> close）。 */
 export function runtimeTurnExecutor(adapter: PiRuntimeAdapter): TurnExecutor {
 	return async ({ scope, spec, text, history, retrieval, onProgress }) => {
 		const opened = await adapter.open(spec, scope);
 		if (!opened.ok) return { ok: false, error: opened.reason };
 		const runtime = opened.runtime;
+		const llmUsage = createLlmUsageCollector();
 		const unsubscribe = runtime.subscribe((event) => {
-			if (event.event.type === "progress") onProgress?.(event.event.progress);
+			if (event.event.type === "progress") {
+				const progress = event.event.progress;
+				onProgress?.(progress);
+				llmUsage.observe(progress);
+			}
 		});
 		try {
 			await runtime.prompt(text, { history, retrieval });
 			const result = lastAssistantResult(runtime.snapshot());
+			const collected = llmUsage.result();
 			return {
 				ok: true,
 				outputText: result.outputText,
 				...(result.thinkingText ? { thinkingText: result.thinkingText } : {}),
 				...(result.usage ? { usage: result.usage } : {}),
+				...(collected ? { llmUsage: collected } : {}),
 			};
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -79,18 +162,25 @@ export function managedTurnExecutor(
 	const execute: TurnExecutor = async ({ scope, spec, text, history, retrieval, onProgress }) => {
 		const acquired = await manager.acquire(spec, scope);
 		const runtime = acquired.runtime;
+		const llmUsage = createLlmUsageCollector();
 		const unsubscribe = runtime.subscribe((event) => {
-			if (event.event.type === "progress") onProgress?.(event.event.progress);
+			if (event.event.type === "progress") {
+				const progress = event.event.progress;
+				onProgress?.(progress);
+				llmUsage.observe(progress);
+			}
 		});
 		try {
 			await beforePrompt?.({ scope, spec, text, history, retrieval, onProgress });
 			await runtime.prompt(text, { history, retrieval });
 			const result = lastAssistantResult(runtime.snapshot());
+			const collected = llmUsage.result();
 			return {
 				ok: true,
 				outputText: result.outputText,
 				...(result.thinkingText ? { thinkingText: result.thinkingText } : {}),
 				...(result.usage ? { usage: result.usage } : {}),
+				...(collected ? { llmUsage: collected } : {}),
 			};
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };

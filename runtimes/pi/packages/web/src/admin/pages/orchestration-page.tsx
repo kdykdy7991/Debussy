@@ -9,14 +9,16 @@ import { useDialogs } from "../components/use-dialogs.tsx";
 import { OrchestrationConfiguration } from "./orchestration-configuration.tsx";
 import { OrchestrationConnection, OrchestrationCredential } from "./orchestration-connection.tsx";
 import { OrchestrationCreate } from "./orchestration-create.tsx";
+import { OrchestrationDebug } from "./orchestration-debug.tsx";
 import styles from "./orchestration-page.module.css";
-import { displayTime, errorMessage, WORK_STATUS, workMatches } from "./orchestration-ui.ts";
+import { displayTime, errorMessage, externalRefLabel, shortVersion, WORK_STATUS } from "./orchestration-ui.ts";
 import { OrchestrationWorkDetail } from "./orchestration-work-detail.tsx";
 
 type Panel =
 	| { kind: "create" }
 	| { kind: "configuration" | "connection"; integration: OrchestrationIntegration }
 	| { kind: "work"; item: AnalysisWorkItem }
+	| { kind: "debug"; integrationId?: string }
 	| { kind: "credential"; name: string; token: string };
 
 export function AdminOrchestrationPage(): React.JSX.Element {
@@ -40,6 +42,11 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 		[source, setSource] = useState(""),
 		[panel, setPanel] = useState<Panel | null>(null),
 		[notice, setNotice] = useState("");
+	/** 服务端查询结果；为空表示当前无筛选，直接使用最近 100 条。 */
+	const [results, setResults] = useState<readonly AnalysisWorkItem[] | null>(null),
+		[searching, setSearching] = useState(false),
+		[searchNonce, setSearchNonce] = useState(0),
+		[debugRuns, setDebugRuns] = useState<readonly AnalysisWorkItem[]>([]);
 	const loadSequence = useRef(0);
 	const load = useCallback(
 		async (signal?: AbortSignal) => {
@@ -69,6 +76,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 			if (pending) return;
 			pending = true;
 			await load(abort.signal);
+			setSearchNonce((value) => value + 1);
 			pending = false;
 		};
 		void refresh();
@@ -107,6 +115,71 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 		const timer = setTimeout(() => setNotice(""), 6000);
 		return () => clearTimeout(timer);
 	}, [notice]);
+	// 筛选结果由服务端查询，避免只在最近 100 条里做前端过滤。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: searchNonce forces the periodic refresh of the filtered query.
+	useEffect(() => {
+		if (tab !== "work") {
+			setResults(null);
+			return;
+		}
+		const text = query.trim();
+		if (!text && !state && !source) {
+			setResults(null);
+			setSearching(false);
+			return;
+		}
+		const abort = new AbortController();
+		const timer = setTimeout(() => {
+			const params = new URLSearchParams();
+			if (text) params.set("q", text);
+			if (state) params.set("state", state);
+			if (source) params.set("integrationId", source);
+			setSearching(true);
+			void api
+				.request<readonly AnalysisWorkItem[]>(`work-items?${params.toString()}`, "GET", undefined, abort.signal)
+				.then(
+					(items) => {
+						if (!abort.signal.aborted) setResults(items);
+					},
+					(e) => {
+						if (!abort.signal.aborted) setError(errorMessage(e));
+					},
+				)
+				.finally(() => {
+					if (!abort.signal.aborted) setSearching(false);
+				});
+		}, 300);
+		return () => {
+			clearTimeout(timer);
+			abort.abort();
+		};
+	}, [api, tab, query, state, source, searchNonce]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: searchNonce forces the periodic refresh of the debug run list.
+	useEffect(() => {
+		if (tab !== "debugRuns") return;
+		const abort = new AbortController();
+		const loadDebug = async () => {
+			try {
+				const items = await api.request<readonly AnalysisWorkItem[]>(
+					"work-items?externalRefType=console_debug",
+					"GET",
+					undefined,
+					abort.signal,
+				);
+				if (!abort.signal.aborted) setDebugRuns(items);
+			} catch (e) {
+				if (!abort.signal.aborted) setError(errorMessage(e));
+			}
+		};
+		void loadDebug();
+		const timer = setInterval(() => {
+			if (document.visibilityState === "visible") void loadDebug();
+		}, 5000);
+		return () => {
+			abort.abort();
+			clearInterval(timer);
+		};
+	}, [api, tab, searchNonce]);
 	const integrations = data?.integrations ?? [],
 		work = data?.work ?? [];
 	const sourceName = (id: string) => integrations.find((i) => i.id === id)?.name ?? "未知接入";
@@ -116,7 +189,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 		setState("");
 		setSource("");
 	};
-	const filteredWork = work.filter((w) => workMatches(w, query, state, source, sourceName(w.integrationId)));
+	const filteredWork = tab === "debugRuns" ? debugRuns : (results ?? work);
 	const filteredIntegrations = integrations.filter(
 		(i) =>
 			(!state || (state === "enabled") === i.enabled) &&
@@ -151,6 +224,29 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 			setBusy(false);
 		}
 	};
+	const migrate = async (i: OrchestrationIntegration) => {
+		if (
+			!(await dialogs.confirm(
+				`将 Chat Agent「${i.chatAppName ?? "历史发布"}」的冻结快照复制为独立编排配置。接入 ID、调用凭据和已有 Run 均保持不变。`,
+				{ title: "迁移为独立编排配置？", confirmLabel: "迁移为独立配置" },
+			))
+		)
+			return;
+		setBusy(true);
+		setError(null);
+		try {
+			await api.request(`integrations/${i.id}/migrate`, "POST", {
+				expected_revision: i.revision,
+				expected_active_version: i.versionId,
+			});
+			setNotice("已迁移为独立编排配置，新任务将使用独立版本");
+			await load();
+		} catch (e) {
+			setError(errorMessage(e));
+		} finally {
+			setBusy(false);
+		}
+	};
 	return (
 		<section className={styles.page} aria-label="Agent 编排">
 			<AuroraPageHeader
@@ -161,6 +257,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 						<AuroraButton disabled={refreshing} onClick={() => void load()}>
 							{refreshing ? "正在刷新…" : "刷新"}
 						</AuroraButton>
+						<AuroraButton onClick={() => setPanel({ kind: "debug" })}>动态任务调试</AuroraButton>
 						<AuroraButton variant="primary" onClick={() => setPanel({ kind: "create" })}>
 							新建接入
 						</AuroraButton>
@@ -216,13 +313,16 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 						onKeyDown={(event) => {
 							if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 							event.preventDefault();
-							const next = tab === "work" ? "integrations" : "work";
+							const order = ["work", "debugRuns", "integrations"];
+							const index = order.indexOf(tab);
+							const next = order[(index + (event.key === "ArrowRight" ? 1 : order.length - 1)) % order.length]!;
 							switchTab(next);
 							document.getElementById(`orchestration-tab-${next}`)?.focus();
 						}}
 					>
 						{[
 							["work", "分析工作项", work.length],
+							["debugRuns", "调试记录", debugRuns.length],
 							["integrations", "接入系统", integrations.length],
 						].map(([key, label, count]) => (
 							<button
@@ -250,13 +350,31 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 							<label className={styles.search}>
 								<span>搜索</span>
 								<input
-									aria-label={tab === "work" ? "搜索告警或结论" : "搜索接入系统"}
-									placeholder={tab === "work" ? "搜索告警、结论或接入名称" : "搜索接入名称或配置 ID"}
+									disabled={tab === "debugRuns"}
+									aria-label={
+										tab === "integrations"
+											? "搜索接入系统"
+											: tab === "debugRuns"
+												? "调试记录由服务端按保留类型筛选"
+												: "搜索告警、业务标识或 Run ID"
+									}
+									placeholder={
+										tab === "integrations"
+											? "搜索接入名称或配置 ID"
+											: tab === "debugRuns"
+												? "调试记录（服务端筛选）"
+												: "搜索告警、业务标识或 Run ID"
+									}
 									value={query}
 									onChange={(event) => setQuery(event.target.value)}
 								/>
 							</label>
-							<select aria-label="筛选状态" value={state} onChange={(event) => setState(event.target.value)}>
+							<select
+								aria-label="筛选状态"
+								value={state}
+								disabled={tab === "debugRuns"}
+								onChange={(event) => setState(event.target.value)}
+							>
 								<option value="">全部状态</option>
 								{tab === "work" ? (
 									Object.entries(WORK_STATUS).map(([key, value]) => (
@@ -264,12 +382,12 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 											{value.label}
 										</option>
 									))
-								) : (
+								) : tab === "integrations" ? (
 									<>
 										<option value="enabled">已启用</option>
 										<option value="disabled">已停用</option>
 									</>
-								)}
+								) : null}
 							</select>
 							{tab === "work" && (
 								<select
@@ -298,9 +416,11 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 									清除筛选
 								</button>
 							)}
-							<span className={styles.toolbarHint}>{refreshing ? "正在同步" : "每 5 秒自动更新"}</span>
+							<span className={styles.toolbarHint}>
+								{searching ? "正在查询…" : refreshing ? "正在同步" : "每 5 秒自动更新"}
+							</span>
 						</div>
-						{tab === "work" ? (
+						{tab === "work" || tab === "debugRuns" ? (
 							filteredWork.length ? (
 								<div className={styles.tableScroll}>
 									<table className={styles.table}>
@@ -309,7 +429,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 												<th>告警 / 分析结论</th>
 												<th>接入来源</th>
 												<th>状态</th>
-												<th>配置</th>
+												<th>冻结版本</th>
 												<th>最近更新</th>
 												<th>
 													<span className={styles.srOnly}>操作</span>
@@ -327,6 +447,11 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 														>
 															{w.alarmId}
 														</button>
+														{w.externalRef && (
+															<p className={styles.rowDescription}>
+																业务标识 {externalRefLabel(w.externalRef)}
+															</p>
+														)}
 														<p className={styles.rowDescription}>
 															{w.report?.slice(0, 200) ??
 																(w.state === "failed"
@@ -341,7 +466,14 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 														</AuroraPill>
 													</td>
 													<td>
-														<span className={styles.version}>v{w.configurationRevision}</span>
+														{w.versionId ? (
+															<span className={styles.version} title={w.versionId}>
+																{w.versionId.startsWith("pav_") ? "历史 " : ""}
+																{shortVersion(w.versionId)}
+															</span>
+														) : (
+															<span className={styles.version}>v{w.configurationRevision}</span>
+														)}
 													</td>
 													<td className={styles.time}>{displayTime(w.updatedAt)}</td>
 													<td>
@@ -386,7 +518,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 											<th>接入系统</th>
 											<th>配置来源</th>
 											<th>状态</th>
-											<th>生效配置</th>
+											<th>接入修订</th>
 											<th>操作</th>
 										</tr>
 									</thead>
@@ -405,7 +537,23 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 														{i.bindings.length} 条工具凭据映射 · {i.allowedModels.length} 个开放模型
 													</p>
 												</td>
-												<td>{i.configurationId ? "独立编排配置" : "历史发布快照（待迁移）"}</td>
+												<td>
+													{i.configurationSource === "orchestration"
+														? "独立编排配置"
+														: "历史发布快照（待迁移）"}
+													{i.chatAppName ? (
+														<p className={styles.rowDescription}>
+															{i.configurationSource === "orchestration" ? "历史溯源" : "来源"}：Chat
+															Agent「
+															{i.chatAppName}」
+															{i.legacyVersionId ? ` · ${shortVersion(i.legacyVersionId)}` : ""}
+														</p>
+													) : i.legacyVersionId ? (
+														<p className={styles.rowDescription}>
+															历史版本 {shortVersion(i.legacyVersionId)}
+														</p>
+													) : null}
+												</td>
 												<td>
 													<AuroraPill tone={i.enabled ? "green" : "neutral"}>
 														{i.enabled ? "已启用" : "已停用"}
@@ -428,6 +576,13 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 														>
 															接入说明
 														</AuroraButton>
+														<AuroraButton
+															size="sm"
+															disabled={!i.enabled}
+															onClick={() => setPanel({ kind: "debug", integrationId: i.id })}
+														>
+															调试此接入
+														</AuroraButton>
 														<details className={styles.menu}>
 															<summary aria-label={`${i.name}的更多操作`}>•••</summary>
 															<div>
@@ -445,6 +600,15 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 																>
 																	重新签发凭据
 																</button>
+																{i.configurationSource !== "orchestration" && (
+																	<button
+																		type="button"
+																		disabled={busy}
+																		onClick={() => void migrate(i)}
+																	>
+																		迁移为独立配置
+																	</button>
+																)}
 															</div>
 														</details>
 													</div>
@@ -467,10 +631,18 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 						<footer className={styles.listFooter}>
 							<span>
 								{tab === "work"
-									? `显示 ${filteredWork.length} 个工作项 · 统计范围为最近 100 项`
-									: `共 ${filteredIntegrations.length} 个接入系统`}
+									? results
+										? `匹配 ${results.length} 项 · 服务端查询，最多返回最近 100 条`
+										: `显示 ${work.length} 个工作项 · 统计范围为最近 100 项`
+									: tab === "debugRuns"
+										? `共 ${debugRuns.length} 条调试 Run · 服务端按保留类型筛选`
+										: `共 ${filteredIntegrations.length} 个接入系统`}
 							</span>
-							<span>{tab === "work" ? "点击告警查看报告与执行记录" : "接入凭据由业务系统后端保存"}</span>
+							<span>
+								{tab === "work" || tab === "debugRuns"
+									? "点击任务查看报告与执行记录"
+									: "接入凭据由业务系统后端保存"}
+							</span>
 						</footer>
 					</section>
 				</>
@@ -517,6 +689,18 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 					sourceName={sourceName(panel.item.integrationId)}
 					onClose={() => setPanel(null)}
 					onChanged={() => void load()}
+				/>
+			)}
+			{panel?.kind === "debug" && (
+				<OrchestrationDebug
+					api={api}
+					integrations={integrations}
+					initialIntegrationId={panel.integrationId}
+					onClose={() => setPanel(null)}
+					onOpenRun={(item) => {
+						setPanel({ kind: "work", item });
+						void load();
+					}}
 				/>
 			)}
 			{dialogs.dialog}

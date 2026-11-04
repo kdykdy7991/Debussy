@@ -14,7 +14,7 @@
 ### Added
 
 - Added independent orchestration configuration/immutable version storage and an early execution configuration resolver. Task execution no longer requires Chat publication rows, shares the existing Runtime, and preserves frozen versions and original request semantics for historical work.
-- Added JSON `input` tasks alongside deprecated `prompt` system overrides; requests must select exactly one contract. Persisted contract-aware idempotency retains original hashes for historical replays.
+- Added optional JSON `input` task messages alongside the dynamic `prompt` system prompt override, which is the formally supported AaaS contract; requests must select exactly one. Persisted contract-aware idempotency retains original hashes for historical replays.
 - Added explicit Integration ownership for task contexts, events and summaries, version-separated Skill/cache identities, and task-specific MCP audit attribution.
 - Added external configuration drafts, immutable publication through the existing compiler, dual revision/version concurrency checks, independently scoped view/edit/publish grants, field allowlists and a short-session embedded configuration page.
 - Added thin AaaS Run create/query APIs over orchestration, with JSON inputs, idempotent requests, pinned versions and durable origin guards against legacy supplement/retry mutations.
