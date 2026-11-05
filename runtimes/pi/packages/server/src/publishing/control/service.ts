@@ -2522,6 +2522,13 @@ export class ControlService {
 					to: input.to,
 				})
 			: undefined;
+		const chat = this.repos.events.summarizeChatUsageView
+			? await this.repos.events.summarizeChatUsageView({
+					scope: { tenantId: input.tenantId },
+					from: input.from,
+					to: input.to,
+				})
+			: undefined;
 		const totals = rows.reduce(
 			(acc, row) => ({
 				inputTokens: acc.inputTokens + row.inputTokens,
@@ -2558,6 +2565,7 @@ export class ControlService {
 				})),
 				bySource: rows.length === 0 ? [] : [{ source: "embed", ...totals }],
 				...(orchestration ? { orchestration } : {}),
+				...(chat ? { chat } : {}),
 				generatedAt: new Date().toISOString(),
 			},
 		};
@@ -2794,6 +2802,7 @@ export class ControlService {
 		const ownerScope = {
 			tenantId: row.tenantId,
 			publishedAppId: row.publishedAppId,
+			...(row.integrationId ? { integrationId: row.integrationId } : {}),
 			principalId: row.ownerPrincipalId,
 		};
 		const latest = await this.repos.summaries.getLatest(ownerScope, row.conversationId);
@@ -3048,6 +3057,7 @@ export class ControlService {
 		const ownerScope = {
 			tenantId: row.tenantId,
 			publishedAppId: row.publishedAppId,
+			...(row.integrationId ? { integrationId: row.integrationId } : {}),
 			principalId: row.ownerPrincipalId,
 		};
 		const summaries = await this.repos.summaries.list(ownerScope, row.conversationId);

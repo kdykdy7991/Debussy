@@ -19,3 +19,4 @@ export * from "./orchestration.ts";
 export * from "./publishing/control-http.ts";
 export * from "./schemas.ts";
 export * from "./session-events.ts";
+export * from "./usage-view.ts";

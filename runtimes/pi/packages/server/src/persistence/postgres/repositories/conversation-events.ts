@@ -11,10 +11,13 @@
  * Every read embeds the full ownership scope; a bare event-id lookup is
  * impossible.
  */
-import type {
-	AdminOrchestrationRunRow,
-	AdminOrchestrationUsage,
-	AdminOrchestrationUsageRow,
+import {
+	type AdminOrchestrationRunRow,
+	type AdminOrchestrationUsage,
+	type AdminOrchestrationUsageRow,
+	type AdminUsageRunRow,
+	type AdminUsageViewStats,
+	buildUsageViewStats,
 } from "@earendil-works/pi-protocol";
 import {
 	type AgentDefinitionId,
@@ -24,6 +27,7 @@ import {
 	type PublishedAppId,
 	type TenantId,
 	type TurnId,
+	toPublicId,
 } from "../../../publishing/domain/ids.ts";
 import type {
 	AdminConversationEventListParams,
@@ -240,7 +244,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 		async summarizeOrchestrationUsage(input): Promise<AdminOrchestrationUsage> {
 			const rows = await client.run(
 				`select w.id as run_id, w.integration_id, i.name as integration_name,
-				        w.state, w.created_at,
+				        w.state, w.created_at, w.conversation_id,
 				        case when w.orchestration_version_id is not null
 				                  then 'orv_' || w.orchestration_version_id::text
 				             when w.published_app_version_id is not null
@@ -318,6 +322,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 			}
 			const groups = new Map<string, Group>();
 			const recentRuns: AdminOrchestrationRunRow[] = [];
+			const viewRuns: AdminUsageRunRow[] = [];
 			for (const row of rows) {
 				const integrationId = String(row.integration_id);
 				const turnCount = numberOrZero(row.turn_count);
@@ -365,17 +370,35 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				} else {
 					group.noUsageRuns += 1;
 				}
+				const createdAt = new Date(String(row.created_at)).toISOString();
+				const accurateTokens = complete ? numberOrZero(row.total_tokens) : null;
+				const accurateLlmCallCount = complete ? numberOrZero(row.llm_calls) : null;
+				viewRuns.push({
+					id: String(row.run_id),
+					groupId: integrationId,
+					groupName: String(row.integration_name),
+					state,
+					createdAt,
+					model,
+					versionId,
+					tokenCoverage: coverage,
+					accurateTokens,
+					partialTokens: coverage === "partial" ? numberOrZero(row.legacy_tokens) : 0,
+					accurateLlmCallCount,
+					durationMs: elapsed,
+					conversationId: toPublicId("ConversationId", String(row.conversation_id) as ConversationId),
+				});
 				if (recentRuns.length < 50) {
 					recentRuns.push({
 						runId: String(row.run_id),
 						integrationId,
 						state,
-						createdAt: new Date(String(row.created_at)).toISOString(),
+						createdAt,
 						model,
 						versionId,
 						tokenCoverage: coverage,
-						totalTokens: complete ? numberOrZero(row.total_tokens) : 0,
-						llmCallCount: complete ? numberOrZero(row.llm_calls) : 0,
+						totalTokens: accurateTokens ?? 0,
+						llmCallCount: accurateLlmCallCount ?? 0,
 						durationMs: elapsed,
 					});
 				}
@@ -427,7 +450,90 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					...totals,
 					note: "仅统计 turn/end 中带完整 llmUsage（本 Run 每次 LLM 调用均有 provider usage）的 Run；历史仅保存最后一次调用 usage 的 Run 标为 partial，单独列示，不计入准确总量。",
 				},
+				view: buildUsageViewStats({
+					runs: viewRuns,
+					from: input.from.toISOString(),
+					to: input.to.toISOString(),
+				}),
 			};
+		},
+		/**
+		 * Chat Agent view: one row per non-orchestration `turn/end`. Complete rows
+		 * take `llmUsage.total`; legacy single-call `usage` stays in `partialTokens`
+		 * and is never presented as an accurate total. Uses the same exclusion
+		 * predicates as `summarizeUsage`, so the two views never mix calibers.
+		 */
+		async summarizeChatUsageView(input): Promise<AdminUsageViewStats> {
+			const rows = await client.run(
+				`select e.id as event_id, e.turn_id, e.conversation_id, e.created_at,
+				        pa.agent_definition_id as group_id,
+				        coalesce(ad.name, pa.name) as group_name,
+				        s.payload->>'model' as model,
+				        jsonb_typeof(e.payload->'llmUsage') as llm_usage_kind,
+				        e.payload->'llmUsage'->>'partial' as llm_partial,
+				        (e.payload->'llmUsage'->'total'->>'totalTokens')::bigint as accurate_tokens,
+				        (e.payload->'llmUsage'->>'callCount')::bigint as llm_calls,
+				        (e.payload->'usage'->>'totalTokens')::bigint as legacy_tokens
+				 from conversation_events e
+				 join conversations c
+				   on c.id = e.conversation_id and c.published_app_id is not distinct from e.published_app_id and c.integration_id is not distinct from e.integration_id and c.tenant_id=e.tenant_id
+				 join published_app_versions pav on pav.id = c.published_app_version_id
+				 join published_apps pa on pa.id = c.published_app_id
+				 left join agent_definitions ad
+				   on ad.id = pa.agent_definition_id and ad.revision = pav.source_agent_revision
+				 left join lateral (
+				   select payload from conversation_events x
+				   where x.tenant_id=e.tenant_id and x.conversation_id=e.conversation_id
+				     and x.turn_id is not distinct from e.turn_id and x.event_type='turn/start'
+				   order by x.sequence asc limit 1
+				 ) s on true
+				 where e.tenant_id = $1
+				   and e.event_type = 'turn/end'
+				   and e.created_at >= $2 and e.created_at < $3
+				   and e.source is distinct from 'orchestration'
+				   and not exists (
+				     select 1 from orchestration_work_items w
+				     where w.tenant_id = e.tenant_id and w.conversation_id = e.conversation_id
+				   )
+				 order by e.created_at desc, e.id desc`,
+				input.scope.tenantId,
+				input.from,
+				input.to,
+			);
+			const numberOrZero = (value: unknown): number => {
+				const parsed = Number(value ?? 0);
+				return Number.isFinite(parsed) ? parsed : 0;
+			};
+			const runs: AdminUsageRunRow[] = rows.map((row) => {
+				const complete = row.llm_usage_kind === "object" && row.llm_partial === "false";
+				const hasLegacyUsage = row.legacy_tokens !== null && row.legacy_tokens !== undefined;
+				const coverage: AdminUsageRunRow["tokenCoverage"] = complete
+					? "complete"
+					: hasLegacyUsage || row.llm_usage_kind === "object"
+						? "partial"
+						: "none";
+				return {
+					id: String(row.turn_id ?? row.event_id),
+					groupId: String(row.group_id),
+					groupName: String(row.group_name),
+					state: null,
+					createdAt: new Date(String(row.created_at)).toISOString(),
+					model:
+						row.model === null || row.model === undefined || String(row.model) === "" ? null : String(row.model),
+					versionId: null,
+					tokenCoverage: coverage,
+					accurateTokens: complete ? numberOrZero(row.accurate_tokens) : null,
+					partialTokens: complete ? 0 : numberOrZero(row.legacy_tokens),
+					accurateLlmCallCount: complete ? numberOrZero(row.llm_calls) : null,
+					durationMs: null,
+					conversationId: toPublicId("ConversationId", String(row.conversation_id) as ConversationId),
+				};
+			});
+			return buildUsageViewStats({
+				runs,
+				from: input.from.toISOString(),
+				to: input.to.toISOString(),
+			});
 		},
 	};
 }

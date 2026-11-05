@@ -11,7 +11,7 @@
  * indistinguishable from a missing resource (no ID enumeration).
  */
 
-import type { AdminOrchestrationUsage, ReasoningEffort } from "@earendil-works/pi-protocol";
+import type { AdminOrchestrationUsage, AdminUsageViewStats, ReasoningEffort } from "@earendil-works/pi-protocol";
 import type {
 	AgentDefinitionId,
 	AttachmentId,
@@ -1121,6 +1121,16 @@ export interface ConversationEventRepository {
 		readonly from: Date;
 		readonly to: Date;
 	}): Promise<AdminOrchestrationUsage>;
+	/**
+	 * Chat Agent view: real per-turn rows for the same bounded period, using
+	 * the identical orchestration-exclusion predicates as `summarizeUsage`.
+	 * Optional so repositories built before this view stay usable.
+	 */
+	summarizeChatUsageView?(input: {
+		readonly scope: TenantScope;
+		readonly from: Date;
+		readonly to: Date;
+	}): Promise<AdminUsageViewStats>;
 	/**
 	 * WB-006: tenant-scoped admin listing (cross-owner). The query joins
 	 * `conversations` to enforce `(tenant, app, conversation)` scope and

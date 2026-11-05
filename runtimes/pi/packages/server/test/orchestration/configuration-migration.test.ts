@@ -150,7 +150,10 @@ test.skipIf(!url)(
 			const before0028 = await client.run(
 				"select w.*,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
 			);
-			expect((await runMigrations(client)).applied).toEqual(["0028_aaas_business_context.sql"]);
+			expect((await runMigrations(client)).applied).toEqual([
+				"0028_aaas_business_context.sql",
+				"0029_usage_view_aggregation.sql",
+			]);
 			const after0028 = await client.run(
 				"select w.*,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
 			);

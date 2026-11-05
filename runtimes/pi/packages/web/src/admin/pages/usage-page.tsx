@@ -1,33 +1,178 @@
-import type { AdminOrchestrationUsage, AdminUsageSummary } from "@earendil-works/pi-protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type AdminUsageRunRow,
+	type AdminUsageSummary,
+	type AdminUsageViewStats,
+	type AnalysisWorkItem,
+	buildUsageViewStats,
+	UNKNOWN_MODEL_LABEL,
+} from "@earendil-works/pi-protocol";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { OrchestrationApi } from "../api/orchestration-api.ts";
 import { UsageApi } from "../api/usage-api.ts";
 import { AuroraButton } from "../aurora/Button.tsx";
 import { AuroraPageHeader } from "../aurora/PageHeader.tsx";
+import { AuroraPillTabs } from "../aurora/PillTabs.tsx";
+import { AuroraSearchBox } from "../aurora/SearchBox.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { navigate } from "../router.ts";
+import { errorMessage, WORK_STATUS } from "./orchestration-ui.ts";
+import { OrchestrationWorkDetail } from "./orchestration-work-detail.tsx";
+import {
+	downloadCsv,
+	EMPTY_FILTERS,
+	filterUsageRuns,
+	formatCompact,
+	formatCoveragePercent,
+	formatRunTime,
+	shortId,
+	sortUsageRuns,
+	type UsageFilters,
+	type UsageSort,
+	type UsageSortKey,
+	type UsageTab,
+	usageCsv,
+} from "./usage-format.ts";
 import styles from "./usage-page.module.css";
+import {
+	OPTIONAL_COLUMNS,
+	type OptionalColumn,
+	UsageColumnsMenu,
+	type UsageFilterOption,
+	UsageFilterSelect,
+	UsageGroupTable,
+	UsageHint,
+	type UsageMetricItem,
+	UsageMetrics,
+	UsagePagination,
+	UsageRunsTable,
+	UsageTabs,
+	UsageTrend,
+	UsageViewStatsEmpty,
+} from "./usage-view.tsx";
 
+type UsageKind = "orchestration" | "chat";
 type UsageState =
 	| { readonly kind: "loading" }
 	| { readonly kind: "loaded"; readonly summary: AdminUsageSummary }
 	| { readonly kind: "error"; readonly message: string };
+type DetailState =
+	| { readonly kind: "loading"; readonly runId: string }
+	| { readonly kind: "loaded"; readonly item: AnalysisWorkItem; readonly sourceName: string }
+	| { readonly kind: "error"; readonly runId: string; readonly message: string };
 
-const NUMBER = new Intl.NumberFormat("zh-CN");
+const PAGE_SIZE = 10;
+const DEFAULT_COLUMNS: readonly OptionalColumn[] = ["state", "model"];
+
+const REFRESH_ICON = (
+	<svg
+		viewBox="0 0 16 16"
+		width="14"
+		height="14"
+		fill="none"
+		stroke="currentColor"
+		strokeWidth="1.5"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		aria-hidden="true"
+	>
+		<path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.8M13.4 2.6v2.9h-2.9" />
+	</svg>
+);
+const EXPORT_ICON = (
+	<svg
+		viewBox="0 0 16 16"
+		width="14"
+		height="14"
+		fill="none"
+		stroke="currentColor"
+		strokeWidth="1.5"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		aria-hidden="true"
+	>
+		<path d="M8 2v8m0 0 2.8-2.8M8 10 5.2 7.2M2.6 11.2v2.2h10.8v-2.2" />
+	</svg>
+);
+
+function periodForDays(days: number): { from: Date; to: Date } {
+	const to = new Date();
+	const from = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate() - (days - 1)));
+	return { from, to };
+}
+
+function metricItems(kind: UsageKind, coverage: AdminUsageViewStats["coverage"]): readonly UsageMetricItem[] {
+	const isRun = kind === "orchestration";
+	return [
+		{
+			id: "runs",
+			label: isRun ? "编排 Run 数" : "请求数",
+			hint: isRun
+				? "统计周期内创建的编排 Run 总数，含排队中、执行中、成功、失败与取消；不含 Chat Agent 请求。"
+				: "统计周期内已结束的 Chat Agent Turn 数（turn/end 事件），不含编排 Run。",
+			value: formatCompact(coverage.runCount),
+			icon: "run",
+		},
+		{
+			id: "tokens",
+			label: "准确 Token",
+			hint: "仅累加每次 LLM 调用都有完整 provider usage 的记录；历史部分 Token 与无 usage 记录不计入，也不会用 0 代替。",
+			value: formatCompact(coverage.accurateTokens),
+			icon: "token",
+		},
+		{
+			id: "calls",
+			label: "LLM 调用次数",
+			hint: "只统计完整 llmUsage 记录中可准确覆盖的调用次数；历史部分记录无法准确覆盖，显示为 —。",
+			value: formatCompact(coverage.llmCallCount),
+			icon: "call",
+		},
+		{
+			id: "complete",
+			label: isRun ? "完整记录 Run 数" : "完整记录请求数",
+			hint: "拥有完整 provider usage 的记录数；覆盖率 = 完整记录数 / 当前视图总数。",
+			value: formatCompact(coverage.completeCount),
+			badge: formatCoveragePercent(coverage.completeCount, coverage.runCount),
+			icon: "check",
+		},
+	];
+}
 
 export function AdminUsagePage(): React.ReactElement {
 	const { controller } = useAdminAuth();
 	const apiRef = useRef<UsageApi | null>(null);
+	const orchestrationApiRef = useRef<OrchestrationApi | null>(null);
 	if (apiRef.current === null) apiRef.current = new UsageApi({ auth: controller });
+	if (orchestrationApiRef.current === null) orchestrationApiRef.current = new OrchestrationApi(controller);
 	const api = apiRef.current;
-	const [days, setDays] = useState(7);
+	const orchestrationApi = orchestrationApiRef.current;
+	const sequence = useRef(0);
+
+	const [days, setDays] = useState(14);
+	const [kind, setKind] = useState<UsageKind>("orchestration");
 	const [state, setState] = useState<UsageState>({ kind: "loading" });
+	const [refreshing, setRefreshing] = useState(false);
+	const [filters, setFilters] = useState<UsageFilters>(EMPTY_FILTERS);
+	const [tab, setTab] = useState<UsageTab>("runs");
+	const [sort, setSort] = useState<UsageSort>({ key: "createdAt", direction: "desc" });
+	const [page, setPage] = useState(0);
+	const [visible, setVisible] = useState<ReadonlySet<OptionalColumn>>(new Set(DEFAULT_COLUMNS));
+	const [detail, setDetail] = useState<DetailState | null>(null);
 
 	const load = useCallback(() => {
-		const to = new Date();
-		const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
-		setState({ kind: "loading" });
+		const current = ++sequence.current;
+		const { from, to } = periodForDays(days);
+		setRefreshing(true);
 		void api.getSummary({ from, to }).then(
-			(summary) => setState({ kind: "loaded", summary }),
-			(error: Error) => setState({ kind: "error", message: error.message }),
+			(summary) => {
+				if (current !== sequence.current) return;
+				setState({ kind: "loaded", summary });
+				setRefreshing(false);
+			},
+			(error: Error) => {
+				if (current !== sequence.current) return;
+				setState({ kind: "error", message: error.message });
+				setRefreshing(false);
+			},
 		);
 	}, [api, days]);
 
@@ -35,28 +180,192 @@ export function AdminUsagePage(): React.ReactElement {
 		load();
 	}, [load]);
 
+	const summary = state.kind === "loaded" ? state.summary : null;
+	const viewStats: AdminUsageViewStats | null = useMemo(() => {
+		if (summary === null) return null;
+		return kind === "orchestration" ? (summary.orchestration?.view ?? null) : (summary.chat ?? null);
+	}, [summary, kind]);
+
+	const narrowed = useMemo(
+		() => (viewStats === null ? null : filterUsageRuns(viewStats.runs, { ...filters, query: "" })),
+		[viewStats, filters],
+	);
+	/** Same shared aggregator as the server: filtering never changes the caliber. */
+	const aggregated = useMemo(
+		() =>
+			summary === null || narrowed === null
+				? null
+				: buildUsageViewStats({
+						runs: narrowed,
+						from: summary.period.from,
+						to: summary.period.to,
+					}),
+		[summary, narrowed],
+	);
+	const searchRuns = useMemo(
+		() => (narrowed === null ? [] : filterUsageRuns(narrowed, { ...EMPTY_FILTERS, query: filters.query })),
+		[narrowed, filters.query],
+	);
+	const sortedRuns = useMemo(() => sortUsageRuns(searchRuns, sort), [searchRuns, sort]);
+	const pageCount = Math.max(1, Math.ceil(sortedRuns.length / PAGE_SIZE));
+	const currentPage = Math.min(page, pageCount - 1);
+	const pagedRuns = sortedRuns.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+	const groupOptions: readonly UsageFilterOption[] = useMemo(
+		() =>
+			viewStats === null
+				? []
+				: [...new Map(viewStats.runs.map((run) => [run.groupId, run.groupName])).entries()].map(
+						([value, label]) => ({ value, label }),
+					),
+		[viewStats],
+	);
+	const modelOptions: readonly UsageFilterOption[] = useMemo(
+		() =>
+			viewStats === null
+				? []
+				: [...new Set(viewStats.runs.map((run) => run.model ?? UNKNOWN_MODEL_LABEL))].map((value) => ({
+						value,
+						label: value,
+					})),
+		[viewStats],
+	);
+	const stateOptions: readonly UsageFilterOption[] = useMemo(
+		() =>
+			viewStats === null
+				? []
+				: [
+						...new Set(viewStats.runs.map((run) => run.state).filter((value): value is string => value !== null)),
+					].map((value) => ({
+						value,
+						label: WORK_STATUS[value as keyof typeof WORK_STATUS]?.label ?? value,
+					})),
+		[viewStats],
+	);
+
+	const updateFilter = (patch: Partial<UsageFilters>): void => {
+		setFilters((previous) => ({ ...previous, ...patch }));
+		setPage(0);
+	};
+	const changeKind = (next: UsageKind): void => {
+		setKind(next);
+		setFilters(EMPTY_FILTERS);
+		setTab("runs");
+		setSort({ key: "createdAt", direction: "desc" });
+		setPage(0);
+		if (next === "chat") {
+			setVisible((previous) => {
+				const columns = new Set(previous);
+				columns.delete("version");
+				return columns;
+			});
+		}
+	};
+	const changeSort = (key: UsageSortKey): void => {
+		setSort((previous) =>
+			previous.key === key
+				? { key, direction: previous.direction === "asc" ? "desc" : "asc" }
+				: { key, direction: "desc" },
+		);
+		setPage(0);
+	};
+	const toggleColumn = (column: OptionalColumn): void => {
+		setVisible((previous) => {
+			const next = new Set(previous);
+			if (next.has(column)) next.delete(column);
+			else next.add(column);
+			return next;
+		});
+	};
+	const exportCurrent = (): void => {
+		if (aggregated === null) return;
+		const content = usageCsv(tab, aggregated, sortedRuns);
+		const stamp = new Date().toISOString().slice(0, 10);
+		downloadCsv(`usage-${kind}-${tab}-${stamp}.csv`, content);
+	};
+	const openDetail = (run: AdminUsageRunRow): void => {
+		if (kind === "chat") {
+			if (run.conversationId !== null) navigate(`/conversations/${run.conversationId}`);
+			else setDetail({ kind: "error", runId: run.id, message: "该请求没有关联的会话记录。" });
+			return;
+		}
+		setDetail({ kind: "loading", runId: run.id });
+		void orchestrationApi.request<AnalysisWorkItem>(`work-items/${encodeURIComponent(run.id)}`).then(
+			(item) => setDetail({ kind: "loaded", item, sourceName: run.groupName }),
+			(error: unknown) => setDetail({ kind: "error", runId: run.id, message: errorMessage(error) }),
+		);
+	};
+
+	const isRun = kind === "orchestration";
 	return (
 		<section className={styles.page} aria-labelledby="usage-title">
 			<AuroraPageHeader
-				title="Usage"
+				title="用量统计"
 				titleId="usage-title"
+				meta={
+					<UsageHint text="Agent 编排与 Chat Agent 为两套独立统计口径，切换后所有指标、趋势与明细均只使用该口径的真实数据。" />
+				}
 				actions={
-					<label className={styles.rangeControl}>
-						<span>统计周期</span>
-						<select value={days} onChange={(event) => setDays(Number(event.target.value))}>
-							<option value={7}>最近 7 天</option>
-							<option value={30}>最近 30 天</option>
-							<option value={90}>最近 90 天</option>
-						</select>
-					</label>
+					<div className={styles.headerActions}>
+						<AuroraButton size="sm" icon={REFRESH_ICON} disabled={refreshing} onClick={load}>
+							{refreshing ? "正在刷新…" : "刷新"}
+						</AuroraButton>
+						<AuroraButton size="sm" icon={EXPORT_ICON} disabled={aggregated === null} onClick={exportCurrent}>
+							导出
+						</AuroraButton>
+					</div>
 				}
 			/>
 
-			{state.kind === "loading" && <output className={styles.state}>正在汇总 Token 用量…</output>}
+			<div className={styles.filterBar}>
+				<label className={styles.rangeSelect}>
+					<span className={styles.srOnly}>时间范围</span>
+					<select value={days} onChange={(event) => setDays(Number(event.target.value))} aria-label="时间范围">
+						{[7, 14, 30, 90].map((value) => (
+							<option key={value} value={value}>{`最近 ${value} 天`}</option>
+						))}
+					</select>
+				</label>
+				<div className={styles.kindTabs}>
+					<AuroraPillTabs
+						ariaLabel="统计口径"
+						value={kind}
+						onChange={changeKind}
+						items={[
+							{ value: "orchestration", label: "Agent 编排" },
+							{ value: "chat", label: "Chat Agent" },
+						]}
+					/>
+				</div>
+				<UsageFilterSelect
+					label={isRun ? "接入" : "Agent"}
+					allLabel={isRun ? "全部接入" : "全部 Agent"}
+					value={filters.group}
+					options={groupOptions}
+					onChange={(value) => updateFilter({ group: value })}
+				/>
+				<UsageFilterSelect
+					label="模型"
+					value={filters.model}
+					options={modelOptions}
+					onChange={(value) => updateFilter({ model: value })}
+				/>
+				{isRun && (
+					<UsageFilterSelect
+						label="状态"
+						value={filters.state}
+						options={stateOptions}
+						onChange={(value) => updateFilter({ state: value })}
+					/>
+				)}
+				{summary && <span className={styles.updated}>更新于 {formatRunTime(summary.generatedAt)} UTC</span>}
+			</div>
+
+			{state.kind === "loading" && <output className={styles.state}>正在汇总用量…</output>}
 			{state.kind === "error" && (
 				<div className={styles.error} role="alert">
 					<div>
-						<strong>无法加载 Usage</strong>
+						<strong>无法加载用量统计</strong>
 						<p>请确认管理服务已升级并可访问 Usage 聚合接口。</p>
 						<code>{state.message}</code>
 					</div>
@@ -65,223 +374,89 @@ export function AdminUsagePage(): React.ReactElement {
 					</AuroraButton>
 				</div>
 			)}
-			{state.kind === "loaded" && <UsageContent summary={state.summary} />}
+			{state.kind === "loaded" && viewStats === null && (
+				<UsageViewStatsEmpty message="当前服务版本尚未提供该口径的明细聚合，请升级管理服务后刷新。" />
+			)}
+			{state.kind === "loaded" && aggregated !== null && (
+				<>
+					<UsageMetrics items={metricItems(kind, aggregated.coverage)} />
+					<UsageTrend days={aggregated.byDay} />
+					<section className={styles.detailCard} aria-label="用量明细">
+						<div className={styles.detailHead}>
+							<UsageTabs
+								value={tab}
+								onChange={(next) => {
+									setTab(next);
+									setPage(0);
+								}}
+							/>
+							<div className={styles.detailTools}>
+								<AuroraSearchBox
+									value={filters.query}
+									onChange={(value) => updateFilter({ query: value })}
+									placeholder="搜索 ID / 接入 / 模型"
+									ariaLabel="搜索运行记录"
+								/>
+								<UsageColumnsMenu
+									visible={visible}
+									onToggle={toggleColumn}
+									columns={OPTIONAL_COLUMNS.filter((column) => isRun || column !== "version")}
+								/>
+							</div>
+						</div>
+						<div
+							role="tabpanel"
+							aria-label={tab === "runs" ? "运行记录" : tab === "groups" ? "按接入统计" : "按模型统计"}
+						>
+							{tab === "runs" ? (
+								<>
+									<UsageRunsTable
+										runs={pagedRuns}
+										sort={sort}
+										onSort={changeSort}
+										visible={visible}
+										onOpenDetail={openDetail}
+									/>
+									<UsagePagination
+										page={currentPage}
+										pageCount={pageCount}
+										total={sortedRuns.length}
+										onPage={setPage}
+									/>
+								</>
+							) : (
+								<UsageGroupTable
+									rows={tab === "groups" ? aggregated.byGroup : aggregated.byModel}
+									label={tab === "groups" ? (isRun ? "接入" : "Agent") : "模型"}
+									emptyText="当前筛选条件下没有统计数据。"
+								/>
+							)}
+						</div>
+					</section>
+				</>
+			)}
+
+			{detail?.kind === "loading" && <output className={styles.detailNotice}>正在加载 Run 详情…</output>}
+			{detail?.kind === "error" && (
+				<div className={styles.detailNotice} role="alert">
+					<span>
+						无法打开 {shortId(detail.runId)}：{detail.message}
+					</span>
+					<button type="button" onClick={() => setDetail(null)}>
+						关闭
+					</button>
+				</div>
+			)}
+			{detail?.kind === "loaded" && (
+				<OrchestrationWorkDetail
+					key={detail.item.id}
+					api={orchestrationApi}
+					initial={detail.item}
+					sourceName={detail.sourceName}
+					onClose={() => setDetail(null)}
+					onChanged={load}
+				/>
+			)}
 		</section>
 	);
-}
-
-function UsageContent({ summary }: { readonly summary: AdminUsageSummary }): React.ReactElement {
-	const totals = summary.totals;
-	return (
-		<>
-			<section className={styles.summary} aria-label="Token 用量汇总">
-				<UsageMetric label="总 Token" value={totals.totalTokens} />
-				<UsageMetric label="输入 Token" value={totals.inputTokens} />
-				<UsageMetric label="输出 Token" value={totals.outputTokens} />
-				<UsageMetric label="模型请求" value={totals.requestCount} />
-			</section>
-
-			<section className={styles.agentSection} aria-labelledby="usage-agent-title">
-				<div className={styles.sectionHeader}>
-					<div>
-						<h2 id="usage-agent-title">按 Agent</h2>
-						<p>按总 Token 从高到低排列；当前已接入发布后的 Embed 会话。</p>
-					</div>
-					<time dateTime={summary.generatedAt}>更新于 {formatTime(summary.generatedAt)}</time>
-				</div>
-				{summary.byAgent.length === 0 ? (
-					<div className={styles.empty}>该周期内还没有带 Provider Usage 的已完成请求。</div>
-				) : (
-					<div className={styles.tableWrap}>
-						<table className={styles.table}>
-							<thead>
-								<tr>
-									<th>Agent</th>
-									<th>来源</th>
-									<th>总 Token</th>
-									<th>输入</th>
-									<th>输出</th>
-									<th>缓存读取</th>
-									<th>请求数</th>
-								</tr>
-							</thead>
-							<tbody>
-								{summary.byAgent.map((row) => (
-									<tr key={`${row.agentId}:${row.source}`}>
-										<td>
-											<strong>{row.agentName}</strong>
-											<code>{row.agentId}</code>
-										</td>
-										<td>{row.source === "embed" ? "发布 Web" : "管理员 Chat"}</td>
-										<td>{NUMBER.format(row.totalTokens)}</td>
-										<td>{NUMBER.format(row.inputTokens)}</td>
-										<td>{NUMBER.format(row.outputTokens)}</td>
-										<td>{NUMBER.format(row.cacheReadTokens)}</td>
-										<td>{NUMBER.format(row.requestCount)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				)}
-			</section>
-
-			{summary.orchestration && <OrchestrationUsage data={summary.orchestration} />}
-		</>
-	);
-}
-
-function OrchestrationUsage({ data }: { readonly data: AdminOrchestrationUsage }): React.ReactElement {
-	const accurateTokens = data.coverage.completeTokens;
-	const completeRuns = data.coverage.completeRuns;
-	return (
-		<>
-			<section className={styles.summary} aria-label="编排用量汇总">
-				<UsageMetric
-					label="编排 Run 数"
-					value={completeRuns + data.coverage.partialRuns + data.coverage.noUsageRuns}
-				/>
-				<UsageMetric label="准确 Token（完整记录）" value={accurateTokens} />
-				<UsageMetric
-					label="LLM 调用次数"
-					value={data.byIntegration.reduce((sum, row) => sum + row.llmCallCount, 0)}
-				/>
-				<UsageMetric label="完整记录 Run" value={completeRuns} />
-			</section>
-			<div className={styles.empty} role="note">
-				<strong>Token 统计覆盖范围</strong>
-				<p>{data.coverage.note}</p>
-				<p>
-					完整 {data.coverage.completeRuns} 条 · 历史不完整 {data.coverage.partialRuns} 条 · 无 provider usage{" "}
-					{data.coverage.noUsageRuns} 条。历史不完整数据仅有最后一次 LLM 调用的 usage，共{" "}
-					{NUMBER.format(data.coverage.partialTokens)} Token，未计入上面的准确总量。
-				</p>
-			</div>
-
-			<section className={styles.agentSection} aria-labelledby="usage-orchestration-title">
-				<div className={styles.sectionHeader}>
-					<div>
-						<h2 id="usage-orchestration-title">按编排接入</h2>
-						<p>与上方 Chat Agent 统计互斥；Token 仅来自完整记录的 Run，历史 partial 单独列示。</p>
-					</div>
-				</div>
-				{data.byIntegration.length === 0 ? (
-					<div className={styles.empty}>该周期内还没有编排 Run。</div>
-				) : (
-					<div className={styles.tableWrap}>
-						<table className={styles.table}>
-							<thead>
-								<tr>
-									<th>接入</th>
-									<th>Run / 成功 / 失败 / 取消</th>
-									<th>准确 Token</th>
-									<th>LLM 调用</th>
-									<th>平均 / 最长耗时</th>
-									<th>模型</th>
-									<th>冻结版本</th>
-									<th>历史 partial Token</th>
-								</tr>
-							</thead>
-							<tbody>
-								{data.byIntegration.map((row) => (
-									<tr key={row.integrationId}>
-										<td>
-											<strong>{row.integrationName}</strong>
-											<code>{row.integrationId}</code>
-										</td>
-										<td>
-											{row.runCount} / {row.succeeded} / {row.failed} / {row.cancelled}
-										</td>
-										<td>{NUMBER.format(row.tokens.totalTokens)}</td>
-										<td>{NUMBER.format(row.llmCallCount)}</td>
-										<td>
-											{formatDuration(row.avgDurationMs)} / {formatDuration(row.maxDurationMs)}
-										</td>
-										<td>{row.models.join(", ") || "—"}</td>
-										<td>{row.versionIds.map((id) => id.slice(0, 16)).join(", ") || "—"}</td>
-										<td>{NUMBER.format(row.partialTokens)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				)}
-			</section>
-
-			<section className={styles.agentSection} aria-labelledby="usage-orchestration-runs">
-				<div className={styles.sectionHeader}>
-					<div>
-						<h2 id="usage-orchestration-runs">最近编排 Run</h2>
-						<p>最多显示 50 条；复制 Run ID 后可在「Agent 编排」页检索并打开详情。</p>
-					</div>
-				</div>
-				{data.recentRuns.length === 0 ? (
-					<div className={styles.empty}>该周期内没有编排 Run。</div>
-				) : (
-					<div className={styles.tableWrap}>
-						<table className={styles.table}>
-							<thead>
-								<tr>
-									<th>Run ID</th>
-									<th>状态</th>
-									<th>模型</th>
-									<th>冻结版本</th>
-									<th>Token 覆盖</th>
-									<th>准确 Token</th>
-									<th>耗时</th>
-								</tr>
-							</thead>
-							<tbody>
-								{data.recentRuns.map((run) => (
-									<tr key={run.runId}>
-										<td>
-											<code>{run.runId}</code>
-										</td>
-										<td>{run.state}</td>
-										<td>{run.model ?? "—"}</td>
-										<td title={run.versionId ?? undefined}>{run.versionId?.slice(0, 16) ?? "—"}</td>
-										<td>
-											{run.tokenCoverage === "complete"
-												? "完整"
-												: run.tokenCoverage === "partial"
-													? "历史不完整"
-													: "无 usage"}
-										</td>
-										<td>{NUMBER.format(run.totalTokens)}</td>
-										<td>{run.durationMs === null ? "—" : formatDuration(run.durationMs)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				)}
-			</section>
-		</>
-	);
-}
-
-function formatDuration(ms: number): string {
-	if (ms <= 0) return "—";
-	return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
-}
-
-function UsageMetric({ label, value }: { readonly label: string; readonly value: number }): React.ReactElement {
-	return (
-		<div className={styles.metric}>
-			<span>{label}</span>
-			<strong>{NUMBER.format(value)}</strong>
-		</div>
-	);
-}
-
-function formatTime(value: string): string {
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return value;
-	return new Intl.DateTimeFormat("zh-CN", {
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-		hour12: false,
-	}).format(date);
 }

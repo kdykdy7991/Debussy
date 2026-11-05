@@ -79,6 +79,77 @@ export interface AdminOrchestrationUsage {
 		readonly partialTokens: number;
 		readonly note: string;
 	};
+	/** Full-period detail view built from the same run rows; absent on legacy services. */
+	readonly view?: AdminUsageViewStats;
+}
+
+/**
+ * One fact row of an independent usage view (either Agent orchestration runs
+ * or Chat Agent requests). `accurateTokens` / `accurateLlmCallCount` are `null`
+ * when provider usage is incomplete or absent; consumers must render `—` and
+ * must never coerce them to zero.
+ */
+export interface AdminUsageRunRow {
+	readonly id: string;
+	readonly groupId: string;
+	readonly groupName: string;
+	/** Orchestration work-item state; null for Chat requests. */
+	readonly state: string | null;
+	readonly createdAt: string;
+	readonly model: string | null;
+	readonly versionId: string | null;
+	readonly tokenCoverage: AdminOrchestrationTokenCoverage;
+	readonly accurateTokens: number | null;
+	/** Legacy single-call provider usage, kept for inspection but never summed into accurate totals. */
+	readonly partialTokens: number;
+	readonly accurateLlmCallCount: number | null;
+	/** Orchestration execution elapsed (assignment start → end), excluding queue time; null for Chat. */
+	readonly durationMs: number | null;
+	readonly conversationId: string | null;
+}
+
+export interface AdminUsageGroupRow {
+	readonly key: string;
+	readonly label: string;
+	readonly runCount: number;
+	readonly completeCount: number;
+	readonly partialCount: number;
+	readonly noUsageCount: number;
+	readonly accurateTokens: number;
+	readonly partialTokens: number;
+	readonly llmCallCount: number;
+	readonly avgDurationMs: number;
+	readonly maxDurationMs: number;
+}
+
+export interface AdminUsageDayRow {
+	/** UTC calendar day, `YYYY-MM-DD`. */
+	readonly date: string;
+	readonly runCount: number;
+	readonly accurateTokens: number;
+	readonly partialTokens: number;
+}
+
+export interface AdminUsageCoverage {
+	readonly runCount: number;
+	readonly completeCount: number;
+	readonly partialCount: number;
+	readonly noUsageCount: number;
+	readonly accurateTokens: number;
+	readonly partialTokens: number;
+	readonly llmCallCount: number;
+}
+
+/**
+ * A self-contained, single-caliber usage view. Orchestration and Chat views
+ * are built from disjoint event sets and must never be merged into one number.
+ */
+export interface AdminUsageViewStats {
+	readonly runs: readonly AdminUsageRunRow[];
+	readonly byGroup: readonly AdminUsageGroupRow[];
+	readonly byModel: readonly AdminUsageGroupRow[];
+	readonly byDay: readonly AdminUsageDayRow[];
+	readonly coverage: AdminUsageCoverage;
 }
 
 export interface AdminUsageSummary {
@@ -92,5 +163,7 @@ export interface AdminUsageSummary {
 	readonly bySource: readonly AdminUsageSourceRow[];
 	/** Optional for compatibility with services that do not yet expose orchestration aggregation. */
 	readonly orchestration?: AdminOrchestrationUsage;
+	/** Chat Agent view, computed from Chat-only turn/end events. Optional for legacy services. */
+	readonly chat?: AdminUsageViewStats;
 	readonly generatedAt: string;
 }
