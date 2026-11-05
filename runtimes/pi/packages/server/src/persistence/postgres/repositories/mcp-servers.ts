@@ -285,6 +285,41 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 				return "deleted";
 			});
 		},
+		async forceDelete(scope, mcpServerId, auditId, requestId) {
+			return client.transaction(async (tx) => {
+				const rows = await txRows(
+					tx,
+					"select deleted_at from mcp_servers where tenant_id = $1 and id = $2 for update",
+					scope.tenantId,
+					mcpServerId,
+				);
+				if (rows.length !== 1) return false;
+				if (rows[0].deleted_at !== null) return true;
+				await txRows(
+					tx,
+					"update mcp_servers set status = 'disabled', deleted_at = now(), updated_at = now() where tenant_id = $1 and id = $2",
+					scope.tenantId,
+					mcpServerId,
+				);
+				await txRows(
+					tx,
+					"delete from mcp_secrets where tenant_id = $1 and mcp_server_id = $2",
+					scope.tenantId,
+					mcpServerId,
+				);
+				await txRows(
+					tx,
+					`insert into audit_events
+					(id, tenant_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, created_at)
+					 values ($1, $2::uuid, 'platform_admin', $2::uuid::text, 'mcp-server.force-deleted', 'mcp_server', $3::text, $4, '{}'::jsonb, now())`,
+					auditId,
+					scope.tenantId,
+					mcpServerId,
+					requestId,
+				);
+				return true;
+			});
+		},
 		async listBindings(scope, agentDefinitionId, agentRevision) {
 			const rows = await client.run(
 				`select * from agent_revision_mcp_bindings where tenant_id = $1

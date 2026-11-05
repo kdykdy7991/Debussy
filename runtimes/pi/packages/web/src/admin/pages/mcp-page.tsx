@@ -7,6 +7,7 @@ import { Dialog } from "../components/dialog.tsx";
 import { McpTokenDialog, type McpTokenTarget } from "../components/mcp-token-dialog.tsx";
 import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
+import { deleteMcpWithConfirmation } from "./mcp-delete.ts";
 import styles from "./mcp-page.module.css";
 
 type DetailTab = "overview" | "tools" | "revisions" | "agents";
@@ -356,7 +357,14 @@ export function AdminMcpPage(): React.ReactElement {
 										}))
 									)
 										return;
-									void act("delete", () => api.delete(selected.id));
+									void act("delete", async () => {
+										await deleteMcpWithConfirmation(api, selected.id, () =>
+											dialogs.confirm(
+												`MCP Server“${selected.name}”仍被发布版本引用。强制删除可能导致相关 Agent 的工具调用失败，并影响正在执行的任务。确定强制删除吗？`,
+												{ title: "强制删除 MCP Server", confirmLabel: "强制删除", destructive: true },
+											),
+										);
+									});
 								}}
 							/>
 						) : null}

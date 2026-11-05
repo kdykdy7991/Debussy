@@ -259,6 +259,20 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 			},
 		},
 		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/force-delete$/,
+			operation: "mcp-servers.force-delete",
+			handler: async ({ requestId, params, body }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (mcpServerId === null) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const parsed = parseBody(body, { confirm: "boolean" });
+				if (parsed.confirm !== true) return badRequest("force deletion requires confirm=true", requestId);
+				const result = await service.forceDeleteMcpServer({ tenantId, mcpServerId, requestId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
 			method: "DELETE",
 			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)$/,
 			operation: "mcp-servers.delete",

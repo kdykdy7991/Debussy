@@ -2099,6 +2099,21 @@ export class ControlService {
 		return { ok: true, data: { deleted: true } };
 	}
 
+	async forceDeleteMcpServer(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly requestId: string;
+	}): Promise<ControlResult<{ readonly deleted: true }>> {
+		const deleted = await this.repos.mcpServers.forceDelete(
+			{ tenantId: input.tenantId },
+			input.mcpServerId,
+			newAuditEventId(),
+			input.requestId,
+		);
+		if (!deleted) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server not found in tenant scope");
+		return { ok: true, data: { deleted: true } };
+	}
+
 	private validateMcpConfig(config: McpStreamableHttpConfig): ControlResult<McpStreamableHttpConfig> {
 		if (config.transport !== "streamable_http")
 			return fail("MCP_CONFIG_NOT_APPROVED", 422, "MVP supports streamable_http transport only");

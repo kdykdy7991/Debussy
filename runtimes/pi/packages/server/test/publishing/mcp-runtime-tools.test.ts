@@ -448,11 +448,37 @@ describe("MCP runtime Tool boundary", () => {
 			mcpRevision: 2,
 			toolName: "crm_lookup",
 			outcome: "error",
-			errorCode: "MCP_CALL_FAILED",
+			errorCode: "MCP_SERVER_UNAVAILABLE",
 			resultBytes: 0,
 			resultTruncated: false,
 		});
 		expect(JSON.stringify(audits[0])).not.toContain("sensitive-123");
+	});
+
+	it("rejects calls after a server disappears and records the unavailability", async () => {
+		const audits: McpCallAuditRecord[] = [];
+		let deleted = false;
+		let connected = false;
+		const repositories = {
+			mcpServers: {
+				get: async () => (deleted ? undefined : { name: "CRM", status: "enabled" }),
+				getRevision: async () => (deleted ? undefined : { revision: 2 }),
+				recordCallAudit: async (audit: McpCallAuditRecord) => audits.push(audit),
+			},
+		} as unknown as PublishingRepositories;
+		const tools = await createMcpRuntimeToolFactory({
+			repositories,
+			connect: async () => {
+				connected = true;
+				throw new Error("unexpected connection");
+			},
+		})(frozenSpec(), runtimeScope());
+		deleted = true;
+		await expect(tools[0]!.execute("deleted", {}, undefined, undefined, undefined as never)).rejects.toThrow(
+			"deleted, disabled, or revision missing",
+		);
+		expect(connected).toBe(false);
+		expect(audits[0]).toMatchObject({ outcome: "error", errorCode: "MCP_SERVER_UNAVAILABLE" });
 	});
 
 	it("calls through the secure connector, bounds the result, closes the session, and records success", async () => {

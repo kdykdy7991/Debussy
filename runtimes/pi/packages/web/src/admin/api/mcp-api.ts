@@ -134,4 +134,12 @@ export class McpApi {
 			write: true,
 		});
 	}
+	forceDelete(id: string): Promise<{ readonly deleted: true }> {
+		return this.request({
+			method: "POST",
+			path: `/api/control/v1/mcp-servers/${encodeURIComponent(id)}/force-delete`,
+			body: { confirm: true },
+			write: true,
+		});
+	}
 }

@@ -1,6 +1,7 @@
 import type { McpSecretId, McpServerId, TenantId } from "../../../publishing/domain/ids.ts";
 import type { McpEncryptedSecretRecord, McpSecretRepository } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
+import { txRows } from "./tx.ts";
 
 function secretFromRow(row: Record<string, unknown>): McpEncryptedSecretRecord {
 	return {
@@ -17,21 +18,31 @@ function secretFromRow(row: Record<string, unknown>): McpEncryptedSecretRecord {
 export function createMcpSecretRepository(client: PostgresClient): McpSecretRepository {
 	return {
 		async put(record) {
-			await client.run(
-				`insert into mcp_secrets
+			await client.transaction(async (tx) => {
+				const rows = await txRows(
+					tx,
+					"select id from mcp_servers where tenant_id = $1 and id = $2 and deleted_at is null for update",
+					record.tenantId,
+					record.mcpServerId,
+				);
+				if (rows.length !== 1) throw new Error("MCP Server is unavailable");
+				await txRows(
+					tx,
+					`insert into mcp_secrets
 				 (id, tenant_id, mcp_server_id, ciphertext, nonce, auth_tag, key_version)
 				 values ($1, $2, $3, $4, $5, $6, $7)
 				 on conflict (tenant_id, mcp_server_id) do update set
 				 ciphertext = excluded.ciphertext, nonce = excluded.nonce, auth_tag = excluded.auth_tag,
 				 key_version = excluded.key_version, updated_at = now()`,
-				record.secretId,
-				record.tenantId,
-				record.mcpServerId,
-				record.ciphertext,
-				record.nonce,
-				record.authTag,
-				record.keyVersion,
-			);
+					record.secretId,
+					record.tenantId,
+					record.mcpServerId,
+					record.ciphertext,
+					record.nonce,
+					record.authTag,
+					record.keyVersion,
+				);
+			});
 		},
 		async get(scope, mcpServerId) {
 			const rows = await client.run(

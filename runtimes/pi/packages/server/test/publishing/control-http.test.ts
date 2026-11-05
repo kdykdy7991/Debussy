@@ -16,7 +16,7 @@ import { runMigrations } from "../../src/persistence/postgres/migrate.ts";
 import { createPublishingRepositories } from "../../src/persistence/postgres/repositories/index.ts";
 import { createControlHttpHandler } from "../../src/publishing/control/http.ts";
 import { ControlService, type CurrentAgentDefinitionSource } from "../../src/publishing/control/service.ts";
-import { newTenantId, type TenantId } from "../../src/publishing/domain/ids.ts";
+import { fromPublicId, newTenantId, type TenantId } from "../../src/publishing/domain/ids.ts";
 import { McpSecretBox } from "../../src/publishing/mcp/secret-box.ts";
 import type { PublishingRepositories } from "../../src/publishing/repositories.ts";
 import type { AgentDraftConfig, CapabilityCatalog } from "../../src/publishing/runtime-spec/compiler.ts";
@@ -396,6 +396,122 @@ describe.skipIf(!pgUp)("control plane http api", () => {
 		});
 		expect(missing.status).toBe(404);
 		expect(missing.body.error.code).toBe("MCP_SERVER_NOT_FOUND");
+	});
+
+	test("admin force deletion is atomic, idempotent and retains MCP history", async () => {
+		const auth = { authorization: `Bearer ${ADMIN_TOKEN}` };
+		const created = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/mcp-servers",
+			base: httpBase,
+			headers: auth,
+			body: {
+				name: "force-delete-mcp",
+				config: { transport: "streamable_http", endpoint: "https://mcp.example.com", authentication: "bearer" },
+			},
+		});
+		expect(created.status).toBe(201);
+		const publicId = created.body.data.id as string;
+		const id = publicId.slice(4);
+		const path = `/api/control/v1/mcp-servers/${publicId}/force-delete`;
+		const secret = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/mcp-servers/${publicId}/secret`,
+			base: httpBase,
+			headers: auth,
+			body: { bearerToken: "secret-value" },
+		});
+		expect(secret.status).toBe(200);
+		const serverId = fromPublicId("McpServerId", publicId);
+		if (serverId === null) throw new Error("Invalid MCP Server ID");
+		const encryptedSecret = await repos.mcpSecrets.get({ tenantId: adminId }, serverId);
+		expect(encryptedSecret).toBeDefined();
+		await client.run(
+			`insert into mcp_tools (id,tenant_id,mcp_server_id,mcp_revision,name,input_schema,input_schema_hash)
+			values (gen_random_uuid(),$1,$2,1,'tool','{}'::jsonb,$3)`,
+			adminId,
+			id,
+			"a".repeat(64),
+		);
+		await client.run(
+			`insert into mcp_call_audits (id,tenant_id,mcp_server_id,mcp_revision,tool_name,outcome,latency_ms)
+			values (gen_random_uuid(),$1,$2,1,'tool','success',1)`,
+			adminId,
+			id,
+		);
+		const agent = await httpCall({
+			method: "POST",
+			path: "/api/control/v1/agent-definitions",
+			base: httpBase,
+			headers: auth,
+			body: {
+				...createAgentBody("force-delete-agent"),
+				mcpServers: [{ mcpServerId: publicId, revision: 1, toolNames: ["tool"] }],
+			},
+		});
+		expect(agent.status).toBe(201);
+		const published = await httpCall({
+			method: "POST",
+			path: `/api/control/v1/agent-definitions/${agent.body.data.id}/publish`,
+			base: httpBase,
+			headers: auth,
+			body: {},
+		});
+		expect(published.status).toBe(201);
+		const versionId = (published.body.data.version.id as string).slice(4);
+		const beforeVersion = (
+			await client.run(
+				"select snapshot, runtime_spec, runtime_spec_hash from published_app_versions where id=$1",
+				versionId,
+			)
+		)[0];
+		const ordinary = await httpCall({
+			method: "DELETE",
+			path: `/api/control/v1/mcp-servers/${publicId}`,
+			base: httpBase,
+			headers: auth,
+		});
+		expect(ordinary.status).toBe(409);
+		const unauthorized = await httpCall({ method: "POST", path, base: httpBase, body: { confirm: true } });
+		expect(unauthorized.status).toBe(401);
+		const notConfirmed = await httpCall({
+			method: "POST",
+			path,
+			base: httpBase,
+			headers: auth,
+			body: { confirm: false },
+		});
+		expect(notConfirmed.status).toBe(400);
+		await client.run(`create function reject_force_audit() returns trigger language plpgsql as $$ begin
+			if new.action = 'mcp-server.force-deleted' then raise exception 'test audit failure'; end if; return new; end $$`);
+		await client.run(
+			"create trigger reject_force_audit before insert on audit_events for each row execute function reject_force_audit()",
+		);
+		const failed = await httpCall({ method: "POST", path, base: httpBase, headers: auth, body: { confirm: true } });
+		expect(failed.status).toBe(500);
+		expect((await client.run("select deleted_at from mcp_servers where id=$1", id))[0]?.deleted_at).toBeNull();
+		expect(await client.run("select id from mcp_secrets where mcp_server_id=$1", id)).toHaveLength(1);
+		await client.run("drop trigger reject_force_audit on audit_events");
+		const results = await Promise.all(
+			[1, 2].map(() => httpCall({ method: "POST", path, base: httpBase, headers: auth, body: { confirm: true } })),
+		);
+		expect(results.map((result) => result.status)).toEqual([200, 200]);
+		expect(await client.run("select id from mcp_secrets where mcp_server_id=$1", id)).toHaveLength(0);
+		await expect(repos.mcpSecrets.put(encryptedSecret!)).rejects.toThrow("MCP Server is unavailable");
+		expect(await client.run("select revision from mcp_server_revisions where mcp_server_id=$1", id)).toHaveLength(1);
+		expect(await client.run("select id from mcp_tools where mcp_server_id=$1", id)).toHaveLength(1);
+		expect(await client.run("select id from mcp_call_audits where mcp_server_id=$1", id)).toHaveLength(1);
+		expect(
+			(
+				await client.run(
+					"select snapshot, runtime_spec, runtime_spec_hash from published_app_versions where id=$1",
+					versionId,
+				)
+			)[0],
+		).toEqual(beforeVersion);
+		expect(
+			await client.run("select id from audit_events where resource_id=$1 and action='mcp-server.force-deleted'", id),
+		).toHaveLength(1);
 	});
 
 	test("import-current is idempotent per Idempotency-Key (same response, no new revision)", async () => {

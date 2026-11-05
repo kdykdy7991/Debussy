@@ -136,8 +136,12 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 								mcpServerId,
 								frozenServer.revision,
 							);
-							if (server === undefined || server.status !== "enabled" || revision === undefined)
-								throw new Error("MCP Server is unavailable");
+							if (server === undefined || server.status !== "enabled" || revision === undefined) {
+								errorCode = "MCP_SERVER_UNAVAILABLE";
+								throw new Error(
+									`MCP Server is unavailable (${frozenServer.mcpServerId}): deleted, disabled, or revision missing`,
+								);
+							}
 							if ("inputSchemaHash" in frozenTool && server.currentRevision > frozenServer.revision) {
 								const latest = await options.repositories.mcpServers.listTools(
 									{ tenantId: scope.tenantId },

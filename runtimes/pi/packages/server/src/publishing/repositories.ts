@@ -297,6 +297,12 @@ export interface McpServerRepository {
 		scope: TenantScope,
 		mcpServerId: McpServerId,
 	): Promise<"deleted" | "published_reference" | "not_found">;
+	forceDelete(
+		scope: TenantScope,
+		mcpServerId: McpServerId,
+		auditId: AuditEventId,
+		requestId: string,
+	): Promise<boolean>;
 	listBindings(
 		scope: TenantScope,
 		agentDefinitionId: AgentDefinitionId,
