@@ -270,6 +270,15 @@ describe.skipIf(!url)("independent orchestration domain on real Postgres and sha
 			chatRead.mockRestore();
 		}
 		expect((await store.run(a.run_id, integration.id)).result).toBe("  custom raw result\n");
+		const work = await store.workItem(a.run_id, integration.id);
+		const conversationId = work.conversationId.slice("conv_".length) as ConversationId;
+		const detail = await control.getConversationAdminDetail({ tenantId: tenant as TenantId, conversationId });
+		expect(detail.ok).toBe(true);
+		if (detail.ok) expect(detail.data.conversation.configurationSource).toBe("orchestration");
+		expect((await control.listConversationSummaries({ tenantId: tenant as TenantId, conversationId })).ok).toBe(true);
+		expect(
+			(await control.getConversationAdminDetail({ tenantId: randomUUID() as TenantId, conversationId })).ok,
+		).toBe(false);
 		expect(sessions[0]!.options.systemPrompt).toContain(configuration.systemPrompt);
 		expect(sessions[0]!.options.thinkingLevel).toBe("high");
 		expect(sessions[0]!.prompt.mock.calls[0]![0].text).toBe(

@@ -257,6 +257,47 @@ describe("WB-006 ControlService.listConversationEvents", () => {
 });
 
 describe("WB-006 ControlService summaries + detail", () => {
+	test("independent orchestration detail and summaries use their integration ownership", async () => {
+		const integrationId = "11111111-2222-3333-4444-555555555555";
+		const row = adminRow({
+			source: "orchestration",
+			publishedAppId: null,
+			publishedAppVersionId: null,
+			integrationId,
+			orchestrationVersionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		});
+		let calls = 0;
+		const validate = async (scope: {
+			tenantId: TenantId;
+			publishedAppId: unknown;
+			integrationId?: string;
+			principalId: unknown;
+		}) => {
+			expect(scope).toEqual({
+				tenantId: TENANT_A,
+				publishedAppId: null,
+				integrationId,
+				principalId: row.ownerPrincipalId,
+			});
+			calls++;
+		};
+		const { service } = buildService({
+			getByTenant: async () => row,
+			summaries: {
+				getLatest: async (scope: Parameters<typeof validate>[0]) => {
+					await validate(scope);
+					return undefined;
+				},
+				list: async (scope: Parameters<typeof validate>[0]) => {
+					await validate(scope);
+					return [];
+				},
+			},
+		});
+		expect((await service.getConversationAdminDetail({ tenantId: TENANT_A, conversationId: CONV_A })).ok).toBe(true);
+		expect((await service.listConversationSummaries({ tenantId: TENANT_A, conversationId: CONV_A })).ok).toBe(true);
+		expect(calls).toBe(2);
+	});
 	test("getConversationAdminDetail writes a transcript audit event", async () => {
 		const auditRows: AuditRow[] = [];
 		const { service } = buildService({

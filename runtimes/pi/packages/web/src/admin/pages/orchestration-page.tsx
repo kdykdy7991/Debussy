@@ -224,6 +224,28 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 			setBusy(false);
 		}
 	};
+	const rename = async (i: OrchestrationIntegration) => {
+		const entered = await dialogs.prompt("名称仅用于控制台识别接入来源；接入 ID、调用凭据、配置和已有 Run 均不变。", {
+			title: "重命名接入",
+			inputLabel: "接入名称",
+			defaultValue: i.name,
+			maxLength: 200,
+			confirmLabel: "保存名称",
+		});
+		const name = entered?.trim();
+		if (!name || name === i.name) return;
+		setBusy(true);
+		setError(null);
+		try {
+			await api.request(`integrations/${i.id}`, "PATCH", { action: "rename", name });
+			setNotice(`接入已重命名为「${name}」`);
+			await load();
+		} catch (e) {
+			setError(errorMessage(e));
+		} finally {
+			setBusy(false);
+		}
+	};
 	const migrate = async (i: OrchestrationIntegration) => {
 		if (
 			!(await dialogs.confirm(
@@ -592,6 +614,9 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 																	onClick={() => void update(i, i.enabled ? "disable" : "enable")}
 																>
 																	{i.enabled ? "停用接入" : "启用接入"}
+																</button>
+																<button type="button" disabled={busy} onClick={() => void rename(i)}>
+																	重命名
 																</button>
 																<button
 																	type="button"

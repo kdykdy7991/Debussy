@@ -34,9 +34,9 @@
 .messageRow > time { padding-top: 14px; color: #596373; font-size: 10px; font-variant-numeric: tabular-nums; }
 .avatar { display: grid; width: 22px; height: 22px; place-items: center; margin-top: 11px; border-radius: 5px; color: #fff; font-size: 10px; }
 .avatarUser { background: #3578e8; }.avatarAssistant { background: #159ca2; }.avatarTool { background: #7259d6; }.avatarError { background: #ef4646; }
-.messageContent { min-height: 62px; box-sizing: border-box; padding: 11px 13px; border: 1px solid #dfe3e9; border-radius: 7px; background: #fff; }
+.messageContent { min-width: 0; min-height: 62px; box-sizing: border-box; padding: 11px 13px; border: 1px solid #dfe3e9; border-radius: 7px; background: #fff; }
 .messageContent > div { display: flex; align-items: center; gap: 10px; }
-.messageContent > div > strong { font-size: 12px; }.messageContent p { margin: 8px 0 0; font-size: 12px; line-height: 1.55; }
+.messageContent > div > strong { font-size: 12px; }.messageContent p { margin: 8px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
 .success, .failed { margin-left: auto; padding: 2px 7px; border-radius: 4px; background: #e7f7ec; color: #168c47; font-size: 10px; }.failed { background: #fde9e9; color: #e13b3b; }
 .messageError .messageContent { border-color: #f3caca; background: #fffafa; }.messageSelected .messageContent { box-shadow: 0 0 0 1px #efb5b5; }
 .expand { padding-top: 14px; color: #687180; }

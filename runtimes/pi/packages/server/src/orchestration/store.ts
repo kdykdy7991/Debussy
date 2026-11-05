@@ -192,6 +192,18 @@ export class OrchestrationStore {
 		return { enabled: action === "enable" };
 	}
 
+	/** Display name only: identity, credentials, configuration and historical runs stay untouched. */
+	async renameIntegration(id: string, name: string): Promise<{ name: string }> {
+		await this.getIntegration(id);
+		await this.client.run(
+			"update orchestration_integrations set name=$3 where tenant_id=$1 and id=$2",
+			this.tenantId,
+			id,
+			name,
+		);
+		return { name };
+	}
+
 	async accept(
 		i: IntegrationRecord,
 		input: AnalysisEventRequest,

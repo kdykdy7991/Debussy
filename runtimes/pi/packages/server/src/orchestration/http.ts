@@ -110,13 +110,19 @@ export function createOrchestrationHttp(
 				data = await service.store.workItem(created.run_id, current.id);
 				status = 202;
 			} else if (admin && parts[0] === "integrations" && parts.length === 2 && method === "PATCH") {
-				data = await service.store.updateAccess(
-					z.string().uuid().parse(parts[1]),
-					z
-						.object({ action: z.enum(["enable", "disable", "rotate"]) })
-						.strict()
-						.parse(body).action,
-				);
+				const id = z.string().uuid().parse(parts[1]);
+				const patch = z
+					.discriminatedUnion("action", [
+						z.object({ action: z.literal("enable") }).strict(),
+						z.object({ action: z.literal("disable") }).strict(),
+						z.object({ action: z.literal("rotate") }).strict(),
+						z.object({ action: z.literal("rename"), name: z.string().trim().min(1).max(200) }).strict(),
+					])
+					.parse(body);
+				data =
+					patch.action === "rename"
+						? await service.store.renameIntegration(id, patch.name)
+						: await service.store.updateAccess(id, patch.action);
 			} else if (parts[0] === "configuration" && parts.length === 1 && integration) {
 				throw new OrchestrationError(
 					403,

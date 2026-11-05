@@ -330,6 +330,59 @@ describe.skipIf(!url)("orchestration with real isolated Postgres and Fake model"
 		await store.cancel(runId);
 	});
 
+	test("renaming an integration changes only the display name", async () => {
+		const before = await store.getIntegration(i.id);
+		const originalName = before.name;
+		const secret = () =>
+			client.run("select secret_hash from orchestration_integrations where tenant_id=$1 and id=$2", tenantId, i.id);
+		const secretBefore = await secret();
+		const existing = await store.accept(i, event());
+		const patch = (body: unknown) =>
+			fetch(`${base}/api/admin/v1/orchestration/integrations/${i.id}`, {
+				method: "PATCH",
+				headers: { Authorization: "Bearer admin-test", "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		let probeRun: string | undefined;
+		try {
+			expect((await patch({ action: "rename" })).status).toBe(400);
+			expect((await patch({ action: "rename", name: "   " })).status).toBe(400);
+			expect((await patch({ action: "rename", name: "x".repeat(201) })).status).toBe(400);
+			const renamed = await patch({ action: "rename", name: "  工单系统 AaaS 接入  " });
+			expect(renamed.status).toBe(200);
+			expect(((await renamed.json()) as { data: { name: string } }).data.name).toBe("工单系统 AaaS 接入");
+			const after = await store.getIntegration(i.id);
+			expect(after).toMatchObject({
+				id: before.id,
+				name: "工单系统 AaaS 接入",
+				revision: before.revision,
+				enabled: before.enabled,
+				versionId: before.versionId,
+				configurationId: before.configurationId,
+			});
+			expect(after.settings).toEqual(before.settings);
+			expect(await secret()).toEqual(secretBefore);
+			const listed = (await (
+				await fetch(`${base}/api/admin/v1/orchestration/integrations`, {
+					headers: { Authorization: "Bearer admin-test" },
+				})
+			).json()) as { data: readonly OrchestrationIntegration[] };
+			expect(listed.data.find((integration) => integration.id === i.id)?.name).toBe("工单系统 AaaS 接入");
+			const probe = await runRequest(`/integrations/${i.id}/runs`, "POST", { input: { probe: true } }, randomUUID());
+			expect(probe.status).toBe(202);
+			probeRun = probe.body.data.run_id;
+			expect(await store.workItem(existing.workItemId)).toMatchObject({
+				id: existing.workItemId,
+				integrationId: i.id,
+				alarmId: "alarm-1",
+			});
+		} finally {
+			await patch({ action: "rename", name: originalName });
+			await store.cancel(existing.workItemId);
+			if (probeRun) await store.cancel(probeRun);
+		}
+	});
+
 	test("admin debug runs reuse AaaS acceptance and cannot be forged by external callers", async () => {
 		const prompt = "你是告警研判 Agent，请输出本次结论。";
 		const requestId = randomUUID();
