@@ -1,5 +1,9 @@
 # Agent 任务 API 接入说明
 
+交互式接口文档位于服务的 `/api/aaas-docs/`，OpenAPI 描述位于 `/api/aaas-docs/openapi.json`。本机默认开发配置启动后可访问 `http://127.0.0.1:5176/api/aaas-docs/`；其他部署使用平台提供的服务地址并确保反向代理转发该路径和 `/api/aaas/v1/`。文档仅列出本说明中的三个业务接口，接口请求仍使用 Integration Token；示例不包含真实凭据。
+
+维护者修改 Agent 任务接口后，应核对 `packages/server/src/orchestration/api-documentation.ts`、本说明和实际行为，再运行 `npm run check:aaas-api`。`npm run check` 也包含该检查。检查会比较 `scripts/aaas-contract-hashes.json` 中受关注文件的 SHA-256，并运行契约测试；修改受关注文件时，检查会输出实际哈希，完成复核和相应文档更新后将其填回该文件。该门禁促使每次改动都经过复核，并验证部分关键行为，不能自动证明文字说明或所有间接依赖的语义正确；新增相关实现文件时也应将其加入清单。
+
 接入方可以下发任务、查询结果和请求取消。AaaS 是动态任务型 Agent：外部业务系统每次调用提供本次完整 Prompt（分析要求、任务内容、输出要求），Agent 编排提供模型、思考强度、MCP、Skill 与 Runtime 等执行能力；请求 Prompt 按覆盖语义作为该 Run 的系统提示词生效。没有其他 Prompt 模式，也没有从 `prompt` 迁移到 `input` 的计划。
 
 本说明对应含迁移 `0028` 的新版本；现有运行实例是否已升级，以平台方通知为准。动态 Prompt 是正式支持的契约，接入方无需切换。

@@ -1,0 +1,11 @@
+{
+	"packages/server/src/orchestration/aaas.ts": "bd9bfa835ec343eab8c8358330c356a890f9abd1a2f1b9b89a8d209c494b4a6b",
+	"packages/server/src/orchestration/contracts.ts": "10c006387b0eb49e18f0721bb0fc61e212d4ec0bb2429aabfb6837cfd1b12cc8",
+	"packages/server/src/orchestration/http.ts": "3855e1bc0de028f4ba6aea82fbf205899bcca1076ba167122b3dd5327c6cbc0d",
+	"packages/server/src/orchestration/store.ts": "9fbf3ff577b9de1ff4dd6dce81aed11bf66142cba4e5937782100039aaa3d0fb",
+	"packages/server/src/orchestration/api-documentation.ts": "f12f5b0022335d8b99e51ec3bc6a392abd07f59962f4bef47c2835e2a504f65a",
+	"packages/server/test/orchestration/api-documentation.test.ts": "7d301af4615eddef14b29b2cd57344d18ef0fa616aa57456a9c78663f3b8e531",
+	"docs/aaas-api-integration.md": "ba10c59e109b072b4d2a48c7b60517cdd5f5c6c6a9503662e81f7c873b2f1c17",
+	"packages/web/vite.config.ts": "6fdc2d3bce508e056219753eda02359e50f0672a44c1e4ae936b4b497627f0a2",
+	"packages/web/test/vite-aaas-proxy.test.ts": "f15c0513512e51452fe32190c61a9cd629fcd5e24e218c83453ac57e44cf0c0c"
+}

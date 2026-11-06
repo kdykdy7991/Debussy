@@ -4,6 +4,7 @@ import { errorEnvelope, jsonBody, readJsonBody, readRequestId } from "../embed/h
 import { requestPathname } from "../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../types.ts";
 import { createRun } from "./aaas.ts";
+import { apiDocumentationHttp } from "./api-documentation.ts";
 import { createConfigurationHttp } from "./configuration-http.ts";
 import { configurationSchema, createIntegrationSchema, eventSchema, OrchestrationError } from "./contracts.ts";
 import type { OrchestrationService } from "./service.ts";
@@ -15,6 +16,7 @@ export function createOrchestrationHttp(
 ): HttpRequestHandler {
 	const configurationHandler = createConfigurationHttp(service, isAdmin);
 	return async (request, response) => {
+		if (await apiDocumentationHttp(request, response)) return true;
 		if (await configurationHandler(request, response)) return true;
 		const pathname = requestPathname(request.url) ?? "";
 		const admin = pathname === "/api/admin/v1/orchestration" || pathname.startsWith("/api/admin/v1/orchestration/");

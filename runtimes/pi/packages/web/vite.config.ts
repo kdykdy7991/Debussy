@@ -250,6 +250,7 @@ export function buildProxyConfig(
 		};
 	}
 	return {
+		"/api/aaas": { target: embedTarget, changeOrigin: false },
 		"/api/control": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 		"/api/admin": { target: embedTarget, changeOrigin: false, configure: adminConfigure },
 		"/api/embed": { target: embedTarget, changeOrigin: false, ws: true },
