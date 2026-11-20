@@ -549,6 +549,7 @@ export async function processResponsesStream<TApi extends Api>(
 				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
 				output: response.usage.output_tokens || 0,
 				cacheRead: cachedTokens,
+				...(typeof inputDetails?.cached_tokens === "number" ? { cacheReadReported: true } : {}),
 				cacheWrite: cacheWriteTokens,
 				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
 				totalTokens: response.usage.total_tokens || 0,

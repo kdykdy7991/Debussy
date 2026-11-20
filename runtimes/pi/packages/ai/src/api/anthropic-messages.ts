@@ -578,6 +578,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.input = event.message.usage.input_tokens || 0;
 					output.usage.output = event.message.usage.output_tokens || 0;
 					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
+					if (typeof event.message.usage.cache_read_input_tokens === "number") output.usage = { ...output.usage, cacheReadReported: true };
 					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
 					output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
 					// Anthropic doesn't provide total_tokens, compute from components
@@ -724,6 +725,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						}
 						if (event.usage.cache_read_input_tokens != null) {
 							output.usage.cacheRead = event.usage.cache_read_input_tokens;
+							output.usage = { ...output.usage, cacheReadReported: true };
 						}
 						if (event.usage.cache_creation_input_tokens != null) {
 							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;

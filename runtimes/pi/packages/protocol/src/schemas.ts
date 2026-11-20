@@ -117,6 +117,8 @@ export const UsageSchema = StrictObject({
 	cacheRead: Type.Integer({ minimum: 0 }),
 	cacheWrite: Type.Integer({ minimum: 0 }),
 	reasoning: Type.Optional(Type.Integer({ minimum: 0 })),
+	/** True only when the provider explicitly reported prompt-cache read tokens (including an explicit 0). */
+	cacheReadReported: Type.Optional(Type.Boolean()),
 	totalTokens: Type.Integer({ minimum: 0 }),
 	cost: StrictObject({
 		input: Type.Number({ minimum: 0 }),

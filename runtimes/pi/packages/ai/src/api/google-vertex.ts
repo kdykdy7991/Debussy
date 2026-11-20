@@ -238,12 +238,16 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				}
 
 				if (chunk.usageMetadata) {
+					const reportedCache = chunk.usageMetadata.cachedContentTokenCount;
+					const cacheRead = reportedCache ?? output.usage.cacheRead;
 					output.usage = {
-						input:
-							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
+						input: chunk.usageMetadata.promptTokenCount === undefined
+							? output.usage.input
+							: Math.max(0, chunk.usageMetadata.promptTokenCount - cacheRead),
 						output:
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
-						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
+						cacheRead,
+						...(typeof reportedCache === "number" || output.usage.cacheReadReported === true ? { cacheReadReported: true } : {}),
 						cacheWrite: 0,
 						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,

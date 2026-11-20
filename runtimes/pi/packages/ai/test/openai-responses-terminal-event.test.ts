@@ -295,6 +295,7 @@ describe("OpenAI Responses terminal event handling", () => {
 			input: 15,
 			output: 7,
 			cacheRead: 2,
+			cacheReadReported: true,
 			cacheWrite: 3,
 			totalTokens: 27,
 		});
@@ -314,6 +315,7 @@ describe("OpenAI Responses terminal event handling", () => {
 			input: 25,
 			output: 12,
 			cacheRead: 5,
+			cacheReadReported: true,
 			cacheWrite: 0,
 			totalTokens: 42,
 		});

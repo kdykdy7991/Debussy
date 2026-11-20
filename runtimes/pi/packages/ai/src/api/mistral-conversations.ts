@@ -276,7 +276,7 @@ function shouldUsePromptCaching(options?: MistralOptions): options is MistralOpt
 	return options?.cacheRetention !== "none" && !!options?.sessionId;
 }
 
-function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): number {
+function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): number | undefined {
 	const rawUsage = usage as {
 		promptTokensDetails?: { cachedTokens?: unknown } | null;
 		prompt_tokens_details?: { cached_tokens?: unknown } | null;
@@ -291,10 +291,9 @@ function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): num
 		rawUsage.promptTokenDetails?.cachedTokens ??
 		rawUsage.prompt_token_details?.cached_tokens ??
 		rawUsage.numCachedTokens ??
-		rawUsage.num_cached_tokens ??
-		0;
-	const cachedTokens = typeof rawCachedTokens === "number" && Number.isFinite(rawCachedTokens) ? rawCachedTokens : 0;
-	return Math.min(promptTokens, Math.max(0, cachedTokens));
+		rawUsage.num_cached_tokens;
+	if (typeof rawCachedTokens !== "number" || !Number.isFinite(rawCachedTokens)) return undefined;
+	return Math.min(promptTokens, Math.max(0, rawCachedTokens));
 }
 
 async function consumeChatStream(
@@ -337,11 +336,13 @@ async function consumeChatStream(
 
 		if (chunk.usage) {
 			const promptTokens = chunk.usage.promptTokens || 0;
-			const cachedPromptTokens = getMistralCachedPromptTokens(chunk.usage, promptTokens);
+			const reportedCache = getMistralCachedPromptTokens(chunk.usage, promptTokens);
+			const cachedPromptTokens = reportedCache ?? output.usage.cacheRead;
 
 			output.usage.input = Math.max(0, promptTokens - cachedPromptTokens);
 			output.usage.output = chunk.usage.completionTokens || 0;
 			output.usage.cacheRead = cachedPromptTokens;
+			if (reportedCache !== undefined) output.usage = { ...output.usage, cacheReadReported: true };
 			output.usage.cacheWrite = 0;
 			output.usage.totalTokens =
 				chunk.usage.totalTokens ||

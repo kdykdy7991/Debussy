@@ -397,6 +397,7 @@ describe("Anthropic raw SSE parsing", () => {
 		expect(result.stopReason).toBe("stop");
 		expect(result.errorMessage).toBeUndefined();
 		expect(result.content).toEqual([{ type: "text", text: "Hello" }]);
+		expect(result.usage.cacheReadReported).toBe(true);
 		expect(result.usage.input).toBe(12);
 		expect(result.usage.totalTokens).toBe(12);
 	});

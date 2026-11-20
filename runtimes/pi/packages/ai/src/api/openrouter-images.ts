@@ -181,6 +181,7 @@ function parseUsage(
 		input,
 		output,
 		cacheRead: cacheReadTokens,
+		...(typeof rawUsage.prompt_tokens_details?.cached_tokens === "number" ? { cacheReadReported: true } : {}),
 		cacheWrite: cacheWriteTokens,
 		totalTokens: input + output + cacheReadTokens + cacheWriteTokens,
 		cost: {

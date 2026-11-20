@@ -1369,14 +1369,22 @@ function parseChunkUsage(
 		prompt_tokens?: number;
 		completion_tokens?: number;
 		prompt_cache_hit_tokens?: number;
-		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		prompt_tokens_details?: { cached_tokens?: number | null; cache_write_tokens?: number } | null;
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens = rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const promptTokensDetails = rawUsage.prompt_tokens_details;
+	const cacheReadTokens = promptTokensDetails?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
+	const cacheWriteTokens = promptTokensDetails?.cache_write_tokens || 0;
+	// Cache-read usage is only "reported" when the provider explicitly sends the
+	// field, including an explicit 0. A missing/null field means unknown, not a miss.
+	const cacheReadReported =
+		(promptTokensDetails !== null &&
+			typeof promptTokensDetails === "object" &&
+			typeof promptTokensDetails.cached_tokens === "number") ||
+		typeof rawUsage.prompt_cache_hit_tokens === "number";
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). OpenAI does not document or emit cache_write_tokens, but
@@ -1395,6 +1403,7 @@ function parseChunkUsage(
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
 		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
+		...(cacheReadReported ? { cacheReadReported: true } : {}),
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
