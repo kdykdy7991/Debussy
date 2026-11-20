@@ -12,6 +12,7 @@ import { createIntegrationSchema, settingsSchema } from "../../src/orchestration
 import { credentialHash, WorkCredentialBox } from "../../src/orchestration/credentials.ts";
 import { orchestrationExecutionConfigResolver } from "../../src/orchestration/execution-configuration.ts";
 import { createOrchestrationHttp } from "../../src/orchestration/http.ts";
+import { createBoundaryExecutionSource } from "../../src/orchestration/execution-source.ts";
 import { protectTool } from "../../src/orchestration/protected-tool.ts";
 import { OrchestrationService } from "../../src/orchestration/service.ts";
 import { type IntegrationRecord, OrchestrationStore } from "../../src/orchestration/store.ts";
@@ -146,15 +147,30 @@ describe.skipIf(!url)("independent orchestration domain on real Postgres and sha
 				},
 				close: async () => {},
 			}),
-			protectTool: async (scope, serverId, tool, schema) =>
-				protectTool(
-					tool,
-					schema,
-					(await store.toolBindings(scope.conversationId)).filter(
-						(b) => b.mcpServerId === serverId && b.toolName === tool.name,
-					),
-					async () => (await store.credentials(scope.conversationId, scope.turnId!)).values,
-				),
+			protectTool,
+			executionSource: async (scope) => {
+				const conversationId = scope.conversationId;
+				if (conversationId === undefined) return undefined;
+				return createBoundaryExecutionSource({
+					boundary: {
+						async checkFresh() {},
+						connectionCredential: () => undefined,
+						secrets: [],
+						authenticationFailed() {},
+						connectionFailed() {},
+						inspect() {},
+					},
+					owner: { kind: "conversation", conversationId },
+					toolBindings: async (serverId, toolName) =>
+						(await store.toolBindings(conversationId)).filter(
+							(b) => b.mcpServerId === serverId && b.toolName === toolName,
+						),
+					toolCredentials: async (_serverId, _toolName, credentialNames) => {
+						const values = (await store.credentials(conversationId, scope.turnId!)).values;
+						return Object.fromEntries(credentialNames.map((name) => [name, values[name] ?? ""]));
+					},
+				});
+			},
 		});
 		const adapter = createPiRuntimeAdapter({
 			createMcpTools: factory,

@@ -38,6 +38,7 @@ import { DebugConversationService } from "../publishing/debug/service.ts";
 import { createMcpRuntimeToolFactory } from "../publishing/mcp/runtime-tools.ts";
 import { createSkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import { type BuiltinToolNameResolver, createPiRuntimeAdapter } from "../runtime/pi-runtime-adapter.ts";
+import { sandboxConfigFromEnv } from "../runtime/sandbox.ts";
 import type { PiServer } from "../server.ts";
 import { createWebSocketServer } from "../transports/websocket/preset.ts";
 import type { WebSocketServerOptions } from "../transports/websocket/types.ts";
@@ -240,8 +241,8 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 			});
 		// ONE MCP tool factory + ONE PiRuntimeAdapter shared by the Published
 		// (embed) path and the Debug path: "SAME RuntimeSpec → SAME Runtime
-		// Builder → SAME Tool Set". allowedToolNames is computed inside the
-		// adapter strictly from the RuntimeSpec.
+		// Builder → SAME Tool Set". The adapter supplies the frozen built-in
+		// allowlist and the MCP definitions to the shared session factory.
 		const mcpTools = createMcpRuntimeToolFactory({
 			repositories: controlPlane.repositories,
 			secretBox: controlPlane.mcpSecretBox,
@@ -341,6 +342,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 		if (publishing.mcpSecretMasterKey !== undefined) {
 			orchestration = await composeOrchestration({
 				control: controlPlane,
+				legacyOnly: process.env.PI_AAAS_LEGACY_ONLY === "1",
 				masterKey: publishing.mcpSecretMasterKey,
 				networkPolicy:
 					publishing.mcpNetworkPolicy === undefined
@@ -354,6 +356,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
 										: new Set(publishing.mcpNetworkPolicy.allowedPorts),
 							},
 				createSession: makeRuntimeSession,
+				sandboxConfig: sandboxConfigFromEnv(process.env),
 				skillMaterializer,
 				resolveModelMetadata: (provider, modelId) =>
 					(embedBackend ?? backend).getResolvedModelMetadata(provider, modelId),

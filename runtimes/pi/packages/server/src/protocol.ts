@@ -50,7 +50,15 @@ type _AiToolCallFieldsAccountedFor = Assert<
 type _AiUsageFieldsAccountedFor = Assert<
 	ExactKeys<
 		AiUsage,
-		"input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "reasoning" | "totalTokens" | "cost"
+		| "input"
+		| "output"
+		| "cacheRead"
+		| "cacheWrite"
+		| "cacheWrite1h"
+		| "cacheReadReported"
+		| "reasoning"
+		| "totalTokens"
+		| "cost"
 	>
 >;
 type _AiUsageCostFieldsAccountedFor = Assert<
@@ -187,12 +195,14 @@ export function sanitizeProtocolDetails(value: unknown, seen = new Set<object>()
 export function toProtocolUsage(usage: AiUsage | undefined): Usage | undefined {
 	if (!usage) return undefined;
 	const reasoning = nonNegativeInteger(usage.reasoning);
+	const cacheReadReported = usage.cacheReadReported === true;
 	const result = {
 		input: nonNegativeInteger(usage.input) ?? 0,
 		output: nonNegativeInteger(usage.output) ?? 0,
 		cacheRead: nonNegativeInteger(usage.cacheRead) ?? 0,
 		cacheWrite: nonNegativeInteger(usage.cacheWrite) ?? 0,
 		...(reasoning === undefined ? {} : { reasoning }),
+		...(cacheReadReported ? { cacheReadReported: true } : {}),
 		totalTokens: nonNegativeInteger(usage.totalTokens) ?? 0,
 		cost: {
 			input: nonNegativeNumber(usage.cost.input),

@@ -20,6 +20,10 @@ function run(overrides: Partial<AdminUsageRunRow> = {}): AdminUsageRunRow {
 		accurateLlmCallCount: 3,
 		durationMs: 38_600,
 		conversationId: "conv-1",
+		cacheHitTokens: null,
+		cacheMissTokens: null,
+		cachePromptTokens: null,
+		cacheHitRate: null,
 		...overrides,
 	};
 }
@@ -57,6 +61,14 @@ describe("usage view aggregation", () => {
 			accurateTokens: 17_470,
 			partialTokens: 500,
 			llmCallCount: 3,
+			cacheReportedRuns: 0,
+			cacheUnknownRuns: 1,
+			cacheReportedCalls: 0,
+			cacheUnknownCalls: 0,
+			cacheHitTokens: 0,
+			cachePromptTokens: 0,
+			cacheMissTokens: 0,
+			cacheHitRate: null,
 		});
 		expect(stats.byGroup[0]).toMatchObject({
 			runCount: 3,
@@ -77,7 +89,19 @@ describe("usage view aggregation", () => {
 			runs: [run(), run({ id: "run-2", createdAt: "2026-08-05T23:59:00.000Z" })],
 		});
 		expect(stats.byDay).toHaveLength(7);
-		expect(stats.byDay[0]).toEqual({ date: "2026-08-01", runCount: 0, accurateTokens: 0, partialTokens: 0 });
+		expect(stats.byDay[0]).toEqual({
+			date: "2026-08-01",
+			runCount: 0,
+			accurateTokens: 0,
+			partialTokens: 0,
+			cacheHitTokens: 0,
+			cachePromptTokens: 0,
+			cacheHitRate: null,
+			cacheReportedRuns: 0,
+			cacheUnknownRuns: 0,
+			cacheReportedCalls: 0,
+			cacheUnknownCalls: 0,
+		});
 		expect(stats.byDay[1]).toMatchObject({ date: "2026-08-02", runCount: 1, accurateTokens: 17_470 });
 		expect(stats.byDay[4]).toMatchObject({ date: "2026-08-05", runCount: 1 });
 	});
@@ -117,6 +141,151 @@ describe("usage view aggregation", () => {
 			accurateTokens: 0,
 			partialTokens: 0,
 			llmCallCount: 0,
+			cacheReportedRuns: 0,
+			cacheUnknownRuns: 0,
+			cacheReportedCalls: 0,
+			cacheUnknownCalls: 0,
+			cacheHitTokens: 0,
+			cachePromptTokens: 0,
+			cacheMissTokens: 0,
+			cacheHitRate: null,
 		});
+	});
+
+	it("weights cache hit rate by prompt tokens and excludes unknown cache rows", () => {
+		const stats = buildUsageViewStats({
+			from: FROM,
+			to: TO,
+			runs: [
+				run({
+					id: "cache-hit",
+					accurateTokens: 1_400,
+					cacheHitTokens: 300,
+					cacheMissTokens: 100,
+					cachePromptTokens: 400,
+					cacheHitRate: 0.75,
+				}),
+				run({
+					id: "cache-zero",
+					accurateTokens: 200,
+					cacheHitTokens: 0,
+					cacheMissTokens: 100,
+					cachePromptTokens: 100,
+					cacheHitRate: 0,
+				}),
+				run({ id: "cache-unknown" }),
+				run({
+					id: "cache-partial",
+					tokenCoverage: "partial",
+					accurateTokens: null,
+					accurateLlmCallCount: null,
+					partialTokens: 10,
+					cacheHitTokens: null,
+					cacheMissTokens: null,
+					cachePromptTokens: null,
+					cacheHitRate: null,
+				}),
+			],
+		});
+		expect(stats.coverage).toMatchObject({
+			cacheReportedRuns: 2,
+			cacheUnknownRuns: 1,
+			cacheHitTokens: 300,
+			cachePromptTokens: 500,
+			cacheMissTokens: 200,
+			// Weighted 300/500, not the arithmetic mean of 0.75 and 0.
+			cacheHitRate: 0.6,
+		});
+		expect(stats.byDay[1]).toMatchObject({
+			cacheReportedRuns: 2,
+			cacheUnknownRuns: 1,
+			cacheHitTokens: 300,
+			cachePromptTokens: 500,
+			cacheHitRate: 0.6,
+		});
+		expect(stats.byGroup[0]).toMatchObject({
+			cacheReportedRuns: 2,
+			cacheUnknownRuns: 1,
+			cacheHitRate: 0.6,
+		});
+	});
+
+	it("reports cache coverage per call so a partially reporting row is not discarded", () => {
+		const stats = buildUsageViewStats({
+			from: FROM,
+			to: TO,
+			runs: [
+				// Two of three calls reported their cache read: the reported calls
+				// still contribute their hits and prompt tokens.
+				run({
+					id: "cache-mixed",
+					accurateTokens: 1310,
+					accurateLlmCallCount: 3,
+					cacheHitTokens: 400,
+					cacheMissTokens: 350,
+					cachePromptTokens: 750,
+					cacheHitRate: 400 / 750,
+					cacheReportedCalls: 2,
+					cacheUnknownCalls: 1,
+				}),
+				// A row without a single reported call stays unknown.
+				run({
+					id: "cache-none-reported",
+					accurateTokens: 800,
+					accurateLlmCallCount: 1,
+					cacheReportedCalls: 0,
+					cacheUnknownCalls: 1,
+				}),
+			],
+		});
+		expect(stats.coverage).toMatchObject({
+			cacheReportedRuns: 1,
+			cacheUnknownRuns: 1,
+			cacheReportedCalls: 2,
+			cacheUnknownCalls: 2,
+			cacheHitTokens: 400,
+			cachePromptTokens: 750,
+			cacheMissTokens: 350,
+			cacheHitRate: 400 / 750,
+		});
+		expect(stats.byGroup[0]).toMatchObject({
+			cacheReportedCalls: 2,
+			cacheUnknownCalls: 2,
+			cacheHitTokens: 400,
+			cachePromptTokens: 750,
+			cacheHitRate: 400 / 750,
+		});
+		expect(stats.byModel[0]).toMatchObject({
+			cacheReportedCalls: 2,
+			cacheUnknownCalls: 2,
+		});
+		expect(stats.byDay[1]).toMatchObject({
+			date: "2026-08-02",
+			cacheReportedCalls: 2,
+			cacheUnknownCalls: 2,
+			cacheHitTokens: 400,
+			cachePromptTokens: 750,
+			cacheHitRate: 400 / 750,
+		});
+	});
+
+	it("keeps an explicit zero hit rate distinct from unknown cache data", () => {
+		const known = buildUsageViewStats({
+			from: FROM,
+			to: TO,
+			runs: [
+				run({
+					cacheHitTokens: 0,
+					cacheMissTokens: 400,
+					cachePromptTokens: 400,
+					cacheHitRate: 0,
+				}),
+			],
+		});
+		expect(known.coverage.cacheHitRate).toBe(0);
+		expect(known.coverage.cacheReportedRuns).toBe(1);
+		const unknown = buildUsageViewStats({ from: FROM, to: TO, runs: [run()] });
+		expect(unknown.coverage.cacheHitRate).toBeNull();
+		expect(unknown.coverage.cacheUnknownRuns).toBe(1);
 	});
 });

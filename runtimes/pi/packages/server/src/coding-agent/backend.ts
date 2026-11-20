@@ -224,6 +224,13 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			throw new PiServerError("invalid_request", `Backend failed to allocate a session file for ${options.id}`);
 		}
 		const model = options.model ? this.resolveModel(options.model) : undefined;
+		const customTools = options.customTools === undefined ? undefined : [...options.customTools];
+		// Pi's SDK uses a single allowlist. Only include MCP names with registered
+		// definitions, and preserve an explicit empty list to suppress Pi defaults.
+		const tools =
+			options.allowedToolNames === undefined
+				? undefined
+				: [...new Set([...options.allowedToolNames, ...(customTools ?? []).map((tool) => tool.name)])];
 		const result = await createAgentSessionFromServices({
 			services: options.resourceOverrides
 				? await this.buildOverriddenServices(options.resourceOverrides, cwd)
@@ -232,11 +239,8 @@ export class CodingAgentPiSessionBackend implements PiSessionBackend {
 			model: model as never,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 			streamOptions: options.streamOptions,
-			// Pi's native model is additive: MCP custom tools coexist with its
-			// built-in coding tools. Sandbox policy, rather than tool suppression,
-			// will constrain filesystem and process access for published sessions.
-			...(options.customTools !== undefined ? { customTools: [...options.customTools] } : {}),
-			...(options.allowedToolNames !== undefined ? { allowedToolNames: [...options.allowedToolNames] } : {}),
+			customTools,
+			tools,
 			sessionStartEvent: {
 				type: "session_start",
 				reason: "new",

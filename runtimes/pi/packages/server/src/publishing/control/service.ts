@@ -32,15 +32,26 @@ import type {
 	AgentDefinitionRevision,
 	AgentDefinitionRevisionListResponse,
 	AgentPublicId,
+	ConversationAdminDetailResponse,
 	ConversationAdminEvent,
 	ConversationAdminEventListResponse,
 	ConversationAdminListResponse,
+	ConversationAdminLlmCallDetailResponse,
+	ConversationAdminLlmCallListResponse,
+	ConversationAdminLlmCallSummary,
 	ConversationAdminSummary,
 	ConversationAdminSummaryEntry,
 	ConversationAdminSummaryListResponse,
 	ConversationEventPublicId,
+	ConversationLlmTraceStatus,
+	ConversationSessionCallStatus,
 	ConversationPublicId,
 	ConversationReasoningState,
+	ConversationSessionLlmCallUsage,
+	ConversationSessionTurnPrecision,
+	ConversationSessionTurnUsage,
+	ConversationSessionUsageResponse,
+	ConversationSessionUsageTotals,
 	CreateAgentDefinitionRequest,
 	CreateAgentDefinitionResponse,
 	CustomLlmApi,
@@ -89,7 +100,11 @@ import {
 } from "../../agent-v2/query.ts";
 import { applyConversationReasoning, reasoningCapabilitiesForVersion } from "../../agent-v2/reasoning.ts";
 import { validateOriginList } from "../../embed/auth/origin.ts";
+import { redactStructured } from "../../logging/redact.ts";
 import { modelParameterCapabilities, validateModelParameters } from "../../model-parameters.ts";
+import { actualInputTokens } from "../../runtime/token-accounting.ts";
+import type { SensitiveRuleBatch } from "../../orchestration/router-capability-contracts.ts";
+import { inheritSensitiveBindings, publishMcpSensitiveRules } from "../../orchestration/router-capability.ts";
 import type {
 	AgentDefinitionId,
 	AuditEventId,
@@ -136,6 +151,8 @@ import type {
 	ConversationEventRecord,
 	ConversationSummaryRecord,
 	LaunchKeyRecord,
+	LlmCallQueryResult,
+	LlmCallRow,
 	McpServerRevisionRecord,
 	McpToolRecord,
 	PublishedAppRecord,
@@ -314,6 +331,9 @@ export type ControlErrorCode =
 	| "METRICS_UNAVAILABLE" // Agent V2 metrics subsystem disabled/unavailable (503)
 	| "CONTEXT_SNAPSHOT_UNAVAILABLE" // Agent V2 context snapshot subsystem unavailable (503)
 	| "INVALID_METRICS_FILTER" // metrics/context query params invalid (422)
+	| "LLM_TRACE_QUERY_FAILED" // LLM trace query failed for a reason other than a missing 0030 table (500)
+	| "LLM_TRACE_UNAVAILABLE" // 0030 migration not applied in this database (503)
+	| "LLM_CALL_NOT_FOUND" // requested single LLM record does not exist (404)
 	// Agent V2 §4.3: conversation reasoning effort overrides.
 	| "REASONING_INVALID_EFFORT" // effort not in the model's declared tiers (422)
 	| "REASONING_NOT_CONFIGURABLE" // policy forbids adjusting this conversation (403)
@@ -333,6 +353,119 @@ export type ControlResult<T> =
 
 function fail<T>(code: ControlErrorCode, httpStatus: number, message: string): ControlResult<T> {
 	return { ok: false, error: { code, httpStatus, message } };
+}
+
+/** Session V1 helpers — pure projections over persisted facts, no inference about Step/Attempt. */
+
+interface SessionUsageAggregate {
+	readonly calls: readonly ConversationSessionLlmCallUsage[];
+	readonly turns: readonly ConversationSessionTurnUsage[];
+	readonly totals: ConversationSessionUsageTotals | null;
+	readonly accurateTurns: number;
+	readonly partialTurns: number;
+	readonly legacyTurns: number;
+	readonly missingTurns: number;
+	readonly expectedCalls: number | null;
+	readonly verified: boolean;
+	readonly toolCallCount: number;
+	readonly toolErrorCount: number;
+	readonly latestPromptTokens: number | null;
+	readonly peakPromptTokens: number | null;
+	readonly notes: readonly string[];
+}
+
+function numeric(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function diagnosticMessage(error: unknown): string {
+	return error instanceof Error && error.message.trim() !== ""
+		? error.message.replace(/\s+/g, " ").trim().slice(0, 300)
+		: "unknown database error";
+}
+
+/**
+ * A trace may be labelled `complete` only when every Turn has a verified
+ * `llmUsage.callCount` and the recorded request count matches it. Otherwise
+ * the coverage is at best `partial` and usually `unknown` — never `complete`.
+ */
+function buildTraceStatus(
+	source: "chat" | "orchestration",
+	page: { readonly available: boolean; readonly reason: "ok" | "table_missing"; readonly total: number },
+	expectedCalls: number | null,
+	verified: boolean,
+): ConversationLlmTraceStatus {
+	if (!page.available)
+		return { available: false, reason: "table_missing", recordedCalls: 0, expectedCalls: null, coverage: "unknown" };
+	if (source === "chat")
+		return {
+			available: false,
+			reason: "chat_untraced",
+			recordedCalls: page.total,
+			expectedCalls,
+			coverage: "unknown",
+		};
+	if (page.total === 0)
+		return { available: false, reason: "no_records", recordedCalls: 0, expectedCalls, coverage: "unknown" };
+	const coverage: ConversationLlmTraceStatus["coverage"] =
+		verified && expectedCalls !== null && page.total === expectedCalls
+			? "complete"
+			: verified && expectedCalls !== null && page.total < expectedCalls
+				? "partial"
+				: "unknown";
+	return {
+		available: true,
+		reason: "collected",
+		recordedCalls: page.total,
+		expectedCalls,
+		coverage,
+	};
+}
+
+/** Derive a compact summary from one persisted provider-boundary row. */
+function llmCallSummary(row: LlmCallRow): ConversationAdminLlmCallSummary {
+	const request = isObject(row.request) ? row.request : {};
+	const response = isObject(row.response) ? row.response : null;
+	const messages = Array.isArray(request.messages) ? request.messages : null;
+	const systemPrompt = typeof request.systemPrompt === "string" ? request.systemPrompt : null;
+	const content = response !== null && Array.isArray(response.content) ? response.content : [];
+	const parts = content.map((part) => (isObject(part) ? part : {}));
+	const toolCalls = parts.filter((part) => part.type === "toolCall");
+	const toolCallIds = toolCalls.map((part) => (typeof part.id === "string" ? part.id : "")).filter((id) => id !== "");
+	const toolCallNames = toolCalls
+		.map((part) => (typeof part.name === "string" ? part.name : ""))
+		.filter((name) => name !== "");
+	const preview = parts
+		.filter((part) => part.type === "text" && typeof part.text === "string")
+		.map((part) => String(part.text))
+		.join("\n")
+		.slice(0, 160);
+	const stopReason = response !== null && typeof response.stopReason === "string" ? response.stopReason : null;
+	const status: ConversationAdminLlmCallSummary["status"] =
+		row.response === null
+			? "incomplete"
+			: row.completedAt === null
+				? "unknown"
+				: stopReason === "error"
+					? "failed"
+					: stopReason === "aborted"
+						? "interrupted"
+						: "completed";
+	return {
+		turnId: toPublicId("TurnId", row.turnId as TurnId),
+		callIndex: row.callIndex,
+		model: `${row.modelProvider}/${row.modelId}`,
+		startedAt: row.createdAt.toISOString(),
+		completedAt: row.completedAt?.toISOString() ?? null,
+		durationMs: row.completedAt === null ? null : Math.max(0, row.completedAt.getTime() - row.createdAt.getTime()),
+		status,
+		messageCount: messages === null ? null : messages.length,
+		systemPromptChars: systemPrompt === null ? null : systemPrompt.length,
+		toolCallIds,
+		toolCallNames,
+		responsePreview: preview === "" ? null : preview,
+		hasRawPayload: row.response !== null,
+	};
 }
 
 function mcpFailureDetail(error: unknown, secrets: readonly string[] = []): string {
@@ -1817,6 +1950,64 @@ export class ControlService {
 		};
 	}
 
+	async getMcpSensitiveRules(tenantId: TenantId, mcpServerId: McpServerId) {
+		const scope = { tenantId };
+		const server = await this.repos.mcpServers.get(scope, mcpServerId);
+		if (!server) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Server 不存在或不可访问");
+		const revision = await this.repos.mcpServers.getRevision(scope, mcpServerId, server.currentRevision);
+		if (!revision) return fail("MCP_SERVER_NOT_FOUND", 404, "MCP Revision 不存在或不可访问");
+		return { ok: true as const, data: { revision: revision.revision, sensitive_bindings: revision.sensitiveBindings ?? null } };
+	}
+
+	/** Freeze reviewed sensitive rules with a new MCP Revision; equivalent rules reuse a Revision. */
+	async publishMcpSensitiveRules(input: {
+		readonly tenantId: TenantId;
+		readonly mcpServerId: McpServerId;
+		readonly rules: readonly SensitiveRuleBatch[];
+		readonly expectedRevision?: number;
+		readonly reuseEquivalent?: boolean;
+	}): Promise<
+		ControlResult<{
+			readonly revision: number;
+			readonly created: boolean;
+			readonly sensitive_bindings: readonly {
+				readonly mcpServerId: string;
+				readonly toolName: string;
+				readonly parameter: string;
+				readonly credentialId: string;
+			}[];
+		}>
+	> {
+		try {
+			const result = await publishMcpSensitiveRules({
+				repos: this.repos,
+				tenantId: input.tenantId,
+				mcpServerId: input.mcpServerId,
+				rules: input.rules,
+				expectedRevision: input.expectedRevision,
+				reuseEquivalent: input.reuseEquivalent,
+			});
+			if (result.created)
+				await this.writeAudit({
+					tenantId: input.tenantId,
+					action: "mcp-server.sensitive-rules-published",
+					resourceType: "mcp_server",
+					resourceId: input.mcpServerId,
+					metadata: { revision: result.revision, rules: input.rules.length },
+				});
+			return {
+				ok: true,
+				data: {
+					revision: result.revision,
+					created: result.created,
+					sensitive_bindings: result.sensitiveBindings,
+				},
+			};
+		} catch {
+			return fail("MCP_BINDING_VIOLATION", 422, "敏感参数规则无效或与 MCP Revision 不匹配");
+		}
+	}
+
 	async listMcpServers(input: {
 		readonly tenantId: TenantId;
 		readonly limit: number;
@@ -2026,6 +2217,17 @@ export class ControlService {
 					data: { ok: true, revision: connected.data.revision.revision, added, removed, changed },
 				};
 			}
+			// Rules freeze with the Revision: only still-applicable rules are
+			// inherited. New/changed tools keep NULL until rules are published.
+			const inherited = inheritSensitiveBindings(
+				oldTools,
+				nextTools.map(({ mcpRevision: _mcpRevision, ...tool }) => tool),
+			);
+			const reviewed = new Set(inherited.filter((tool) => tool.sensitiveBindings !== null).map((tool) => tool.name));
+			const previousRules = connected.data.revision.sensitiveBindings;
+			const revisionRules = previousRules === null || previousRules === undefined
+				? null
+				: previousRules.filter((binding) => reviewed.has(binding.toolName));
 			const created = await this.repos.mcpServers.addRevision({
 				scope: { tenantId: input.tenantId },
 				mcpServerId: input.mcpServerId,
@@ -2036,9 +2238,10 @@ export class ControlService {
 					transport: connected.data.revision.transport,
 					endpoint: connected.data.revision.endpoint,
 					authentication: connected.data.revision.authentication,
+					sensitiveBindings: revisionRules,
 					createdAt: new Date(),
 				},
-				tools: nextTools.map(({ mcpRevision: _mcpRevision, ...tool }) => tool),
+				tools: inherited,
 			});
 			if (created === undefined) return fail("CONFLICT", 409, "MCP Server changed during synchronization; retry");
 			await this.writeAudit({
@@ -2544,6 +2747,11 @@ export class ControlService {
 					to: input.to,
 				})
 			: undefined;
+		const router = await this.repos.events.summarizeRouterUsageView?.({
+			scope: { tenantId: input.tenantId },
+			from: input.from,
+			to: input.to,
+		});
 		const totals = rows.reduce(
 			(acc, row) => ({
 				inputTokens: acc.inputTokens + row.inputTokens,
@@ -2581,6 +2789,7 @@ export class ControlService {
 				bySource: rows.length === 0 ? [] : [{ source: "embed", ...totals }],
 				...(orchestration ? { orchestration } : {}),
 				...(chat ? { chat } : {}),
+				...(router ? { router } : {}),
 				generatedAt: new Date().toISOString(),
 			},
 		};
@@ -2725,9 +2934,16 @@ export class ControlService {
 		readonly agentId?: AgentDefinitionId;
 		readonly hasErrors?: boolean;
 		readonly principalType?: "external_user" | "anonymous_visitor";
+		readonly origin?: "chat" | "integration" | "aaas_key";
+		readonly keyId?: string;
+		readonly runId?: string;
+		readonly executionState?: string;
 		readonly publishedAppVersionId?: PublishedAppVersionId;
 		readonly createdAfter?: Date;
 		readonly createdBefore?: Date;
+		readonly search?: string;
+		readonly lastActiveAfter?: Date;
+		readonly lastActiveBefore?: Date;
 	}): Promise<ControlResult<ConversationAdminListResponse>> {
 		const rows = await this.repos.conversations.listByTenant({
 			scope: { tenantId: input.tenantId },
@@ -2738,9 +2954,16 @@ export class ControlService {
 			agentId: input.agentId,
 			hasErrors: input.hasErrors,
 			principalType: input.principalType,
+			origin: input.origin,
+			keyId: input.keyId,
+			runId: input.runId,
+			executionState: input.executionState,
 			publishedAppVersionId: input.publishedAppVersionId,
 			createdAfter: input.createdAfter,
 			createdBefore: input.createdBefore,
+			search: input.search,
+			lastActiveAfter: input.lastActiveAfter,
+			lastActiveBefore: input.lastActiveBefore,
 		});
 		const { page, nextCursor } = sliceCursorPage(rows, input.limit);
 		return {
@@ -2801,17 +3024,7 @@ export class ControlService {
 		readonly tenantId: TenantId;
 		readonly conversationId: ConversationId;
 		readonly requestId?: string;
-	}): Promise<
-		ControlResult<{
-			readonly conversation: ConversationAdminSummary;
-			readonly rollover: {
-				readonly previousConversationId: string | null;
-				readonly nextConversationId: string | null;
-				readonly rolledOverAt: string | null;
-			};
-			readonly latestSummary: ConversationAdminSummaryEntry | null;
-		}>
-	> {
+	}): Promise<ControlResult<ConversationAdminDetailResponse>> {
 		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
 		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
 		const ownerScope = {
@@ -2821,6 +3034,15 @@ export class ControlService {
 			principalId: row.ownerPrincipalId,
 		};
 		const latest = await this.repos.summaries.getLatest(ownerScope, row.conversationId);
+		const task = await this.repos.conversations.getOrchestrationTaskByTenant(
+			{ tenantId: input.tenantId },
+			input.conversationId,
+		);
+		const source: "chat" | "orchestration" = row.integrationId ? "orchestration" : "chat";
+		// Session V1: detail never carries any raw LLM payload. Only a bounded
+		// count probe is needed to explain why Trajectory is empty.
+		const traced = await this.readLlmCallPage(input.tenantId, input.conversationId, 1, 0);
+		if (!traced.ok) return traced;
 		await this.writeAudit({
 			tenantId: input.tenantId,
 			action: "conversation.read-transcript",
@@ -2829,6 +3051,12 @@ export class ControlService {
 			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
 			metadata: { publishedAppId: row.publishedAppId, latestThroughSequence: latest?.throughSequence ?? null },
 		});
+		// Only `legacy_prompt` carries a dynamic System Prompt override. Other
+		// AaaS contracts and plain Chat keep their real `user/message` event.
+		const taskInput =
+			task?.requestContract === "legacy_prompt" && typeof task.taskPrompt === "string"
+				? { kind: "external_task" as const, text: task.taskPrompt }
+				: null;
 		return {
 			ok: true,
 			data: {
@@ -2841,7 +3069,421 @@ export class ControlService {
 					rolledOverAt: row.rolledOverAt === null ? null : row.rolledOverAt.toISOString(),
 				},
 				latestSummary: latest === undefined ? null : toConversationAdminSummaryEntry(latest),
+				source,
+				requestContract: task?.requestContract ?? null,
+				taskInput,
+				trace: buildTraceStatus(source, traced.data, null, false),
 			},
+		};
+	}
+
+	/** Session V1: lightweight per-request summaries; no Request/Response payloads. */
+	async listConversationLlmCalls(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly limit: number;
+		readonly after: number;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationAdminLlmCallListResponse>> {
+		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
+		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const source: "chat" | "orchestration" = row.integrationId ? "orchestration" : "chat";
+		const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 200);
+		const after = Math.max(0, Math.trunc(input.after));
+		const page = await this.readLlmCallPage(input.tenantId, input.conversationId, limit, after);
+		if (!page.ok) return page;
+		const usage = await this.collectSessionUsage(input.tenantId, input.conversationId);
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				items: page.data.rows.map(llmCallSummary),
+				nextCursor:
+					page.data.rows.length === limit && after + page.data.rows.length < page.data.total
+						? String(after + page.data.rows.length)
+						: null,
+				trace: buildTraceStatus(source, page.data, usage.expectedCalls, usage.verified),
+			},
+		};
+	}
+
+	/** Session V1: one raw record on demand, with tenant scope, redaction and audit. */
+	async getConversationLlmCallDetail(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly turnId: TurnId;
+		readonly callIndex: number;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationAdminLlmCallDetailResponse>> {
+		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
+		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		let found: LlmCallQueryResult<LlmCallRow | null>;
+		try {
+			found = await this.repos.conversations.getLlmCallByTenant(
+				{ tenantId: input.tenantId },
+				input.conversationId,
+				input.turnId,
+				input.callIndex,
+			);
+		} catch (error) {
+			return fail("LLM_TRACE_QUERY_FAILED", 500, `LLM 原文查询失败：${diagnosticMessage(error)}`);
+		}
+		if (!found.available) return fail("LLM_TRACE_UNAVAILABLE", 503, "逐次调用追踪未部署（0030 表缺失）");
+		if (found.rows === null) return fail("LLM_CALL_NOT_FOUND", 404, "该次 LLM 请求记录不存在");
+		const request = redactStructured(found.rows.request);
+		const response = redactStructured(found.rows.response);
+		await this.writeAudit({
+			tenantId: input.tenantId,
+			action: "conversation.read-llm-call",
+			resourceType: "conversation",
+			resourceId: input.conversationId,
+			requestId: input.requestId === undefined ? undefined : (input.requestId as RequestId),
+			metadata: {
+				turnId: String(input.turnId),
+				callIndex: input.callIndex,
+				redacted: request.redacted || response.redacted,
+			},
+		});
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				turnId: toPublicId("TurnId", found.rows.turnId as TurnId),
+				callIndex: found.rows.callIndex,
+				model: `${found.rows.modelProvider}/${found.rows.modelId}`,
+				startedAt: found.rows.createdAt.toISOString(),
+				completedAt: found.rows.completedAt?.toISOString() ?? null,
+				request: request.value,
+				response: response.value,
+				redacted: request.redacted || response.redacted,
+			},
+		};
+	}
+
+	/**
+	 * Session V1: Session-level usage from the *authoritative* per-call records
+	 * in `turn/end.payload.llmUsage.calls[]` / `.total`. Legacy `payload.usage`
+	 * (last call only) is reported separately and never mixed into the totals.
+	 */
+	async getConversationSessionUsage(input: {
+		readonly tenantId: TenantId;
+		readonly conversationId: ConversationId;
+		readonly requestId?: string;
+	}): Promise<ControlResult<ConversationSessionUsageResponse>> {
+		const row = await this.repos.conversations.getByTenant({ tenantId: input.tenantId }, input.conversationId);
+		if (row === undefined) return fail("CONVERSATION_NOT_FOUND", 404, "conversation not found in tenant scope");
+		const source: "chat" | "orchestration" = row.integrationId ? "orchestration" : "chat";
+		const usage = await this.collectSessionUsage(input.tenantId, input.conversationId);
+		const traced = await this.readLlmCallPage(input.tenantId, input.conversationId, 1, 0);
+		if (!traced.ok) return traced;
+		return {
+			ok: true,
+			data: {
+				conversationId: toPublicId("ConversationId", input.conversationId) as ConversationPublicId,
+				totals: usage.totals,
+				calls: usage.calls,
+				turns: usage.turns,
+				accurateTurns: usage.accurateTurns,
+				partialTurns: usage.partialTurns,
+				legacyTurns: usage.legacyTurns,
+				missingTurns: usage.missingTurns,
+				toolCallCount: usage.toolCallCount,
+				toolErrorCount: usage.toolErrorCount,
+				latestPromptTokens: usage.latestPromptTokens,
+				peakPromptTokens: usage.peakPromptTokens,
+				trace: buildTraceStatus(source, traced.data, usage.expectedCalls, usage.verified),
+				notes: usage.notes,
+			},
+		};
+	}
+
+	/**
+	 * The only swallowed database condition is a recognisable missing 0030
+	 * table (repository returns `available=false`). Every other failure is
+	 * surfaced with an explicit diagnostic code instead of being hidden.
+	 */
+	private async readLlmCallPage(
+		tenantId: TenantId,
+		conversationId: ConversationId,
+		limit: number,
+		after: number,
+	): Promise<ControlResult<LlmCallQueryResult<readonly LlmCallRow[]>>> {
+		try {
+			const result = await this.repos.conversations.listLlmCallsByTenant({ tenantId }, conversationId, {
+				limit,
+				after,
+			});
+			return { ok: true, data: result };
+		} catch (error) {
+			return fail("LLM_TRACE_QUERY_FAILED", 500, `LLM 逐次请求记录查询失败：${diagnosticMessage(error)}`);
+		}
+	}
+
+	/** Page the append-only event log server-side; only small aggregates cross the wire. */
+	private async collectSessionUsage(
+		tenantId: TenantId,
+		conversationId: ConversationId,
+	): Promise<SessionUsageAggregate> {
+		const calls: ConversationSessionLlmCallUsage[] = [];
+		const turns: ConversationSessionTurnUsage[] = [];
+		let accurateTurns = 0;
+		let partialTurns = 0;
+		let legacyTurns = 0;
+		let missingTurns = 0;
+		let toolCallCount = 0;
+		let toolErrorCount = 0;
+		let interruptedWithUsageTurns = 0;
+		let hasConfirmedTotals = false;
+		let expectedCalls = 0;
+		let allTurnsHaveCallCount = true;
+		let verified = true;
+		const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+		let after = 0;
+		for (;;) {
+			const page = await this.repos.events.listByConversation({
+				scope: { tenantId },
+				conversationId,
+				limit: 500,
+				afterSequence: after,
+			});
+			for (const event of page) {
+				if (event.eventType === "tool/call") toolCallCount += 1;
+				if (event.eventType === "tool/error") toolErrorCount += 1;
+				// Cancelled Turns persist usage on `turn/interrupted` (never on a
+				// success `turn/end`). Include them so confirmed usage already produced
+				// is not lost. The Turn stays flagged partial/incomplete, but its
+				// `llmUsage.total` is a real confirmed consumption and is accumulated.
+				const isInterrupted = event.eventType === "turn/interrupted";
+				if (event.eventType !== "turn/end" && !isInterrupted) continue;
+				const payload = isObject(event.payload) ? event.payload : {};
+				const llmUsage = isObject(payload.llmUsage) ? payload.llmUsage : null;
+				if (isInterrupted && llmUsage === null && !isObject(payload.usage)) continue;
+				const rawCalls = llmUsage !== null && Array.isArray(llmUsage.calls) ? llmUsage.calls : null;
+				const declaredCount =
+					llmUsage !== null && typeof llmUsage.callCount === "number" ? llmUsage.callCount : null;
+				const partial = llmUsage === null ? true : llmUsage.partial === true;
+				const turnId = event.turnId === null ? null : toPublicId("TurnId", event.turnId as TurnId);
+				if (rawCalls === null) {
+					verified = false;
+					allTurnsHaveCallCount = false;
+					if (isInterrupted) interruptedWithUsageTurns += 1;
+					else if (isObject(payload.usage)) legacyTurns += 1;
+					else missingTurns += 1;
+					turns.push({
+						turnId,
+						sequence: event.sequence,
+						precision: isInterrupted || !isObject(payload.usage) ? "missing" : "legacy_last_call",
+						callCount: 0,
+						partial: true,
+						totals: null,
+					});
+					continue;
+				}
+				const count = declaredCount ?? rawCalls.length;
+				const turnPrecision: ConversationSessionTurnPrecision =
+					isInterrupted || partial || declaredCount !== rawCalls.length ? "partial" : "per_call";
+				if (isInterrupted) interruptedWithUsageTurns += 1;
+				if (turnPrecision !== "per_call") {
+					verified = false;
+					partialTurns += 1;
+				} else {
+					accurateTurns += 1;
+				}
+				if (declaredCount === null) allTurnsHaveCallCount = false;
+				else expectedCalls += declaredCount;
+				const turnTotal = llmUsage !== null && isObject(llmUsage.total) ? llmUsage.total : {};
+				const totals: ConversationSessionUsageTotals = {
+					input: numeric(turnTotal.input),
+					output: numeric(turnTotal.output),
+					cacheRead: numeric(turnTotal.cacheRead),
+					cacheWrite: numeric(turnTotal.cacheWrite),
+					totalTokens: numeric(turnTotal.totalTokens),
+					reasoning: null,
+				};
+				// `llmUsage.total` is the confirmed consumption of this Turn's reported
+				// calls, independent of Turn completeness. Accumulate it for every Turn
+				// that has per-call data (per_call, partial or interrupted) so a failed/
+				// cancelled call with real usage is never discarded just because another
+				// call was unknown or the Turn did not finish. Legacy last-call usage
+				// (rawCalls === null) stays out — that is a different, pre-llmUsage caliber.
+				total.input += totals.input;
+				total.output += totals.output;
+				total.cacheRead += totals.cacheRead;
+				total.cacheWrite += totals.cacheWrite;
+				total.totalTokens += totals.totalTokens;
+				hasConfirmedTotals = true;
+				turns.push({
+					turnId,
+					sequence: event.sequence,
+					precision: turnPrecision,
+					callCount: count,
+					partial,
+					totals,
+				});
+				rawCalls.forEach((raw, index) => {
+					const call = isObject(raw) ? raw : {};
+					// Authoritative callIndex is written at the provider boundary and persisted with
+					// llmUsage.calls[]. Validate as a positive integer; legacy records without it stay
+					// null. Never fall back to `index` (array position) — that would fabricate a link.
+					const rawCallIndex = call.callIndex;
+					const callIndex =
+						typeof rawCallIndex === "number" && Number.isInteger(rawCallIndex) && rawCallIndex > 0
+							? rawCallIndex
+							: null;
+					const input = typeof call.input === "number" ? call.input : null;
+					const cacheRead = typeof call.cacheRead === "number" ? call.cacheRead : null;
+					// Output must be explicitly reported and finite; the flat field below keeps
+					// its historical coercion for display, but derived TPS must never use a
+					// fabricated 0 from `numeric()`.
+					const reportedOutput =
+						typeof call.output === "number" && Number.isFinite(call.output) ? call.output : null;
+					// Terminal status: new records carry it explicitly. Legacy calls only ever
+					// recorded completed assistant items, so default to "completed" — no status
+					// is inferred from array position or completion order.
+					const rawStatus = call.status;
+					const status: ConversationSessionCallStatus =
+						rawStatus === "completed" ||
+						rawStatus === "failed" ||
+						rawStatus === "aborted" ||
+						rawStatus === "unknown"
+							? rawStatus
+							: "completed";
+					// usageReported=false is the explicit "provider returned no tokens" signal.
+					// Legacy records had usage (that was the old collection gate); default true.
+					const usageReported = call.usageReported === false ? false : true;
+					// Pi normalises every provider into input/cacheRead/cacheWrite, where the three
+					// terms partition the request prompt (no double counting). `cacheWrite === 0`
+					// means "no cache write counted", including providers that never report writes;
+					// the prompt-size note below documents that inherited limitation.
+					const cacheWrite = numeric(call.cacheWrite);
+					// A call has reliable per-call tokens only when the provider reported usage
+					// and the two partition fields are present. Same gate for contextTokens and
+					// promptTokens so the UI never renders a fabricated 0 as a real measurement.
+					const reliable = usageReported && input !== null && cacheRead !== null;
+					// Optional timing is passed through verbatim when present and complete.
+					// Legacy rows and calls with no observed response boundary stay absent
+					// (unknown), never coerced to 0 or derived from token counts.
+					const rawTiming = isObject(call.timing) ? call.timing : null;
+					const timing =
+						rawTiming !== null &&
+						typeof rawTiming.startedAtMs === "number" &&
+						Number.isFinite(rawTiming.startedAtMs) &&
+						typeof rawTiming.endedAtMs === "number" &&
+						Number.isFinite(rawTiming.endedAtMs) &&
+						typeof rawTiming.durationMs === "number" &&
+						Number.isFinite(rawTiming.durationMs)
+							? {
+									startedAtMs: rawTiming.startedAtMs,
+									endedAtMs: rawTiming.endedAtMs,
+									durationMs: rawTiming.durationMs,
+									...(typeof rawTiming.firstOutputLatencyMs === "number" &&
+									Number.isFinite(rawTiming.firstOutputLatencyMs)
+										? { firstOutputLatencyMs: rawTiming.firstOutputLatencyMs }
+										: {}),
+								}
+							: undefined;
+					// generationMs is a pure monotonic-clock derivation: it needs only a
+					// valid duration and first-output sample, independent of token usage.
+					// Wall-clock stamps are display-only, so a Date.now() regression must
+					// not invalidate a monotonic duration. observedOutputTps additionally
+					// requires a reliably reported output count; otherwise it stays unknown.
+					const firstOutput = timing?.firstOutputLatencyMs;
+					let generationMs: number | null = null;
+					let observedOutputTps: number | null = null;
+					if (
+						timing !== undefined &&
+						firstOutput !== undefined &&
+						timing.durationMs >= 0 &&
+						firstOutput >= 0
+					) {
+						const generation = timing.durationMs - firstOutput;
+						if (Number.isFinite(generation) && generation > 0) {
+							generationMs = generation;
+							if (usageReported && reportedOutput !== null && reportedOutput >= 0) {
+								observedOutputTps = (reportedOutput * 1000) / generation;
+							}
+						}
+					}
+					calls.push({
+						turnId,
+						index: index + 1,
+						callIndex,
+						model: typeof call.model === "string" ? call.model : null,
+						// The protocol type keeps `input`/`cacheRead` non-nullable, so a provider that never
+						// reported them is coerced to 0 here. `contextTokens`/`promptTokens` stay null in
+						// that case, which is the signal the UI uses to render "—" instead of a fake 0.
+						input: input ?? 0,
+						output: numeric(call.output),
+						cacheRead: cacheRead ?? 0,
+						cacheReadReported: usageReported && cacheRead !== null && (call.cacheReadReported === true || cacheRead > 0),
+						cacheWrite,
+						totalTokens: numeric(call.totalTokens),
+						reasoning: null,
+						contextTokens: reliable ? actualInputTokens({ input, cacheRead }) : null,
+						promptTokens: reliable ? input + cacheRead + cacheWrite : null,
+						status,
+						usageReported,
+						...(timing !== undefined ? { timing } : {}),
+						generationMs,
+						observedOutputTps,
+						precision: turnPrecision === "per_call" ? "reported" : "partial",
+					});
+				});
+			}
+			if (page.length < 500) break;
+			after = page[page.length - 1]!.sequence;
+		}
+		const notes: string[] = [];
+		if (legacyTurns > 0)
+			notes.push(`${legacyTurns} 个历史 Turn 只保存了最后一次调用的用量（历史口径），未计入累计值。`);
+		if (partialTurns > 0)
+			notes.push(
+				`${partialTurns} 个 Turn 的逐次用量不完整（有调用未上报用量）：未上报部分保持未知，已上报的确认用量仍计入累计，完整性另见 Turn 精度与 trace 覆盖。`,
+			);
+		if (missingTurns > 0) notes.push(`${missingTurns} 个 Turn 没有 Token 用量记录，未计入累计值。`);
+		if (interruptedWithUsageTurns > 0)
+			notes.push(
+				`${interruptedWithUsageTurns} 个取消 Turn 的已确认用量记在 turn/interrupted，已计入 Session 累计；该 Turn 仍标记为不完整（partial），不视为完整 Turn。`,
+			);
+		notes.push("累计值是各 Turn 已上报调用用量的合计（已确认消耗）；完整性由 Turn 精度、partial、trace 覆盖单独表达，累计值不代表全部实际消耗。");
+		notes.push("Input 不含 cacheRead / cacheWrite；分项不重复加总。");
+		notes.push("调用编号为 Turn 内由 Runtime 在 provider 调用边界分配的稳定编号，与 AaaS Trace 的 call_index 同源；重试分配新编号，历史数据无编号时显示未知，不用数组位置回填。");
+		notes.push("逐次调用状态来自 provider 调用边界（completed/failed/aborted/unknown），与用量可靠性无关：只要 provider 明确返回最终用量，完成/失败/取消的调用都计入累计，重试按各自调用编号分别计入、不重复叠加。");
+		notes.push("usageReported=false 表示该次调用 provider 未返回 Token，分项一律未知，不按 0 处理；历史记录默认视为已上报。");
+		notes.push(
+			"Total 在 Anthropic / OpenAI-Completions 下由 runtime 按 input + output + cacheRead + cacheWrite 计算，其余 provider 取 provider 上报值。",
+		);
+		notes.push("上下文规模 = input + cacheRead（不含 cacheWrite），与累计消耗不是同一口径，不可相加。");
+		notes.push("Prompt Token = input + cacheRead + cacheWrite，是单次请求的 prompt 规模（不含 output），不等于 Turn/Session 累计消耗。");
+		notes.push("最近一次 / 峰值 Prompt Token 只统计有可靠用量的调用；没有可靠用量时显示「未知」，不按 0 处理。");
+		notes.push("Reasoning Token 逐次未采集，显示「未知」而不是 0；Output 已包含 reasoning，不重复叠加。");
+		notes.push("逐次 timing 是 Runtime 在 provider 边界观察到的请求耗时（单调时钟计算），不等于模型内部纯推理时间；firstOutputLatencyMs 是首个有效生成增量相对请求开始的延迟，无有效生成事件或无响应边界时缺省为未知。");
+		notes.push("generationMs = durationMs - firstOutputLatencyMs（仅由单调时钟差值计算，与 Token 无关），observedOutputTps = output × 1000 / generationMs（还需可靠 output）。两者是 Runtime 客户端观察值，不是模型内部纯推理 TTFT/TPS；缺有效计时或可靠 output 时相应显示未知，不填 0。");
+		// Ordered by turn/end sequence then call index; the last collected call is the latest one.
+		// A latest call without reliable usage stays unknown — never fall back to an older call.
+		const latestCall = calls[calls.length - 1];
+		const latestPromptTokens = latestCall === undefined ? null : latestCall.promptTokens;
+		let peakPromptTokens: number | null = null;
+		for (const call of calls) {
+			if (call.promptTokens !== null && (peakPromptTokens === null || call.promptTokens > peakPromptTokens)) {
+				peakPromptTokens = call.promptTokens;
+			}
+		}
+		return {
+			calls,
+			turns,
+			totals: hasConfirmedTotals ? { ...total, reasoning: null } : null,
+			accurateTurns,
+			partialTurns,
+			legacyTurns,
+			missingTurns,
+			expectedCalls: turns.length > 0 && allTurnsHaveCallCount ? expectedCalls : null,
+			verified: verified && accurateTurns > 0 && allTurnsHaveCallCount,
+			toolCallCount,
+			toolErrorCount,
+			latestPromptTokens,
+			peakPromptTokens,
+			notes,
 		};
 	}
 
@@ -3726,6 +4368,11 @@ function toConversationAdminSummary(row: AdminConversationListRow): Conversation
 	const principalType = mapPrincipalType(row.principalType);
 	return {
 		configurationSource: row.source ?? "chat",
+		origin: row.origin,
+		...(row.keyId ? { keyId: row.keyId } : {}),
+		...(row.taskId ? { taskId: row.taskId } : {}),
+		...(row.runId ? { runId: row.runId } : {}),
+		...(row.executionState ? { executionState: row.executionState } : {}),
 		...(row.integrationId
 			? { integrationId: row.integrationId, orchestrationVersionId: `orv_${row.orchestrationVersionId}` }
 			: {}),
@@ -3747,6 +4394,8 @@ function toConversationAdminSummary(row: AdminConversationListRow): Conversation
 		messageCount: row.messageCount,
 		errorCount: row.errorCount,
 		lastEventSequence: row.lastEventSequence,
+		turnCount: row.turnCount,
+		agentName: row.agentName,
 		createdAt: row.createdAt.toISOString(),
 		lastActiveAt: row.lastActiveAt.toISOString(),
 	};

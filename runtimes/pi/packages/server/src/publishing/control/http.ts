@@ -21,6 +21,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline, Readable } from "node:stream";
 import { createGzip } from "node:zlib";
+import { z } from "zod";
 import type {
 	AgentCapabilities,
 	AgentMcpRevisionReference,
@@ -32,6 +33,7 @@ import type {
 	ReasoningEffort,
 	ReasoningUpdateRequest,
 } from "@earendil-works/pi-protocol";
+import { sensitiveRuleBatchSchema } from "../../orchestration/router-capability-contracts.ts";
 import { requestPathname } from "../../transports/websocket/listener.ts";
 import type { HttpRequestHandler } from "../../types.ts";
 import { jsonBody } from "../../web/http-shared.ts";
@@ -45,6 +47,7 @@ import type {
 	RequestId,
 	SkillId,
 	TenantId,
+	TurnId,
 } from "../domain/ids.ts";
 import { fromPublicId, newRequestId, toPublicId } from "../domain/ids.ts";
 import type { IdempotencyScope, PublishingRepositories } from "../repositories.ts";
@@ -186,6 +189,47 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				});
 				if (!result.ok) return serviceError(result.error, requestId);
 				return { status: 201, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/sensitive-rules$/,
+			operation: "mcp-servers.get-sensitive-rules",
+			handler: async ({ requestId, params }) => {
+				const mcpServerId = parseMcpServerId(params[0]);
+				if (!mcpServerId) return badRequest("mcpServerId must be an mcp_<uuid> id", requestId);
+				const result = await service.getMcpSensitiveRules(tenantId, mcpServerId);
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "POST",
+			pattern: /^\/api\/control\/v1\/mcp-servers\/([^/]+)\/sensitive-rules$/,
+			operation: "mcp-servers.publish-sensitive-rules",
+			handler: async ({ requestId, body, params }) => {
+				const rawId = params[0]?.startsWith("mcp_") ? params[0].slice(4) : params[0];
+				const idParsed = z.string().uuid().safeParse(rawId);
+				if (!idParsed.success) return badRequest("mcpServerId must be an mcp_<uuid> id or a bare uuid", requestId);
+				const mcpServerId = idParsed.data as McpServerId;
+				const parsed = z
+					.object({
+						rules: z.array(sensitiveRuleBatchSchema).max(128),
+						expected_revision: z.number().int().min(1).optional(),
+						reuse_equivalent: z.boolean().optional(),
+					})
+					.strict()
+					.safeParse(body);
+				if (!parsed.success) return badRequest("invalid sensitive rules", requestId);
+				const result = await service.publishMcpSensitiveRules({
+					tenantId,
+					mcpServerId,
+					rules: parsed.data.rules,
+					expectedRevision: parsed.data.expected_revision,
+					reuseEquivalent: parsed.data.reuse_equivalent,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
 			},
 		},
 		{
@@ -422,9 +466,16 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 					agentId: parsed.data.agentId,
 					hasErrors: parsed.data.hasErrors,
 					principalType: parsed.data.principalType,
+					origin: parsed.data.origin,
+					keyId: parsed.data.keyId,
+					runId: parsed.data.runId,
+					executionState: parsed.data.executionState,
 					publishedAppVersionId: parsed.data.publishedAppVersionId,
 					createdAfter: parsed.data.createdAfter,
 					createdBefore: parsed.data.createdBefore,
+					search: parsed.data.search,
+					lastActiveAfter: parsed.data.lastActiveAfter,
+					lastActiveBefore: parsed.data.lastActiveBefore,
 				});
 				if (!listed.ok) return serviceError(listed.error, requestId);
 				return { status: 200, body: { data: listed.data, requestId } };
@@ -502,6 +553,65 @@ export function createControlHttpHandler(options: ControlHttpHandlerOptions): Ht
 				});
 				if (!listed.ok) return serviceError(listed.error, requestId);
 				return { status: 200, body: { data: listed.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/llm-calls$/,
+			operation: "conversations.list-llm-calls",
+			handler: async ({ requestId, query, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const limitRaw = query.get("limit");
+				const limit = limitRaw === null || limitRaw.trim() === "" ? 50 : parsePositiveInt(limitRaw, 1, 200);
+				if (limit === null) return badRequest("limit must be an integer in [1, 200]", requestId);
+				const afterRaw = query.get("after");
+				const after = afterRaw === null || afterRaw.trim() === "" ? 0 : parsePositiveInt(afterRaw, 0, 1e9);
+				if (after === null) return badRequest("after must be a non-negative integer", requestId);
+				const result = await service.listConversationLlmCalls({
+					tenantId,
+					conversationId,
+					limit,
+					after,
+					requestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/llm-calls\/([^/]+)\/(\d+)$/,
+			operation: "conversations.get-llm-call",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const turnId = fromPublicId("TurnId", params[1] ?? "") as TurnId | null;
+				if (turnId === null) return badRequest("turnId must be a bare turn_<uuid> id", requestId);
+				const callIndex = Number(params[2]);
+				if (!Number.isInteger(callIndex) || callIndex < 1 || callIndex > 1e9)
+					return badRequest("callIndex must be a positive integer", requestId);
+				const result = await service.getConversationLlmCallDetail({
+					tenantId,
+					conversationId,
+					turnId,
+					callIndex,
+					requestId,
+				});
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
+			},
+		},
+		{
+			method: "GET",
+			pattern: /^\/api\/control\/v1\/conversations\/([^/]+)\/usage$/,
+			operation: "conversations.session-usage",
+			handler: async ({ requestId, params }) => {
+				const conversationId = parseConversationId(params[0]);
+				if (conversationId === null) return badRequest("conversationId must be a bare conv_<uuid> id", requestId);
+				const result = await service.getConversationSessionUsage({ tenantId, conversationId, requestId });
+				if (!result.ok) return serviceError(result.error, requestId);
+				return { status: 200, body: { data: result.data, requestId } };
 			},
 		},
 		{
@@ -1425,9 +1535,16 @@ function parseConversationListQuery(query: URLSearchParams):
 				readonly agentId?: AgentDefinitionId;
 				readonly hasErrors?: boolean;
 				readonly principalType?: "external_user" | "anonymous_visitor";
+				readonly origin?: "chat" | "integration" | "aaas_key";
+				readonly keyId?: string;
+				readonly runId?: string;
+				readonly executionState?: string;
 				readonly publishedAppVersionId?: PublishedAppVersionId;
 				readonly createdAfter?: Date;
 				readonly createdBefore?: Date;
+				readonly search?: string;
+				readonly lastActiveAfter?: Date;
+				readonly lastActiveBefore?: Date;
 			};
 	  }
 	| { readonly ok: false; readonly message: string } {
@@ -1460,6 +1577,10 @@ function parseConversationListQuery(query: URLSearchParams):
 	}
 
 	const statusRaw = query.get("status") ?? "";
+	const executionState = query.get("executionState") || undefined;
+	if (executionState && !["queued", "running", "succeeded", "failed", "cancelled"].includes(executionState)) {
+		return { ok: false, message: "executionState must be queued | running | succeeded | failed | cancelled" };
+	}
 	const status = statusRaw.trim() === "" ? undefined : (statusRaw.trim() as "active" | "archived" | "deleted");
 	if (status !== undefined && !["active", "archived", "deleted"].includes(status)) {
 		return { ok: false, message: "status must be active | archived | deleted" };
@@ -1474,11 +1595,32 @@ function parseConversationListQuery(query: URLSearchParams):
 	if (principalType !== undefined && !["external_user", "anonymous_visitor"].includes(principalType)) {
 		return { ok: false, message: "principalType must be external_user | anonymous_visitor" };
 	}
+	const originRaw = query.get("origin") ?? "";
+	const origin = originRaw.trim() === "" ? undefined : (originRaw.trim() as "chat" | "integration" | "aaas_key");
+	if (origin !== undefined && !["chat", "integration", "aaas_key"].includes(origin)) {
+		return { ok: false, message: "origin must be chat | integration | aaas_key" };
+	}
+	const keyIdRaw = (query.get("keyId") ?? "").trim();
+	if (keyIdRaw !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(keyIdRaw)) {
+		return { ok: false, message: "keyId must be a bare uuid" };
+	}
+	const runIdRaw = (query.get("runId") ?? "").trim();
+	if (runIdRaw !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runIdRaw)) {
+		return { ok: false, message: "runId must be a bare uuid" };
+	}
+
+	const searchRaw = (query.get("search") ?? "").trim();
+	if (searchRaw.length > 200) return { ok: false, message: "search must be at most 200 characters" };
+	const search = searchRaw === "" ? undefined : searchRaw;
 
 	const createdAfter = parseIsoOrNull(query.get("createdAfter"));
 	if (createdAfter.invalid) return { ok: false, message: createdAfter.message };
 	const createdBefore = parseIsoOrNull(query.get("createdBefore"));
 	if (createdBefore.invalid) return { ok: false, message: createdBefore.message };
+	const lastActiveAfter = parseIsoOrNull(query.get("lastActiveAfter"));
+	if (lastActiveAfter.invalid) return { ok: false, message: lastActiveAfter.message };
+	const lastActiveBefore = parseIsoOrNull(query.get("lastActiveBefore"));
+	if (lastActiveBefore.invalid) return { ok: false, message: lastActiveBefore.message };
 
 	return {
 		ok: true,
@@ -1487,12 +1629,19 @@ function parseConversationListQuery(query: URLSearchParams):
 			cursor,
 			publishedAppId,
 			status,
+			executionState,
 			agentId,
 			hasErrors,
 			principalType,
+			origin,
+			keyId: keyIdRaw === "" ? undefined : keyIdRaw,
+			runId: runIdRaw === "" ? undefined : runIdRaw,
 			publishedAppVersionId,
 			createdAfter: createdAfter.value,
 			createdBefore: createdBefore.value,
+			search,
+			lastActiveAfter: lastActiveAfter.value,
+			lastActiveBefore: lastActiveBefore.value,
 		},
 	};
 }

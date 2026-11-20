@@ -26,6 +26,34 @@
  * partition the request input, so summing them does not double count. `cacheWrite`
  * (suffix-cache write) is NOT part of the input that competes for the window and
  * is therefore excluded. No second provider-specific parser is implemented here.
+ *
+ * ## Verified provider mapping (read-only audit, 2026-11)
+ *
+ * `cacheRead` / `cacheWrite` are produced by the Pi provider parsers
+ * (`packages/ai/src/api/*`); this module never re-parses raw provider fields.
+ * The actual 1:1 mappings are:
+ *
+ * | raw provider field | Pi field | parser |
+ * | --- | --- | --- |
+ * | `prompt_tokens_details.cached_tokens` / `prompt_cache_hit_tokens` | `cacheRead` | `openai-completions.ts` (vLLM / OneAPI path) |
+ * | `input_tokens_details.cached_tokens` | `cacheRead` | `openai-responses-shared.ts` |
+ * | `usage.cache_read_input_tokens` | `cacheRead` | `anthropic-messages.ts` |
+ * | `usageMetadata.cachedContentTokenCount` | `cacheRead` | `google-generative-ai.ts` / `google-vertex.ts` |
+ * | `usage.cacheReadInputTokens` | `cacheRead` | `bedrock-converse-stream.ts` |
+ * | `prompt_tokens_details.cache_write_tokens` | `cacheWrite` | `openai-completions.ts` |
+ * | `input_tokens_details.cache_write_tokens` | `cacheWrite` | `openai-responses-shared.ts` |
+ * | `usage.cache_creation_input_tokens` | `cacheWrite` | `anthropic-messages.ts` |
+ * | `usage.cacheWriteInputTokens` | `cacheWrite` | `bedrock-converse-stream.ts` |
+ *
+ * `created_cache_tokens` is NOT read anywhere in this repository: no parser, no
+ * provider, no test. It is therefore neither mapped onto `cacheWrite` nor
+ * double-counted. Because a gateway may publish cache-creation tokens under that
+ * name while Pi only recognises the fields above, `cacheWrite` stays **unknown**
+ * for such gateways instead of being guessed — Pi's metering semantics are left
+ * untouched. Consequences for reporting: `cacheWrite === 0` means "no cache write
+ * was counted", which covers both "provider reported 0" and "provider does not
+ * report cache writes at all"; the prompt-size denominator
+ * (`input + cacheRead + cacheWrite`) inherits that limitation.
  */
 
 /** The subset of the protocol `Usage` this module reads. */

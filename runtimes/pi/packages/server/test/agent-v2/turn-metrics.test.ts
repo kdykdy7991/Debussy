@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { buildTurnMetrics, startTurnTiming, type TurnTimingBase } from "../../src/agent-v2/turn-metrics.ts";
+import {
+	buildTurnMetrics,
+	startTurnTiming,
+	usageCountsFromTokenTotals,
+	type TurnTimingBase,
+} from "../../src/agent-v2/turn-metrics.ts";
 
 const EPOCH = 1_700_000_000_000;
 function base(): TurnTimingBase {
@@ -68,5 +73,51 @@ describe("buildTurnMetrics (M1 runtime timing -> frozen TurnMetrics)", () => {
 			() => 123_456_789,
 		);
 		expect(t).toEqual({ monotonicStartMs: 42, epochStartMs: 123_456_789 });
+	});
+
+	test("tokenScope marks the caliber of the recorded tokens", () => {
+		const whole = buildTurnMetrics({
+			outcome: "success",
+			base: base(),
+			events: { providerStartAtMs: 1000, firstOutputAtMs: null, completedAtMs: 1400 },
+			usage: { inputTokens: 1500, outputTokens: 300, cacheReadTokens: 200, cacheWriteTokens: 0 },
+			tokenScope: "turn",
+		});
+		expect(whole.tokenScope).toBe("turn");
+		expect(whole.inputTokens).toBe(1500);
+		expect(whole.outputTokens).toBe(300);
+		expect(whole.cacheReadTokens).toBe(200);
+
+		// 历史行没有该字段：按「只取最后一次调用」解释，绝不当成整轮累计。
+		const legacy = buildTurnMetrics({
+			outcome: "success",
+			base: base(),
+			events: { providerStartAtMs: 1000, firstOutputAtMs: null, completedAtMs: 1400 },
+			usage: { inputTokens: 500, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 },
+		});
+		expect(legacy.tokenScope).toBeUndefined();
+	});
+});
+
+describe("usageCountsFromTokenTotals (provider token 分项 -> 轮指标计数)", () => {
+	test("maps the whole-turn totals of every model call", () => {
+		expect(
+			usageCountsFromTokenTotals({ input: 1500, output: 300, cacheRead: 200, cacheWrite: 50 }),
+		).toEqual({ inputTokens: 1500, outputTokens: 300, cacheReadTokens: 200, cacheWriteTokens: 50 });
+	});
+
+	test("missing source counts as zero; missing fields default to zero", () => {
+		expect(usageCountsFromTokenTotals(undefined)).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+		});
+		expect(usageCountsFromTokenTotals({ input: 7 })).toEqual({
+			inputTokens: 7,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+		});
 	});
 });

@@ -313,6 +313,10 @@ describe.skipIf(!url)("orchestration with real isolated Postgres and Fake model"
 			requestContract: "input_v1",
 		});
 		const filtered = await admin<readonly AnalysisWorkItem[]>("/api/admin/v1/orchestration/work-items?q=TK-ADMIN-1");
+		const bySession = await admin<readonly AnalysisWorkItem[]>(
+			`/api/admin/v1/orchestration/work-items?q=${detail.conversationId}`,
+		);
+		expect(bySession.map((row) => row.id)).toEqual([runId]);
 		expect(filtered.map((work) => work.id)).toContain(runId);
 		const otherState = detail.state === "queued" ? "succeeded" : "queued";
 		expect(

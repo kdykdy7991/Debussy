@@ -19,7 +19,13 @@ export function createOrchestrationTurnExecutor(
 	});
 	const execute: TurnExecutor = async (input) => {
 		try {
-			return await managed(input);
+			return await managed({
+				...input,
+				onLlmTrace: async (trace) => {
+					if (input.scope.turnId === undefined) return;
+					await store.recordLlmTrace(input.scope.conversationId, input.scope.turnId, trace);
+				},
+			});
 		} finally {
 			await manager.reset(input.scope.conversationId);
 		}

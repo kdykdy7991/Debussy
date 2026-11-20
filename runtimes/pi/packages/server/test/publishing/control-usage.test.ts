@@ -30,6 +30,10 @@ function run(id: string, groupId: string): AdminUsageRunRow {
 		accurateLlmCallCount: 2,
 		durationMs: 1000,
 		conversationId: null,
+		cacheHitTokens: null,
+		cacheMissTokens: null,
+		cachePromptTokens: null,
+		cacheHitRate: null,
 	};
 }
 

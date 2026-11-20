@@ -211,10 +211,24 @@ describe.skipIf(!pgUp)("admin list regressions (MVP-02)", () => {
 		expect(page[0]?.agentId).toBe(agentId);
 	});
 
-	test("conversations admin getByTenant() returns the agent id from published_apps", async () => {
+	test("administrative list and detail return one Session when the associated Agent has multiple revisions", async () => {
+		await client.run(
+			`insert into agent_definitions(id, tenant_id, name, revision, draft_config, created_by)
+			 select id, tenant_id, 'Demo Agent (latest)', 2, draft_config, created_by
+			 from agent_definitions where id=$1 and tenant_id=$2 and revision=1`,
+			agentId,
+			tenantId,
+		);
 		const repo = createConversationRepository(client);
-		const row = await repo.getByTenant({ tenantId }, conversationId);
-		expect(row?.agentId).toBe(agentId);
+		const rows = await repo.listByTenant({ scope: { tenantId }, limit: 1, origin: "chat" });
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ conversationId, agentId, agentName: "Demo Agent (latest)" });
+		await expect(repo.getByTenant({ tenantId }, conversationId)).resolves.toMatchObject({
+			conversationId,
+			agentId,
+			agentName: "Demo Agent (latest)",
+		});
+		await expect(repo.getByTenant({ tenantId: otherTenant }, conversationId)).resolves.toBeUndefined();
 	});
 
 	test("conversations admin list() filters by agentId", async () => {
@@ -231,5 +245,58 @@ describe.skipIf(!pgUp)("admin list regressions (MVP-02)", () => {
 		const repo = createConversationRepository(client);
 		const page = await repo.listByTenant({ scope: { tenantId: otherTenant }, limit: 50 });
 		expect(page).toEqual([]);
+	});
+
+	test("conversations admin list() searches title, prefixed id and app name server-side", async () => {
+		const repo = createConversationRepository(client);
+		const byTitle = await repo.listByTenant({ scope: { tenantId }, limit: 50, search: "dem" });
+		expect(byTitle.map((row) => row.conversationId)).toEqual([conversationId]);
+
+		const byId = await repo.listByTenant({
+			scope: { tenantId },
+			limit: 50,
+			search: `conv_${conversationId}`,
+		});
+		expect(byId).toHaveLength(1);
+
+		const byApp = await repo.listByTenant({ scope: { tenantId }, limit: 50, search: "Demo App" });
+		expect(byApp).toHaveLength(1);
+
+		// Wildcards in user input must stay literal, and search must never
+		// cross the tenant boundary.
+		expect(await repo.listByTenant({ scope: { tenantId }, limit: 50, search: "%" })).toEqual([]);
+		expect(await repo.listByTenant({ scope: { tenantId: otherTenant }, limit: 50, search: "Demo" })).toEqual([]);
+	});
+
+	test("conversations admin list() filters on last-active time", async () => {
+		const repo = createConversationRepository(client);
+		const seeded = (await repo.listByTenant({ scope: { tenantId }, limit: 50 }))[0];
+		expect(seeded).toBeDefined();
+		const at = seeded.lastActiveAt;
+		const after = new Date(seeded.lastActiveAt.getTime() + 60_000);
+		const before = new Date(seeded.lastActiveAt.getTime() - 60_000);
+
+		expect(await repo.listByTenant({ scope: { tenantId }, limit: 50, lastActiveAfter: at })).toHaveLength(1);
+		expect(await repo.listByTenant({ scope: { tenantId }, limit: 50, lastActiveBefore: before })).toEqual([]);
+		expect(await repo.listByTenant({ scope: { tenantId }, limit: 50, lastActiveAfter: after })).toEqual([]);
+	});
+
+	test("conversations admin list supplies a lookahead row and a contiguous cursor page", async () => {
+		for (const id of ["ffffffff-ffff-ffff-ffff-ffffffffff01", "ffffffff-ffff-ffff-ffff-ffffffffff02"]) {
+			await client.run(
+				`insert into conversations (id,tenant_id,published_app_id,published_app_version_id,owner_principal_id,title,status,last_active_at)
+				 values ($1,$2,$3,$4,$5,'Pagination fixture','active',now())`,
+				id,
+				tenantId,
+				appId,
+				versionId,
+				principalId,
+			);
+		}
+		const repo = createConversationRepository(client);
+		const first = await repo.listByTenant({ scope: { tenantId }, limit: 2 });
+		expect(first).toHaveLength(3);
+		const second = await repo.listByTenant({ scope: { tenantId }, limit: 2, cursor: first[1]!.cursor });
+		expect(second.map((row) => row.conversationId)).toEqual([first[2]!.conversationId]);
 	});
 });

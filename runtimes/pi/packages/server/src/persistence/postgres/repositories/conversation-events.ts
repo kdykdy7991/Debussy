@@ -40,7 +40,14 @@ import type {
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient, SqlParameter } from "../client.ts";
 import { executionOwnerColumn, executionOwnerId } from "./execution-owner.ts";
+import { routerCallUsageSql } from "./router-call-usage.ts";
 import { txRows } from "./tx.ts";
+
+// The JSON value c is one normalized LLM call from a recorded Turn.
+const cacheCallReportedSql = `(c->>'usageReported' is distinct from 'false'
+	and (c->>'cacheRead')::bigint >= 0
+	and (c->>'cacheReadReported' = 'true' or (c->>'cacheRead')::bigint > 0)
+	and c->>'input' is not null and c->>'cacheWrite' is not null)`;
 
 function rowToRecord(row: Record<string, unknown>): ConversationEventRecord {
 	return {
@@ -243,7 +250,10 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 		 */
 		async summarizeOrchestrationUsage(input): Promise<AdminOrchestrationUsage> {
 			const rows = await client.run(
-				`select w.id as run_id, w.integration_id, i.name as integration_name,
+				`select w.id as run_id, w.integration_id,
+				        case when w.key_id is not null then 'aaas_key:' || coalesce(k.name, w.key_id::text)
+				             else coalesce(i.name, 'Integration') end as integration_name,
+				        case when w.key_id is not null then 'aaas_key' else 'legacy' end as run_source,
 				        w.state, w.created_at, w.conversation_id,
 				        case when w.orchestration_version_id is not null
 				                  then 'orv_' || w.orchestration_version_id::text
@@ -252,9 +262,12 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				        s.payload->>'model' as model,
 				        u.turn_count, u.complete, u.total_tokens, u.input_tokens, u.output_tokens,
 				        u.cache_read_tokens, u.cache_write_tokens, u.llm_calls, u.legacy_tokens,
+				        cc.cache_hit_tokens, cc.cache_prompt_tokens,
+				        cc.cache_reported_calls, cc.cache_unknown_calls,
 				        a.started_at, a.ended_at
 				 from orchestration_work_items w
 				 join orchestration_integrations i on i.id=w.integration_id and i.tenant_id=w.tenant_id
+				 left join aaas_api_keys k on k.id=w.key_id and k.tenant_id=w.tenant_id
 				 left join lateral (
 				   select payload from conversation_events e
 				   where e.tenant_id=w.tenant_id and e.conversation_id=w.conversation_id
@@ -262,7 +275,8 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				 ) s on true
 				 left join lateral (
 				   select count(*)::bigint as turn_count,
-				          bool_and(e.payload->'llmUsage' is not null
+				          bool_and(e.event_type='turn/end'
+				            and e.payload->'llmUsage' is not null
 				            and e.payload->'llmUsage'->>'partial'='false') as complete,
 				          coalesce(sum((e.payload->'llmUsage'->'total'->>'totalTokens')::bigint)
 				            filter (where e.payload->'llmUsage'->>'partial'='false'),0)::bigint as total_tokens,
@@ -278,13 +292,38 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				            filter (where e.payload->'llmUsage'->>'partial'='false'),0)::bigint as llm_calls,
 				          coalesce(sum((e.payload->'usage'->>'totalTokens')::bigint)
 				            filter (where e.payload->'llmUsage' is null
-				              or e.payload->'llmUsage'->>'partial'='true'),0)::bigint as legacy_tokens
+				              or e.payload->'llmUsage'->>'partial'='true'),0)::bigint as legacy_tokens,
+				          -- Confirmed consumption from EVERY terminal event that has
+				          -- llmUsage (complete, partial or cancelled). Kept separate
+				          -- from the complete flag so an incomplete Run still surfaces the
+				          -- tokens the provider actually reported.
+				          coalesce(sum((e.payload->'llmUsage'->'total'->>'totalTokens')::bigint),0)::bigint as confirmed_tokens
 				   from conversation_events e
 				   where e.tenant_id=w.tenant_id and e.conversation_id=w.conversation_id
-				     and e.event_type='turn/end'
+				     and e.event_type in ('turn/end','turn/interrupted')
 				     and (jsonb_typeof(e.payload->'usage')='object'
 				       or jsonb_typeof(e.payload->'llmUsage')='object')
 				 ) u on true
+				 left join lateral (
+				   -- Cache data is aggregated PER CALL: only calls that explicitly
+				   -- reported prompt-cache read tokens contribute to the hit and
+				   -- the prompt denominator. Unmarked zero values are unknown,
+				   -- never a miss, so they are counted separately and excluded.
+				   select coalesce(sum(coalesce((c->>'cacheRead')::bigint,0))
+				            filter (where ${cacheCallReportedSql}),0)::bigint as cache_hit_tokens,
+				          coalesce(sum((coalesce((c->>'input')::bigint,0)
+				                      +coalesce((c->>'cacheRead')::bigint,0)
+				                      +coalesce((c->>'cacheWrite')::bigint,0)))
+				            filter (where ${cacheCallReportedSql}),0)::bigint as cache_prompt_tokens,
+				          count(*) filter (where ${cacheCallReportedSql})::bigint as cache_reported_calls,
+				          count(*) filter (where not coalesce(${cacheCallReportedSql},false))::bigint as cache_unknown_calls
+				   from conversation_events e2
+				   cross join lateral jsonb_array_elements(
+				     case when jsonb_typeof(e2.payload->'llmUsage'->'calls') = 'array'
+				          then e2.payload->'llmUsage'->'calls' else '[]'::jsonb end) as c
+				   where e2.tenant_id=w.tenant_id and e2.conversation_id=w.conversation_id
+				     and e2.event_type='turn/end'
+				 ) cc on true
 				 left join lateral (
 				   select started_at, ended_at from orchestration_assignments x
 				   where x.tenant_id=w.tenant_id and x.work_item_id=w.id and x.started_at is not null
@@ -309,6 +348,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 			interface Group {
 				readonly integrationId: string;
 				readonly name: string;
+				readonly source: "legacy" | "aaas_key";
 				readonly states: Record<string, number>;
 				readonly durations: number[];
 				tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
@@ -338,6 +378,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					group = {
 						integrationId,
 						name: String(row.integration_name),
+						source: row.run_source === "aaas_key" ? "aaas_key" : "legacy",
 						states: { succeeded: 0, failed: 0, cancelled: 0, queued: 0, running: 0 },
 						durations: [],
 						tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -366,15 +407,29 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					group.llmCallCount += numberOrZero(row.llm_calls);
 				} else if (turnCount > 0) {
 					group.partialRuns += 1;
-					group.partialTokens += numberOrZero(row.legacy_tokens);
+					// Prefer confirmed per-call tokens over the legacy last-call figure;
+					// never add both (they are two calibers of the same Turn).
+					group.partialTokens +=
+						numberOrZero(row.confirmed_tokens) > 0
+							? numberOrZero(row.confirmed_tokens)
+							: numberOrZero(row.legacy_tokens);
 				} else {
 					group.noUsageRuns += 1;
 				}
 				const createdAt = new Date(String(row.created_at)).toISOString();
 				const accurateTokens = complete ? numberOrZero(row.total_tokens) : null;
 				const accurateLlmCallCount = complete ? numberOrZero(row.llm_calls) : null;
+				// Cache coverage is per call: only calls that explicitly reported
+				// prompt-cache read tokens contribute. A row without a single
+				// reported call keeps every cache field unknown (never zero).
+				const cacheReportedCalls = numberOrZero(row.cache_reported_calls);
+				const cacheUnknownCalls = numberOrZero(row.cache_unknown_calls);
+				const cacheReported = complete && cacheReportedCalls > 0;
+				const cacheHitTokens = numberOrZero(row.cache_hit_tokens);
+				const cachePromptTokens = numberOrZero(row.cache_prompt_tokens);
 				viewRuns.push({
 					id: String(row.run_id),
+					source: group.source === "aaas_key" ? "aaas_key" : "integration",
 					groupId: integrationId,
 					groupName: String(row.integration_name),
 					state,
@@ -383,8 +438,19 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 					versionId,
 					tokenCoverage: coverage,
 					accurateTokens,
-					partialTokens: coverage === "partial" ? numberOrZero(row.legacy_tokens) : 0,
+					partialTokens:
+						coverage === "partial"
+							? numberOrZero(row.confirmed_tokens) > 0
+								? numberOrZero(row.confirmed_tokens)
+								: numberOrZero(row.legacy_tokens)
+							: 0,
 					accurateLlmCallCount,
+					cacheHitTokens: cacheReported ? cacheHitTokens : null,
+					cacheMissTokens: cacheReported ? cachePromptTokens - cacheHitTokens : null,
+					cachePromptTokens: cacheReported ? cachePromptTokens : null,
+					cacheHitRate: cacheReported && cachePromptTokens > 0 ? cacheHitTokens / cachePromptTokens : null,
+					cacheReportedCalls,
+					cacheUnknownCalls,
 					durationMs: elapsed,
 					conversationId: toPublicId("ConversationId", String(row.conversation_id) as ConversationId),
 				});
@@ -407,6 +473,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				.map((group) => ({
 					integrationId: group.integrationId,
 					integrationName: group.name,
+					source: group.source,
 					runCount: Object.values(group.states).reduce((sum, value) => sum + value, 0),
 					succeeded: group.states.succeeded ?? 0,
 					failed: group.states.failed ?? 0,
@@ -448,7 +515,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				recentRuns,
 				coverage: {
 					...totals,
-					note: "仅统计 turn/end 中带完整 llmUsage（本 Run 每次 LLM 调用均有 provider usage）的 Run；历史仅保存最后一次调用 usage 的 Run 标为 partial，单独列示，不计入准确总量。",
+					note: "准确总量只统计 turn/end 中带完整 llmUsage 的 Run；不完整或取消 Turn 的已确认用量单列为部分用量（partialTokens），不混入准确总量。历史仅保存最后一次调用 usage 的 Run 同样计入部分用量。Integration 与 AaaS Key Run 共用这一种口径，且每个 Work Item 只计一次。",
 				},
 				view: buildUsageViewStats({
 					runs: viewRuns,
@@ -466,6 +533,7 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 		async summarizeChatUsageView(input): Promise<AdminUsageViewStats> {
 			const rows = await client.run(
 				`select e.id as event_id, e.turn_id, e.conversation_id, e.created_at,
+				        e.event_type as terminal_event,
 				        pa.agent_definition_id as group_id,
 				        coalesce(ad.name, pa.name) as group_name,
 				        s.payload->>'model' as model,
@@ -473,6 +541,8 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				        e.payload->'llmUsage'->>'partial' as llm_partial,
 				        (e.payload->'llmUsage'->'total'->>'totalTokens')::bigint as accurate_tokens,
 				        (e.payload->'llmUsage'->>'callCount')::bigint as llm_calls,
+				        cc.cache_hit_tokens, cc.cache_prompt_tokens,
+				        cc.cache_reported_calls, cc.cache_unknown_calls,
 				        (e.payload->'usage'->>'totalTokens')::bigint as legacy_tokens
 				 from conversation_events e
 				 join conversations c
@@ -487,8 +557,25 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				     and x.turn_id is not distinct from e.turn_id and x.event_type='turn/start'
 				   order by x.sequence asc limit 1
 				 ) s on true
+				 left join lateral (
+				   -- Cache data is aggregated PER CALL: only calls that explicitly
+				   -- reported prompt-cache read tokens contribute to the hit and to
+				   -- the prompt denominator. Unmarked zero values are unknown, never
+				   -- a miss: they are counted separately and excluded from both.
+				   select coalesce(sum(coalesce((c->>'cacheRead')::bigint,0))
+				            filter (where ${cacheCallReportedSql}),0)::bigint as cache_hit_tokens,
+				          coalesce(sum((coalesce((c->>'input')::bigint,0)
+				                      +coalesce((c->>'cacheRead')::bigint,0)
+				                      +coalesce((c->>'cacheWrite')::bigint,0)))
+				            filter (where ${cacheCallReportedSql}),0)::bigint as cache_prompt_tokens,
+				          count(*) filter (where ${cacheCallReportedSql})::bigint as cache_reported_calls,
+				          count(*) filter (where not coalesce(${cacheCallReportedSql},false))::bigint as cache_unknown_calls
+				   from jsonb_array_elements(
+				     case when jsonb_typeof(e.payload->'llmUsage'->'calls') = 'array'
+				          then e.payload->'llmUsage'->'calls' else '[]'::jsonb end) as c
+				 ) cc on true
 				 where e.tenant_id = $1
-				   and e.event_type = 'turn/end'
+				   and e.event_type in ('turn/end', 'turn/interrupted')
 				   and e.created_at >= $2 and e.created_at < $3
 				   and e.source is distinct from 'orchestration'
 				   and not exists (
@@ -505,28 +592,113 @@ export function createConversationEventRepository(client: PostgresClient): Conve
 				return Number.isFinite(parsed) ? parsed : 0;
 			};
 			const runs: AdminUsageRunRow[] = rows.map((row) => {
-				const complete = row.llm_usage_kind === "object" && row.llm_partial === "false";
+				// A cancelled Turn (turn/interrupted) can carry confirmed llmUsage, but
+				// it is never a complete Turn: keep tokenCoverage partial and surface
+				// its confirmed tokens in partialTokens, not accurateTokens.
+				const isInterrupted = row.terminal_event === "turn/interrupted";
+				const complete =
+					!isInterrupted && row.llm_usage_kind === "object" && row.llm_partial === "false";
+				// Cache coverage is per call: only calls that explicitly reported
+				// prompt-cache read tokens contribute. A turn without a single
+				// reported call keeps every cache field unknown (never zero).
+				const cacheReportedCalls = numberOrZero(row.cache_reported_calls);
+				const cacheUnknownCalls = numberOrZero(row.cache_unknown_calls);
+				const cacheReported = complete && cacheReportedCalls > 0;
+				const cacheHitTokens = numberOrZero(row.cache_hit_tokens);
+				const cachePromptTokens = numberOrZero(row.cache_prompt_tokens);
 				const hasLegacyUsage = row.legacy_tokens !== null && row.legacy_tokens !== undefined;
+				const hasConfirmedLlmUsage = row.llm_usage_kind === "object";
 				const coverage: AdminUsageRunRow["tokenCoverage"] = complete
 					? "complete"
-					: hasLegacyUsage || row.llm_usage_kind === "object"
+					: hasLegacyUsage || hasConfirmedLlmUsage
 						? "partial"
 						: "none";
 				return {
 					id: String(row.turn_id ?? row.event_id),
+					source: "chat",
 					groupId: String(row.group_id),
 					groupName: String(row.group_name),
-					state: null,
+					state: isInterrupted ? "cancelled" : null,
 					createdAt: new Date(String(row.created_at)).toISOString(),
 					model:
 						row.model === null || row.model === undefined || String(row.model) === "" ? null : String(row.model),
 					versionId: null,
 					tokenCoverage: coverage,
 					accurateTokens: complete ? numberOrZero(row.accurate_tokens) : null,
-					partialTokens: complete ? 0 : numberOrZero(row.legacy_tokens),
+					// For incomplete rows prefer confirmed per-call tokens; the legacy
+					// last-call figure remains the fallback for historical data only.
+					partialTokens: complete
+						? 0
+						: hasConfirmedLlmUsage
+							? numberOrZero(row.accurate_tokens)
+							: numberOrZero(row.legacy_tokens),
 					accurateLlmCallCount: complete ? numberOrZero(row.llm_calls) : null,
+					cacheHitTokens: cacheReported ? cacheHitTokens : null,
+					cacheMissTokens: cacheReported ? cachePromptTokens - cacheHitTokens : null,
+					cachePromptTokens: cacheReported ? cachePromptTokens : null,
+					cacheHitRate: cacheReported && cachePromptTokens > 0 ? cacheHitTokens / cachePromptTokens : null,
+					cacheReportedCalls,
+					cacheUnknownCalls,
 					durationMs: null,
 					conversationId: toPublicId("ConversationId", String(row.conversation_id) as ConversationId),
+				};
+			});
+			return buildUsageViewStats({
+				runs,
+				from: input.from.toISOString(),
+				to: input.to.toISOString(),
+			});
+		},
+		async summarizeRouterUsageView(input) {
+			const [schema] = await client.run("select to_regclass('router_operations') is not null as available");
+			if (schema?.available !== true) return undefined;
+			const rows = await client.run(
+				`select o.id,o.task_id,o.state,o.created_at,o.usage_complete,
+				        (o.usage->>'total_tokens')::bigint as total_tokens,
+				        o.capability_snapshot->'model'->>'modelId' as model,
+				        extract(epoch from (o.ended_at-o.started_at))*1000 as duration_ms,
+				        t.key_id,k.name as key_name,cache.total_calls,cache.cache_reported_calls,
+				        cache.cache_hit_tokens,cache.cache_prompt_tokens
+				 from router_operations o
+				 join router_tasks t on t.tenant_id=o.tenant_id and t.id=o.task_id
+				 join aaas_api_keys k on k.tenant_id=t.tenant_id and k.id=t.key_id
+				 cross join lateral (${routerCallUsageSql}) cache
+				 where o.tenant_id=$1 and o.created_at >= $2 and o.created_at < $3
+				 order by o.created_at desc,o.id desc`,
+				input.scope.tenantId,
+				input.from,
+				input.to,
+			);
+			const runs: AdminUsageRunRow[] = rows.map((row) => {
+				const total = row.total_tokens == null ? null : Number(row.total_tokens);
+				const complete = total !== null && row.usage_complete === true;
+				const cacheReportedCalls = Number(row.cache_reported_calls ?? 0);
+				const cacheReported = complete && cacheReportedCalls > 0;
+				const cacheHitTokens = Number(row.cache_hit_tokens ?? 0);
+				const cachePromptTokens = Number(row.cache_prompt_tokens ?? 0);
+				return {
+					id: String(row.id),
+					source: "router",
+					routerTaskId: String(row.task_id),
+					routerKeyId: String(row.key_id),
+					groupId: String(row.key_id),
+					groupName: String(row.key_name),
+					state: String(row.state),
+					createdAt: new Date(String(row.created_at)).toISOString(),
+					model: row.model == null ? null : String(row.model),
+					versionId: null,
+					tokenCoverage: complete ? "complete" : total === null ? "none" : "partial",
+					accurateTokens: complete ? total : null,
+					partialTokens: !complete && total !== null ? total : 0,
+					accurateLlmCallCount: complete && Number(row.total_calls) > 0 ? Number(row.total_calls) : null,
+					cacheHitTokens: cacheReported ? cacheHitTokens : null,
+					cacheMissTokens: cacheReported ? cachePromptTokens - cacheHitTokens : null,
+					cachePromptTokens: cacheReported ? cachePromptTokens : null,
+					cacheHitRate: cacheReported && cachePromptTokens > 0 ? cacheHitTokens / cachePromptTokens : null,
+					cacheReportedCalls,
+					cacheUnknownCalls: Number(row.total_calls ?? 0) - cacheReportedCalls,
+					durationMs: row.duration_ms == null ? null : Number(row.duration_ms),
+					conversationId: null,
 				};
 			});
 			return buildUsageViewStats({

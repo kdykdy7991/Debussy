@@ -32,6 +32,7 @@ function revisionFromRow(row: Record<string, unknown>): McpServerRevisionRecord 
 		transport: "streamable_http",
 		endpoint: String(row.endpoint),
 		authentication: row.authentication as McpServerRevisionRecord["authentication"],
+		sensitiveBindings: row.sensitive_bindings === null ? null : (row.sensitive_bindings as McpServerRevisionRecord["sensitiveBindings"]),
 		createdAt: row.created_at as Date,
 	};
 }
@@ -46,8 +47,20 @@ function toolFromRow(row: Record<string, unknown>): McpToolRecord {
 		description: row.description === null ? null : String(row.description),
 		inputSchema: row.input_schema as Readonly<Record<string, unknown>>,
 		inputSchemaHash: String(row.input_schema_hash),
+		sensitiveBindings: row.sensitive_bindings === null ? null : (row.sensitive_bindings as McpToolRecord["sensitiveBindings"]),
 		createdAt: row.created_at as Date,
 	};
+}
+
+/** 0035 added sensitive_bindings; baseline seeding still runs against <=0034. */
+async function hasSensitiveBindingsColumn(tx: Parameters<typeof txRows>[0]): Promise<boolean> {
+	const rows = await txRows(
+		tx,
+		`select 1 from information_schema.columns
+		 where table_schema = current_schema() and table_name = 'mcp_server_revisions'
+		   and column_name = 'sensitive_bindings' limit 1`,
+	);
+	return rows.length === 1;
 }
 
 async function insertRevision(
@@ -55,35 +68,72 @@ async function insertRevision(
 	revision: McpServerRevisionRecord,
 	tools: readonly McpToolRecord[],
 ): Promise<void> {
-	await txRows(
-		tx,
-		`insert into mcp_server_revisions
-		 (mcp_server_id, revision, tenant_id, transport, endpoint, authentication, created_by, created_at)
-		 values ($1, $2, $3, $4, $5, $6, $3, $7)`,
-		revision.mcpServerId,
-		revision.revision,
-		revision.tenantId,
-		revision.transport,
-		revision.endpoint,
-		revision.authentication,
-		revision.createdAt,
-	);
-	for (const tool of tools) {
+	const withRules = await hasSensitiveBindingsColumn(tx);
+	if (withRules) {
 		await txRows(
 			tx,
-			`insert into mcp_tools
-			 (id, tenant_id, mcp_server_id, mcp_revision, name, description, input_schema, input_schema_hash, created_at)
-			 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			tool.mcpToolId,
-			tool.tenantId,
-			tool.mcpServerId,
-			tool.mcpRevision,
-			tool.name,
-			tool.description,
-			tool.inputSchema as object,
-			tool.inputSchemaHash,
-			tool.createdAt,
+			`insert into mcp_server_revisions
+			 (mcp_server_id, revision, tenant_id, transport, endpoint, authentication, sensitive_bindings, created_by, created_at)
+			 values ($1, $2, $3, $4, $5, $6, $7::jsonb, $3, $8)`,
+			revision.mcpServerId,
+			revision.revision,
+			revision.tenantId,
+			revision.transport,
+			revision.endpoint,
+			revision.authentication,
+			revision.sensitiveBindings ?? null,
+			revision.createdAt,
 		);
+	} else {
+		await txRows(
+			tx,
+			`insert into mcp_server_revisions
+			 (mcp_server_id, revision, tenant_id, transport, endpoint, authentication, created_by, created_at)
+			 values ($1, $2, $3, $4, $5, $6, $3, $7)`,
+			revision.mcpServerId,
+			revision.revision,
+			revision.tenantId,
+			revision.transport,
+			revision.endpoint,
+			revision.authentication,
+			revision.createdAt,
+		);
+	}
+	for (const tool of tools) {
+		if (withRules) {
+			await txRows(
+				tx,
+				`insert into mcp_tools
+				 (id, tenant_id, mcp_server_id, mcp_revision, name, description, input_schema, input_schema_hash, sensitive_bindings, created_at)
+				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
+				tool.mcpToolId,
+				tool.tenantId,
+				tool.mcpServerId,
+				tool.mcpRevision,
+				tool.name,
+				tool.description,
+				tool.inputSchema as object,
+				tool.inputSchemaHash,
+				tool.sensitiveBindings ?? null,
+				tool.createdAt,
+			);
+		} else {
+			await txRows(
+				tx,
+				`insert into mcp_tools
+				 (id, tenant_id, mcp_server_id, mcp_revision, name, description, input_schema, input_schema_hash, created_at)
+				 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				tool.mcpToolId,
+				tool.tenantId,
+				tool.mcpServerId,
+				tool.mcpRevision,
+				tool.name,
+				tool.description,
+				tool.inputSchema as object,
+				tool.inputSchemaHash,
+				tool.createdAt,
+			);
+		}
 	}
 }
 
@@ -146,20 +196,29 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 					(Number(rows[0].current_revision) !== input.expectedRevision || rows[0].status !== "enabled")
 				)
 					return undefined;
+				// Both publishing and migration allocate from the same locked,
+				// per-Server maximum so they can never collide on a Revision number.
+				const [maximum] = await txRows(
+					tx,
+					"select coalesce(max(revision), 0) as revision from mcp_server_revisions where tenant_id=$1 and mcp_server_id=$2",
+					input.scope.tenantId,
+					input.mcpServerId,
+				);
 				const revision: McpServerRevisionRecord = {
 					...input.revision,
-					revision: Number(rows[0].current_revision) + 1,
+					revision: Number(maximum.revision) + 1,
 				};
 				const tools = input.tools.map((tool) => ({ ...tool, mcpRevision: revision.revision }));
 				await insertRevision(tx, revision, tools);
-				await txRows(
-					tx,
-					"update mcp_servers set current_revision = $3, updated_at = $4 where tenant_id = $1 and id = $2",
-					input.scope.tenantId,
-					input.mcpServerId,
-					revision.revision,
-					revision.createdAt,
-				);
+				if (input.advanceCurrentRevision !== false)
+					await txRows(
+						tx,
+						"update mcp_servers set current_revision = $3, updated_at = $4 where tenant_id = $1 and id = $2",
+						input.scope.tenantId,
+						input.mcpServerId,
+						revision.revision,
+						revision.createdAt,
+					);
 				return revision;
 			});
 		},
@@ -182,16 +241,18 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 			);
 			return rows.map(serverFromRow);
 		},
-		async get(scope, mcpServerId) {
-			const rows = await client.run(
+		async get(scope, mcpServerId, tx) {
+			const query = tx ? txRows.bind(undefined, tx) : client.run.bind(client);
+			const rows = await query(
 				"select * from mcp_servers where tenant_id = $1 and id = $2 and deleted_at is null",
 				scope.tenantId,
 				mcpServerId,
 			);
 			return rows.length === 1 ? serverFromRow(rows[0]) : undefined;
 		},
-		async getRevision(scope, mcpServerId, revision) {
-			const rows = await client.run(
+		async getRevision(scope, mcpServerId, revision, tx) {
+			const query = tx ? txRows.bind(undefined, tx) : client.run.bind(client);
+			const rows = await query(
 				`select r.* from mcp_server_revisions r join mcp_servers s
 				 on s.tenant_id = r.tenant_id and s.id = r.mcp_server_id
 				 where r.tenant_id = $1 and r.mcp_server_id = $2 and r.revision = $3 and s.deleted_at is null`,
@@ -211,8 +272,9 @@ export function createMcpServerRepository(client: PostgresClient): McpServerRepo
 			);
 			return rows.map(revisionFromRow);
 		},
-		async listTools(scope, mcpServerId, revision) {
-			const rows = await client.run(
+		async listTools(scope, mcpServerId, revision, tx) {
+			const query = tx ? txRows.bind(undefined, tx) : client.run.bind(client);
+			const rows = await query(
 				`select t.* from mcp_tools t join mcp_servers s
 				 on s.tenant_id = t.tenant_id and s.id = t.mcp_server_id
 				 where t.tenant_id = $1 and t.mcp_server_id = $2 and t.mcp_revision = $3

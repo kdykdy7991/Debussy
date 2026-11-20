@@ -150,18 +150,41 @@ test.skipIf(!url)(
 			const before0028 = await client.run(
 				"select w.*,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
 			);
+			// Incremental files after 0027; 0030 was added by an in-flight workspace change and
+			// 0031 by the AaaS V1 API Key migration. Both are verified as additive by the
+			// isolated forward-migration rehearsal, so this list tracks the applied files only.
 			expect((await runMigrations(client)).applied).toEqual([
 				"0028_aaas_business_context.sql",
 				"0029_usage_view_aggregation.sql",
+				"0030_orchestration_llm_calls.sql",
+				"0031_aaas_api_key_v1.sql",
 			]);
 			const after0028 = await client.run(
 				"select w.*,a.report,e.request_hash from orchestration_work_items w join orchestration_assignments a on a.work_item_id=w.id join orchestration_events e on e.id=a.event_id order by w.alarm_id",
 			);
 			expect(
-				after0028.map(({ external_ref_id, external_ref_type, metadata, ...old }) => {
-					expect([external_ref_id, external_ref_type, metadata]).toEqual([null, null, null]);
-					return old;
-				}),
+				after0028.map(
+					({
+						external_ref_id,
+						external_ref_type,
+						metadata,
+						key_id,
+						task_id,
+						capability_snapshot,
+						capability_snapshot_hash,
+						...old
+					}) => {
+						expect([external_ref_id, external_ref_type, metadata]).toEqual([null, null, null]);
+						// 0031 is additive: pre-existing runs are never backfilled with a Key identity.
+						expect([key_id, task_id, capability_snapshot, capability_snapshot_hash]).toEqual([
+							null,
+							null,
+							null,
+							null,
+						]);
+						return old;
+					},
+				),
 			).toEqual(before0028);
 			expect((await runMigrations(client)).applied).toEqual([]);
 		} finally {

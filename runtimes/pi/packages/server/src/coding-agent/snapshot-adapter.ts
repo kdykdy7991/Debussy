@@ -224,6 +224,7 @@ function toProtocolUsage(usage: Usage | undefined): AssistantTranscriptItem["usa
 		cacheRead: usage.cacheRead,
 		cacheWrite: usage.cacheWrite,
 		reasoning: usage.reasoning,
+		...(usage.cacheReadReported === true ? { cacheReadReported: true } : {}),
 		totalTokens: usage.totalTokens,
 		cost: {
 			input: usage.cost.input,

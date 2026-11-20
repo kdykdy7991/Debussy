@@ -3,7 +3,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "vitest";
 import { eventSchema } from "../../src/orchestration/contracts.ts";
 import { WorkCredentialBox } from "../../src/orchestration/credentials.ts";
-import { modelToolSchema, protectTool } from "../../src/orchestration/protected-tool.ts";
+import { modelToolSchema, protectTool, publicToolDescription, publicToolSchema } from "../../src/orchestration/protected-tool.ts";
 
 const schema = {
 	type: "object",
@@ -29,6 +29,15 @@ test("the model schema hides injected fields and rejects ambiguous schemas", () 
 	expect(schema.properties.api_key).toEqual({ type: "string" });
 	expect(() => modelToolSchema({ ...schema, allOf: [] }, bindings)).toThrow();
 	expect(() => modelToolSchema(schema, [...bindings, ...bindings])).toThrow();
+});
+
+test("public schemas and tool descriptions do not instruct the model to supply injected parameters", () => {
+	const input = { type: "object", description: "Required: authToken.", properties: { id: { type: "string", description: "An identifier" }, authToken: { type: "string" } }, required: ["id", "authToken"] };
+	const visible = publicToolSchema(input, ["authToken"]);
+	expect(JSON.stringify(visible)).not.toContain("authToken");
+	expect(visible.required).toEqual(["id"]);
+	expect(publicToolDescription("Find tickets. Required: id, authToken. Optional: page.", ["authToken"])).toBe("Find tickets. Optional: page.");
+	expect(publicToolDescription("查询工单。\n必填参数：authToken 身份认证令牌", ["authToken"])).toBe("查询工单。");
 });
 
 test("parallel tasks inject their own keys, overwrite supplied secrets, and redact tool echoes", async () => {

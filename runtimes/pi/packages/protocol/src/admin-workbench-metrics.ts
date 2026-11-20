@@ -66,6 +66,17 @@ export interface ContextUsageSnapshot {
 export type TurnOutcome = "success" | "failed" | "cancelled";
 
 /**
+ * `TurnMetrics` 里 Token 计数的口径。
+ *
+ * - `turn`：整轮累计 —— 本轮所有模型调用的 provider usage 之和。
+ * - `last_call`：最后一次模型调用的 provider usage（历史数据口径，保留只读兼容）。
+ *
+ * 缺省（历史行没有该字段）按 `last_call` 解释：旧实现只取末次调用，
+ * 绝不能把它当成整轮累计。
+ */
+export type TurnTokenScope = "turn" | "last_call";
+
+/**
  * 墙上时间戳（ISO 8601 / UTC），仅用于展示与追溯。延迟推导一律使用
  * {@link TurnMonotonicDelays}，不得用这些墙上时间戳做减法。
  */
@@ -104,6 +115,11 @@ export interface TurnMetrics {
 	readonly outputTokens: number;
 	readonly cacheReadTokens: number;
 	readonly cacheWriteTokens: number;
+	/**
+	 * 上述 Token 的计量口径。缺省表示历史行（只取最后一次模型调用）。
+	 * `turn` 表示整轮累计（所有模型调用之和）。
+	 */
+	readonly tokenScope?: TurnTokenScope;
 	readonly ttftMs: number | null;
 	readonly generationMs: number | null;
 	readonly totalLatencyMs: number;
@@ -117,6 +133,10 @@ export interface TurnMetricsDerivationInput {
 	readonly outputTokens: number;
 	readonly cacheReadTokens: number;
 	readonly cacheWriteTokens: number;
+	/**
+	 * Token 计量口径。缺省不写入该字段（历史行语义：只取最后一次模型调用）。
+	 */
+	readonly tokenScope?: TurnTokenScope;
 	readonly stamps: TurnWallClockStamps;
 	readonly monotonic: TurnMonotonicDelays;
 }
@@ -181,6 +201,7 @@ export function deriveTurnMetrics(input: TurnMetricsDerivationInput): TurnMetric
 		outputTokens: input.outputTokens,
 		cacheReadTokens: input.cacheReadTokens,
 		cacheWriteTokens: input.cacheWriteTokens,
+		...(input.tokenScope === undefined ? {} : { tokenScope: input.tokenScope }),
 		ttftMs,
 		generationMs,
 		totalLatencyMs: input.monotonic.totalElapsedMs,

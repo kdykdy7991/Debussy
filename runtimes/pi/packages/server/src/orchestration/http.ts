@@ -58,7 +58,85 @@ export function createOrchestrationHttp(
 					await service.store.cancel(id, integration.id);
 					data = await service.store.run(id, integration.id);
 				} else throw new OrchestrationError(404, "NOT_FOUND", "接口不存在");
-			} else if (admin && parts[0] === "catalog" && parts.length === 1 && method === "GET")
+			} else if (admin && parts[0] === "configurations" && parts.length === 1 && method === "GET")
+				data = await service.independentConfigurations();
+			else if (admin && parts[0] === "configurations" && parts.length === 1 && method === "POST") {
+				const input = z
+					.object({ name: z.string().trim().min(1).max(200), draft: z.unknown() })
+					.strict()
+					.parse(body);
+				data = await service.createIndependentConfiguration(input.name, input.draft);
+				status = 201;
+			} else if (admin && parts[0] === "configurations" && parts.length === 2 && method === "GET")
+				data = await service.independentConfiguration(z.string().uuid().parse(parts[1]));
+			else if (
+				admin &&
+				parts[0] === "configurations" &&
+				parts.length === 3 &&
+				parts[2] === "draft" &&
+				method === "PUT"
+			) {
+				const input = z
+					.object({ expectedRevision: z.number().int().positive(), draft: z.unknown() })
+					.strict()
+					.parse(body);
+				data = await service.saveIndependentDraft(
+					z.string().uuid().parse(parts[1]),
+					input.expectedRevision,
+					input.draft,
+				);
+			} else if (
+				admin &&
+				parts[0] === "configurations" &&
+				parts.length === 3 &&
+				parts[2] === "versions" &&
+				method === "POST"
+			) {
+				const input = z.object({ expectedRevision: z.number().int().positive() }).strict().parse(body);
+				data = await service.publishIndependentConfiguration(
+					z.string().uuid().parse(parts[1]),
+					input.expectedRevision,
+				);
+				status = 201;
+			} else if (
+				admin &&
+				parts[0] === "configurations" &&
+				parts.length === 2 &&
+				parts[1] === "current" &&
+				method === "PUT"
+			) {
+				const binding = z.object({
+					mcpServerId: z.string().regex(/^mcp_[0-9a-f-]{36}$/),
+					toolName: z.string().min(1).max(200),
+					parameter: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+					credentialId: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+				}).strict();
+				const input = z.object({
+					configuration_id: z.string().uuid().nullable(),
+					name: z.string().trim().min(1).max(200),
+					draft: z.unknown(),
+					expected_revision: z.number().int().positive().optional(),
+					credential_bindings: z.array(binding).max(128),
+				}).strict().parse(body);
+				data = await service.applyCurrentConfiguration({
+					configurationId: input.configuration_id,
+					name: input.name,
+					draft: input.draft,
+					expectedRevision: input.expected_revision,
+					credentialBindings: input.credential_bindings,
+				});
+			} else if (
+				admin &&
+				parts[0] === "configurations" &&
+				parts.length === 4 &&
+				parts[2] === "versions" &&
+				method === "GET"
+			)
+				data = await service.independentVersion(
+					z.string().uuid().parse(parts[1]),
+					z.string().uuid().parse(parts[3]),
+				);
+			else if (admin && parts[0] === "catalog" && parts.length === 1 && method === "GET")
 				data = await service.catalog();
 			else if (admin && parts[0] === "integrations" && parts.length === 1 && method === "GET")
 				data = await service.store.listIntegrations();
@@ -96,7 +174,7 @@ export function createOrchestrationHttp(
 					})
 					.strict()
 					.parse(body);
-				const current = await service.store.getIntegration(z.string().uuid().parse(parts[1]));
+				const current = await service.store.getLegacyIntegration(z.string().uuid().parse(parts[1]));
 				const created = await createRun(
 					service.store,
 					current,
@@ -132,7 +210,7 @@ export function createOrchestrationHttp(
 					"业务调用凭据不授予配置权限，请使用独立配置会话",
 				);
 			} else if (admin && parts[0] === "integrations" && parts[2] === "configuration" && parts.length === 3) {
-				const current = await service.store.getIntegration(z.string().uuid().parse(parts[1]));
+				const current = await service.store.getLegacyIntegration(z.string().uuid().parse(parts[1]));
 				if (method === "GET") data = await service.configuration(current);
 				else if (method === "PUT") data = await service.saveConfiguration(current, configurationSchema.parse(body));
 				else throw new OrchestrationError(405, "METHOD_NOT_ALLOWED", "方法不支持");

@@ -1,9 +1,14 @@
 import type { ReservedSql } from "postgres";
+import { CONNECTION_FAILED, CREDENTIAL_EXPIRED, MCP_AUTH_FAILED, MCP_RESULT_BLOCKED } from "./api-key-boundary.ts";
 import { OrchestrationError } from "./contracts.ts";
 import type { OrchestrationService } from "./service.ts";
 
 /** One active scheduler per tenant. Keeps its lock connection until all executions have stopped. */
-export async function startOrchestrationDispatcher(service: OrchestrationService, onError: () => void) {
+export async function startOrchestrationDispatcher(
+	service: OrchestrationService,
+	onError: () => void,
+	options: { legacyOnly?: boolean } = {},
+) {
 	const { store } = service;
 	const lock: ReservedSql = await store.client.withDriver((sql) => sql.reserve());
 	const key = `debussy:orchestration:${store.tenantId}`;
@@ -24,11 +29,33 @@ export async function startOrchestrationDispatcher(service: OrchestrationService
 	const active = new Map<string, Promise<void>>();
 	const recover = async () => {
 		const rows = await store.client.run(
-			`select a.id,a.turn_id,w.conversation_id from orchestration_assignments a
-		join orchestration_work_items w on w.id=a.work_item_id where a.tenant_id=$1 and a.state='running' order by a.created_at`,
+			`select a.id,a.turn_id,a.error,w.conversation_id,w.key_id from orchestration_assignments a
+		join orchestration_work_items w on w.id=a.work_item_id
+		join orchestration_integrations i on i.id=w.integration_id and i.tenant_id=w.tenant_id
+		where a.tenant_id=$1 and a.state='running' and (not $2::boolean or (w.key_id is null and i.kind='legacy')) order by a.created_at`,
 			store.tenantId,
+			options.legacyOnly === true,
 		);
 		for (const row of rows) {
+			// A persisted fatal boundary hit is terminal: the Run must never be
+			// judged successful, not even when the model already committed output.
+			const fatal = row.error === null || row.error === undefined ? undefined : String(row.error);
+			if (
+				fatal === MCP_RESULT_BLOCKED ||
+				fatal === MCP_AUTH_FAILED ||
+				fatal === CREDENTIAL_EXPIRED ||
+				fatal === CONNECTION_FAILED
+			) {
+				await store.complete(String(row.id), null, fatal);
+				continue;
+			}
+			// A process can stop after observing a fatal MCP response but before its
+			// marker is durable. A committed message alone cannot prove that a Key
+			// Run passed the boundary, so recover these interrupted Runs fail-closed.
+			if (row.key_id != null) {
+				await store.complete(String(row.id), null, "EXECUTION_INTERRUPTED");
+				continue;
+			}
 			const output = await store.client.run(
 				`select payload->>'text' as text from conversation_events e where e.tenant_id=$1
 			and e.conversation_id=$2 and e.turn_id=$3 and e.event_type='assistant/message'
@@ -69,8 +96,13 @@ export async function startOrchestrationDispatcher(service: OrchestrationService
 			throw error;
 		}
 		await store.client.run(
-			"update orchestration_credentials set sealed='{}'::jsonb where tenant_id=$1 and expires_at<now() and sealed<>'{}'::jsonb",
+			`update orchestration_credentials c set sealed='{}'::jsonb where c.tenant_id=$1 and c.expires_at<now() and c.sealed<>'{}'::jsonb
+			and (not $2::boolean or exists (select 1 from orchestration_assignments a
+			join orchestration_work_items w on w.id=a.work_item_id and w.tenant_id=a.tenant_id
+			join orchestration_integrations i on i.id=w.integration_id and i.tenant_id=w.tenant_id
+			where a.credential_id=c.id and a.tenant_id=c.tenant_id and w.key_id is null and i.kind='legacy'))`,
 			store.tenantId,
+			options.legacyOnly === true,
 		);
 		// The database is the cross-process cancellation signal. Retry while the
 		// execution remains active, including while its runtime is still opening.
@@ -83,7 +115,7 @@ export async function startOrchestrationDispatcher(service: OrchestrationService
 			if (rows[0]?.state === "cancelled") await service.abort(id).catch(onError);
 		}
 		while (!stopped && active.size < 3) {
-			const assignment = await store.claim();
+			const assignment = await store.claim(options.legacyOnly === true);
 			if (!assignment) break;
 			const run = (async () => {
 				let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -140,6 +172,28 @@ export async function startOrchestrationDispatcher(service: OrchestrationService
 				clearInterval(timer);
 				try {
 					await busy;
+					// An aborted runtime can return an empty output as if it succeeded.
+					// Settle active Key Runs under the normal lifecycle lock before
+					// requesting cancellation; a concurrent terminal state wins.
+					for (const workId of active.keys()) {
+						const rows = await store.client.run(
+							`select a.id,a.error from orchestration_assignments a join orchestration_work_items w
+							on w.id=a.work_item_id and w.tenant_id=a.tenant_id
+							where a.tenant_id=$1 and w.id=$2 and w.key_id is not null and a.state='running'`,
+							store.tenantId,
+							workId,
+						);
+						if (rows[0]) {
+							const code = String(rows[0].error ?? "");
+							await store.complete(
+								String(rows[0].id),
+								null,
+								[MCP_RESULT_BLOCKED, MCP_AUTH_FAILED, CREDENTIAL_EXPIRED, CONNECTION_FAILED].includes(code)
+									? code
+									: "EXECUTION_INTERRUPTED",
+							);
+						}
+					}
 					await Promise.allSettled([...active.keys()].map((id) => service.abort(id)));
 					await Promise.allSettled([...active.values()]);
 				} finally {

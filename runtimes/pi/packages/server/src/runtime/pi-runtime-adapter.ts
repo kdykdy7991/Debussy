@@ -3,7 +3,7 @@
  *
  * 把冻结的 `RuntimeSpec` 映射为现有 `CreateSessionOptions`/`PiSessionRuntime`
  * 并包装成 `ConversationRuntime`。MVP 只允许 chat-only 白名单：非 chat-only
- * profile、工具、知识库一律拒绝打开（「禁用工具不能调用」在创建时强制，
+ * profile、内置工具、知识库一律拒绝打开（「禁用工具不能调用」在创建时强制，
  * 而非依赖调用方自觉）。Adapter 不处理 Principal 鉴权——只接收已授权 Scope。
  *
  * 依赖注入：`createSession` 由组合层传入（真实组合接
@@ -17,14 +17,13 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
 import { resolveEffectiveModelOptions } from "../model-parameters.ts";
-import { mcpResourceToolName } from "../publishing/mcp/resource-content.ts";
 import { MCP_RESOURCE_GUIDANCE } from "../publishing/mcp/resource-guidance.ts";
 import type { McpRuntimeToolFactory, McpRuntimeTools } from "../publishing/mcp/runtime-tools.ts";
 import type { SkillMaterializer } from "../publishing/runtime/skill-materializer.ts";
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type { MaterializedSkill, PiSessionRuntime } from "../types.ts";
 import { ConversationRuntime } from "./conversation-runtime.ts";
-import type { ScopeContext } from "./scope-context.ts";
+import type { RuntimeScope, ScopeContext } from "./scope-context.ts";
 
 /** 传给底层会话工厂的创建参数（源自 RuntimeSpec + Scope）。 */
 export interface RuntimeSessionOptions {
@@ -34,6 +33,7 @@ export interface RuntimeSessionOptions {
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly streamOptions?: import("@earendil-works/pi-ai").SimpleStreamOptions;
 	readonly customTools?: readonly ToolDefinition[];
+	/** Frozen built-in tool names. An empty array denies all built-ins. */
 	readonly allowedToolNames?: readonly string[];
 	/** 冻结的发布版本 system prompt（创建会话时写入独立 ResourceLoader）。 */
 	readonly systemPrompt?: string;
@@ -48,8 +48,13 @@ export type RuntimeOpenResult =
 	| { readonly ok: false; readonly reason: string };
 
 export interface PiRuntimeAdapter {
-	/** 打开一个 ConversationRuntime；spec 越权/越界时返回明确的拒绝原因。 */
-	open(spec: RuntimeSpec, scope: ScopeContext): Promise<RuntimeOpenResult>;
+	/**
+	 * 打开一个 ConversationRuntime；spec 越权/越界时返回明确的拒绝原因。
+	 *
+	 * `scope` 不要求存在 Conversation：Router Operation 用 `sessionId`
+	 * （operation id）作为内存会话标识，MCP 工具从本次执行的凭据来源获得授权。
+	 */
+	open(spec: RuntimeSpec, scope: RuntimeScope): Promise<RuntimeOpenResult>;
 }
 
 /** Maps a frozen builtin Tool capability `{id}` to its runtime tool name. */
@@ -77,17 +82,32 @@ export function createPiRuntimeAdapter(deps: {
 				conversationEffort: scope.conversationEffort ?? null,
 			});
 			const thinkingLevel = resolved.thinkingLevel;
+			// 会话标识：Chat/AaaS 用 conversationId，Router Operation 用 operation id。
+			const sessionId = scope.sessionId ?? scope.conversationId;
+			if (sessionId === undefined) return { ok: false, reason: "执行缺少会话标识" };
+			// MCP 工具的凭据与审计来自本次执行的凭据来源：Chat/AaaS 走
+			// Conversation 归属，Router Operation 走自带密封凭据的来源。两者都没有
+			// 时不提供 MCP 工具（旧 Chat 口径不变）。
+			const conversationScope: ScopeContext | undefined =
+				scope.conversationId === undefined ? undefined : { ...scope, conversationId: scope.conversationId };
+			const hasCredentialSource = scope.credentialSource !== undefined;
+			if (conversationScope === undefined && !hasCredentialSource && spec.capabilities.mcpServers.length > 0) {
+				return { ok: false, reason: "MCP 工具需要归属到真实会话或自带凭据的执行上下文" };
+			}
 			const customTools: McpRuntimeTools =
 				deps.createMcpTools === undefined ? [] : await deps.createMcpTools(spec, scope);
+			const sandbox = scope.sandbox;
+			if (sandbox && customTools.some((tool) => tool.name === sandbox.tool.name)) {
+				return { ok: false, reason: "INVALID_CAPABILITY_SNAPSHOT" };
+			}
+			const sessionTools = sandbox ? [...customTools, sandbox.tool] : customTools;
 			// 物化冻结 Skill 到运行时目录，并把 systemPrompt/Skill 一并交给会话工厂，
 			// 让发布会话通过独立 ResourceLoader（skillsOverride）只看到本版本快照。
 			const skills =
 				deps.skillMaterializer === undefined
 					? []
 					: await deps.skillMaterializer.materialize(spec, { tenantId: scope.tenantId });
-			// 单源 allowedToolNames：Debug 与 Published 用同一套计算，实际暴露工具
-			// 严格等于 RuntimeSpec 声明允许的工具（capabilities.tools + MCP tools）。
-			const allowedToolNames = computeAllowedToolNames(spec, resolveToolName);
+			const allowedToolNames = computeAllowedBuiltinToolNames(spec, resolveToolName);
 			const agentSystemPrompt =
 				spec.capabilities.mcpServers.length > 0
 					? `${spec.agent.systemPrompt}\n\n${MCP_RESOURCE_GUIDANCE}`
@@ -103,12 +123,12 @@ export function createPiRuntimeAdapter(deps: {
 							},
 						)}`;
 			const session = await deps.createSession({
-				id: scope.conversationId,
+				id: sessionId,
 				model: { provider: spec.agent.model.provider, id: spec.agent.model.modelId },
 				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
 				streamOptions: resolved.streamOptions,
-				...(customTools.length > 0 ? { customTools } : {}),
-				...(allowedToolNames.length > 0 ? { allowedToolNames } : {}),
+				...(sessionTools.length > 0 ? { customTools: sessionTools } : {}),
+				allowedToolNames,
 				systemPrompt,
 				...(skills.length > 0 ? { skills } : {}),
 			});
@@ -126,19 +146,11 @@ export function createPiRuntimeAdapter(deps: {
 	};
 }
 
-/**
- * The tools a runtime is actually allowed to expose = exactly the tools the
- * RuntimeSpec declares:
- *
- * - `spec.capabilities.tools` — builtin tool capabilities the Agent revision
- *   whitelisted (capability `{id}` resolved to its runtime name);
- * - `spec.capabilities.mcpServers[].tools[].name` — the frozen MCP Tool
- *   allowlist.
- *
- * This must be the ONLY place allowedToolNames are computed, so
- * `RuntimeSpec.allowed == Debug.actual == Published.actual`.
- */
-function computeAllowedToolNames(spec: RuntimeSpec, resolveToolName: BuiltinToolNameResolver | undefined): string[] {
+/** Resolve built-ins from the frozen spec. MCP tools come from the MCP factory. */
+function computeAllowedBuiltinToolNames(
+	spec: RuntimeSpec,
+	resolveToolName: BuiltinToolNameResolver | undefined,
+): string[] {
 	const names: string[] = [];
 	for (const tool of spec.capabilities.tools) {
 		const id = tool.id;
@@ -150,10 +162,6 @@ function computeAllowedToolNames(spec: RuntimeSpec, resolveToolName: BuiltinTool
 			throw new Error(`RuntimeSpec contains an unknown builtin Tool id: ${id}`);
 		}
 		names.push(name);
-	}
-	for (const server of spec.capabilities.mcpServers) {
-		for (const tool of server.tools) names.push(tool.name);
-		names.push(mcpResourceToolName(server.mcpServerId));
 	}
 	return [...new Set(names)];
 }

@@ -15,8 +15,8 @@ import {
 	type TurnMetrics,
 	type TurnMetricsDerivationInput,
 	type TurnOutcome,
+	type TurnTokenScope,
 	type TurnWallClockStamps,
-	type Usage,
 } from "@earendil-works/pi-protocol";
 
 /** turn 开始时捕获的一次性时间基准（单写）。 */
@@ -53,28 +53,46 @@ export interface TurnUsageCounts {
 	readonly cacheWriteTokens: number;
 }
 
+/**
+ * 任意来源的 provider token 分项（protocol `Usage` 或逐次调用的累计分项）。
+ * 只读四个分项，不读 `totalTokens`/`cost`。
+ */
+export interface TurnTokenCountsSource {
+	readonly input?: number;
+	readonly output?: number;
+	readonly cacheRead?: number;
+	readonly cacheWrite?: number;
+}
+
 /** `buildTurnMetrics` 输入：终局 + 基准 + 单调时点 + 权威 Usage。 */
 export interface BuildTurnMetricsInput {
 	readonly outcome: TurnOutcome;
 	readonly base: TurnTimingBase;
 	readonly events: TurnTimingEvents;
 	readonly usage: TurnUsageCounts;
+	/** Token 计量口径；缺省表示历史行语义（只取最后一次模型调用）。 */
+	readonly tokenScope?: TurnTokenScope;
 }
 
 function isoAt(epochStartMs: number, monotonicOffsetMs: number): string {
 	return new Date(epochStartMs + Math.max(0, monotonicOffsetMs)).toISOString();
 }
 
-/** 把 Provider 的权威 `Usage` 映射为 `TurnUsageCounts`；缺省用 0。 */
-export function usageCountsFromProtocolUsage(usage: Usage | undefined): TurnUsageCounts {
-	if (usage === undefined) {
+/**
+ * 把 provider token 分项映射为 `TurnUsageCounts`；缺省用 0。
+ *
+ * 调用方必须自己决定「统计的是整轮累计还是最后一次调用」——本函数只做映射，
+ * 不做任何口径推断。
+ */
+export function usageCountsFromTokenTotals(source: TurnTokenCountsSource | undefined): TurnUsageCounts {
+	if (source === undefined) {
 		return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 	}
 	return {
-		inputTokens: usage.input ?? 0,
-		outputTokens: usage.output ?? 0,
-		cacheReadTokens: usage.cacheRead ?? 0,
-		cacheWriteTokens: usage.cacheWrite ?? 0,
+		inputTokens: source.input ?? 0,
+		outputTokens: source.output ?? 0,
+		cacheReadTokens: source.cacheRead ?? 0,
+		cacheWriteTokens: source.cacheWrite ?? 0,
 	};
 }
 
@@ -95,6 +113,7 @@ export function buildTurnMetrics(input: BuildTurnMetricsInput): TurnMetrics {
 	const derivation: TurnMetricsDerivationInput = {
 		outcome: input.outcome,
 		...input.usage,
+		...(input.tokenScope === undefined ? {} : { tokenScope: input.tokenScope }),
 		stamps,
 		monotonic: {
 			providerStartDelayMs: offset(input.events.providerStartAtMs),

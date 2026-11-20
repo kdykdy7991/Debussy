@@ -12,6 +12,7 @@
  */
 import type { RuntimeSpec } from "../publishing/runtime-spec/schema.ts";
 import type {
+	LlmCallTrace,
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
 	ResolvedAttachmentInput,
@@ -20,10 +21,10 @@ import type {
 } from "../types.ts";
 import { historyToContextText, historyToReference, type RestoredContext } from "./context-restore.ts";
 import { createEffectOwner, type EffectOwner } from "./effect-owner.ts";
-import type { ScopeContext } from "./scope-context.ts";
+import type { RuntimeScope } from "./scope-context.ts";
 
 export interface ConversationRuntimeOptions {
-	readonly scope: ScopeContext;
+	readonly scope: RuntimeScope;
 	/** 冻结的运行时配置（不可变，AD-05）。 */
 	readonly spec: RuntimeSpec;
 	/** 底层会话；MVP 每个 Conversation 独立（AD-07）。 */
@@ -33,12 +34,12 @@ export interface ConversationRuntimeOptions {
 }
 
 export interface ConversationRuntimeEvent {
-	readonly type: "snapshot" | "progress" | "error";
+	readonly type: PiSessionRuntimeEvent["type"];
 	readonly event: PiSessionRuntimeEvent;
 }
 
 export class ConversationRuntime {
-	readonly scope: ScopeContext;
+	readonly scope: RuntimeScope;
 	readonly spec: RuntimeSpec;
 	private readonly session: PiSessionRuntime;
 	private readonly systemPrompt: string | undefined;
@@ -106,6 +107,7 @@ export class ConversationRuntime {
 			readonly attachmentIds?: readonly string[];
 			/** Resolved attachment inputs already prepared by the caller. */
 			readonly attachments?: readonly ResolvedAttachmentInput[];
+			readonly onLlmTrace?: (trace: LlmCallTrace) => Promise<void>;
 		},
 	): Promise<void> {
 		if (this.closed) throw new Error("ConversationRuntime is closed");
@@ -133,6 +135,7 @@ export class ConversationRuntime {
 			await this.session.prompt({
 				text,
 				...(this.systemPrompt !== undefined ? { systemPrompt: this.systemPrompt } : {}),
+				...(options?.onLlmTrace ? { onLlmTrace: options.onLlmTrace } : {}),
 			});
 			return;
 		}
@@ -150,6 +153,7 @@ export class ConversationRuntime {
 		await this.session.prompt({
 			text,
 			...(this.systemPrompt !== undefined ? { systemPrompt: this.systemPrompt } : {}),
+			...(options?.onLlmTrace ? { onLlmTrace: options.onLlmTrace } : {}),
 			...(structuredHistory !== undefined ? { transcript: structuredHistory } : {}),
 			...(hasAttachments
 				? {

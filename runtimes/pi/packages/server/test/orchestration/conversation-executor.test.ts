@@ -114,6 +114,9 @@ test("the real runtime adapter passes the task prompt into the session system ro
 		expect(prompt).toHaveBeenCalledWith({
 			text: "caller text",
 			systemPrompt: "  caller system prompt\n",
+			// Session V1: the orchestration executor also wires the provider
+			// boundary trace callback (WIP behaviour, kept explicit here).
+			onLlmTrace: expect.any(Function),
 		});
 		expect(createSession.mock.calls[0]).toEqual([
 			expect.objectContaining({ systemPrompt: "  caller system prompt\n", model: { provider: "fake", id: "test" } }),

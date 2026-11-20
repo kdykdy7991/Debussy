@@ -28,7 +28,7 @@ export const PLATFORM_LIMITS = {
 	/** Total selected MCP tools across all bound servers. */
 	maxMcpTools: 128,
 	maxTurns: 100,
-	maxContextTokens: 100_000,
+	maxContextTokens: 256_000,
 	maxToolResultBytes: 65_536,
 	maxTurnTimeoutMs: 120_000,
 	maxIdleTtlMs: 1_200_000, // 20 minutes, PD-14

@@ -12,6 +12,7 @@
  */
 
 import type { AdminOrchestrationUsage, AdminUsageViewStats, ReasoningEffort } from "@earendil-works/pi-protocol";
+import type { TransactionSql } from "postgres";
 import type {
 	AgentDefinitionId,
 	AttachmentId,
@@ -177,7 +178,7 @@ export interface SkillRepository {
 	}): Promise<SkillRevisionRecord | undefined>;
 	list(scope: TenantScope, limit: number, cursor?: string): Promise<readonly SkillRecord[]>;
 	get(scope: TenantScope, skillId: SkillId): Promise<SkillRecord | undefined>;
-	getRevision(scope: TenantScope, skillId: SkillId, revision: number): Promise<SkillRevisionRecord | undefined>;
+	getRevision(scope: TenantScope, skillId: SkillId, revision: number, tx?: TransactionSql): Promise<SkillRevisionRecord | undefined>;
 	getArtifact(scope: TenantScope, artifactId: SkillArtifactId): Promise<SkillArtifactRecord | undefined>;
 	listRevisions(scope: TenantScope, skillId: SkillId): Promise<readonly SkillRevisionRecord[]>;
 	setStatus(scope: TenantScope, skillId: SkillId, status: "enabled" | "disabled"): Promise<boolean>;
@@ -220,7 +221,16 @@ export interface McpServerRevisionRecord {
 	readonly transport: "streamable_http";
 	readonly endpoint: string;
 	readonly authentication: "none" | "bearer" | "api_key";
+	/** NULL = never registered; [] = reviewed empty; non-empty = frozen rules. */
+	readonly sensitiveBindings?: readonly SensitiveBindingRecord[] | null;
 	readonly createdAt: Date;
+}
+
+export interface SensitiveBindingRecord {
+	readonly mcpServerId: string;
+	readonly toolName: string;
+	readonly parameter: string;
+	readonly credentialId: string;
 }
 
 export interface McpToolRecord {
@@ -232,6 +242,8 @@ export interface McpToolRecord {
 	readonly description: string | null;
 	readonly inputSchema: Readonly<Record<string, unknown>>;
 	readonly inputSchemaHash: string;
+	/** NULL = never registered; [] = reviewed empty; non-empty = frozen rules. */
+	readonly sensitiveBindings?: readonly SensitiveBindingRecord[] | null;
 	readonly createdAt: Date;
 }
 
@@ -274,18 +286,21 @@ export interface McpServerRepository {
 		readonly scope: TenantScope;
 		readonly mcpServerId: McpServerId;
 		readonly expectedRevision?: number;
+		/** Migration freezes an equivalent Revision without moving the catalog pointer. */
+		readonly advanceCurrentRevision?: boolean;
 		readonly revision: Omit<McpServerRevisionRecord, "revision">;
 		readonly tools: readonly Omit<McpToolRecord, "mcpRevision">[];
 	}): Promise<McpServerRevisionRecord | undefined>;
 	list(scope: TenantScope, limit: number, cursor?: string): Promise<readonly McpServerRecord[]>;
-	get(scope: TenantScope, mcpServerId: McpServerId): Promise<McpServerRecord | undefined>;
+	get(scope: TenantScope, mcpServerId: McpServerId, tx?: TransactionSql): Promise<McpServerRecord | undefined>;
 	getRevision(
 		scope: TenantScope,
 		mcpServerId: McpServerId,
 		revision: number,
+		tx?: TransactionSql,
 	): Promise<McpServerRevisionRecord | undefined>;
 	listRevisions(scope: TenantScope, mcpServerId: McpServerId): Promise<readonly McpServerRevisionRecord[]>;
-	listTools(scope: TenantScope, mcpServerId: McpServerId, revision: number): Promise<readonly McpToolRecord[]>;
+	listTools(scope: TenantScope, mcpServerId: McpServerId, revision: number, tx?: TransactionSql): Promise<readonly McpToolRecord[]>;
 	setLastTest(
 		scope: TenantScope,
 		mcpServerId: McpServerId,
@@ -728,6 +743,17 @@ export interface AdminConversationListParams {
 	/** Only conversations whose error-event count > 0. */
 	readonly hasErrors?: boolean;
 	readonly principalType?: "external_user" | "anonymous_visitor";
+	/** Restrict the unified admin view to a task origin. */
+	readonly origin?: "chat" | "integration" | "aaas_key";
+	/** Restrict the unified admin view to one logical AaaS Key id. */
+	readonly keyId?: string;
+	/** Restrict the unified admin view to one Work Item / Run id. */
+	readonly runId?: string;
+	readonly executionState?: string;
+	/** Case-insensitive text search over id, title, app name and redacted principal id. */
+	readonly search?: string;
+	readonly lastActiveAfter?: Date;
+	readonly lastActiveBefore?: Date;
 }
 
 /** WB-006: tenant-scoped admin row with display + scope fields joined from siblings. */
@@ -741,6 +767,47 @@ export interface AdminConversationListRow extends ConversationRecord {
 	readonly publicAppId: string;
 	/** Agent (agentDefinitionId) that produced this conversation, if resolvable. */
 	readonly agentId: AgentDefinitionId | null;
+	/** Display name joined from agent_definitions; null when the agent was removed. */
+	readonly agentName: string | null;
+	/** Task origin derived from the carrier kind and work item key ownership. */
+	readonly origin: "chat" | "integration" | "aaas_key";
+	/** Logical AaaS Key id (never a secret), when the work item is Key-owned. */
+	readonly keyId: string | null;
+	/** Business correlation id from the AaaS request, when present. */
+	readonly taskId: string | null;
+	/** Work Item id, equal to the AaaS Run id. */
+	readonly runId: string | null;
+	readonly executionState?: string;
+}
+
+/** One persisted provider-boundary record (WIP 0030 shape). */
+export interface LlmCallRow {
+	readonly turnId: string;
+	readonly callIndex: number;
+	readonly modelProvider: string;
+	readonly modelId: string;
+	readonly request: unknown;
+	readonly response: unknown | null;
+	readonly createdAt: Date;
+	readonly completedAt: Date | null;
+}
+
+/** AaaS task contract persisted on the work item. */
+export interface OrchestrationTaskRow {
+	readonly requestContract: string | null;
+	readonly taskPrompt: string | null;
+}
+
+/**
+ * `available=false` + `reason="table_missing"` is the ONLY degraded path:
+ * the 0030 migration has not been applied to this database. Every other
+ * database error must propagate with a diagnostic instead of being swallowed.
+ */
+export interface LlmCallQueryResult<T> {
+	readonly available: boolean;
+	readonly reason: "ok" | "table_missing";
+	readonly rows: T;
+	readonly total: number;
 }
 
 export interface ConversationRepository {
@@ -802,6 +869,24 @@ export interface ConversationRepository {
 	 * reads return `undefined` (uniform 404).
 	 */
 	getByTenant(scope: TenantScope, conversationId: ConversationId): Promise<AdminConversationListRow | undefined>;
+	/** Admin detail: the AaaS request contract + its dynamic task prompt, when present. */
+	getOrchestrationTaskByTenant(
+		scope: TenantScope,
+		conversationId: ConversationId,
+	): Promise<OrchestrationTaskRow | null>;
+	/** Admin-only provider-boundary trace page (Session V1: summaries only). */
+	listLlmCallsByTenant(
+		scope: TenantScope,
+		conversationId: ConversationId,
+		args: { readonly limit: number; readonly after: number },
+	): Promise<LlmCallQueryResult<readonly LlmCallRow[]>>;
+	/** Admin-only single raw provider-boundary record, fetched on demand. */
+	getLlmCallByTenant(
+		scope: TenantScope,
+		conversationId: ConversationId,
+		turnId: string,
+		callIndex: number,
+	): Promise<LlmCallQueryResult<LlmCallRow | null>>;
 	/** Admin-only tenant-scoped lifecycle transition. Returns false when no row changed. */
 	updateStatusByTenant?(
 		scope: TenantScope,
@@ -1137,6 +1222,11 @@ export interface ConversationEventRepository {
 		readonly from: Date;
 		readonly to: Date;
 	}): Promise<AdminUsageViewStats>;
+	summarizeRouterUsageView?(input: {
+		readonly scope: TenantScope;
+		readonly from: Date;
+		readonly to: Date;
+	}): Promise<AdminUsageViewStats | undefined>;
 	/**
 	 * WB-006: tenant-scoped admin listing (cross-owner). The query joins
 	 * `conversations` to enforce `(tenant, app, conversation)` scope and

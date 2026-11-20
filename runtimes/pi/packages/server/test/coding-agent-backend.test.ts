@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createAssistantMessageEventStream, type AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import {
 	type AgentSessionServices,
@@ -16,12 +17,16 @@ import type {
 	SessionSummary,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { CodingAgentPiSessionBackend } from "../src/coding-agent/index.ts";
 import type { CodingAgentPiSessionRuntime } from "../src/coding-agent/runtime.ts";
 import type { PiServer } from "../src/index.ts";
+import { newConversationId, newPrincipalId, newPublishedAppId, newTenantId } from "../src/publishing/domain/ids.ts";
+import { parseRuntimeSpec } from "../src/publishing/runtime-spec/schema.ts";
+import { createPiRuntimeAdapter } from "../src/runtime/pi-runtime-adapter.ts";
 import { connectWebSocketTestClient, type ProtocolTestClient } from "../src/testing/index.ts";
 import { createWebSocketServer } from "../src/transports/websocket/index.ts";
+import type { LlmCallTrace } from "../src/types.ts";
 
 /**
  * B6 end-to-end tests for the Coding Agent backend adapter.
@@ -266,8 +271,7 @@ describe("CodingAgentPiSessionBackend", () => {
 		const archive = skills.find((s) => s.name === "archive")!;
 		expect(archive.disableModelInvocation).toBe(true);
 
-		// Published sessions preserve Pi's native read capability. Filesystem
-		// isolation is a future sandbox responsibility, not a tool allowlist.
+		// Direct backend sessions without an allowlist use native Pi defaults.
 		const readTool = (session as unknown as { _toolRegistry: Map<string, unknown> })._toolRegistry.get("read") as {
 			execute(id: string, args: { path: string }): Promise<{ content: Array<{ type: "text"; text: string }> }>;
 		};
@@ -279,7 +283,7 @@ describe("CodingAgentPiSessionBackend", () => {
 		await runtime.dispose();
 	});
 
-	test("published sessions keep Pi built-ins and MCP tools together", async () => {
+	test("direct sessions keep Pi defaults alongside SDK custom tools when the allowlist is omitted", async () => {
 		const { backend, root } = await makeHarness();
 		const skillDir = join(root, "runtime-skills", "pav_x", "analyze");
 		mkdirSync(skillDir, { recursive: true });
@@ -310,17 +314,10 @@ describe("CodingAgentPiSessionBackend", () => {
 			},
 		});
 
-		const session = (
-			runtime as unknown as {
-				session: { systemPrompt: string; _toolRegistry: Map<string, unknown> };
-			}
-		).session;
+		const session = (runtime as CodingAgentPiSessionRuntime).session;
 		expect(session.systemPrompt).toContain("<available_skills>");
 		expect(session.systemPrompt).toContain("<name>analyze</name>");
-		const tools = session._toolRegistry;
-		expect([...tools.keys()]).toEqual(
-			expect.arrayContaining(["read", "write", "edit", "bash", "grep", "find", "ls", "mcp_search"]),
-		);
+		expect(session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "mcp_search"]);
 		await runtime.dispose();
 	});
 
@@ -336,24 +333,133 @@ describe("CodingAgentPiSessionBackend", () => {
 		const v1 = await backend.createSession({
 			id: "debug-tools-v1",
 			model: { provider: "faux", id: "faux-1" },
-			allowedToolNames: ["read", "write", "mcp_search"],
+			allowedToolNames: ["read", "write"],
 			customTools: [mcpTool],
 		});
-		const v1Tools = (v1 as unknown as { session: { _toolRegistry: Map<string, unknown> } }).session._toolRegistry;
-		expect([...v1Tools.keys()].sort()).toEqual(["mcp_search", "read", "write"]);
+		expect((v1 as CodingAgentPiSessionRuntime).session.getActiveToolNames()).toEqual(["read", "write", "mcp_search"]);
 		await v1.dispose();
 
 		const v2 = await backend.createSession({
 			id: "debug-tools-v2",
 			model: { provider: "faux", id: "faux-1" },
-			allowedToolNames: ["read", "mcp_search"],
+			allowedToolNames: ["read"],
 			customTools: [mcpTool],
 		});
-		const v2Tools = (v2 as unknown as { session: { _toolRegistry: Map<string, unknown> } }).session._toolRegistry;
-		expect(v2Tools.has("read")).toBe(true);
-		expect(v2Tools.has("mcp_search")).toBe(true);
-		expect(v2Tools.has("write")).toBe(false);
+		expect((v2 as CodingAgentPiSessionRuntime).session.getActiveToolNames()).toEqual(["read", "mcp_search"]);
 		await v2.dispose();
+	});
+
+	test("an explicit empty backend allowlist reaches the model without Pi defaults", async () => {
+		const { backend, faux } = await makeHarness();
+		const runtime = (await backend.createSession({
+			id: "tool-allowlist-empty",
+			model: { provider: "faux", id: "faux-1" },
+			allowedToolNames: [],
+		})) as CodingAgentPiSessionRuntime;
+		try {
+			expect(runtime.session.getActiveToolNames()).toEqual([]);
+			faux.setResponses([
+				(context) => {
+					expect(context.tools ?? []).toEqual([]);
+					return fauxAssistantMessage("ok");
+				},
+			]);
+			await runtime.prompt({ text: "hello" });
+			expect(runtime.snapshot().transcript.at(-1)).toMatchObject({ role: "assistant", status: "complete" });
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	test("published Chat sends only MCP schemas and rejects a tool call outside that list", async () => {
+		const { backend, faux } = await makeHarness();
+		const mcpTool: ToolDefinition = {
+			name: "mcp_search",
+			label: "MCP Search",
+			description: "Search through MCP.",
+			parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+			execute: async () => ({ content: [{ type: "text", text: "mcp result" }], details: null }),
+		};
+		const parsed = parseRuntimeSpec({
+			schemaVersion: 1,
+			publishedAppVersionId: "pav_chat",
+			agent: { systemPrompt: "Published prompt", model: { provider: "faux", modelId: "faux-1" } },
+			capabilities: {
+				mcpServers: [
+					{
+						mcpServerId: "mcp_test",
+						revision: 1,
+						transport: "streamable_http",
+						endpoint: "https://mcp.example.com",
+						authentication: "none",
+						tools: [
+							{
+								name: mcpTool.name,
+								description: mcpTool.description,
+								inputSchema: mcpTool.parameters,
+								inputSchemaHash: "a".repeat(64),
+							},
+						],
+					},
+				],
+			},
+		});
+		if (!parsed.ok) throw new Error(parsed.errors.join(", "));
+		const adapter = createPiRuntimeAdapter({
+			createMcpTools: async () => [mcpTool],
+			createSession: (options) =>
+				backend.createSession({
+					...options,
+					ephemeral: true,
+					resourceOverrides: { systemPrompt: options.systemPrompt },
+				}),
+		});
+		const opened = await adapter.open(parsed.spec, {
+			tenantId: newTenantId(),
+			publishedAppId: newPublishedAppId(),
+			publishedAppVersionId: parsed.spec.publishedAppVersionId,
+			principalId: newPrincipalId(),
+			conversationId: newConversationId(),
+			limits: { ...parsed.spec.contextPolicy, ...parsed.spec.runtimePolicy },
+		});
+		if (!opened.ok) throw new Error(opened.reason);
+		try {
+			faux.setResponses([
+				fauxAssistantMessage(
+					[fauxToolCall("read", { path: "notes.txt" }), fauxToolCall(mcpTool.name, { query: "example" })],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("done"),
+			]);
+			const requests: Extract<LlmCallTrace, { kind: "request" }>[] = [];
+			await opened.runtime.prompt("Call the tools", {
+				onLlmTrace: async (trace) => {
+					if (trace.kind === "request") requests.push(trace);
+				},
+			});
+			expect(requests).toHaveLength(2);
+			for (const { context } of requests) {
+				expect(context.tools?.map(({ name, parameters }) => ({ name, parameters }))).toEqual([
+					{ name: mcpTool.name, parameters: mcpTool.parameters },
+				]);
+			}
+			expect(requests[1].context.messages.filter((message) => message.role === "toolResult")).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						toolName: "read",
+						isError: true,
+						content: [{ type: "text", text: "Tool read not found" }],
+					}),
+					expect.objectContaining({
+						toolName: mcpTool.name,
+						isError: false,
+						content: [{ type: "text", text: "mcp result" }],
+					}),
+				]),
+			);
+		} finally {
+			await opened.runtime.close();
+		}
 	});
 
 	test("listSessions returns one row when legacy files reuse the same assigned id", async () => {
@@ -428,6 +534,238 @@ describe("CodingAgentPiSessionBackend", () => {
 		expect(snap.transcript[2].role === "tool" && snap.transcript[2].status).toBe("complete");
 		expect(progress).toContain("item_started");
 		expect(progress).toContain("item_finished");
+	});
+
+	test("captures each provider request and response across a tool loop", async () => {
+		const { backend, faux } = await makeHarness();
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("read", { path: "notes.txt" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done reading"),
+		]);
+		const runtime = await backend.createSession({
+			id: "trace-sess",
+			model: { provider: "faux", id: "faux-1" },
+			thinkingLevel: "off",
+		});
+		const traces: LlmCallTrace[] = [];
+		await runtime.prompt({
+			text: "read the file",
+			systemPrompt: "Use the read tool",
+			onLlmTrace: async (trace) => {
+				traces.push(trace);
+			},
+		});
+		expect(traces.map((trace) => `${trace.kind}:${trace.callIndex}`)).toEqual([
+			"request:1",
+			"response:1",
+			"request:2",
+			"response:2",
+		]);
+		const first = traces[0];
+		const second = traces[2];
+		expect(first?.kind === "request" && first.context.systemPrompt).toBe("Use the read tool");
+		expect(
+			second?.kind === "request" && second.context.messages.some((message) => message.role === "toolResult"),
+		).toBe(true);
+		expect(
+			traces[3]?.kind === "response" &&
+				traces[3].message.content.some((part) => part.type === "text" && part.text === "done reading"),
+		).toBe(true);
+	});
+
+	test("response timing covers the whole stream lifecycle, including result()", async () => {
+		const { backend, faux } = await makeHarness();
+		faux.setResponses([fauxAssistantMessage("timed")]);
+		const runtime = (await backend.createSession({
+			id: "trace-timing-sess",
+			model: { provider: "faux", id: "faux-1" },
+			thinkingLevel: "off",
+		})) as CodingAgentPiSessionRuntime;
+		// Delay only result(): measuring when streamFunction returns would miss it.
+		const originalStream = runtime.session.agent.streamFunction;
+		const resultDelayMs = 60;
+		runtime.session.agent.streamFunction = async (model, context, options) => {
+			const stream = await originalStream(model, context, options);
+			return new Proxy(stream, {
+				get(target, property) {
+					if (property === "result")
+						return async () => {
+							await new Promise((resolve) => setTimeout(resolve, resultDelayMs));
+							return target.result();
+						};
+					const value: unknown = Reflect.get(target, property, target);
+					return typeof value === "function" ? value.bind(target) : value;
+				},
+			});
+		};
+		const traces: LlmCallTrace[] = [];
+		await runtime.prompt({
+			text: "measure me",
+			onLlmTrace: async (trace) => {
+				traces.push(trace);
+			},
+		});
+		const response = traces.find((trace) => trace.kind === "response");
+		expect(response?.kind).toBe("response");
+		if (response?.kind !== "response") return;
+		expect(response.timing).toBeDefined();
+		expect(response.timing!.durationMs).toBeGreaterThanOrEqual(resultDelayMs - 5);
+		expect(response.timing!.endedAtMs).toBeGreaterThanOrEqual(response.timing!.startedAtMs);
+	});
+
+	/** Drive a scripted event stream through the single consumer path and read its timing. */
+	async function firstOutputTiming(
+		steps: readonly { readonly event: AssistantMessageEvent; readonly delayMs?: number }[],
+	): Promise<Extract<LlmCallTrace, { kind: "response" }>["timing"]> {
+		const { backend } = await makeHarness();
+		const runtime = (await backend.createSession({
+			id: `first-output-${Math.random().toString(36).slice(2)}`,
+			model: { provider: "faux", id: "faux-1" },
+			thinkingLevel: "off",
+		})) as CodingAgentPiSessionRuntime;
+		const stream = createAssistantMessageEventStream();
+		runtime.session.agent.streamFunction = () => {
+			void (async () => {
+				for (const step of steps) {
+					if (step.delayMs !== undefined && step.delayMs > 0) {
+						await new Promise((resolve) => setTimeout(resolve, step.delayMs));
+					}
+					stream.push(step.event);
+				}
+			})();
+			return stream;
+		};
+		const traces: LlmCallTrace[] = [];
+		await runtime.prompt({
+			text: "measure first output",
+			onLlmTrace: async (trace) => {
+				traces.push(trace);
+			},
+		});
+		const response = traces.find((trace) => trace.kind === "response");
+		if (response?.kind !== "response") throw new Error("no response trace captured");
+		return response.timing;
+	}
+
+	const finalMessage = fauxAssistantMessage("");
+	const startEvent: AssistantMessageEvent = { type: "start", partial: finalMessage };
+	const doneEvent: AssistantMessageEvent = { type: "done", reason: "stop", message: finalMessage };
+
+	test("firstOutputLatencyMs counts text deltas but not boundary events", async () => {
+		const timing = await firstOutputTiming([
+			{ event: startEvent, delayMs: 10 },
+			{ event: { type: "text_start", contentIndex: 0, partial: finalMessage }, delayMs: 10 },
+			{
+				event: { type: "text_delta", contentIndex: 0, delta: "hello", partial: finalMessage },
+				delayMs: 40,
+			},
+			{ event: { type: "text_end", contentIndex: 0, content: "hello", partial: finalMessage } },
+			{ event: doneEvent },
+		]);
+		expect(timing?.firstOutputLatencyMs).toBeGreaterThanOrEqual(55);
+		expect(timing!.firstOutputLatencyMs!).toBeLessThanOrEqual(timing!.durationMs);
+	});
+
+	test("firstOutputLatencyMs counts reasoning deltas", async () => {
+		const timing = await firstOutputTiming([
+			{ event: startEvent },
+			{ event: { type: "thinking_start", contentIndex: 0, partial: finalMessage }, delayMs: 10 },
+			{
+				event: { type: "thinking_delta", contentIndex: 0, delta: "reason", partial: finalMessage },
+				delayMs: 35,
+			},
+			{ event: { type: "thinking_end", contentIndex: 0, content: "reason", partial: finalMessage } },
+			{ event: doneEvent },
+		]);
+		expect(timing?.firstOutputLatencyMs).toBeGreaterThanOrEqual(40);
+	});
+
+	test("firstOutputLatencyMs counts tool-call argument deltas, not empty or boundary events", async () => {
+		const timing = await firstOutputTiming([
+			{ event: startEvent },
+			{ event: { type: "toolcall_start", contentIndex: 0, partial: finalMessage } },
+			// Empty deltas carry no generated content.
+			{ event: { type: "toolcall_delta", contentIndex: 0, delta: "", partial: finalMessage }, delayMs: 15 },
+			{
+				event: { type: "toolcall_delta", contentIndex: 0, delta: '{"p', partial: finalMessage },
+				delayMs: 25,
+			},
+			{
+				event: {
+					type: "toolcall_end",
+					contentIndex: 0,
+					toolCall: fauxToolCall("read", { path: "notes.txt" }),
+					partial: finalMessage,
+				},
+			},
+			{ event: doneEvent },
+		]);
+		expect(timing?.firstOutputLatencyMs).toBeGreaterThanOrEqual(35);
+	});
+
+	test("empty output with only boundary events leaves firstOutputLatencyMs unknown", async () => {
+		const timing = await firstOutputTiming([
+			{ event: startEvent, delayMs: 10 },
+			{ event: doneEvent },
+		]);
+		expect(timing?.durationMs).toBeGreaterThanOrEqual(0);
+		expect(timing?.firstOutputLatencyMs).toBeUndefined();
+	});
+
+	test("an aborted stream keeps timing observed before the abort", async () => {
+		const aborted = fauxAssistantMessage("", { stopReason: "aborted" });
+		const timing = await firstOutputTiming([
+			{ event: startEvent },
+			{ event: { type: "text_delta", contentIndex: 0, delta: "x", partial: aborted }, delayMs: 30 },
+			{
+				event: { type: "error", reason: "aborted", error: aborted },
+			},
+		]);
+		expect(timing?.firstOutputLatencyMs).toBeGreaterThanOrEqual(25);
+		expect(timing!.durationMs).toBeGreaterThanOrEqual(timing!.firstOutputLatencyMs!);
+	});
+
+	test("abort before any generation leaves firstOutputLatencyMs unknown", async () => {
+		const aborted = fauxAssistantMessage("", { stopReason: "aborted" });
+		const timing = await firstOutputTiming([
+			{ event: startEvent, delayMs: 10 },
+			{ event: { type: "error", reason: "aborted", error: aborted } },
+		]);
+		expect(timing?.firstOutputLatencyMs).toBeUndefined();
+	});
+
+	test("trace capture failures never change the agent result; callIndex is monotonic across prompts", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const { backend, faux } = await makeHarness();
+			faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			const runtime = await backend.createSession({
+				id: "trace-failure-sess",
+				model: { provider: "faux", id: "faux-1" },
+				thinkingLevel: "off",
+			});
+			const indices: number[] = [];
+			await runtime.prompt({
+				text: "one",
+				onLlmTrace: async (trace) => {
+					indices.push(trace.callIndex);
+					throw new Error("capture unavailable");
+				},
+			});
+			await runtime.prompt({
+				text: "two",
+				onLlmTrace: async (trace) => {
+					indices.push(trace.callIndex);
+				},
+			});
+			// request + response for each prompt, and the second prompt must NOT restart at 1.
+			expect(indices).toEqual([1, 1, 2, 2]);
+			const assistants = runtime.snapshot().transcript.filter((item) => item.role === "assistant");
+			expect(assistants).toHaveLength(2);
+			expect(warn).toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+		}
 	});
 
 	test("abort stops a streaming turn and settles to idle with aborted assistant", async () => {

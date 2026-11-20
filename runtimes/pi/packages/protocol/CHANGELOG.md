@@ -10,6 +10,8 @@
 
 ### Added
 
+- Added administrator DTOs for the live Sandbox environment and per-Bash execution statistics.
+
 - Added independent orchestration configuration/source and version metadata, direct model/MCP/Skill catalog choices, and explicit task ownership metadata for administrator conversation summaries.
 - Added safe external configuration views, field and permission contracts, and configuration grant DTOs independent of chat and Run credentials.
 - Added the AaaS Run result projection and orchestration work origin, keeping runtime conversations and assignments internal to Run responses.

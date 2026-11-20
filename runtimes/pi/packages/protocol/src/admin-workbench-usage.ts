@@ -30,10 +30,15 @@ export interface AdminUsageTokenTotals {
 	readonly totalTokens: number;
 }
 
-/** Row grouped by AaaS Integration. Tokens are accurate totals only; partial values are separate. */
+/** Source of an orchestration Usage row: legacy Integration or Key-owned AaaS Run. */
+export type AdminOrchestrationUsageSource = "legacy" | "aaas_key";
+export type AdminExecutionUsageSource = "chat" | "integration" | "aaas_key" | "router";
+
+/** Row grouped by AaaS Integration or logical Key. Tokens are accurate totals only; partial values are separate. */
 export interface AdminOrchestrationUsageRow {
 	readonly integrationId: string;
 	readonly integrationName: string;
+	readonly source: AdminOrchestrationUsageSource;
 	readonly runCount: number;
 	readonly succeeded: number;
 	readonly failed: number;
@@ -84,13 +89,15 @@ export interface AdminOrchestrationUsage {
 }
 
 /**
- * One fact row of an independent usage view (either Agent orchestration runs
- * or Chat Agent requests). `accurateTokens` / `accurateLlmCallCount` are `null`
+ * One fact row of a usage view. `accurateTokens` / `accurateLlmCallCount` are `null`
  * when provider usage is incomplete or absent; consumers must render `—` and
  * must never coerce them to zero.
  */
 export interface AdminUsageRunRow {
 	readonly id: string;
+	readonly source?: AdminExecutionUsageSource;
+	readonly routerTaskId?: string;
+	readonly routerKeyId?: string;
 	readonly groupId: string;
 	readonly groupName: string;
 	/** Orchestration work-item state; null for Chat requests. */
@@ -100,9 +107,32 @@ export interface AdminUsageRunRow {
 	readonly versionId: string | null;
 	readonly tokenCoverage: AdminOrchestrationTokenCoverage;
 	readonly accurateTokens: number | null;
-	/** Legacy single-call provider usage, kept for inspection but never summed into accurate totals. */
+	/** Known consumption on incomplete records, excluded from accurate totals. */
 	readonly partialTokens: number;
 	readonly accurateLlmCallCount: number | null;
+	/**
+	 * Prompt-cache read tokens reported by the provider, or `null` when the
+	 * request did not report cache fields (unknown, never coerced to zero).
+	 */
+	readonly cacheHitTokens: number | null;
+	/** Provider prompt tokens minus cache-hit tokens (`null` when cache data is unknown). */
+	readonly cacheMissTokens: number | null;
+	/** Prompt-token denominator used for the hit rate (`null` when cache data is unknown). */
+	readonly cachePromptTokens: number | null;
+	/** `cacheHitTokens / cachePromptTokens` as a 0..1 fraction; `null` when unknown or prompt is 0. */
+	readonly cacheHitRate: number | null;
+	/**
+	 * LLM calls of this row that explicitly reported prompt-cache read tokens.
+	 * Cache numbers are aggregated over those calls only; `undefined` on legacy
+	 * producers that do not report per-call cache coverage.
+	 */
+	readonly cacheReportedCalls?: number;
+	/**
+	 * LLM calls of this row without cache telemetry (the provider never
+	 * reported cache fields for that call). Unknown is not a miss: these calls
+	 * are excluded from both the hit and the prompt denominator.
+	 */
+	readonly cacheUnknownCalls?: number;
 	/** Orchestration execution elapsed (assignment start → end), excluding queue time; null for Chat. */
 	readonly durationMs: number | null;
 	readonly conversationId: string | null;
@@ -120,6 +150,17 @@ export interface AdminUsageGroupRow {
 	readonly llmCallCount: number;
 	readonly avgDurationMs: number;
 	readonly maxDurationMs: number;
+	/** Cache counters aggregated only over token-complete rows that reported cache data. */
+	readonly cacheHitTokens: number;
+	readonly cachePromptTokens: number;
+	/** Weighted hit rate over the rows with reported cache data; `null` when none. */
+	readonly cacheHitRate: number | null;
+	readonly cacheReportedRuns: number;
+	readonly cacheUnknownRuns: number;
+	/** LLM calls that explicitly reported prompt-cache read tokens. */
+	readonly cacheReportedCalls: number;
+	/** LLM calls without cache telemetry; never counted as cache misses. */
+	readonly cacheUnknownCalls: number;
 }
 
 export interface AdminUsageDayRow {
@@ -128,6 +169,16 @@ export interface AdminUsageDayRow {
 	readonly runCount: number;
 	readonly accurateTokens: number;
 	readonly partialTokens: number;
+	readonly cacheHitTokens: number;
+	readonly cachePromptTokens: number;
+	/** Weighted hit rate of the day; `null` when no row reported cache data. */
+	readonly cacheHitRate: number | null;
+	readonly cacheReportedRuns: number;
+	readonly cacheUnknownRuns: number;
+	/** LLM calls of the day that explicitly reported prompt-cache read tokens. */
+	readonly cacheReportedCalls: number;
+	/** LLM calls of the day without cache telemetry; never counted as cache misses. */
+	readonly cacheUnknownCalls: number;
 }
 
 export interface AdminUsageCoverage {
@@ -138,11 +189,23 @@ export interface AdminUsageCoverage {
 	readonly accurateTokens: number;
 	readonly partialTokens: number;
 	readonly llmCallCount: number;
+	/** Token-complete rows that explicitly reported cache fields (hit rate denominator set). */
+	readonly cacheReportedRuns: number;
+	/** Token-complete rows that did not report cache fields; excluded from the hit rate. */
+	readonly cacheUnknownRuns: number;
+	/** LLM calls that explicitly reported prompt-cache read tokens. */
+	readonly cacheReportedCalls: number;
+	/** LLM calls without cache telemetry; excluded from the hit rate. */
+	readonly cacheUnknownCalls: number;
+	readonly cacheHitTokens: number;
+	readonly cachePromptTokens: number;
+	readonly cacheMissTokens: number;
+	/** Weighted `cacheHitTokens / cachePromptTokens`; `null` when no reported prompt tokens. */
+	readonly cacheHitRate: number | null;
 }
 
 /**
- * A self-contained, single-caliber usage view. Orchestration and Chat views
- * are built from disjoint event sets and must never be merged into one number.
+ * A usage view computed from disjoint source facts under one coverage rule.
  */
 export interface AdminUsageViewStats {
 	readonly runs: readonly AdminUsageRunRow[];
@@ -165,5 +228,7 @@ export interface AdminUsageSummary {
 	readonly orchestration?: AdminOrchestrationUsage;
 	/** Chat Agent view, computed from Chat-only turn/end events. Optional for legacy services. */
 	readonly chat?: AdminUsageViewStats;
+	/** One row per Router Operation, using its committed usage for the selected period. */
+	readonly router?: AdminUsageViewStats;
 	readonly generatedAt: string;
 }

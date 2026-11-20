@@ -9,7 +9,11 @@
  *   provider usage. Incomplete rows contribute `null` (rendered as `—`).
  * - `partialTokens` is legacy single-call usage, kept visible for inspection
  *   but never folded into `accurateTokens`.
- * - Chat and orchestration runs live in separate arrays and are never merged.
+ * - Cache coverage is counted per LLM call: `cacheReportedCalls` /
+ *   `cacheUnknownCalls` describe how many calls actually carried cache
+ *   telemetry, while `cacheReportedRuns` / `cacheUnknownRuns` describe rows.
+ *   Unknown cache data is never coerced to zero and never counted as a miss.
+ * - Chat turns, legacy work items and Router operations are disjoint fact sources.
  */
 import type {
 	AdminUsageDayRow,
@@ -59,6 +63,12 @@ interface MutableGroup {
 	accurateTokens: number;
 	partialTokens: number;
 	llmCallCount: number;
+	cacheHitTokens: number;
+	cachePromptTokens: number;
+	cacheReportedRuns: number;
+	cacheUnknownRuns: number;
+	cacheReportedCalls: number;
+	cacheUnknownCalls: number;
 	readonly durations: number[];
 }
 
@@ -73,6 +83,12 @@ function emptyGroup(key: string, label: string): MutableGroup {
 		accurateTokens: 0,
 		partialTokens: 0,
 		llmCallCount: 0,
+		cacheHitTokens: 0,
+		cachePromptTokens: 0,
+		cacheReportedRuns: 0,
+		cacheUnknownRuns: 0,
+		cacheReportedCalls: 0,
+		cacheUnknownCalls: 0,
 		durations: [],
 	};
 }
@@ -86,6 +102,33 @@ function addRun(group: MutableGroup, run: AdminUsageRunRow): void {
 	group.partialTokens += run.partialTokens;
 	group.llmCallCount += run.accurateLlmCallCount ?? 0;
 	if (run.durationMs !== null) group.durations.push(run.durationMs);
+	// Cache coverage is scoped to token-complete rows: partial/no-usage rows have
+	// no cache data by definition and must not be counted as "unknown cache".
+	if (run.tokenCoverage === "complete") {
+		// Per-call coverage is reported independently of the row-level flag: a
+		// row can mix reported and unreported calls.
+		group.cacheReportedCalls += run.cacheReportedCalls ?? 0;
+		group.cacheUnknownCalls += run.cacheUnknownCalls ?? 0;
+		if (hasReportedCache(run)) {
+			group.cacheReportedRuns += 1;
+			group.cacheHitTokens += run.cacheHitTokens ?? 0;
+			group.cachePromptTokens += run.cachePromptTokens ?? 0;
+		} else group.cacheUnknownRuns += 1;
+	}
+}
+
+function hasReportedCache(run: AdminUsageRunRow): boolean {
+	// Old services may omit the additive cache fields entirely; undefined is
+	// unknown, never a reported zero.
+	return (
+		typeof run.cacheHitTokens === "number" &&
+		typeof run.cachePromptTokens === "number" &&
+		typeof run.cacheMissTokens === "number"
+	);
+}
+
+function weightedHitRate(hitTokens: number, promptTokens: number): number | null {
+	return promptTokens > 0 ? hitTokens / promptTokens : null;
 }
 
 function finishGroup(group: MutableGroup): AdminUsageGroupRow {
@@ -102,6 +145,13 @@ function finishGroup(group: MutableGroup): AdminUsageGroupRow {
 		llmCallCount: group.llmCallCount,
 		avgDurationMs: group.durations.length ? Math.round(total / group.durations.length) : 0,
 		maxDurationMs: group.durations.length ? Math.max(...group.durations) : 0,
+		cacheHitTokens: group.cacheHitTokens,
+		cachePromptTokens: group.cachePromptTokens,
+		cacheHitRate: weightedHitRate(group.cacheHitTokens, group.cachePromptTokens),
+		cacheReportedRuns: group.cacheReportedRuns,
+		cacheUnknownRuns: group.cacheUnknownRuns,
+		cacheReportedCalls: group.cacheReportedCalls,
+		cacheUnknownCalls: group.cacheUnknownCalls,
 	};
 }
 
@@ -128,12 +178,43 @@ export function buildUsageViewStats(input: {
 		accurateTokens: 0,
 		partialTokens: 0,
 		llmCallCount: 0,
+		cacheReportedRuns: 0,
+		cacheUnknownRuns: 0,
+		cacheReportedCalls: 0,
+		cacheUnknownCalls: 0,
+		cacheHitTokens: 0,
+		cachePromptTokens: 0,
+		cacheMissTokens: 0,
+		cacheHitRate: null as number | null,
 	};
 	const groups = new Map<string, MutableGroup>();
 	const models = new Map<string, MutableGroup>();
-	const days = new Map<string, { runCount: number; accurateTokens: number; partialTokens: number }>();
+	const days = new Map<
+		string,
+		{
+			runCount: number;
+			accurateTokens: number;
+			partialTokens: number;
+			cacheHitTokens: number;
+			cachePromptTokens: number;
+			cacheReportedRuns: number;
+			cacheUnknownRuns: number;
+			cacheReportedCalls: number;
+			cacheUnknownCalls: number;
+		}
+	>();
 	for (const day of usageDayRange(input.from, input.to)) {
-		days.set(day, { runCount: 0, accurateTokens: 0, partialTokens: 0 });
+		days.set(day, {
+			runCount: 0,
+			accurateTokens: 0,
+			partialTokens: 0,
+			cacheHitTokens: 0,
+			cachePromptTokens: 0,
+			cacheReportedRuns: 0,
+			cacheUnknownRuns: 0,
+			cacheReportedCalls: 0,
+			cacheUnknownCalls: 0,
+		});
 	}
 	for (const run of runs) {
 		if (run.tokenCoverage === "complete") coverage.completeCount += 1;
@@ -142,6 +223,16 @@ export function buildUsageViewStats(input: {
 		coverage.accurateTokens += run.accurateTokens ?? 0;
 		coverage.partialTokens += run.partialTokens;
 		coverage.llmCallCount += run.accurateLlmCallCount ?? 0;
+		if (run.tokenCoverage === "complete") {
+			coverage.cacheReportedCalls += run.cacheReportedCalls ?? 0;
+			coverage.cacheUnknownCalls += run.cacheUnknownCalls ?? 0;
+			if (hasReportedCache(run)) {
+				coverage.cacheReportedRuns += 1;
+				coverage.cacheHitTokens += run.cacheHitTokens ?? 0;
+				coverage.cachePromptTokens += run.cachePromptTokens ?? 0;
+				coverage.cacheMissTokens += run.cacheMissTokens ?? 0;
+			} else coverage.cacheUnknownRuns += 1;
+		}
 
 		const groupKey = run.groupId;
 		let group = groups.get(groupKey);
@@ -164,9 +255,23 @@ export function buildUsageViewStats(input: {
 			day.runCount += 1;
 			day.accurateTokens += run.accurateTokens ?? 0;
 			day.partialTokens += run.partialTokens;
+			if (run.tokenCoverage === "complete") {
+				day.cacheReportedCalls += run.cacheReportedCalls ?? 0;
+				day.cacheUnknownCalls += run.cacheUnknownCalls ?? 0;
+				if (hasReportedCache(run)) {
+					day.cacheReportedRuns += 1;
+					day.cacheHitTokens += run.cacheHitTokens ?? 0;
+					day.cachePromptTokens += run.cachePromptTokens ?? 0;
+				} else day.cacheUnknownRuns += 1;
+			}
 		}
 	}
-	const byDay: AdminUsageDayRow[] = [...days.entries()].map(([date, value]) => ({ date, ...value }));
+	coverage.cacheHitRate = weightedHitRate(coverage.cacheHitTokens, coverage.cachePromptTokens);
+	const byDay: AdminUsageDayRow[] = [...days.entries()].map(([date, value]) => ({
+		date,
+		...value,
+		cacheHitRate: weightedHitRate(value.cacheHitTokens, value.cachePromptTokens),
+	}));
 	return {
 		runs,
 		byGroup: [...groups.values()].map(finishGroup).sort(byTokensThenCount),

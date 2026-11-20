@@ -82,7 +82,7 @@ export class ExternalConfigurationService {
 		return this.service.store;
 	}
 	async grants(integrationId: string): Promise<ConfigurationGrant[]> {
-		await this.store.getIntegration(integrationId);
+		await this.store.getLegacyIntegration(integrationId);
 		const rows = await this.store.client.run(
 			"select * from orchestration_configuration_grants where tenant_id=$1 and integration_id=$2 order by created_at,id",
 			this.store.tenantId,
@@ -98,7 +98,7 @@ export class ExternalConfigurationService {
 			id = randomUUID(),
 			secret = randomBytes(32).toString("base64url");
 		await this.store.client.transaction(async (tx) => {
-			const i = await this.store.getIntegration(integrationId, tx);
+			const i = await this.store.getLegacyIntegration(integrationId, tx);
 			if (i.configurationId)
 				throw new OrchestrationError(
 					409,
@@ -122,7 +122,7 @@ export class ExternalConfigurationService {
 			.parse(body);
 		const secret = input.rotate ? randomBytes(32).toString("base64url") : undefined;
 		await this.store.client.transaction(async (tx) => {
-			const i = await this.store.getIntegration(integrationId, tx);
+			const i = await this.store.getLegacyIntegration(integrationId, tx);
 			const rows = await txRows(
 				tx,
 				"select * from orchestration_configuration_grants where tenant_id=$1 and integration_id=$2 and id=$3 for update",
@@ -157,7 +157,7 @@ export class ExternalConfigurationService {
 		const match = /^Bearer oc_([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/.exec(header ?? "");
 		if (!match) throw new OrchestrationError(401, "CONFIGURATION_UNAUTHORIZED", "配置凭据无效");
 		return this.store.client.transaction(async (tx) => {
-			const i = await this.store.getIntegration(input.integration_id, tx);
+			const i = await this.store.getLegacyIntegration(input.integration_id, tx);
 			const rows = await txRows(
 				tx,
 				"select * from orchestration_configuration_grants where tenant_id=$1 and integration_id=$2 and id=$3",
@@ -209,7 +209,7 @@ export class ExternalConfigurationService {
 			);
 			const c = codes[0];
 			if (!c) throw new OrchestrationError(401, "CONFIGURATION_SESSION_INVALID", "配置入口已使用或过期");
-			const i = await this.store.getIntegration(String(c.integration_id), tx);
+			const i = await this.store.getLegacyIntegration(String(c.integration_id), tx);
 			const rows = await txRows(
 				tx,
 				"select * from orchestration_configuration_grants where tenant_id=$1 and integration_id=$2 and id=$3",
@@ -308,7 +308,7 @@ export class ExternalConfigurationService {
 	}
 	async view(header: string | undefined, id: string) {
 		return this.store.client.transaction(async (tx) => {
-			const i = await this.store.getIntegration(id, tx),
+			const i = await this.store.getLegacyIntegration(id, tx),
 				g = await this.access(header, i, "config.view", tx);
 			return this.viewData(i, g, tx);
 		});
@@ -339,7 +339,7 @@ export class ExternalConfigurationService {
 		const reset = typeof body === "object" && body !== null && "reset" in body;
 		const request = reset ? resetSchema.parse(body) : draftSchema.parse(body);
 		return this.store.client.transaction(async (tx) => {
-			const i = await this.store.getIntegration(id, tx),
+			const i = await this.store.getLegacyIntegration(id, tx),
 				g = await this.access(header, i, "config.edit", tx),
 				current = await this.draft(i, tx);
 			if (current.revision !== request.expected_draft_revision)
@@ -393,7 +393,7 @@ export class ExternalConfigurationService {
 	async publish(header: string | undefined, id: string, body: unknown) {
 		const request = publishSchema.parse(body);
 		return this.store.client.transaction(async (tx) => {
-			const i = await this.store.getIntegration(id, tx),
+			const i = await this.store.getLegacyIntegration(id, tx),
 				g = await this.access(header, i, "config.publish", tx),
 				draft = await this.draft(i, tx);
 			if (draft.revision !== request.expected_draft_revision)

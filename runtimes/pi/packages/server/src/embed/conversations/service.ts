@@ -24,6 +24,7 @@ import type {
 	ToolTranscriptItem,
 	TranscriptProgress,
 	TurnMetrics,
+	Usage,
 } from "@earendil-works/pi-protocol";
 import {
 	assertEventPayloadSafe,
@@ -34,7 +35,7 @@ import {
 import { estimateContextSnapshot } from "../../agent-v2/context.ts";
 import { agentV2MetricsEnabled } from "../../agent-v2/feature-flag.ts";
 import { applyConversationReasoning, reasoningCapabilitiesForVersion } from "../../agent-v2/reasoning.ts";
-import { buildTurnMetrics, startTurnTiming, usageCountsFromProtocolUsage } from "../../agent-v2/turn-metrics.ts";
+import { buildTurnMetrics, startTurnTiming, usageCountsFromTokenTotals } from "../../agent-v2/turn-metrics.ts";
 import {
 	appNotFound,
 	appSuspended,
@@ -77,7 +78,7 @@ import { replayAllAfter } from "../../runtime/replay.ts";
 import type { ScopeContext } from "../../runtime/scope-context.ts";
 import { buildSummary } from "../../runtime/summary-builder.ts";
 import { toToolProgressEvent } from "../../runtime/tool-event-payload.ts";
-import type { TurnExecutor } from "../../runtime/turn-executor.ts";
+import type { TurnExecutor, TurnLlmUsage } from "../../runtime/turn-executor.ts";
 import type { RetrievalInput } from "../../types.ts";
 import type { ConversationCitationService } from "../citations/service.ts";
 import type { EmbedAuthContext } from "../middleware/authenticate.ts";
@@ -1039,14 +1040,68 @@ export class ConversationService {
 				onProgress,
 			});
 			const completedAtMs = metricsTiming === undefined ? undefined : performance.now();
+			// Narrow the result once: `interrupted` is a distinct variant, not a flag on
+			// a generic result, so TypeScript can keep the usage/output fields typed.
+			const interruptedResult = !result.ok && "interrupted" in result ? result : undefined;
+			const usageResult: { readonly llmUsage?: TurnLlmUsage; readonly usage?: Usage } = result;
 			let turnMetrics: TurnMetrics | undefined;
 			if (metricsTiming !== undefined && providerStartAtMs !== undefined && completedAtMs !== undefined) {
+				// 轮指标里的 Token 必须是【整轮累计】：一次 Turn 可能包含多次模型调用
+				// （tool loop）。`result.llmUsage.total` 是本轮所有模型调用的 provider
+				// usage 之和；`result.usage` 只是最后一次调用的 usage，仅在拿不到逐次
+				// 记录时回退。口径写进 `tokenScope`：历史行（无该字段）按 `last_call`
+				// 解释，绝不与整轮累计混用。取消轮保留取消前已完成调用的真实 usage，
+				// 不为未完成部分补 0；outcome 必须是 cancelled 以匹配 turn/interrupted。
+				const turnTokenTotals = usageResult.llmUsage?.total ?? usageResult.usage;
 				turnMetrics = buildTurnMetrics({
-					outcome: result.ok ? "success" : "failed",
+					outcome: result.ok ? "success" : interruptedResult !== undefined ? "cancelled" : "failed",
 					base: metricsTiming,
 					events: { providerStartAtMs, firstOutputAtMs: null, completedAtMs },
-					usage: usageCountsFromProtocolUsage(result.ok ? result.usage : undefined),
+					usage: usageCountsFromTokenTotals(turnTokenTotals),
+					tokenScope: usageResult.llmUsage !== undefined ? "turn" : "last_call",
 				});
+			}
+			if (interruptedResult !== undefined) {
+				// 用户主动取消：唯一终态是 turn/interrupted，绝不写 turn/end ok:true，
+				// 也不写 turn/failed。沿用既有 interrupted 语义（历史读取、Session 展示、
+				// metrics 映射均已支持），并把取消前已产生的真实 usage 随事件保留下来，
+				// 避免有效用量因终态切换而丢失或被重复累计。
+				let assistantSequence: number | null = null;
+				if (interruptedResult.outputText !== "" || interruptedResult.thinkingText !== undefined) {
+					const partial = await this.safeAppend(scope, input.conversationId, {
+						eventType: "assistant/message",
+						turnId,
+						payload: {
+							text: interruptedResult.outputText,
+							...(interruptedResult.thinkingText ? { thinking: interruptedResult.thinkingText } : {}),
+							status: "interrupted",
+						},
+					});
+					assistantSequence = partial?.sequence ?? null;
+				}
+				await this.safeAppend(scope, input.conversationId, {
+					eventType: "turn/interrupted",
+					turnId,
+					payload: {
+						aborted: true,
+						error: "用户主动取消",
+						...(interruptedResult.usage ? { usage: interruptedResult.usage } : {}),
+						...(interruptedResult.llmUsage ? { llmUsage: interruptedResult.llmUsage } : {}),
+						...(turnMetrics ? { metrics: turnMetrics } : {}),
+					},
+				});
+				return {
+					ok: true,
+					data: {
+						turnId,
+						userMessageSequence: userEvent.sequence,
+						assistantSequence,
+						outputText: interruptedResult.outputText,
+						...(interruptedResult.thinkingText ? { thinkingText: interruptedResult.thinkingText } : {}),
+						interrupted: true,
+						citations: [],
+					},
+				};
 			}
 			if (result.ok) {
 				// WB-007: write the final assistant message at the standard
@@ -1171,12 +1226,18 @@ export class ConversationService {
 					},
 				};
 			}
+			const failedError = !result.ok && "error" in result ? result.error : "unknown execution error";
 			await this.safeAppend(scope, input.conversationId, {
 				eventType: "turn/failed",
 				turnId,
-				payload: { error: result.error, ...(turnMetrics ? { metrics: turnMetrics } : {}) },
+				payload: {
+					error: failedError,
+					...(usageResult.usage ? { usage: usageResult.usage } : {}),
+					...(usageResult.llmUsage ? { llmUsage: usageResult.llmUsage } : {}),
+					...(turnMetrics ? { metrics: turnMetrics } : {}),
+				},
 			});
-			return { ok: false, error: runtimeUnavailable(`Turn failed: ${result.error}`) };
+			return { ok: false, error: runtimeUnavailable(`Turn failed: ${failedError}`) };
 		} finally {
 			this.runningTurns.delete(input.conversationId);
 		}
@@ -1217,6 +1278,8 @@ export interface ExecuteTurnData {
 	readonly assistantSequence: number | null;
 	readonly outputText: string;
 	readonly thinkingText?: string;
+	/** 用户主动取消时为 true（返回仍为 ok:true；终态事件是 turn/interrupted）。 */
+	readonly interrupted?: true;
 	/** 本 turn 实际使用的引用（TASK-033；无检索为空数组）。 */
 	readonly citations: readonly Citation[];
 }

@@ -18,7 +18,7 @@ import type {
 } from "../../src/publishing/domain/ids.ts";
 import type { RuntimeSpec } from "../../src/publishing/runtime-spec/schema.ts";
 import { createPiRuntimeAdapter, type RuntimeSessionOptions } from "../../src/runtime/pi-runtime-adapter.ts";
-import type { ScopeContext } from "../../src/runtime/scope-context.ts";
+import type { RuntimeScope, ScopeContext } from "../../src/runtime/scope-context.ts";
 import type { PiSessionRuntime, PiSessionRuntimeEvent, PromptInput, SteerInput } from "../../src/types.ts";
 
 class FakeSession implements PiSessionRuntime {
@@ -489,7 +489,7 @@ describe("pi runtime adapter", () => {
 
 	test("builds frozen MCP tools for the conversation and passes them to the session", async () => {
 		const calls: RuntimeSessionOptions[] = [];
-		const scopes: ScopeContext[] = [];
+		const scopes: RuntimeScope[] = [];
 		const adapter = createPiRuntimeAdapter({
 			createMcpTools: async (_spec, runtimeScope) => {
 				scopes.push(runtimeScope);

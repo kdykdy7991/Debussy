@@ -13,6 +13,8 @@
 
 ### Added
 
+- Added an administrator-only live Sandbox inventory and per-Bash duration and outcome statistics for Router executions.
+
 - Added independent orchestration configuration/immutable version storage and an early execution configuration resolver. Task execution no longer requires Chat publication rows, shares the existing Runtime, and preserves frozen versions and original request semantics for historical work.
 - Added optional JSON `input` task messages alongside the dynamic `prompt` system prompt override, which is the formally supported AaaS contract; requests must select exactly one. Persisted contract-aware idempotency retains original hashes for historical replays.
 - Added explicit Integration ownership for task contexts, events and summaries, version-separated Skill/cache identities, and task-specific MCP audit attribution.

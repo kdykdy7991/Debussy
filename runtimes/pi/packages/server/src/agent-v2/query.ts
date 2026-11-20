@@ -10,6 +10,7 @@ import {
 	type ConversationTurnMetric,
 	type TurnMetrics,
 	type TurnOutcome,
+	type TurnTokenScope,
 	turnOutcomeFromTerminalEvent,
 } from "@earendil-works/pi-protocol";
 
@@ -57,6 +58,7 @@ const METRIC_COUNT_KEYS: readonly (keyof TurnMetrics)[] = [
 	"cacheWriteTokens",
 ];
 const METRIC_OPTIONAL_KEYS: readonly (keyof TurnMetrics)[] = ["ttftMs", "generationMs", "outputTokensPerSecond"];
+const TOKEN_SCOPES: ReadonlySet<string> = new Set<TurnTokenScope>(["turn", "last_call"]);
 
 const BREAKDOWN_KEYS: readonly string[] = [
 	"systemPrompt",
@@ -90,6 +92,8 @@ export function readStoredTurnMetrics(payload: unknown): TurnMetrics | undefined
 		if (!isNonNegativeInt(m[key])) return undefined;
 	}
 	if (!isNonNegativeFinite(m.totalLatencyMs)) return undefined;
+	// Token 口径标记：缺省 = 历史行（只取最后一次模型调用）；出现时必须是合法口径。
+	if (m.tokenScope !== undefined && !TOKEN_SCOPES.has(String(m.tokenScope))) return undefined;
 	for (const key of METRIC_OPTIONAL_KEYS) {
 		const value = m[key];
 		if (value !== null && !isNonNegativeFinite(value)) return undefined;

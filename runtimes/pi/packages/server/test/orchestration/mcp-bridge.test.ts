@@ -2,6 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "vitest";
 import { protectTool } from "../../src/orchestration/protected-tool.ts";
+import { createBoundaryExecutionSource } from "../../src/orchestration/execution-source.ts";
 import { createMcpRuntimeToolFactory } from "../../src/publishing/mcp/runtime-tools.ts";
 import type { PublishingRepositories } from "../../src/publishing/repositories.ts";
 import { parseRuntimeSpec } from "../../src/publishing/runtime-spec/schema.ts";
@@ -53,16 +54,19 @@ test("the MCP factory applies the credential adapter before exposing tools to th
 			},
 			close: async () => {},
 		}),
-		protectTool: async (scope, id, tool, inputSchema) => {
-			expect(scope.conversationId).toBe("work-context");
-			expect(id).toBe(serverId);
-			return protectTool(
-				tool,
-				inputSchema,
-				[{ mcpServerId: id, toolName: tool.name, parameter: "apiKey", credential: "ticketKey" }],
-				async () => ({ ticketKey: "private-task-key" }),
-			);
-		},
+		protectTool,
+		// The shared source adapter supplies the bindings and the credential; the
+		// server-only protector hides the parameter from the model and injects it.
+		executionSource: async () =>
+			createBoundaryExecutionSource({
+				boundary: undefined,
+				owner: { kind: "conversation", conversationId: "work-context" },
+				toolBindings: async (id, toolName) => {
+					expect(id).toBe(serverId);
+					return [{ mcpServerId: id, toolName, parameter: "apiKey", credential: "ticketKey" }];
+				},
+				toolCredentials: async () => ({ ticketKey: "private-task-key" }),
+			}),
 	});
 	const tools = await factory(parsed.spec, {
 		conversationId: "work-context",

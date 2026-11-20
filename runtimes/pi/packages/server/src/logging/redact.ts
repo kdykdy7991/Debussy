@@ -43,6 +43,67 @@ export function redact(text: string, secrets: readonly (string | undefined)[] = 
 	return redactBearerTokens(redactQueryParams(redactSecrets(text, secrets)));
 }
 
+/**
+ * Keys / value shapes that must never leave the control plane verbatim in a
+ * raw LLM payload. Mirrors `session-events.ts`' write-side guard so the admin
+ * "view original request" path applies the same boundary on the way out.
+ * The stored audit payload itself is never modified.
+ */
+const SENSITIVE_STRUCTURED_KEYS: readonly string[] = [
+	"adminToken",
+	"admin_token",
+	"accessToken",
+	"access_token",
+	"launchToken",
+	"launch_token",
+	"authorization",
+	"providerApiKey",
+	"provider_api_key",
+	"apiKey",
+	"api_key",
+	"privateKey",
+	"private_key",
+	"secret",
+	"password",
+	"externalUserId",
+	"external_user_id",
+	"visitorId",
+	"visitor_id",
+];
+const SENSITIVE_STRUCTURED_SHAPES: readonly RegExp[] = [
+	/^Bearer\s+/i,
+	/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+	/^-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+	/^sk-[A-Za-z0-9_-]{16,}$/,
+];
+
+/** Recursively replace sensitive values; returns whether anything changed. */
+export function redactStructured(value: unknown): { readonly value: unknown; readonly redacted: boolean } {
+	let redacted = false;
+	const walk = (node: unknown, key: string | undefined): unknown => {
+		if (typeof node === "string") {
+			if (
+				(key !== undefined && SENSITIVE_STRUCTURED_KEYS.includes(key)) ||
+				SENSITIVE_STRUCTURED_SHAPES.some((pattern) => pattern.test(node))
+			) {
+				redacted = true;
+				return REDACTED;
+			}
+			return node;
+		}
+		if (Array.isArray(node)) return node.map((child) => walk(child, undefined));
+		if (node !== null && typeof node === "object") {
+			const out: Record<string, unknown> = {};
+			for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+				out[childKey] = walk(child, childKey);
+			}
+			return out;
+		}
+		return node;
+	};
+	return { value: walk(value, undefined), redacted };
+}
+
 /** A mutable registry of live secret values to redact (runtime-tracked). */
 export interface SecretRegistry {
 	register(value: string | undefined): void;

@@ -65,6 +65,29 @@ describe("runtime spec schema", () => {
 		expect(result.spec.securityPolicyVersion).toBe("sp_001");
 	});
 
+	test("accepts 128k/256k context budgets and rejects beyond the platform limit", () => {
+		for (const budget of [128_000, PLATFORM_LIMITS.maxContextTokens]) {
+			const result = parseRuntimeSpec(
+				validInput({
+					contextPolicy: { maxTurns: 100, maxContextTokens: budget, toolResultMaxBytes: 65_536 },
+				}),
+			);
+			expect(result.ok).toBe(true);
+			if (result.ok) expect(result.spec.contextPolicy.maxContextTokens).toBe(budget);
+		}
+		expect(PLATFORM_LIMITS.maxContextTokens).toBeGreaterThanOrEqual(128_000);
+		const beyond = parseRuntimeSpec(
+			validInput({
+				contextPolicy: {
+					maxTurns: 100,
+					maxContextTokens: PLATFORM_LIMITS.maxContextTokens + 1,
+					toolResultMaxBytes: 65_536,
+				},
+			}),
+		);
+		expect(beyond.ok).toBe(false);
+	});
+
 	test("freezes the experimental realtime voice capability independently from speech", () => {
 		const input = validInput();
 		const capabilities = input.capabilities as Record<string, unknown>;

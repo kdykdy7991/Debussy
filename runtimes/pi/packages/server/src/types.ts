@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
 	Citation,
@@ -124,7 +124,39 @@ export interface PromptInput {
 	retrieval?: RetrievalInput;
 	/** Structured native history to seed into the session before this prompt. */
 	transcript?: readonly TranscriptMessage[];
+	/** Admin-only diagnostics at each actual provider call boundary. */
+	onLlmTrace?: (trace: LlmCallTrace) => Promise<void>;
 }
+
+/**
+ * Runtime-observed timing of one real provider request. `durationMs` is derived
+ * from a monotonic clock; the two timestamps are wall-clock observations for
+ * ordering/display. This is request latency seen by the Runtime, not the
+ * model's internal pure inference time.
+ */
+export interface LlmCallTiming {
+	readonly startedAtMs: number;
+	readonly endedAtMs: number;
+	readonly durationMs: number;
+	/** Monotonic delay to the first content-bearing stream delta. Absent when unknown. */
+	readonly firstOutputLatencyMs?: number;
+}
+
+export type LlmCallTrace =
+	| {
+			readonly kind: "request";
+			readonly callIndex: number;
+			readonly model: { readonly provider: string; readonly id: string };
+			readonly context: Context;
+	  }
+	| {
+			readonly kind: "response";
+			readonly callIndex: number;
+			readonly model: { readonly provider: string; readonly id: string };
+			readonly message: AssistantMessage;
+			/** Absent when the Runtime could not observe a response boundary. */
+			readonly timing?: LlmCallTiming;
+	  };
 
 export interface SteerInput {
 	text: string;
@@ -148,7 +180,7 @@ export interface CreateSessionOptions {
 	streamOptions?: Pick<SimpleStreamOptions, "temperature" | "samplingParams" | "maxTokens" | "thinkingBudgets">;
 	/** Frozen external Tool definitions (MCP), added alongside Pi's built-in coding tools. */
 	customTools?: readonly ToolDefinition[];
-	/** Exact built-in coding Tool allowlist for this frozen Agent revision. */
+	/** Exact built-in allowlist. Omitted uses native Pi defaults. Empty denies all built-ins. */
 	allowedToolNames?: readonly string[];
 	/**
 	 * Per-session resource overrides for published-app sessions. When present,

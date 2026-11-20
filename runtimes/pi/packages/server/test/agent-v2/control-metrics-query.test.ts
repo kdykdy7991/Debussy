@@ -173,6 +173,11 @@ function presentConversation(): AdminConversationListRow {
 		appName: "app",
 		publicAppId: "pub_x",
 		agentId: null,
+		agentName: "Test Agent",
+		origin: "chat",
+		keyId: null,
+		taskId: null,
+		runId: null,
 	};
 }
 

@@ -64,9 +64,21 @@ export interface AgentRevisionSummary {
 	readonly associatedVersionIds: readonly PublishedAppVersionPublicId[];
 }
 
+/** Origin of an administrator-visible Session. Never exposes credentials. */
+export type AdminConversationOrigin = "chat" | "integration" | "aaas_key";
+
 /** Published-user Conversation row for the administrator list; no message body or raw subject is included. */
 export interface ConversationAdminSummary {
 	readonly configurationSource?: "chat" | "orchestration";
+	/** Existing sessions without persisted origin are treated as legacy Integration tasks. */
+	readonly origin?: AdminConversationOrigin;
+	/** Logical AaaS Key id for Key-owned runs; never a secret or a recoverable key. */
+	readonly keyId?: string;
+	/** Business correlation id supplied by the caller, not an API credential. */
+	readonly taskId?: string;
+	/** Work Item id; equals the AaaS Run id. */
+	readonly runId?: string;
+	readonly executionState?: string;
 	readonly integrationId?: string;
 	readonly orchestrationVersionId?: string;
 	readonly id: ConversationPublicId;
@@ -82,6 +94,10 @@ export interface ConversationAdminSummary {
 	readonly messageCount: number;
 	readonly errorCount: number;
 	readonly lastEventSequence: number;
+	/** Persisted turn counter; absent only on legacy rows that predate the counter. */
+	readonly turnCount?: number;
+	/** Agent display name; null when the agent definition is no longer resolvable. */
+	readonly agentName?: string | null;
 	readonly createdAt: string;
 	readonly lastActiveAt: string;
 }

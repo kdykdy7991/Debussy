@@ -1,18 +1,32 @@
 # Agent 任务 API 接入说明
 
-交互式接口文档位于服务的 `/api/aaas-docs/`，OpenAPI 描述位于 `/api/aaas-docs/openapi.json`。本机默认开发配置启动后可访问 `http://127.0.0.1:5176/api/aaas-docs/`；其他部署使用平台提供的服务地址并确保反向代理转发该路径和 `/api/aaas/v1/`。文档仅列出本说明中的三个业务接口，接口请求仍使用 Integration Token；示例不包含真实凭据。
+Router V1 中文开发者文档位于 `/api/aaas-docs/`，包含快速开始、六个核心接口和两个 MCP 发现接口。本地默认地址为 `http://127.0.0.1:5176/api/aaas-docs/`。
 
-维护者修改 Agent 任务接口后，应核对 `packages/server/src/orchestration/api-documentation.ts`、本说明和实际行为，再运行 `npm run check:aaas-api`。`npm run check` 也包含该检查。检查会比较 `scripts/aaas-contract-hashes.json` 中受关注文件的 SHA-256，并运行契约测试；修改受关注文件时，检查会输出实际哈希，完成复核和相应文档更新后将其填回该文件。该门禁促使每次改动都经过复核，并验证部分关键行为，不能自动证明文字说明或所有间接依赖的语义正确；新增相关实现文件时也应将其加入清单。
+OpenAPI JSON 位于 `/api/aaas-docs/v1/public/openapi.json`，Key 管理文档位于 `/api/aaas-docs/v1/openapi.json`。
 
-接入方可以下发任务、查询结果和请求取消。AaaS 是动态任务型 Agent：外部业务系统每次调用提供本次完整 Prompt（分析要求、任务内容、输出要求），Agent 编排提供模型、思考强度、MCP、Skill 与 Runtime 等执行能力；请求 Prompt 按覆盖语义作为该 Run 的系统提示词生效。没有其他 Prompt 模式，也没有从 `prompt` 迁移到 `input` 的计划。
+## API Key 与 Router V1
 
-本说明对应含迁移 `0028` 的新版本；现有运行实例是否已升级，以平台方通知为准。动态 Prompt 是正式支持的契约，接入方无需切换。
+新任务使用 [Router V1](../../../specs/002-router-v1/contracts.md)。在「接入管理 → API Key」签发 Key 并设置直接能力，调用时使用 `Authorization: Bearer <API Key>`。Key 创建或轮换时返回明文，请妥善保管。
 
-## 接入信息
+| 调用 | 方法与路径 |
+| --- | --- |
+| 创建 Task | `POST /api/aaas/v1/tasks` |
+| 追加输入 | `POST /api/aaas/v1/tasks/{task_id}/inputs` |
+| 查询 Task、Operation 与事件 | 见 [Router 契约](../../../specs/002-router-v1/contracts.md) |
+| 查询 MCP Server 概要 | `GET /api/aaas/v1/mcp-servers` |
+| 查询 MCP Server 的工具与凭据要求 | `GET /api/aaas/v1/mcp-servers/{server_id}` |
+
+发现接口按 Key 的有效能力筛选 Server 与工具。双入口 Key 通过 `X-Router-Capability-Scope: router` 查看 Router 能力。详情返回公开工具 Schema 和凭据要求，实际凭据每次随 Router 请求提交。
+
+## Integration Token 接入
+
+Integration 的 OpenAPI JSON 位于 `/api/aaas-docs/openapi.json`。
+
+### 接入信息
 
 平台方提供可达的 `BASE_URL`、`INTEGRATION_ID` 和 `INTEGRATION_TOKEN`。Token 仅存放在接入方后端，单独安全交付；局域网跨机器时使用平台局域网地址，不能使用 127.0.0.1。
 
-## 1. 下发任务
+### 1. 下发任务
 
 ```http
 POST {BASE_URL}/api/aaas/v1/integrations/{INTEGRATION_ID}/runs
@@ -42,7 +56,7 @@ Content-Type: application/json
 {"data":{"run_id":"<任务ID>","status":"queued","duplicate":false},"requestId":"<请求ID>"}
 ```
 
-## 2. 查询结果
+### 2. 查询结果
 
 ```http
 GET {BASE_URL}/api/aaas/v1/runs/{run_id}
@@ -63,7 +77,7 @@ Authorization: Bearer {INTEGRATION_TOKEN}
 
 查询结果包含 `external_ref` 和 `metadata`；未提供时为 null。历史记录不会从旧 alarm ID 推断业务关联。同一业务对象可以关联多个独立 Run，不自动继承历史上下文。
 
-## 3. 请求取消
+### 3. 请求取消
 
 ```http
 POST {BASE_URL}/api/aaas/v1/runs/{run_id}/cancel
@@ -76,3 +90,7 @@ Content-Type: application/json
 返回当前 Run，`cancelled` 表示数据库已记录取消且不会接受迟到结果，不表示 Runtime 或外部工具已经停止。平台会向执行进程持续请求中断；已经发生的外部副作用无法撤销。重复取消和取消终态 Run 均返回当前状态，终态不会改变。
 
 联调报错时提供 HTTP 状态码、error.code、requestId、run_id，不发送密钥明文。
+
+## 维护检查
+
+维护者修改 Agent 任务接口后，应核对 `packages/server/src/orchestration/api-documentation.ts`、本说明和实际行为，再运行 `npm run check:aaas-api`。`npm run check` 也包含该检查。检查会比较 `scripts/aaas-contract-hashes.json` 中受关注文件的 SHA-256，并运行契约测试；修改受关注文件时，检查会输出实际哈希，完成复核和相应文档更新后将其填回该文件。该门禁促使每次改动都经过复核，并验证部分关键行为，不能自动证明文字说明或所有间接依赖的语义正确；新增相关实现文件时也应将其加入清单。

@@ -12,6 +12,7 @@
  *    emits a final authoritative `SessionSnapshot` after each operation.
  *  - Dispose the AgentSession and stop progress forwarding on `dispose()`.
  */
+import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { AgentSession, AttachmentInput, PromptContextBlock } from "@earendil-works/pi-coding-agent";
 import type {
 	ModelRef,
@@ -21,6 +22,7 @@ import type {
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
 import { PiServerError } from "../errors.ts";
+import { redact } from "../logging/redact.ts";
 import type {
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
@@ -41,6 +43,28 @@ function normalizePhase(agentSession: AgentSession, activeOperation: boolean): S
 }
 
 /**
+ * Trace capture must never change the Agent's execution result, but a lost
+ * record has to be observable. Log a redacted, payload-free diagnostic.
+ */
+function reportTraceFailure(phase: "request" | "response", callIndex: number, error: unknown): void {
+	const message = error instanceof Error ? error.message : String(error);
+	console.warn(redact(`[llm-trace] ${phase} capture failed (callIndex=${callIndex}): ${message.slice(0, 200)}`));
+}
+
+/**
+ * Only content-bearing incremental events count as generated output. `start`,
+ * `*_start`, `*_end`, `done` and `error` mark boundaries/state, not new content;
+ * an empty delta carries no generated token even when the event type is a delta.
+ */
+function isGenerationDelta(event: AssistantMessageEvent): boolean {
+	return (
+		(event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") &&
+		typeof event.delta === "string" &&
+		event.delta.length > 0
+	);
+}
+
+/**
  * Adapter that owns one AgentSession lifetime and exposes it to the rest of
  * the server through the `PiSessionRuntime` boundary.
  */
@@ -53,6 +77,13 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 	private readonly agentSession: AgentSession;
 	private readonly onDisposed: (() => void) | undefined;
 	private disposed = false;
+	/**
+	 * Monotonic across every prompt on this runtime instance. The WIP used a
+	 * per-`prompt()` local counter, which collided with the 0030 primary key
+	 * `(turn_id, call_index)` on a second prompt in the same Turn and silently
+	 * dropped records. Never reset it here; the Turn id is part of the key.
+	 */
+	private llmCallCounter = 0;
 
 	constructor(agentSession: AgentSession, onDisposed?: () => void, ephemeral = false) {
 		this.agentSession = agentSession;
@@ -105,11 +136,103 @@ export class CodingAgentPiSessionRuntime implements PiSessionRuntime {
 			await preSeed;
 			const attachments = this.attachmentOptions(input.attachments);
 			const contextBlocks = this.contextBlocks(input.retrieval);
-			return this.agentSession.prompt(input.text, {
-				...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
-				...(attachments ? { attachments } : {}),
-				...(contextBlocks ? { contextBlocks } : {}),
-			});
+			const originalStream = this.agentSession.agent.streamFunction;
+			if (input.onLlmTrace) {
+				this.agentSession.agent.streamFunction = async (model, context, options) => {
+					const index = ++this.llmCallCounter;
+					const modelRef = { provider: model.provider, id: model.id };
+					try {
+						await input.onLlmTrace?.({ kind: "request", callIndex: index, model: modelRef, context });
+					} catch (error) {
+						// Diagnostics must not stop the model call, but the failure must be visible.
+						reportTraceFailure("request", index, error);
+					}
+					// Timing starts immediately before the provider call, excluding
+					// diagnostic-callback overhead. The monotonic sample is used only
+					// for the duration; wall-clock stamps are observations for display.
+					const startedAtMs = Date.now();
+					const monotonicStartMs = performance.now();
+					const stream = await originalStream(model, context, options);
+					let recorded = false;
+					let firstOutputAtMs: number | undefined;
+					return new Proxy(stream, {
+						get(target, property) {
+							if (property === Symbol.asyncIterator) {
+								// Observe the events the agent loop already consumes — never
+								// start a second iterator or touch `result()` here. The wrapper
+								// yields in the original order and preserves early return/throw.
+								return () => {
+									const iterator = target[Symbol.asyncIterator]();
+									return {
+										async next(...args: [] | [unknown]) {
+											const step = await iterator.next(...args);
+											if (!step.done && firstOutputAtMs === undefined && isGenerationDelta(step.value)) {
+												firstOutputAtMs = performance.now();
+											}
+											return step;
+										},
+										async return(value?: unknown) {
+											return iterator.return === undefined
+												? ({ done: true, value } as IteratorResult<AssistantMessageEvent>)
+												: iterator.return(value as never);
+										},
+										async throw(error?: unknown) {
+											if (iterator.throw === undefined) throw error;
+											return iterator.throw(error as never);
+										},
+										[Symbol.asyncIterator]() {
+											return this;
+										},
+									};
+								};
+							}
+							if (property === "result")
+								return async () => {
+									// `result()` settles when the stream has been fully
+									// consumed, so timing here covers the whole response
+									// lifecycle rather than only stream construction.
+									const message = await target.result();
+									if (!recorded) {
+										recorded = true;
+										const endedAtMs = Date.now();
+										const timing = {
+											startedAtMs,
+											endedAtMs,
+											durationMs: performance.now() - monotonicStartMs,
+											...(firstOutputAtMs === undefined
+												? {}
+												: { firstOutputLatencyMs: firstOutputAtMs - monotonicStartMs }),
+										};
+										try {
+											await input.onLlmTrace?.({
+												kind: "response",
+												callIndex: index,
+												model: modelRef,
+												message,
+												timing,
+											});
+										} catch (error) {
+											// Diagnostics must not change the provider result.
+											reportTraceFailure("response", index, error);
+										}
+									}
+									return message;
+								};
+							const value: unknown = Reflect.get(target, property, target);
+							return typeof value === "function" ? value.bind(target) : value;
+						},
+					});
+				};
+			}
+			try {
+				await this.agentSession.prompt(input.text, {
+					...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+					...(attachments ? { attachments } : {}),
+					...(contextBlocks ? { contextBlocks } : {}),
+				});
+			} finally {
+				this.agentSession.agent.streamFunction = originalStream;
+			}
 		});
 	}
 

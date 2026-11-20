@@ -13,11 +13,32 @@ import type {
 	ConversationListRow,
 	ConversationRecord,
 	ConversationRepository,
+	LlmCallRow,
 	OwnerScope,
 	TenantScope,
 } from "../../../publishing/repositories.ts";
 import type { PostgresClient } from "../client.ts";
 import { executionOwnerColumn, executionOwnerId } from "./execution-owner.ts";
+
+const adminLastTurnJoin = `left join lateral (
+	select case e.event_type
+		when 'turn/start' then 'running' when 'turn.start' then 'running'
+		when 'turn/end' then 'succeeded' when 'turn.end' then 'succeeded'
+		when 'turn/interrupted' then 'cancelled'
+		else 'failed' end as state
+	from conversation_events e
+	where e.tenant_id=c.tenant_id and e.conversation_id=c.id
+	  and e.event_type in ('turn/start','turn.start','turn/end','turn.end','turn/interrupted','turn/failed','turn.failed')
+	order by e.sequence desc limit 1
+) last_turn on w.id is null`;
+
+// Agent definitions retain one row per revision. Pick one display name
+// without multiplying conversation rows before list pagination or detail reads.
+const adminAgentNameJoin = `left join lateral (
+	select agent.name from agent_definitions agent
+	where agent.id = a.agent_definition_id and agent.tenant_id = a.tenant_id
+	order by agent.revision desc limit 1
+) d on true`;
 
 function rowToRecord(row: Record<string, unknown>): ConversationRecord {
 	return {
@@ -61,8 +82,17 @@ function toAdminListRow(row: Record<string, unknown>): AdminConversationListRow 
 	const base = rowToRecord(row);
 	const subjectHash = String(row.principal_subject_hash ?? "");
 	const agentIdRaw = row.agent_definition_id;
+	const keyId = row.key_id === null || row.key_id === undefined ? null : String(row.key_id);
+	const runId = row.run_id === null || row.run_id === undefined ? null : String(row.run_id);
+	const carrier = String(row.integration_kind ?? "") === "internal_key_carrier";
+	const origin = carrier ? "aaas_key" : runId !== null ? "integration" : "chat";
 	return {
 		...base,
+		origin,
+		keyId,
+		taskId: row.task_id === null || row.task_id === undefined ? null : String(row.task_id),
+		runId,
+		...(typeof row.execution_state === "string" ? { executionState: row.execution_state } : {}),
 		cursor: `${base.lastActiveAt.toISOString()}|${base.conversationId}`,
 		errorCount: Number(row.error_count ?? 0),
 		messageCount: Number(row.message_count ?? 0),
@@ -73,6 +103,7 @@ function toAdminListRow(row: Record<string, unknown>): AdminConversationListRow 
 		appName: String(row.app_name ?? ""),
 		publicAppId: String(row.public_app_id ?? ""),
 		agentId: agentIdRaw === null || agentIdRaw === undefined ? null : (agentIdRaw as AgentDefinitionId),
+		agentName: row.agent_name === null || row.agent_name === undefined ? null : String(row.agent_name),
 	};
 }
 
@@ -233,6 +264,8 @@ export function createConversationRepository(client: PostgresClient): Conversati
 		},
 		async listByTenant(params: AdminConversationListParams) {
 			const limit = Math.min(Math.max(params.limit, 1), 100);
+			// Admin-only projection: legacy, Key-owned and Chat sessions are
+			// unified here. Old business lookups keep their carrier exclusions.
 			const conditions: string[] = ["c.tenant_id = $1", "c.deleted_at is null"];
 			const values: (string | number | Date)[] = [params.scope.tenantId];
 			if (params.publishedAppId !== undefined) {
@@ -259,6 +292,27 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				values.push(params.principalType);
 				conditions.push(`p.principal_type = $${values.length}`);
 			}
+			if (params.origin !== undefined) {
+				values.push(params.origin);
+				conditions.push(
+					`case
+					  when i.kind = 'internal_key_carrier' then 'aaas_key'
+					  when w.id is not null then 'integration'
+					  else 'chat' end = $${values.length}`,
+				);
+			}
+			if (params.keyId !== undefined) {
+				values.push(params.keyId);
+				conditions.push(`w.key_id = $${values.length}`);
+			}
+			if (params.runId !== undefined) {
+				values.push(params.runId);
+				conditions.push(`w.id = $${values.length}`);
+			}
+			if (params.executionState !== undefined) {
+				values.push(params.executionState);
+				conditions.push(`coalesce(w.state, last_turn.state) = $${values.length}`);
+			}
 			if (params.agentId !== undefined) {
 				values.push(params.agentId);
 				// MVP-02 — the agent id lives on `published_apps`; the
@@ -272,7 +326,32 @@ export function createConversationRepository(client: PostgresClient): Conversati
 					where e.conversation_id = c.id
 					  and e.tenant_id = c.tenant_id
 					  and e.event_type in ('turn/failed','tool.error','turn.failed','turn.interrupted')
-				)`);
+					  )`);
+			}
+			if (params.lastActiveAfter !== undefined) {
+				values.push(params.lastActiveAfter);
+				conditions.push(`c.last_active_at >= $${values.length}`);
+			}
+			if (params.lastActiveBefore !== undefined) {
+				values.push(params.lastActiveBefore);
+				conditions.push(`c.last_active_at <= $${values.length}`);
+			}
+			if (params.search !== undefined && params.search !== "") {
+				// One bound pattern for all display fields; wildcards in user input stay literal.
+				const escaped = params.search.replace(/[\\%_]/g, "\\$&");
+				const pattern = `%${escaped}%`;
+				values.push(pattern);
+				const placeholder = `$${values.length}`;
+				conditions.push(`(
+					  c.id::text ilike ${placeholder} escape '\\'
+					  or 'conv_' || c.id::text ilike ${placeholder} escape '\\'
+					  or c.title ilike ${placeholder} escape '\\'
+					  or coalesce(a.name, i.name) ilike ${placeholder} escape '\\'
+					  or 'prn_' || left(coalesce(p.subject_hash, ''), 8) ilike ${placeholder} escape '\\'
+					  or w.key_id::text ilike ${placeholder} escape '\\'
+					  or w.task_id ilike ${placeholder} escape '\\'
+					  or w.id::text ilike ${placeholder} escape '\\'
+					  )`);
 			}
 			if (params.cursor !== undefined && params.cursor !== "") {
 				const [lastActiveAt, id] = params.cursor.split("|");
@@ -291,6 +370,9 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				        coalesce(a.name,i.name) as app_name,
 				        a.public_app_id as public_app_id,
 				        a.agent_definition_id as agent_definition_id,
+				        d.name as agent_name,
+				        i.kind as integration_kind,
+				        w.id as run_id, coalesce(w.state, last_turn.state) as execution_state, w.key_id, w.task_id,
 				        (select count(*)::int from conversation_events e
 				          where e.conversation_id = c.id
 				            and e.tenant_id = c.tenant_id
@@ -302,14 +384,17 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				   from conversations c
 				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id is not distinct from c.published_app_id and p.integration_id is not distinct from c.integration_id
 				   left join orchestration_integrations i on i.id=c.integration_id and i.tenant_id=c.tenant_id
- left join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
-				   left join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
+				   left join orchestration_work_items w on w.conversation_id=c.id and w.tenant_id=c.tenant_id
+				   ${adminLastTurnJoin}
+				   left join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
+				   ${adminAgentNameJoin}
 				  where ${conditions.join(" and ")}
 				  order by c.last_active_at desc, c.id desc
 				  limit $${values.length}`,
 				...values,
 			);
-			return rows.slice(0, limit).map((row) => toAdminListRow(row));
+			// The control service needs the extra row to determine whether a next page exists.
+			return rows.map((row) => toAdminListRow(row));
 		},
 		async getByTenant(scope: TenantScope, conversationId: ConversationId) {
 			const rows = await client.run(
@@ -319,6 +404,9 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				        coalesce(a.name,i.name) as app_name,
 				        a.public_app_id as public_app_id,
 				        a.agent_definition_id as agent_definition_id,
+				        d.name as agent_name,
+				        i.kind as integration_kind,
+				        w.id as run_id, coalesce(w.state, last_turn.state) as execution_state, w.key_id, w.task_id,
 				        (select count(*)::int from conversation_events e
 				          where e.conversation_id = c.id
 				            and e.tenant_id = c.tenant_id
@@ -330,13 +418,81 @@ export function createConversationRepository(client: PostgresClient): Conversati
 				   from conversations c
 				   join principals p on p.id = c.owner_principal_id and p.tenant_id = c.tenant_id and p.published_app_id is not distinct from c.published_app_id and p.integration_id is not distinct from c.integration_id
 				   left join orchestration_integrations i on i.id=c.integration_id and i.tenant_id=c.tenant_id
- left join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
-				   left join published_app_versions v on v.id = c.published_app_version_id and v.published_app_id = c.published_app_id and v.tenant_id = c.tenant_id
+				   left join orchestration_work_items w on w.conversation_id=c.id and w.tenant_id=c.tenant_id
+				   ${adminLastTurnJoin}
+				   left join published_apps a on a.id = c.published_app_id and a.tenant_id = c.tenant_id
+				   ${adminAgentNameJoin}
 				  where c.id = $1 and c.tenant_id = $2 and c.deleted_at is null`,
 				conversationId,
 				scope.tenantId,
 			);
 			return rows.length === 1 ? toAdminListRow(rows[0]) : undefined;
+		},
+		async getOrchestrationTaskByTenant(scope: TenantScope, conversationId: ConversationId) {
+			const rows = await client.run(
+				`select w.request_contract,w.task_prompt from orchestration_work_items w
+				 join conversations c on c.id=w.conversation_id and c.tenant_id=w.tenant_id
+				 where w.tenant_id=$1 and w.conversation_id=$2 and c.deleted_at is null`,
+				scope.tenantId,
+				conversationId,
+			);
+			if (rows.length !== 1) return null;
+			return {
+				requestContract: typeof rows[0].request_contract === "string" ? rows[0].request_contract : null,
+				taskPrompt: typeof rows[0].task_prompt === "string" ? rows[0].task_prompt : null,
+			};
+		},
+		async listLlmCallsByTenant(scope: TenantScope, conversationId: ConversationId, args) {
+			try {
+				if (!(await llmCallsTableExists(client))) return tableMissingPage();
+				const limit = Math.min(Math.max(Math.trunc(args.limit), 1), 500);
+				const after = Math.max(0, Math.trunc(args.after));
+				const rows = await client.run(
+					`select l.turn_id,l.call_index,l.model_provider,l.model_id,l.request_payload,l.response_payload,
+					 l.created_at,l.completed_at, count(*) over() as total
+					 from orchestration_llm_calls l
+					 join conversations c on c.id=l.conversation_id and c.tenant_id=l.tenant_id
+					 where l.tenant_id=$1 and l.conversation_id=$2 and c.deleted_at is null
+					 order by l.created_at,l.turn_id,l.call_index
+					 limit $3 offset $4`,
+					scope.tenantId,
+					conversationId,
+					limit,
+					after,
+				);
+				return {
+					available: true as const,
+					reason: "ok" as const,
+					rows: rows.map(toLlmCallRow),
+					total: rows.length > 0 ? Number(rows[0].total) : 0,
+				};
+			} catch (error) {
+				throw llmCallsQueryError("list", error);
+			}
+		},
+		async getLlmCallByTenant(scope: TenantScope, conversationId: ConversationId, turnId: string, callIndex: number) {
+			try {
+				if (!(await llmCallsTableExists(client))) return tableMissingSingle();
+				const rows = await client.run(
+					`select l.turn_id,l.call_index,l.model_provider,l.model_id,l.request_payload,l.response_payload,
+					 l.created_at,l.completed_at from orchestration_llm_calls l
+					 join conversations c on c.id=l.conversation_id and c.tenant_id=l.tenant_id
+					 where l.tenant_id=$1 and l.conversation_id=$2 and c.deleted_at is null
+					 and l.turn_id=$3::uuid and l.call_index=$4`,
+					scope.tenantId,
+					conversationId,
+					turnId,
+					callIndex,
+				);
+				return {
+					available: true as const,
+					reason: "ok" as const,
+					rows: rows.length === 1 ? toLlmCallRow(rows[0]) : null,
+					total: rows.length,
+				};
+			} catch (error) {
+				throw llmCallsQueryError("get", error);
+			}
 		},
 		async updateStatusByTenant(scope, conversationId, from, status) {
 			if (from.length === 0) return false;
@@ -353,5 +509,61 @@ export function createConversationRepository(client: PostgresClient): Conversati
 			);
 			return rows.length === 1;
 		},
+	};
+}
+
+function parseTracePayload(value: unknown): unknown {
+	if (typeof value !== "string") return value;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+/**
+ * Session V1: 0030 may not be applied in every database. Probe with
+ * `to_regclass` (resolved through the connection's search_path) so a missing
+ * table is a recognised deployment state rather than a 500. Any *other*
+ * database error propagates with an explicit diagnostic.
+ */
+async function llmCallsTableExists(client: PostgresClient): Promise<boolean> {
+	const rows = await client.run("select to_regclass('orchestration_llm_calls') as present");
+	return rows.length === 1 && rows[0].present !== null && rows[0].present !== undefined;
+}
+
+function llmCallsQueryError(phase: string, error: unknown): Error {
+	const message = error instanceof Error ? error.message : String(error);
+	return new Error(`llm trace query failed (${phase}): ${message.slice(0, 300)}`);
+}
+
+function tableMissingPage() {
+	return {
+		available: false as const,
+		reason: "table_missing" as const,
+		rows: [] as readonly LlmCallRow[],
+		total: 0,
+	};
+}
+
+function tableMissingSingle() {
+	return {
+		available: false as const,
+		reason: "table_missing" as const,
+		rows: null as LlmCallRow | null,
+		total: 0,
+	};
+}
+
+function toLlmCallRow(row: Record<string, unknown>): LlmCallRow {
+	return {
+		turnId: String(row.turn_id),
+		callIndex: Number(row.call_index),
+		modelProvider: String(row.model_provider),
+		modelId: String(row.model_id),
+		request: parseTracePayload(row.request_payload),
+		response: parseTracePayload(row.response_payload ?? null),
+		createdAt: row.created_at as Date,
+		completedAt: (row.completed_at as Date | null) ?? null,
 	};
 }

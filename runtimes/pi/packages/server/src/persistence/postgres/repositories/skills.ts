@@ -178,8 +178,9 @@ export function createSkillRepository(client: PostgresClient): SkillRepository {
 			);
 			return rows.length === 1 ? skillFromRow(rows[0]) : undefined;
 		},
-		async getRevision(scope, skillId, revision) {
-			const rows = await client.run(
+		async getRevision(scope, skillId, revision, tx) {
+			const query = tx ? txRows.bind(undefined, tx) : client.run.bind(client);
+			const rows = await query(
 				`select sr.* from skill_revisions sr
 				 join skills s on s.id = sr.skill_id and s.tenant_id = sr.tenant_id
 				 where sr.skill_id = $1 and sr.tenant_id = $2 and sr.revision = $3 and s.deleted_at is null`,

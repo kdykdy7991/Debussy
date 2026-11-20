@@ -41,6 +41,9 @@ export interface SecureMcpClientOptions {
 	readonly onToolsChanged?: () => void;
 	readonly networkPolicy?: McpNetworkPolicy;
 	readonly signal?: AbortSignal;
+	readonly onAuthenticationFailure?: () => void;
+	/** Inspect a handshake failure before waiting for transport cleanup. */
+	readonly onConnectionFailure?: (error: unknown) => void;
 	/** Test seam. Production callers use the system resolver. */
 	readonly resolveAddresses?: McpAddressResolver;
 }
@@ -157,6 +160,7 @@ function createSecureFetch(
 	url: URL,
 	addresses: readonly McpResolvedAddress[],
 	policy: McpNetworkPolicy,
+	onAuthenticationFailure?: () => void,
 ): {
 	readonly fetch: FetchLike;
 	readonly dispatcher: Agent;
@@ -182,6 +186,7 @@ function createSecureFetch(
 		}
 		const fetchInit = { ...init, dispatcher, redirect: "error" } as unknown as UndiciRequestInit;
 		const response = await undiciFetch(target, fetchInit);
+		if (response.status === 401 || response.status === 403) onAuthenticationFailure?.();
 		// The SDK uses the platform Fetch types while Undici ships structurally
 		// equivalent Fetch objects with its own declarations.
 		return response as unknown as Response;
@@ -202,7 +207,12 @@ export async function connectSecureMcpClient(options: SecureMcpClientOptions): P
 	const policy = options.networkPolicy ?? {};
 	const url = validateMcpEndpoint(options.endpoint, policy);
 	const addresses = await resolveApprovedMcpAddresses(url, policy, options.resolveAddresses);
-	const { fetch: secureFetch, dispatcher } = createSecureFetch(url, addresses, policy);
+	const { fetch: secureFetch, dispatcher } = createSecureFetch(
+		url,
+		addresses,
+		policy,
+		options.onAuthenticationFailure,
+	);
 	const transport = new StreamableHTTPClientTransport(url, {
 		fetch: secureFetch,
 		requestInit: options.apiKey === undefined ? undefined : { headers: { "X-Mcp-Api-Key": options.apiKey } },
@@ -254,7 +264,10 @@ export async function connectSecureMcpClient(options: SecureMcpClientOptions): P
 			maxTotalTimeout: policy.timeoutMs ?? MCP_DEFAULT_TIMEOUT_MS,
 		});
 	} catch (error) {
-		await close();
+		if (options.onConnectionFailure !== undefined) {
+			void close().catch(() => undefined);
+			options.onConnectionFailure(error);
+		} else await close();
 		throw error;
 	}
 	return {

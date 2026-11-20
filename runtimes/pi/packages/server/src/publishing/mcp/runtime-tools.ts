@@ -1,8 +1,20 @@
 import { type TSchema, Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { ScopeContext } from "../../runtime/scope-context.ts";
+import type { ToolCredentialBinding } from "@earendil-works/pi-protocol";
+import {
+	checkMcpResult,
+	CONNECTION_FAILED,
+	CREDENTIAL_EXPIRED,
+	EXECUTION_NOT_AUTHORIZED,
+	MCP_AUTH_FAILED,
+	MCP_RESULT_BLOCKED,
+	type McpTaskBoundary,
+} from "../../orchestration/api-key-boundary.ts";
+import { OrchestrationError } from "../../orchestration/contracts.ts";
+import type { McpCallAuditRecord, McpExecutionSource } from "../../runtime/execution-source.ts";
+import type { RuntimeScope, ScopeContext } from "../../runtime/scope-context.ts";
 import type { TranscriptMessage } from "../../types.ts";
-import { fromPublicId, newMcpCallAuditId, parseIdOrThrow } from "../domain/ids.ts";
+import { fromPublicId, newMcpCallAuditId, parseIdOrThrow, type McpServerId } from "../domain/ids.ts";
 import type { PublishingRepositories } from "../repositories.ts";
 import type { RuntimeSpec } from "../runtime-spec/schema.ts";
 import { McpResourceReferences, mcpResourceToolName, mcpResultContent } from "./resource-content.ts";
@@ -21,22 +33,38 @@ export interface McpRuntimeToolFactoryOptions {
 	readonly secretBox?: McpSecretBox;
 	readonly networkPolicy?: McpNetworkPolicy;
 	readonly onToolsChanged?: () => void;
-	/** Server-only adapter; optional so existing chat/debug tools are unchanged. */
-	readonly protectTool?: (
-		scope: ScopeContext,
-		serverId: string,
-		tool: ToolDefinition,
-		schema: Readonly<Record<string, unknown>>,
-	) => Promise<ToolDefinition>;
+	/**
+	 * Server-only tool protector (implementation injected by the orchestration
+	 * layer): it removes the platform-injected parameters from the model-visible
+	 * schema and injects the credential before the call leaves the process.
+	 */
+	readonly protectTool?: McpToolProtector;
 	/** Test seam; production uses the official SDK-backed secure connector. */
 	readonly connect?: typeof connectSecureMcpClient;
+	/**
+	 * Resolves the credential source of one execution. The scope may also carry
+	 * its own source (`scope.credentialSource`); the scope wins. When neither is
+	 * present the execution keeps the platform-secret behaviour (Chat/Debug).
+	 */
+	readonly executionSource?: (scope: RuntimeScope) => Promise<McpExecutionSource | undefined>;
 }
+
+/**
+ * The server-only protection applied to one MCP tool: the model sees only the
+ * business arguments, the transport alone receives the injected credential.
+ */
+export type McpToolProtector = (
+	tool: ToolDefinition,
+	schema: Readonly<Record<string, unknown>>,
+	bindings: readonly ToolCredentialBinding[],
+	load: () => Promise<Readonly<Record<string, string>>>,
+) => ToolDefinition;
 
 export interface McpRuntimeTools extends ReadonlyArray<ToolDefinition> {
 	readonly hydrateResourceReferences?: (transcript: readonly TranscriptMessage[]) => void;
 }
 
-export type McpRuntimeToolFactory = (spec: RuntimeSpec, scope: ScopeContext) => Promise<McpRuntimeTools>;
+export type McpRuntimeToolFactory = (spec: RuntimeSpec, scope: RuntimeScope) => Promise<McpRuntimeTools>;
 
 function isJsonSchema(value: unknown): boolean {
 	if (value === true || value === false) return true;
@@ -69,10 +97,100 @@ function isJsonSchema(value: unknown): boolean {
 		return false;
 	return true;
 }
+/**
+ * The per-execution security boundary of the credential source. The source owns
+ * the boundary semantics (freshness, own credentials, result inspection and the
+ * fatal marking), so the factory applies it as-is.
+ */
+function buildBoundary(source: McpExecutionSource | undefined): McpTaskBoundary | undefined {
+	return source?.boundary;
+}
+
+/**
+ * One MCP call audit fact. A Router Operation records its own attribution and
+ * leaves every legacy ownership column empty; the legacy columns keep their
+ * existing derivation.
+ */
+function auditRecord(
+	scope: RuntimeScope,
+	source: McpExecutionSource | undefined,
+	call: {
+		readonly mcpServerId: McpServerId;
+		readonly mcpRevision: number;
+		readonly toolName: string;
+		readonly outcome: "success" | "error" | "cancelled";
+		readonly latencyMs: number;
+		readonly resultBytes: number;
+		readonly resultTruncated: boolean;
+		readonly errorCode: string | null;
+	},
+): McpCallAuditRecord {
+	const routerOperationId = source?.owner.kind === "router_operation" ? source.owner.operationId : null;
+	const routerOwned = routerOperationId !== null;
+	return {
+		tenantId: scope.tenantId,
+		conversationId: routerOwned ? null : (scope.conversationId ?? null),
+		publishedAppVersionId: routerOwned
+			? null
+			: scope.executionSource?.kind === "orchestration"
+				? null
+				: parseIdOrThrow("PublishedAppVersionId", scope.publishedAppVersionId, "Chat audit version"),
+		integrationId: routerOwned
+			? null
+			: scope.executionSource && scope.executionSource.kind !== "chat"
+				? scope.executionSource.ownerId
+				: null,
+		orchestrationVersionId: routerOwned
+			? null
+			: scope.executionSource?.kind === "orchestration"
+				? scope.publishedAppVersionId.slice(4)
+				: null,
+		routerOperationId,
+		mcpServerId: call.mcpServerId,
+		mcpRevision: call.mcpRevision,
+		toolName: call.toolName,
+		outcome: call.outcome,
+		latencyMs: call.latencyMs,
+		resultBytes: call.resultBytes,
+		resultTruncated: call.resultTruncated,
+		errorCode: call.errorCode,
+		requestId: scope.requestId ?? null,
+		createdAt: new Date(),
+	};
+}
+
+/** Maps the shared audit fact onto the existing repository record. */
+export function toMcpCallAuditRecord(record: McpCallAuditRecord) {
+	return {
+		mcpCallAuditId: newMcpCallAuditId(),
+		tenantId: record.tenantId,
+		conversationId: record.conversationId,
+		publishedAppVersionId: record.publishedAppVersionId,
+		integrationId: record.integrationId,
+		orchestrationVersionId: record.orchestrationVersionId,
+		mcpServerId: record.mcpServerId,
+		mcpRevision: record.mcpRevision,
+		toolName: record.toolName,
+		outcome: record.outcome,
+		latencyMs: record.latencyMs,
+		resultBytes: record.resultBytes,
+		resultTruncated: record.resultTruncated,
+		errorCode: record.errorCode,
+		requestId: record.requestId,
+		createdAt: record.createdAt,
+	};
+}
 
 export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOptions): McpRuntimeToolFactory {
 	const connect = options.connect ?? connectSecureMcpClient;
 	return async (spec, scope) => {
+		// One source drives the whole protection: credentials, pre-call check and
+		// audit attribution. The scope carries its own source (Router Operation);
+		// otherwise the composition layer resolves it (AaaS Key/legacy Runs).
+		const source: McpExecutionSource | undefined = scope.credentialSource ?? (await options.executionSource?.(scope));
+		const boundary: McpTaskBoundary | undefined = buildBoundary(source);
+		const routerOwned = source?.owner.kind === "router_operation";
+		if (routerOwned && boundary === undefined) throw new Error("Router MCP 调用缺少执行保护");
 		const names = new Set<string>();
 		const definitions: ToolDefinition[] = [];
 		const bindings: McpResourceBinding[] = [];
@@ -127,6 +245,7 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 						let resultTruncated = false;
 						let errorCode: string | null = "MCP_CALL_FAILED";
 						try {
+							if (routerOwned) signal?.throwIfAborted();
 							const server = await options.repositories.mcpServers.get(
 								{ tenantId: scope.tenantId },
 								mcpServerId,
@@ -159,29 +278,121 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 								throw mcpResourceReadError(binding, uri, bindings);
 							}
 							let bearerToken: string | undefined;
-							if (frozenServer.authentication !== "none") {
-								if (options.secretBox === undefined) throw new Error("MCP credential store is unavailable");
-								const secret = await options.repositories.mcpSecrets.get(
-									{ tenantId: scope.tenantId },
-									mcpServerId,
-								);
-								if (secret === undefined) throw new Error("MCP credential is unavailable");
-								bearerToken = options.secretBox.open(scope.tenantId, mcpServerId, secret);
+							if (boundary !== undefined) {
+								await boundary.checkFresh();
 							}
-							const session = await connect({
-								endpoint: frozenServer.endpoint,
-								bearerToken: frozenServer.authentication === "bearer" ? bearerToken : undefined,
-								apiKey: frozenServer.authentication === "api_key" ? bearerToken : undefined,
-								onToolsChanged: options.onToolsChanged,
-								networkPolicy: options.networkPolicy,
-								signal,
-							});
+							if (boundary !== undefined && !routerOwned) {
+								bearerToken = boundary.connectionCredential(
+									frozenServer.mcpServerId,
+									frozenServer.authentication,
+								);
+							} else if (frozenServer.authentication !== "none") {
+								if (options.secretBox === undefined) {
+									boundary?.authenticationFailed();
+									throw new OrchestrationError(500, MCP_AUTH_FAILED, "MCP 平台连接凭据不可用");
+								}
+								const secret = await options.repositories.mcpSecrets
+									.get({ tenantId: scope.tenantId }, mcpServerId)
+									.catch(() => {
+										boundary?.authenticationFailed();
+										throw new OrchestrationError(500, MCP_AUTH_FAILED, "MCP 平台连接凭据不可用");
+									});
+								if (secret === undefined) {
+									boundary?.authenticationFailed();
+									throw new OrchestrationError(500, MCP_AUTH_FAILED, "MCP 平台连接凭据不可用");
+								}
+								try {
+									bearerToken = options.secretBox.open(scope.tenantId, mcpServerId, secret);
+								} catch {
+									boundary?.authenticationFailed();
+									throw new OrchestrationError(500, MCP_AUTH_FAILED, "MCP 平台连接凭据不可用");
+								}
+							}
+							let session: Awaited<ReturnType<typeof connect>>;
 							try {
+								if (routerOwned) signal?.throwIfAborted();
+								session = await connect({
+									endpoint: frozenServer.endpoint,
+									bearerToken: frozenServer.authentication === "bearer" ? bearerToken : undefined,
+									apiKey: frozenServer.authentication === "api_key" ? bearerToken : undefined,
+									onToolsChanged: options.onToolsChanged,
+									networkPolicy: options.networkPolicy,
+									signal,
+									onAuthenticationFailure:
+										boundary !== undefined && frozenServer.authentication !== "none"
+											? () => boundary.authenticationFailed()
+											: undefined,
+									onConnectionFailure:
+										boundary === undefined
+											? undefined
+											: (error) =>
+													(() => {
+														if (routerOwned && bearerToken) {
+															try {
+																checkMcpResult(
+																	{ message: error instanceof Error ? error.message : error },
+																	[bearerToken],
+																	scope.limits.toolResultMaxBytes,
+																);
+															} catch {
+																source?.markFatal(MCP_RESULT_BLOCKED);
+																throw new OrchestrationError(
+																	500,
+																	MCP_RESULT_BLOCKED,
+																	"MCP 返回内容不可用",
+																);
+															}
+														}
+														boundary.inspect({
+															message: error instanceof Error ? error.message : error,
+															details: error,
+														});
+													})(),
+								});
+							} catch (error) {
+								// A connection-layer failure is not a Tool business error. Unless
+								// it is already a recognized fatal boundary hit (or the Run was
+								// cancelled), the Run must fail with a safe generic code instead
+								// of letting the model turn the exception into a success report.
+								const cancelled =
+									signal?.aborted === true || (error instanceof Error && error.name === "AbortError");
+								if (
+									boundary !== undefined &&
+									!cancelled &&
+									!(
+										error instanceof OrchestrationError &&
+										(error.code === MCP_RESULT_BLOCKED || error.code === MCP_AUTH_FAILED)
+									)
+								)
+									boundary.connectionFailed();
+								throw error;
+							}
+							let callFailed = true;
+							try {
+								if (routerOwned) {
+									// Router authorization/credentials can change during the MCP handshake.
+									signal?.throwIfAborted();
+									await boundary?.checkFresh();
+									signal?.throwIfAborted();
+								}
 								if (frozenTool.resourceRead && session.readResource === undefined)
 									throw new Error("MCP resource reading is unavailable");
 								const result = frozenTool.resourceRead
 									? await session.readResource!(uri as string, signal)
 									: await session.callTool(frozenTool.name, argumentsValue, signal);
+								if (routerOwned) signal?.throwIfAborted();
+								// T034: inspect the unredacted return before it becomes a model message,
+								// resource reference, stream update, audit record or persisted event.
+								// A hit or an uncheckable payload discards the whole content and fails.
+								boundary?.inspect(result);
+								if (routerOwned && bearerToken) {
+									try {
+										checkMcpResult(result, [bearerToken], scope.limits.toolResultMaxBytes);
+									} catch {
+										source?.markFatal(MCP_RESULT_BLOCKED);
+										throw new OrchestrationError(500, MCP_RESULT_BLOCKED, "MCP 返回内容不可用");
+									}
+								}
 								if ("isError" in result && result.isError === true)
 									throw new Error("MCP Tool returned an error");
 								resultBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
@@ -208,40 +419,72 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 								resultTruncated = bounded.truncated;
 								outcome = "success";
 								errorCode = null;
+								callFailed = false;
 								return {
 									content: bounded.content,
 									details: { mcpServerId: frozenServer.mcpServerId, resultTruncated },
 								};
+							} catch (callError) {
+								if (routerOwned && bearerToken) {
+									try {
+										checkMcpResult(
+											{ message: callError instanceof Error ? callError.message : callError },
+											[bearerToken],
+											scope.limits.toolResultMaxBytes,
+										);
+									} catch {
+										source?.markFatal(MCP_RESULT_BLOCKED);
+										throw new OrchestrationError(500, MCP_RESULT_BLOCKED, "MCP 返回内容不可用");
+									}
+								}
+								if (
+									boundary !== undefined &&
+									!(
+										callError instanceof OrchestrationError &&
+										(callError.code === MCP_RESULT_BLOCKED || callError.code === MCP_AUTH_FAILED)
+									)
+								)
+									boundary.inspect({
+										message: callError instanceof Error ? callError.message : callError,
+										details: callError,
+									});
+								throw callError;
 							} finally {
-								await session.close();
+								await session
+									.close()
+									.catch((closeError: unknown) =>
+										boundary === undefined || !callFailed ? Promise.reject(closeError) : undefined,
+									);
 							}
 						} catch (error) {
-							if (signal?.aborted === true || (error instanceof Error && error.name === "AbortError")) {
+							if (
+								boundary !== undefined &&
+								error instanceof OrchestrationError &&
+								(error.code === MCP_RESULT_BLOCKED ||
+									error.code === MCP_AUTH_FAILED ||
+									error.code === CREDENTIAL_EXPIRED ||
+									error.code === EXECUTION_NOT_AUTHORIZED)
+							) {
+								errorCode = error.code;
+								throw error;
+							}
+							const cancelled =
+								signal?.aborted === true || (error instanceof Error && error.name === "AbortError");
+							if (cancelled) {
 								outcome = "cancelled";
 								errorCode = "MCP_CALL_CANCELLED";
 							}
+							if (boundary !== undefined) {
+								// SDK/transport exceptions can include remote JSON-RPC error text.
+								// Inspect it before a model or event can see it, and never forward it.
+								boundary.inspect({ message: error instanceof Error ? error.message : error, details: error });
+								const safe = new Error(cancelled ? "MCP 调用已取消" : "MCP 调用失败");
+								if (cancelled) safe.name = "AbortError";
+								throw safe;
+							}
 							throw error;
 						} finally {
-							await options.repositories.mcpServers.recordCallAudit({
-								mcpCallAuditId: newMcpCallAuditId(),
-								tenantId: scope.tenantId,
-								conversationId: scope.conversationId,
-								publishedAppVersionId:
-									scope.executionSource?.kind === "orchestration"
-										? null
-										: parseIdOrThrow(
-												"PublishedAppVersionId",
-												scope.publishedAppVersionId,
-												"Chat audit version",
-											),
-								integrationId:
-									scope.executionSource && scope.executionSource.kind !== "chat"
-										? scope.executionSource.ownerId
-										: null,
-								orchestrationVersionId:
-									scope.executionSource?.kind === "orchestration"
-										? scope.publishedAppVersionId.slice(4)
-										: null,
+							const record = auditRecord(scope, source, {
 								mcpServerId,
 								mcpRevision: frozenServer.revision,
 								toolName: frozenTool.name,
@@ -250,30 +493,38 @@ export function createMcpRuntimeToolFactory(options: McpRuntimeToolFactoryOption
 								resultBytes,
 								resultTruncated,
 								errorCode,
-								requestId: scope.requestId ?? null,
-								createdAt: new Date(),
 							});
+							// The source owns the attribution: a Router Operation records its
+							// own call, everything else keeps the legacy audit columns.
+							if (source !== undefined) await source.recordAudit(record);
+							else await options.repositories.mcpServers.recordCallAudit(toMcpCallAuditRecord(record));
 						}
 					},
 				});
 			}
 		}
 		const protectedDefinitions =
-			options.protectTool === undefined
+			source === undefined
 				? definitions
 				: await Promise.all(
 						definitions.map(async (tool) => {
 							const server = spec.capabilities.mcpServers.find((entry) =>
 								entry.tools.some((candidate) => candidate.name === tool.name),
 							);
-							return server === undefined
-								? tool
-								: options.protectTool!(
-										scope,
-										server.mcpServerId,
-										tool,
-										server.tools.find((candidate) => candidate.name === tool.name)!.inputSchema,
-									);
+							if (server === undefined) return tool;
+							const schema = server.tools.find((candidate) => candidate.name === tool.name)!.inputSchema;
+							const bindings = await source.toolBindings(server.mcpServerId, tool.name);
+							if (bindings.length === 0) return tool;
+							if (options.protectTool === undefined) throw new Error("MCP 工具保护不可用");
+							return options.protectTool(tool, schema, bindings, async () =>
+								// Only the credentials mapped to this (Server, Tool) reach the
+								// transport; the rest of the execution stays sealed.
+								source.toolCredentials(
+									server.mcpServerId,
+									tool.name,
+									bindings.map((binding) => binding.credential),
+								),
+							);
 						}),
 					);
 		return Object.assign(protectedDefinitions, {
