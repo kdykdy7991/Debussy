@@ -89,6 +89,8 @@ systemd-run --user --unit=pi-dev-stack --collect \
 - 后端以 `tsx` 前台方式运行、非 watch 模式，修改服务端代码后必须 `systemctl --user restart pi-dev-stack`，仅刷新浏览器不会加载新路由或新投影。
 - 这是当前用户会话下的临时单元；用户会话完全退出后可能停止，需要长期常驻时应另行配置 lingering 或系统级服务。
 
+若需要在受信任的局域网访问开发工作台，Vite 可读取本机忽略文件 `runtimes/pi/.env.web.lan-admin.local`。文件权限设为 `0600`，配置 `origin`（当前监听的 HTTP IPv4 地址及端口）、`password`（32 字节随机值的 64 位十六进制编码）和 `expiresAt`（Unix 毫秒，设为 `null` 时密码不过期）。默认允许与 `origin` 同一 IPv4 /24 的访问者登录，可用 `allowedClientCidrs` 数组添加受信任的 IPv4 网段。网段校验基于 TCP 对端地址，且访问仍需登录。访问者打开根地址，在登录页使用用户名 `admin` 与文件里 `password` 的值，有效会话最长 15 分钟。删除文件可立即关闭该访问。HTTP 上的密码和会话应只用于受信任的局域网。
+
 ## 依赖更新
 
 - 按锁文件完整安装：`npm ci --ignore-scripts`

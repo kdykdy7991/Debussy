@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { defineConfig, type PluginOption } from "vite";
+import { lanAdminAccess } from "./vite-lan-admin.ts";
 
 /**
  * `PI_WEB_TARGET` 控制本入口的产物裁剪：
@@ -21,6 +22,7 @@ const isEmbedOnly = target === "embed";
 const isSingle = isAdminOnly || isEmbedOnly;
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+const lanAdminConfig = fileURLToPath(new URL("../../.env.web.lan-admin.local", import.meta.url));
 const embedSourceRoots = ["src", "../client/src", "../protocol/src"].map((path) => resolve(projectRoot, path));
 
 /**
@@ -44,7 +46,7 @@ function routeRewritePlugin(): PluginOption {
 		name: "pi-web-route-rewrite",
 		apply: "serve",
 		configureServer(server) {
-			server.middlewares.use((req, _res, next) => {
+			server.middlewares.use(async (req, res, next) => {
 				const url = req.url ?? "/";
 				const remoteAddress = req.socket.remoteAddress;
 				const isLocalRequest =
@@ -52,9 +54,15 @@ function routeRewritePlugin(): PluginOption {
 					remoteAddress === "::1" ||
 					remoteAddress === "::ffff:127.0.0.1";
 				if (!isLocalRequest && !isPublicEmbedDevPath(url)) {
-					_res.statusCode = 403;
-					_res.end("This route is available only on localhost");
-					return;
+					const access = !isEmbedOnly && devAdminToken
+						? await lanAdminAccess(lanAdminConfig, req, res).catch(() => undefined)
+						: undefined;
+					if (access === "handled") return;
+					if (access !== "allow") {
+						res.statusCode = 403;
+						res.end("This route is available only on localhost");
+						return;
+					}
 				}
 				// Backend / Vite internal traffic must never fall through to the
 				// SPA history fallback below — otherwise /api/control/*, WebSocket
@@ -82,7 +90,7 @@ function routeRewritePlugin(): PluginOption {
 				if (isAdminOnly) {
 					if (url === "/embed.html" || url.startsWith("/embed/")) {
 						req.url = "/404.html";
-						_res.statusCode = 404;
+					res.statusCode = 404;
 					}
 					next();
 					return;
@@ -147,7 +155,7 @@ export default defineConfig({
 	},
 });
 
-/** LAN visitors can load Embed and its assets/API, but never the admin proxy. */
+/** These Embed routes are available on LAN without the optional admin login. */
 export function isPublicEmbedDevPath(url: string): boolean {
 	const path = url.split("?", 1)[0];
 	if (path.startsWith("/@fs/")) {
