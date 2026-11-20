@@ -11,6 +11,7 @@ import type { ConversationAdminListResponse } from "@earendil-works/pi-protocol"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ConversationListArgs, ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { formatBeijing } from "../beijing-time.ts";
 import { Badge } from "../components/Badge.tsx";
 import { Button } from "../components/Button.tsx";
 import { DateRange, FilterBar, FilterSearch, FilterSelect } from "../components/FilterBar.tsx";
@@ -318,7 +319,7 @@ interface DisplayConversation {
 function mapApiToDisplay(items: ConversationAdminListResponse["items"]): readonly DisplayConversation[] {
 	return items.map((item) => ({
 		id: item.id,
-		lastActiveAt: new Date(item.lastActiveAt).toLocaleString(),
+		lastActiveAt: formatBeijing(item.lastActiveAt),
 		principalDisplayId: item.principalDisplayId,
 		principalType: principalLabel(item.principalType),
 		appName: item.appName,

@@ -6,7 +6,7 @@
  *
  * 设计稿里 search 是 Topbar 的内嵌元素；这里复用同一组件做 List 页工具行。
  */
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, KeyboardEventHandler } from "react";
 import styles from "./SearchBox.module.css";
 
 export interface AuroraSearchBoxProps {
@@ -14,6 +14,7 @@ export interface AuroraSearchBoxProps {
 	readonly onChange: (value: string) => void;
 	readonly placeholder?: string;
 	readonly ariaLabel?: string;
+	readonly onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
 }
 
 export function AuroraSearchBox({
@@ -21,6 +22,7 @@ export function AuroraSearchBox({
 	onChange,
 	placeholder = "搜索…",
 	ariaLabel,
+	onKeyDown,
 }: AuroraSearchBoxProps): React.ReactElement {
 	return (
 		<label className={styles.box}>
@@ -43,6 +45,7 @@ export function AuroraSearchBox({
 				value={value}
 				placeholder={placeholder}
 				aria-label={ariaLabel ?? placeholder}
+				onKeyDown={onKeyDown}
 				onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.currentTarget.value)}
 			/>
 		</label>

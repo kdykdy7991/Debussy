@@ -6,6 +6,7 @@ import { AuroraPageHeader } from "../aurora/PageHeader.tsx";
 import { AuroraPill } from "../aurora/Pill.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
 import { useDialogs } from "../components/use-dialogs.tsx";
+import { navigate } from "../router.ts";
 import { OrchestrationConfiguration } from "./orchestration-configuration.tsx";
 import { OrchestrationConnection, OrchestrationCredential } from "./orchestration-connection.tsx";
 import { OrchestrationCreate } from "./orchestration-create.tsx";
@@ -21,7 +22,7 @@ type Panel =
 	| { kind: "debug"; integrationId?: string }
 	| { kind: "credential"; name: string; token: string };
 
-export function AdminOrchestrationPage(): React.JSX.Element {
+export function AdminLegacyIntegrationPanel({ management = false }: { management?: boolean }): React.JSX.Element {
 	const { controller } = useAdminAuth();
 	const api = useMemo(() => new OrchestrationApi(controller), [controller]),
 		dialogs = useDialogs();
@@ -36,7 +37,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 		[catalogError, setCatalogError] = useState<string | null>(null),
 		[catalogLoading, setCatalogLoading] = useState(true),
 		[catalogRevision, setCatalogRevision] = useState(0);
-	const [tab, setTab] = useState("work"),
+	const [tab, setTab] = useState(management ? "integrations" : "work"),
 		[query, setQuery] = useState(""),
 		[state, setState] = useState(""),
 		[source, setSource] = useState(""),
@@ -55,7 +56,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 			try {
 				const [integrations, work] = await Promise.all([
 					api.request<readonly OrchestrationIntegration[]>("integrations", "GET", undefined, signal),
-					api.request<readonly AnalysisWorkItem[]>("work-items", "GET", undefined, signal),
+					management ? [] : api.request<readonly AnalysisWorkItem[]>("work-items", "GET", undefined, signal),
 				]);
 				if (!signal?.aborted && sequence === loadSequence.current) {
 					setData({ integrations, work });
@@ -67,7 +68,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 				if (!signal?.aborted && sequence === loadSequence.current) setRefreshing(false);
 			}
 		},
-		[api],
+		[api, management],
 	);
 	useEffect(() => {
 		const abort = new AbortController();
@@ -91,6 +92,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: catalogRevision explicitly invalidates the remote catalog.
 	useEffect(() => {
 		const abort = new AbortController();
+		if (!management) return;
 		setCatalogLoading(true);
 		void api
 			.request<OrchestrationCatalog>("catalog", "GET", undefined, abort.signal)
@@ -109,7 +111,7 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 				if (!abort.signal.aborted) setCatalogLoading(false);
 			});
 		return () => abort.abort();
-	}, [api, catalogRevision]);
+	}, [api, catalogRevision, management]);
 	useEffect(() => {
 		if (!notice) return;
 		const timer = setTimeout(() => setNotice(""), 6000);
@@ -270,23 +272,30 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 		}
 	};
 	return (
-		<section className={styles.page} aria-label="Agent 编排">
+		<section className={styles.page} aria-label={management ? "旧 Integration 接入" : "Integration 执行记录"}>
 			<AuroraPageHeader
-				title="Agent 编排"
+				title={management ? "接入管理" : "执行记录"}
+				meta={management ? "旧 Integration" : "Integration Run"}
 				titleId="orchestration-title"
 				actions={
 					<>
 						<AuroraButton disabled={refreshing} onClick={() => void load()}>
 							{refreshing ? "正在刷新…" : "刷新"}
 						</AuroraButton>
-						<AuroraButton onClick={() => setPanel({ kind: "debug" })}>动态任务调试</AuroraButton>
-						<AuroraButton variant="primary" onClick={() => setPanel({ kind: "create" })}>
-							新建接入
-						</AuroraButton>
+						{management ? (
+							<>
+								<AuroraButton onClick={() => navigate("/conversations/integration")}>查看执行记录</AuroraButton>
+								<AuroraButton onClick={() => setPanel({ kind: "debug" })}>动态任务调试</AuroraButton>
+								<AuroraButton variant="primary" onClick={() => setPanel({ kind: "create" })}>
+									新建接入
+								</AuroraButton>
+							</>
+						) : (
+							<AuroraButton onClick={() => navigate("/access/integrations")}>管理 Integration</AuroraButton>
+						)}
 					</>
 				}
 			/>
-			<p className={styles.intro}>连接业务系统，让 Agent 在后台分析告警，按配置的提示词生成结果。</p>
 			{error && (
 				<div role="alert" className={styles.error}>
 					<strong>未能更新页面</strong>
@@ -298,74 +307,80 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 				</div>
 			)}
 			{notice && <output className={styles.success}>{notice}</output>}
-			{!data && !error && <output className={styles.loading}>正在加载接入系统与分析工作项…</output>}
+			{!data && !error && (
+				<output className={styles.loading}>{management ? "正在加载接入系统…" : "正在加载 Integration Run…"}</output>
+			)}
 			{data && (
 				<>
-					<section className={styles.metrics} aria-label="最近工作项概况">
-						{(["running", "queued", "failed", "succeeded"] as const).map((key) => (
-							<button
-								type="button"
-								key={key}
-								className={tab === "work" && state === key ? styles.metricSelected : styles.metric}
-								onClick={() => {
-									setTab("work");
-									setState(state === key ? "" : key);
-									setQuery("");
-									setSource("");
+					{!management && (
+						<>
+							<section className={styles.metrics} aria-label="最近工作项概况">
+								{(["running", "queued", "failed", "succeeded"] as const).map((key) => (
+									<button
+										type="button"
+										key={key}
+										className={tab === "work" && state === key ? styles.metricSelected : styles.metric}
+										onClick={() => {
+											setTab("work");
+											setState(state === key ? "" : key);
+											setQuery("");
+											setSource("");
+										}}
+									>
+										<span>{WORK_STATUS[key].label}</span>
+										<strong>{work.filter((w) => w.state === key).length}</strong>
+										<small>
+											{key === "running"
+												? "正在处理告警"
+												: key === "queued"
+													? "等待执行"
+													: key === "failed"
+														? "需要关注"
+														: "报告已就绪"}
+										</small>
+									</button>
+								))}
+							</section>
+							<div
+								className={styles.tabs}
+								role="tablist"
+								aria-label="Integration 记录类型"
+								onKeyDown={(event) => {
+									if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+									event.preventDefault();
+									const order = ["work", "debugRuns"];
+									const index = order.indexOf(tab);
+									const next =
+										order[(index + (event.key === "ArrowRight" ? 1 : order.length - 1)) % order.length]!;
+									switchTab(next);
+									document.getElementById(`orchestration-tab-${next}`)?.focus();
 								}}
 							>
-								<span>{WORK_STATUS[key].label}</span>
-								<strong>{work.filter((w) => w.state === key).length}</strong>
-								<small>
-									{key === "running"
-										? "正在处理告警"
-										: key === "queued"
-											? "等待执行"
-											: key === "failed"
-												? "需要关注"
-												: "报告已就绪"}
-								</small>
-							</button>
-						))}
-					</section>
-					<div
-						className={styles.tabs}
-						role="tablist"
-						aria-label="编排管理"
-						onKeyDown={(event) => {
-							if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-							event.preventDefault();
-							const order = ["work", "debugRuns", "integrations"];
-							const index = order.indexOf(tab);
-							const next = order[(index + (event.key === "ArrowRight" ? 1 : order.length - 1)) % order.length]!;
-							switchTab(next);
-							document.getElementById(`orchestration-tab-${next}`)?.focus();
-						}}
-					>
-						{[
-							["work", "分析工作项", work.length],
-							["debugRuns", "调试记录", debugRuns.length],
-							["integrations", "接入系统", integrations.length],
-						].map(([key, label, count]) => (
-							<button
-								type="button"
-								role="tab"
-								key={key}
-								id={`orchestration-tab-${key}`}
-								aria-controls="orchestration-tabpanel"
-								aria-selected={tab === key}
-								tabIndex={tab === key ? 0 : -1}
-								onClick={() => switchTab(String(key))}
-							>
-								{label}
-								<span>{count}</span>
-							</button>
-						))}
-					</div>
+								{[
+									["work", "分析工作项", work.length],
+									["debugRuns", "调试记录", debugRuns.length],
+								].map(([key, label, count]) => (
+									<button
+										type="button"
+										role="tab"
+										key={key}
+										id={`orchestration-tab-${key}`}
+										aria-controls="orchestration-tabpanel"
+										aria-selected={tab === key}
+										tabIndex={tab === key ? 0 : -1}
+										onClick={() => switchTab(String(key))}
+									>
+										{label}
+										<span>{count}</span>
+									</button>
+								))}
+							</div>
+						</>
+					)}
 					<section
 						id="orchestration-tabpanel"
-						role="tabpanel"
-						aria-labelledby={`orchestration-tab-${tab}`}
+						role={management ? undefined : "tabpanel"}
+						aria-labelledby={management ? undefined : `orchestration-tab-${tab}`}
 						className={styles.panel}
 					>
 						<div className={styles.toolbar}>
@@ -526,8 +541,8 @@ export function AdminOrchestrationPage(): React.JSX.Element {
 												: "创建接入后，工单系统即可提交告警并查询分析报告。"}
 									</p>
 									{!integrations.length && (
-										<AuroraButton variant="primary" onClick={() => setPanel({ kind: "create" })}>
-											新建接入
+										<AuroraButton variant="primary" onClick={() => navigate("/access/integrations")}>
+											管理接入
 										</AuroraButton>
 									)}
 								</div>

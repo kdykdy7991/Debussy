@@ -1,77 +1,110 @@
 import type {
+	ConversationAdminDetailResponse,
 	ConversationAdminEvent,
 	ConversationAdminEventListResponse,
 	ConversationAdminListResponse,
-	ConversationAdminSummary,
 	ConversationExportMode,
 } from "@earendil-works/pi-protocol";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationsApi } from "../api/conversations-api.ts";
+import { AuroraPillTabs } from "../aurora/PillTabs.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { formatBeijing } from "../beijing-time.ts";
 import { ConfirmModal } from "../components/confirm-modal.tsx";
 import { useDialogs } from "../components/use-dialogs.tsx";
+import { createStaleResponseGuard } from "../data-state.ts";
+import { WORK_STATUS } from "../pages/orchestration-ui.ts";
 import { navigate } from "../router.ts";
 import styles from "./conversation-detail.module.css";
+import { Info, InfoCard } from "./execution-info.tsx";
+import { TrajectoryView } from "./trajectory-view.tsx";
+import { UsageView } from "./usage-view.tsx";
 
-interface DetailData {
-	readonly conversation: ConversationAdminSummary;
-	readonly rollover: {
-		readonly previousConversationId: string | null;
-		readonly nextConversationId: string | null;
-		readonly rolledOverAt: string | null;
-	};
-}
+type DetailData = ConversationAdminDetailResponse;
+type SessionTab = "trajectory" | "usage";
 
 type DetailState = { kind: "loading" } | { kind: "loaded"; data: DetailData } | { kind: "error"; message: string };
-type EventState =
-	| { kind: "loading" }
-	| { kind: "loaded"; items: readonly ConversationAdminEvent[] }
-	| { kind: "error"; message: string };
-
-type TimelineKind = "user" | "assistant" | "tool" | "error";
-interface TimelineItem {
-	readonly event: ConversationAdminEvent;
-	readonly kind: TimelineKind;
-	readonly label: string;
-	readonly text: string;
+interface EventPageState {
+	readonly kind: "loading" | "loaded" | "error";
+	readonly message?: string;
+	readonly items: readonly ConversationAdminEvent[];
+	readonly nextAfterSequence: number | null;
 }
+const EMPTY_EVENT_PAGE: EventPageState = { kind: "loading", items: [], nextAfterSequence: null };
 
 export function AdminConversationDetail({ conversationId }: { conversationId: string }): React.ReactElement {
 	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
+	const guardRef = useRef<ReturnType<typeof createStaleResponseGuard> | null>(null);
+	if (guardRef.current === null) guardRef.current = createStaleResponseGuard();
+	const guard = guardRef.current;
 	const [detail, setDetail] = useState<DetailState>({ kind: "loading" });
-	const [events, setEvents] = useState<EventState>({ kind: "loading" });
-	const [query, setQuery] = useState("");
-	const [selectedSequence, setSelectedSequence] = useState<number | null>(null);
+	const [eventPage, setEventPage] = useState<EventPageState>(EMPTY_EVENT_PAGE);
+	const [tab, setTab] = useState<SessionTab>("trajectory");
+	const [loadingMore, setLoadingMore] = useState(false);
 	const [fullExportOpen, setFullExportOpen] = useState(false);
 	const [exporting, setExporting] = useState<ConversationExportMode | null>(null);
 	const [exportError, setExportError] = useState<string | null>(null);
 	const [lifecycleBusy, setLifecycleBusy] = useState<"archive" | "delete" | null>(null);
 
 	const load = useCallback(() => {
+		const ticket = guard.begin();
 		setDetail({ kind: "loading" });
-		setEvents({ kind: "loading" });
+		setEventPage(EMPTY_EVENT_PAGE);
 		void Promise.all([
-			api.getDetail(conversationId),
-			api.listEvents(conversationId, { limit: 500, afterSequence: 0 }),
+			api.getDetail(conversationId, ticket.signal),
+			api.listEvents(conversationId, { limit: 200 }, ticket.signal),
 		]).then(
-			([detailData, eventData]) => {
-				setDetail({ kind: "loaded", data: detailData });
-				setEvents({ kind: "loaded", items: eventData.items });
-				const firstFailure = eventData.items.find((event) => isErrorEvent(event));
-				setSelectedSequence(firstFailure?.sequence ?? null);
+			([detailData, firstPage]) => {
+				ticket.commit(() => {
+					setDetail({ kind: "loaded", data: detailData });
+					setEventPage({
+						kind: "loaded",
+						items: firstPage.items,
+						nextAfterSequence: firstPage.nextAfterSequence,
+					});
+				});
 			},
-			(error: Error) => {
-				setDetail({ kind: "error", message: error.message });
-				setEvents({ kind: "error", message: error.message });
+			(error: unknown) => {
+				if (error instanceof DOMException && error.name === "AbortError") return;
+				const message = error instanceof Error ? error.message : String(error);
+				ticket.commit(() => {
+					setDetail({ kind: "error", message });
+					setEventPage({ kind: "error", message, items: [], nextAfterSequence: null });
+				});
 			},
 		);
-	}, [api, conversationId]);
+	}, [api, conversationId, guard]);
 
 	useEffect(() => {
 		load();
-	}, [load]);
+		return () => guard.cancel();
+	}, [load, guard]);
+
+	/** Append the next page; previously loaded events are always kept. */
+	const loadMoreEvents = useCallback(() => {
+		if (eventPage.kind !== "loaded" || eventPage.nextAfterSequence === null || loadingMore) return;
+		const after = eventPage.nextAfterSequence;
+		setLoadingMore(true);
+		void api
+			.listEvents(conversationId, { limit: 200, afterSequence: after })
+			.then((page) => {
+				setEventPage((previous) =>
+					previous.kind === "loaded"
+						? {
+								kind: "loaded",
+								items: [...previous.items, ...page.items],
+								nextAfterSequence: page.nextAfterSequence,
+							}
+						: previous,
+				);
+			})
+			.catch((error: unknown) => {
+				setExportError(error instanceof Error ? error.message : String(error));
+			})
+			.finally(() => setLoadingMore(false));
+	}, [api, conversationId, eventPage, loadingMore]);
 
 	const downloadExport = useCallback(
 		async (mode: ConversationExportMode): Promise<void> => {
@@ -96,17 +129,7 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 		[api, conversationId],
 	);
 
-	const timeline = useMemo(() => {
-		if (events.kind !== "loaded") return [];
-		const needle = query.trim().toLowerCase();
-		return events.items
-			.map(toTimelineItem)
-			.filter((item): item is TimelineItem => item !== null)
-			.filter((item) => needle === "" || item.text.toLowerCase().includes(needle));
-	}, [events, query]);
-	const selectedEvent =
-		events.kind === "loaded" ? (events.items.find((event) => event.sequence === selectedSequence) ?? null) : null;
-	const modelId = events.kind === "loaded" ? readModel(events.items) : "—";
+	const modelId = eventPage.kind === "loaded" ? readModel(eventPage.items) : "—";
 	const updateLifecycle = async (action: "archive" | "delete") => {
 		const message =
 			action === "archive"
@@ -146,8 +169,11 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 				onCancel={() => setFullExportOpen(false)}
 			/>
 			<div className={styles.topLine}>
-				<button type="button" className={styles.back} onClick={() => navigate("/conversations")}>
-					←&nbsp; 返回 Session 日志列表
+				<button type="button" className={styles.back} onClick={() => {
+					const origin = detail.kind === "loaded" ? detail.data.conversation.origin : undefined;
+					navigate(origin === "aaas_key" ? "/conversations/aaas" : origin === "integration" ? "/conversations/integration" : "/conversations");
+				}}>
+					←&nbsp; 返回执行记录
 				</button>
 				<button type="button" className={styles.refresh} onClick={load}>
 					<Icon name="refresh" />
@@ -157,11 +183,11 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 			<div className={styles.titleRow}>
 				<h1>Session 详情</h1>
 				<div className={styles.actions}>
-					<select aria-label="时间范围">
-						<option>全部时间</option>
-					</select>
 					<button type="button" disabled={exporting !== null} onClick={() => void downloadExport("transcript")}>
 						导出日志
+					</button>
+					<button type="button" disabled={exporting !== null} onClick={() => setFullExportOpen(true)}>
+						完整导出
 					</button>
 					{detail.kind === "loaded" && detail.data.conversation.status === "active" ? (
 						<button
@@ -196,16 +222,15 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 			) : null}
 			{detail.kind === "loaded" ? (
 				<LoadedDetail
+					api={api}
+					conversationId={conversationId}
 					data={detail.data}
 					modelId={modelId}
-					timeline={timeline}
-					eventState={events}
-					query={query}
-					onQuery={setQuery}
-					selectedSequence={selectedSequence}
-					onSelect={setSelectedSequence}
-					selectedEvent={selectedEvent}
-					onFullExport={() => setFullExportOpen(true)}
+					eventPage={eventPage}
+					tab={tab}
+					onTab={setTab}
+					loadingMore={loadingMore}
+					onLoadMore={loadMoreEvents}
 				/>
 			) : null}
 		</section>
@@ -213,26 +238,25 @@ export function AdminConversationDetail({ conversationId }: { conversationId: st
 }
 
 function LoadedDetail({
+	api,
+	conversationId,
 	data,
 	modelId,
-	timeline,
-	eventState,
-	query,
-	onQuery,
-	selectedSequence,
-	onSelect,
-	selectedEvent,
+	eventPage,
+	tab,
+	onTab,
+	loadingMore,
+	onLoadMore,
 }: {
+	readonly api: ConversationsApi;
+	readonly conversationId: string;
 	readonly data: DetailData;
 	readonly modelId: string;
-	readonly timeline: readonly TimelineItem[];
-	readonly eventState: EventState;
-	readonly query: string;
-	readonly onQuery: (value: string) => void;
-	readonly selectedSequence: number | null;
-	readonly onSelect: (sequence: number) => void;
-	readonly selectedEvent: ConversationAdminEvent | null;
-	readonly onFullExport: () => void;
+	readonly eventPage: EventPageState;
+	readonly tab: SessionTab;
+	readonly onTab: (tab: SessionTab) => void;
+	readonly loadingMore: boolean;
+	readonly onLoadMore: () => void;
 }): React.ReactElement {
 	const conversation = data.conversation;
 	return (
@@ -248,235 +272,43 @@ function LoadedDetail({
 				</InfoCard>
 				<InfoCard title="运行配置">
 					<Info label="应用" value={conversation.appName} />
+					<Info label="任务来源" value={conversation.origin === "aaas_key" ? "旧 AaaS Run" : conversation.origin === "integration" ? "Integration Run" : data.source === "chat" ? "Chat" : "历史编排"} />
+					{conversation.runId && <Info label="Run ID" value={conversation.runId} copy />}
+					{conversation.executionState && <Info label={conversation.runId ? "Run 状态" : "最近一轮状态"} value={conversation.executionState === "running" && !conversation.runId ? "已开始" : WORK_STATUS[conversation.executionState as keyof typeof WORK_STATUS]?.label ?? conversation.executionState} />}
 					<Info label="实际模型" value={modelId} />
+					<Info label="请求契约" value={data.requestContract || "—"} />
 					<Info label="Agent" value={conversation.agentId || "—"} />
-					<Info label="思考强度" value="—" />
-					<Info label="Agent 版本" value="—" />
 				</InfoCard>
 			</div>
-			<div className={styles.workspace}>
-				<div className={styles.timelinePanel}>
-					<div className={styles.timelineHeader}>
-						<strong>对话时间线</strong>
-						<span>共 {conversation.messageCount} 条消息</span>
-						<label>
-							<Icon name="search" />
-							<input
-								value={query}
-								onChange={(event) => onQuery(event.currentTarget.value)}
-								placeholder="搜索消息内容"
-							/>
-						</label>
-						<button type="button">
-							<Icon name="calendar" />
-							跳转到
-						</button>
-					</div>
-					<div className={styles.timelineBody}>
-						<aside>
-							<strong>全部时间</strong>
-							<span>
-								今天
-								<br />
-								{timeline.length} 条
-							</span>
-						</aside>
-						<main>
-							<div className={styles.dayTitle}>{formatDay(conversation.lastActiveAt)}</div>
-							{eventState.kind === "loading" ? <p className={styles.loading}>加载消息中…</p> : null}
-							{eventState.kind === "error" ? (
-								<div className={styles.errorBanner}>{eventState.message}</div>
-							) : null}
-							{timeline.map((item) => (
-								<TimelineRow
-									key={item.event.sequence}
-									item={item}
-									selected={selectedSequence === item.event.sequence}
-									onSelect={() => onSelect(item.event.sequence)}
-								/>
-							))}
-							{eventState.kind === "loaded" && timeline.length === 0 ? (
-								<p className={styles.empty}>暂无消息</p>
-							) : null}
-						</main>
-					</div>
-				</div>
-				<DetailPanel event={selectedEvent} />
+			<AuroraPillTabs
+				ariaLabel="Session 视图"
+				value={tab}
+				onChange={onTab}
+				items={[
+					{ value: "trajectory", label: "执行轨迹" },
+					{ value: "usage", label: "用量" },
+				]}
+			/>
+			<div className={styles.tabPanel}>
+				{tab === "trajectory" ? (
+					<TrajectoryView
+						key={conversationId}
+						api={api}
+						conversationId={conversationId}
+						events={eventPage.items}
+						initialTrace={data.trace}
+						taskInput={data.taskInput}
+						hasMoreEvents={eventPage.nextAfterSequence !== null}
+						loadingMoreEvents={loadingMore}
+						onLoadMoreEvents={onLoadMore}
+					/>
+				) : null}
+				{tab === "usage" ? <UsageView api={api} conversationId={conversationId} /> : null}
 			</div>
 		</>
 	);
 }
 
-function InfoCard({ title, children }: { title: string; children: React.ReactNode }): React.ReactElement {
-	return (
-		<section className={styles.infoCard}>
-			<h2>{title}</h2>
-			<div>{children}</div>
-		</section>
-	);
-}
-function Info({
-	label,
-	value,
-	copy = false,
-	status = false,
-}: {
-	label: string;
-	value: string;
-	copy?: boolean;
-	status?: boolean;
-}): React.ReactElement {
-	return (
-		<div className={styles.info}>
-			<span>{label}</span>
-			<strong className={status ? styles.infoStatus : ""}>{value}</strong>
-			{copy ? (
-				<button type="button" onClick={() => void navigator.clipboard.writeText(value)} aria-label="复制会话 ID">
-					□
-				</button>
-			) : null}
-		</div>
-	);
-}
-
-function TimelineRow({
-	item,
-	selected,
-	onSelect,
-}: {
-	item: TimelineItem;
-	selected: boolean;
-	onSelect: () => void;
-}): React.ReactElement {
-	return (
-		<button
-			type="button"
-			className={`${styles.messageRow} ${item.kind === "error" ? styles.messageError : ""} ${selected ? styles.messageSelected : ""}`}
-			onClick={onSelect}
-		>
-			<time>
-				{new Date(item.event.createdAt).toLocaleTimeString([], {
-					hour: "2-digit",
-					minute: "2-digit",
-					second: "2-digit",
-				})}
-			</time>
-			<div className={`${styles.avatar} ${styles[`avatar${item.kind[0]!.toUpperCase()}${item.kind.slice(1)}`]}`}>
-				{item.kind === "user" ? "人" : item.kind === "tool" ? "T" : "A"}
-			</div>
-			<div className={styles.messageContent}>
-				<div>
-					<strong>{item.label}</strong>
-					<span className={item.kind === "error" ? styles.failed : styles.success}>
-						{item.kind === "error" ? "失败" : "成功"}
-					</span>
-				</div>
-				<p>{item.text}</p>
-				{item.kind === "error" ? <ErrorInline event={item.event} /> : null}
-			</div>
-			<span className={styles.expand}>⌄</span>
-		</button>
-	);
-}
-
-function ErrorInline({ event }: { event: ConversationAdminEvent }): React.ReactElement {
-	const payload = asRecord(event.payload);
-	return (
-		<div className={styles.errorInline}>
-			<span>
-				错误类型<strong>{readString(payload, "error_type") || "TurnError"}</strong>
-			</span>
-			<span>
-				错误信息<strong>{errorText(event)}</strong>
-			</span>
-			<span>
-				发生时间<strong>{formatDate(event.createdAt)}</strong>
-			</span>
-		</div>
-	);
-}
-
-function DetailPanel({ event }: { event: ConversationAdminEvent | null }): React.ReactElement {
-	if (event === null)
-		return (
-			<aside className={styles.detailPanel}>
-				<h2>消息详情</h2>
-				<p className={styles.empty}>选择一条消息查看详情</p>
-			</aside>
-		);
-	const error = isErrorEvent(event);
-	return (
-		<aside className={styles.detailPanel}>
-			<h2>{error ? "错误详情" : "消息详情"}</h2>
-			<dl>
-				<dt>事件位置</dt>
-				<dd>{event.eventType}</dd>
-				<dt>事件类型</dt>
-				<dd>{event.kind}</dd>
-				<dt>发生时间</dt>
-				<dd>{formatDate(event.createdAt)}</dd>
-				{error ? (
-					<>
-						<dt>错误信息</dt>
-						<dd>{errorText(event)}</dd>
-					</>
-				) : null}
-			</dl>
-			<Technical title="技术详情" value={event.payload} />
-			<Technical
-				title="消息信息"
-				value={{
-					eventId: event.eventId,
-					sequence: event.sequence,
-					turnId: event.turnId,
-					payloadBytes: event.payloadBytes,
-				}}
-			/>
-		</aside>
-	);
-}
-
-function Technical({ title, value }: { title: string; value: unknown }): React.ReactElement {
-	return (
-		<details className={styles.technical} open>
-			<summary>
-				{title}
-				<span>⌃</span>
-			</summary>
-			<pre>{safeJson(value)}</pre>
-		</details>
-	);
-}
-
-function toTimelineItem(event: ConversationAdminEvent): TimelineItem | null {
-	if (event.eventType === "user/message")
-		return { event, kind: "user", label: "用户", text: payloadText(event.payload) };
-	if (event.eventType === "assistant/message")
-		return { event, kind: "assistant", label: "Agent", text: payloadText(event.payload) };
-	if (event.eventType === "tool/call" || event.eventType === "tool/result")
-		return { event, kind: "tool", label: "工具", text: payloadText(event.payload) };
-	if (isErrorEvent(event)) return { event, kind: "error", label: "Agent", text: errorText(event) };
-	return null;
-}
-
-function isErrorEvent(event: ConversationAdminEvent): boolean {
-	return event.eventType === "turn/failed" || event.eventType === "tool/error" || event.kind === "unknown";
-}
-function payloadText(payload: unknown): string {
-	if (typeof payload === "string") return payload;
-	const record = asRecord(payload);
-	return readString(record, "text") || readString(record, "message") || safeJson(payload);
-}
-function errorText(event: ConversationAdminEvent): string {
-	const record = asRecord(event.payload);
-	const nested = asRecord(record.error);
-	return (
-		readString(record, "error") ||
-		readString(record, "message") ||
-		readString(nested, "message") ||
-		safeJson(event.payload)
-	);
-}
 function readModel(events: readonly ConversationAdminEvent[]): string {
 	const start = events.find((event) => event.eventType === "turn/start");
 	return readString(asRecord(start?.payload), "model") || "—";
@@ -489,23 +321,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 function readString(record: Record<string, unknown>, key: string): string {
 	return typeof record[key] === "string" ? record[key] : "";
 }
-function safeJson(value: unknown): string {
-	try {
-		return JSON.stringify(value, null, 2);
-	} catch {
-		return "（不可展示）";
-	}
-}
 function formatDate(value: string): string {
-	return new Date(value).toLocaleString();
-}
-function formatDay(value: string): string {
-	return new Date(value).toLocaleDateString(undefined, {
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-		weekday: "short",
-	});
+	return formatBeijing(value);
 }
 function duration(start: string, end: string): string {
 	const milliseconds = Math.max(0, new Date(end).getTime() - new Date(start).getTime());

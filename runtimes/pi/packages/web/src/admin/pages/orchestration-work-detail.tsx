@@ -115,7 +115,7 @@ export function OrchestrationWorkDetail({
 			footer={
 				<>
 					<AuroraButton onClick={() => navigate(`/conversations/${item.conversationId}`)}>
-						查看 Session 日志 ↗
+						查看调用轨迹 ↗
 					</AuroraButton>
 					<span className={styles.footerSpacer} />
 					{running && (

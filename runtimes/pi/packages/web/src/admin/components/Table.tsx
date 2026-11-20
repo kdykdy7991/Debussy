@@ -15,7 +15,7 @@
  * 视觉：白底圆角细边，表头浅色背景 + 大写字距，行 hover 暖色，行可点击态。
  * 支持空状态/loading/error 态（renderEmpty 回调）。
  */
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import styles from "./Table.module.css";
 
 export interface TableColumn<T> {
@@ -35,6 +35,10 @@ export interface TableProps<T> {
 	readonly rows: readonly T[];
 	readonly rowKey: (row: T) => string;
 	readonly onRowClick?: (row: T) => void;
+	/** Keyboard activation (Enter/Space) for interactive rows. */
+	readonly onRowKeyDown?: (event: KeyboardEvent<HTMLTableRowElement>, row: T) => void;
+	/** Accessible name for an interactive row. */
+	readonly rowAriaLabel?: (row: T) => string;
 	/** 把整行变成可点击的链接。 */
 	readonly rowHref?: (row: T) => string;
 	readonly renderEmpty?: () => ReactNode;
@@ -48,6 +52,8 @@ export function Table<T>({
 	rows,
 	rowKey,
 	onRowClick,
+	onRowKeyDown,
+	rowAriaLabel,
 	rowHref,
 	renderEmpty,
 	emptyTitle = "没有匹配的数据",
@@ -88,12 +94,15 @@ export function Table<T>({
 						</tr>
 					) : (
 						rows.map((row) => {
-							const clickable = onRowClick !== undefined || rowHref !== undefined;
+							const clickable = onRowClick !== undefined || rowHref !== undefined || onRowKeyDown !== undefined;
 							return (
 								<tr
 									key={rowKey(row)}
 									className={clickable ? styles.rowClickable : ""}
 									onClick={onRowClick ? () => onRowClick(row) : undefined}
+									onKeyDown={onRowKeyDown ? (event) => onRowKeyDown(event, row) : undefined}
+									tabIndex={onRowKeyDown === undefined ? undefined : 0}
+									aria-label={rowAriaLabel?.(row)}
 								>
 									{columns.map((col) => (
 										<td

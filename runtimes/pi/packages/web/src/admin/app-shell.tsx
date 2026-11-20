@@ -30,9 +30,11 @@ import { AuroraAppSidebar, type AuroraAppSidebarItem } from "./aurora/AppSidebar
 import { NavIcon } from "./aurora/nav-icons.tsx";
 import { AdminAuthProvider, useAdminAuth } from "./auth/admin-auth-context.tsx";
 import { AdminAgentsPage } from "./pages/agents-page.tsx";
+import { AdminAaasLegacyConfigurationPage } from "./pages/aaas-current-configuration-page.tsx";
+import { AdminAccessPage } from "./pages/access-page.tsx";
 import { AdminChatPage } from "./pages/chat-page.tsx";
 import { AdminMcpPage } from "./pages/mcp-page.tsx";
-import { AdminOrchestrationPage } from "./pages/orchestration-page.tsx";
+import { AdminSandboxPage } from "./pages/sandbox-page.tsx";
 import { AdminSettingsPage } from "./pages/settings-page.tsx";
 import { AdminSkillsPage } from "./pages/skills-page.tsx";
 import { AdminUsagePage } from "./pages/usage-page.tsx";
@@ -45,14 +47,15 @@ const SIDEBAR_ITEMS: readonly AuroraAppSidebarItem[] = [
 	{ id: "agents", label: "Agent", path: "/agents", icon: <NavIcon name="agent" /> },
 	{ id: "skills", label: "Skills", path: "/skills", icon: <NavIcon name="skills" /> },
 	{ id: "mcp", label: "MCP", path: "/mcp", icon: <NavIcon name="mcp" /> },
-	{ id: "orchestration", label: "Agent 编排", path: "/orchestration", icon: <NavIcon name="agent" /> },
-	{ id: "usage", label: "Usage", path: "/usage", icon: <NavIcon name="usage" /> },
+	{ id: "aaas-keys", label: "接入管理", path: "/access", icon: <NavIcon name="agent" /> },
 	{
 		id: "user-conversations",
-		label: "Session 日志",
+		label: "执行记录",
 		path: "/conversations",
 		icon: <NavIcon name="sessions" />,
 	},
+	{ id: "usage", label: "用量统计", path: "/usage", icon: <NavIcon name="usage" /> },
+	{ id: "sandbox", label: "Sandbox 环境", path: "/sandbox", icon: <NavIcon name="skills" /> },
 	{ id: "settings", label: "设置", path: "/settings", icon: <NavIcon name="settings" /> },
 ];
 
@@ -67,10 +70,17 @@ function resolveNavItemId(route: AdminRoute): NavItemId | null {
 			return "mcp";
 		case "usage":
 			return "usage";
-		case "orchestration":
-			return "orchestration";
+		case "sandbox":
+			return "sandbox";
+		case "access-integrations":
+		case "aaas-keys":
+		case "aaas-configurations":
+			return "aaas-keys";
 		case "user-conversations":
 		case "user-conversation-detail":
+		case "orchestration":
+		case "aaas-executions":
+		case "router-executions":
 			return "user-conversations";
 		case "settings":
 			return "settings";
@@ -98,10 +108,18 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 			return <AdminMcpPage />;
 		case "usage":
 			return <AdminUsagePage />;
-		case "orchestration":
-			return <AdminOrchestrationPage />;
+		case "sandbox":
+			return <AdminSandboxPage />;
+		case "aaas-keys":
+		case "access-integrations":
+			return <AdminAccessPage integration={route.id === "access-integrations"} />;
+		case "aaas-configurations":
+			return <AdminAaasLegacyConfigurationPage />;
 		case "user-conversations":
 		case "user-conversation-detail":
+		case "orchestration":
+		case "aaas-executions":
+		case "router-executions":
 			return <AdminUserConversationsPage route={route} />;
 		case "settings":
 			return <AdminSettingsPage />;
@@ -115,6 +133,10 @@ function MainArea({ route }: { route: AdminRoute }): React.ReactElement {
 function Shell(): React.ReactElement {
 	const route = useAdminRoute();
 	const { snapshot } = useAdminAuth();
+	const navItemId = resolveNavItemId(route);
+	const scopeKey = navItemId === "aaas-keys" || navItemId === "user-conversations" || navItemId === "sandbox"
+		? `${snapshot.state}:${snapshot.baseUrl}:${snapshot.tenant?.id ?? ""}`
+		: undefined;
 	const connectionLabel =
 		snapshot.state === "connected"
 			? "已连接"
@@ -127,14 +149,14 @@ function Shell(): React.ReactElement {
 		<div className="admin-shell" data-route={route.id}>
 			<AuroraAppSidebar
 				items={SIDEBAR_ITEMS}
-				currentItemId={resolveNavItemId(route)}
+				currentItemId={navItemId}
 				brandName="Debussy"
 				brandSubtitle="Admin Console"
 				tenantName={snapshot.tenant?.name}
 				connectionLabel={connectionLabel}
 			/>
 			<main className="admin-shell__main">
-				<MainArea route={route} />
+				<MainArea key={scopeKey} route={route} />
 			</main>
 		</div>
 	);

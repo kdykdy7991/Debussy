@@ -8,14 +8,24 @@ import { useState } from "react";
 import { AuroraPill } from "../aurora/Pill.tsx";
 import { WORK_STATUS } from "./orchestration-ui.ts";
 import {
+	CACHE_HIT_HINT,
+	CACHE_MISS_HINT,
+	CACHE_UNKNOWN_TITLE,
 	coverageLabel,
+	formatCacheCoverage,
+	formatCacheHitMiss,
 	formatCompact,
 	formatCoveragePercent,
+	formatDayCacheHitTokens,
 	formatDayLabel,
 	formatDuration,
 	formatInteger,
+	formatPercent,
 	formatRunTime,
+	PROMPT_TOKEN_HINT,
 	shortId,
+	usageSourceLabel,
+	USAGE_CALIBER_LINE,
 	type UsageSort,
 	type UsageSortKey,
 	type UsageTab,
@@ -70,7 +80,8 @@ export interface UsageMetricItem {
 	readonly hint: string;
 	readonly value: string;
 	readonly badge?: string;
-	readonly icon: "run" | "token" | "call" | "check";
+	readonly note?: string;
+	readonly icon: "run" | "token" | "call" | "check" | "cache";
 }
 
 const METRIC_ICONS: Record<UsageMetricItem["icon"], React.ReactNode> = {
@@ -95,6 +106,12 @@ const METRIC_ICONS: Record<UsageMetricItem["icon"], React.ReactNode> = {
 			<path d="m6.5 10 2.5 2.5 4.5-5" />
 		</>
 	),
+	cache: (
+		<>
+			<path d="M3 6.2 10 3l7 3.2-7 3.2-7-3.2Z" />
+			<path d="m3 10.2 7 3.2 7-3.2M3 14.2l7 3.2 7-3.2" />
+		</>
+	),
 };
 
 export function UsageMetrics({ items }: { readonly items: readonly UsageMetricItem[] }): React.ReactElement {
@@ -112,10 +129,23 @@ export function UsageMetrics({ items }: { readonly items: readonly UsageMetricIt
 					<div className={styles.metricValueRow}>
 						<strong className={styles.metricValue}>{item.value}</strong>
 						{item.badge && <span className={styles.coverageBadge}>覆盖率 {item.badge}</span>}
+						{item.note && <span className={styles.coverageBadge}>{item.note}</span>}
 					</div>
 				</div>
 			))}
 		</section>
+	);
+}
+
+/**
+ * 口径定义行：Prompt Token / 缓存命中 / 非命中 / Total 四个公式的可见说明。
+ * 全局用量控制台与单会话 Usage 页共用同一段文案，避免两处口径漂移。
+ */
+export function UsageCaliberLine(): React.ReactElement {
+	return (
+		<p className={styles.muted} data-usage-caliber="true">
+			口径：{USAGE_CALIBER_LINE}
+		</p>
 	);
 }
 
@@ -128,24 +158,68 @@ function niceStep(raw: number): number {
 	return 10 * magnitude;
 }
 
-export function UsageTrend({ days }: { readonly days: readonly AdminUsageDayRow[] }): React.ReactElement {
+function dayTokenSegments(day: AdminUsageDayRow) {
+	const total = day.accurateTokens;
+	const hit =
+		day.cacheReportedRuns > 0 ? Math.min(total, day.cacheHitTokens) : 0;
+	const miss =
+		day.cacheReportedRuns > 0
+			? Math.min(
+					total - hit,
+					Math.max(0, day.cachePromptTokens - day.cacheHitTokens),
+				)
+			: 0;
+	return { hit, miss, other: total - hit - miss };
+}
+
+export function UsageTrend({
+	days,
+}: {
+	readonly days: readonly AdminUsageDayRow[];
+}): React.ReactElement {
 	const [hovered, setHovered] = useState<string | null>(null);
 	const peak = days.reduce((max, day) => Math.max(max, day.accurateTokens), 0);
-	const step = niceStep(peak / 4);
+	const step = niceStep(peak / 3.5);
 	const top = step * 4;
 	const ticks = [4, 3, 2, 1, 0].map((n) => n * step);
 	const labelEvery = Math.max(1, Math.ceil(days.length / 14));
-	const hoveredIndex = hovered === null ? -1 : days.findIndex((day) => day.date === hovered);
+	const hoveredIndex =
+		hovered === null ? -1 : days.findIndex((day) => day.date === hovered);
 	const hoveredDay = hoveredIndex >= 0 ? days[hoveredIndex] : null;
-	const tipLeft = days.length > 0 ? ((hoveredIndex + 0.5) / days.length) * 100 : 0;
+	const tipLeft =
+		days.length > 0 ? ((hoveredIndex + 0.5) / days.length) * 100 : 0;
 	/** Keep the bubble inside the plot for the first and last column. */
-	const tipShift = hoveredIndex <= 0 ? "0%" : hoveredIndex >= days.length - 1 ? "-100%" : "-50%";
-	const tipBottom = hoveredDay !== null && top > 0 ? Math.min(100, (hoveredDay.accurateTokens / top) * 100) : 0;
+	const tipShift =
+		hoveredIndex <= 0
+			? "0%"
+			: hoveredIndex >= days.length - 1
+				? "-100%"
+				: "-50%";
+	const hoveredHeight = hoveredDay === null ? 0 : hoveredDay.accurateTokens;
+	const tipBottom = top > 0 ? Math.min(100, (hoveredHeight / top) * 100) : 0;
+	const hoveredSegments =
+		hoveredDay === null ? null : dayTokenSegments(hoveredDay);
+	const barHeight = (value: number): string =>
+		`${top > 0 ? Math.min(100, (value / top) * 100) : 0}%`;
 	return (
 		<section className={styles.trendCard} aria-label="Tokens 按天趋势">
 			<div className={styles.trendTitleRow}>
 				<h2 className={styles.trendTitle}>Tokens · 趋势</h2>
-				<UsageHint text="按 Run 创建时间归入 UTC 自然日，仅累计完整 provider usage 的准确 Token；历史部分 Token 不计入柱高。" />
+				<UsageHint text="按北京时间自然日汇总完整上报的总 Token。柱内区分已确认的缓存命中、非命中，以及输出或无缓存分项的其余 Token。" />
+				<div className={styles.legend} aria-hidden="true">
+					<span className={styles.legendItem}>
+						<i className={`${styles.legendDot} ${styles.legendDotCache}`} />
+						缓存命中
+					</span>
+					<span className={styles.legendItem}>
+						<i className={styles.legendDot} />
+						非命中
+					</span>
+					<span className={styles.legendItem}>
+						<i className={`${styles.legendDot} ${styles.legendDotOther}`} />
+						输出及未分类
+					</span>
+				</div>
 			</div>
 			<div className={styles.chart}>
 				<div className={styles.yAxis} aria-hidden="true">
@@ -160,20 +234,57 @@ export function UsageTrend({ days }: { readonly days: readonly AdminUsageDayRow[
 						))}
 					</div>
 					<div className={styles.bars}>
-						{days.map((day) => (
-							<div className={styles.barSlot} key={day.date}>
+						{days.map((day, index) => {
+							const { hit, miss, other } = dayTokenSegments(day);
+							const total = day.accurateTokens;
+							return (
 								<div
-									className={styles.bar}
-									data-empty={day.accurateTokens === 0 ? "true" : undefined}
-									style={{ height: `${top > 0 ? Math.min(100, (day.accurateTokens / top) * 100) : 0}%` }}
+									className={styles.barSlot}
+									key={day.date}
 									role="img"
-									aria-label={`${day.date} 准确 Token ${formatInteger(day.accurateTokens)}`}
+									aria-label={`${day.date} 总 Token ${formatInteger(total)}，缓存命中 Token ${formatDayCacheHitTokens(day)}，非命中 Token ${day.cacheReportedRuns === 0 ? "—" : formatInteger(miss)}，输出及未分类 Token ${formatInteger(other)}，缓存命中率 ${formatPercent(day.cacheHitRate)}`}
 									onMouseEnter={() => setHovered(day.date)}
 									onMouseLeave={() => setHovered(null)}
-								/>
-							</div>
-						))}
-						{hoveredDay !== null && (
+								>
+									<div
+										className={styles.bar}
+										data-series="total"
+										data-empty={total === 0 ? "true" : undefined}
+										style={{ height: barHeight(total) }}
+									>
+										{total > 0 && index % labelEvery === 0 && (
+											<span className={styles.barTotal}>
+												{formatCompact(total)}
+											</span>
+										)}
+										<div className={styles.barStack}>
+											{other > 0 && (
+												<span
+													className={styles.barOther}
+													data-segment="other"
+													style={{ flexGrow: other }}
+												/>
+											)}
+											{miss > 0 && (
+												<span
+													className={styles.barMiss}
+													data-segment="miss"
+													style={{ flexGrow: miss }}
+												/>
+											)}
+											{hit > 0 && (
+												<span
+													className={styles.barCache}
+													data-segment="hit"
+													style={{ flexGrow: hit }}
+												/>
+											)}
+										</div>
+									</div>
+								</div>
+							);
+						})}
+						{hoveredDay !== null && hoveredSegments !== null && (
 							<div
 								className={styles.chartTip}
 								role="tooltip"
@@ -183,11 +294,49 @@ export function UsageTrend({ days }: { readonly days: readonly AdminUsageDayRow[
 									transform: `translateX(${tipShift})`,
 								}}
 							>
-								<strong className={styles.chartTipDate}>{hoveredDay.date.replaceAll("-", "/")}</strong>
+								<strong className={styles.chartTipDate}>
+									{hoveredDay.date.replaceAll("-", "/")}
+								</strong>
+								<div className={styles.chartTipRow}>
+									<span className={styles.chartTipLabel}>总 Token</span>
+									<span className={styles.chartTipValue}>
+										{formatInteger(hoveredDay.accurateTokens)}
+									</span>
+								</div>
+								<div className={styles.chartTipRow}>
+									<span
+										className={`${styles.chartTipDot} ${styles.chartTipDotCache}`}
+										aria-hidden="true"
+									/>
+									<span className={styles.chartTipLabel}>缓存命中 Token</span>
+									<span className={styles.chartTipValue}>
+										{formatDayCacheHitTokens(hoveredDay)}
+									</span>
+								</div>
 								<div className={styles.chartTipRow}>
 									<span className={styles.chartTipDot} aria-hidden="true" />
-									<span className={styles.chartTipLabel}>Tokens</span>
-									<span className={styles.chartTipValue}>{formatInteger(hoveredDay.accurateTokens)}</span>
+									<span className={styles.chartTipLabel}>非命中 Token</span>
+									<span className={styles.chartTipValue}>
+										{hoveredDay.cacheReportedRuns === 0
+											? "—"
+											: formatInteger(hoveredSegments.miss)}
+									</span>
+								</div>
+								<div className={styles.chartTipRow}>
+									<span
+										className={`${styles.chartTipDot} ${styles.legendDotOther}`}
+										aria-hidden="true"
+									/>
+									<span className={styles.chartTipLabel}>输出及未分类</span>
+									<span className={styles.chartTipValue}>
+										{formatInteger(hoveredSegments.other)}
+									</span>
+								</div>
+								<div className={styles.chartTipRow}>
+									<span className={styles.chartTipLabel}>命中率</span>
+									<span className={styles.chartTipValue}>
+										{formatPercent(hoveredDay.cacheHitRate)}
+									</span>
 								</div>
 							</div>
 						)}
@@ -196,7 +345,9 @@ export function UsageTrend({ days }: { readonly days: readonly AdminUsageDayRow[
 			</div>
 			<div className={styles.xAxis} aria-hidden="true">
 				{days.map((day, index) => (
-					<span key={day.date}>{index % labelEvery === 0 ? formatDayLabel(day.date) : ""}</span>
+					<span key={day.date}>
+						{index % labelEvery === 0 ? formatDayLabel(day.date) : ""}
+					</span>
 				))}
 			</div>
 		</section>
@@ -234,7 +385,7 @@ export function UsageTabs({
 	);
 }
 
-export const OPTIONAL_COLUMNS = ["state", "model", "llm", "coverage", "version"] as const;
+export const OPTIONAL_COLUMNS = ["state", "model", "llm", "coverage", "cache", "version"] as const;
 export type OptionalColumn = (typeof OPTIONAL_COLUMNS)[number];
 
 export const COLUMN_LABELS: Record<OptionalColumn, string> = {
@@ -242,6 +393,7 @@ export const COLUMN_LABELS: Record<OptionalColumn, string> = {
 	model: "模型",
 	llm: "LLM 调用",
 	coverage: "Token 覆盖",
+	cache: "缓存命中",
 	version: "冻结版本",
 };
 
@@ -306,7 +458,9 @@ function SortHeader({
 
 function StateCell({ state }: { readonly state: string | null }): React.ReactElement {
 	if (state === null) return <span className={styles.muted}>—</span>;
-	const status = WORK_STATUS[state as AnalysisWorkState] ?? { label: state, tone: "neutral" as const };
+	const status = WORK_STATUS[state as AnalysisWorkState] ??
+		(state === "completed" ? { label: "已完成", tone: "green" as const } :
+			state === "canceled" ? WORK_STATUS.cancelled : { label: state, tone: "neutral" as const });
 	return <AuroraPill tone={status.tone}>{status.label}</AuroraPill>;
 }
 
@@ -334,7 +488,7 @@ function AccurateTokens({ run }: { readonly run: AdminUsageRunRow }): React.Reac
 				className={styles.muted}
 				title={
 					run.tokenCoverage === "partial"
-						? `历史部分 Token ${formatInteger(run.partialTokens)}（仅最后一次 LLM 调用，不能计入准确总量）`
+					? `已知部分用量 ${formatInteger(run.partialTokens)}，单独统计`
 						: "该记录没有持久化的 provider usage"
 				}
 			>
@@ -343,6 +497,29 @@ function AccurateTokens({ run }: { readonly run: AdminUsageRunRow }): React.Reac
 		);
 	}
 	return <span>{formatInteger(run.accurateTokens)}</span>;
+}
+
+function CacheHitMiss({ run }: { readonly run: AdminUsageRunRow }): React.ReactElement {
+	const text = formatCacheHitMiss(run);
+	if (text === null) {
+		return (
+			<span className={styles.muted} title={CACHE_UNKNOWN_TITLE}>
+				—
+			</span>
+		);
+	}
+	return (
+		<span
+			className={styles.cacheText}
+			title={
+				run.cachePromptTokens === null
+					? `缓存命中 Token / 非命中 Token（加权命中率）。${CACHE_HIT_HINT}${CACHE_MISS_HINT}`
+					: `缓存命中 Token / 非命中 Token（加权命中率）；Prompt Token ${formatInteger(run.cachePromptTokens)}。${CACHE_MISS_HINT}`
+			}
+		>
+			{text}
+		</span>
+	);
 }
 
 export function UsageRunsTable({
@@ -368,7 +545,7 @@ export function UsageRunsTable({
 							sortKey="createdAt"
 							sort={sort}
 							onSort={onSort}
-							hint="创建时间，按 UTC 显示；趋势图也按 UTC 自然日分桶。"
+							hint="创建时间和趋势图均按北京时间显示。"
 						/>
 						<th scope="col">Run ID</th>
 						<th scope="col">接入</th>
@@ -379,8 +556,16 @@ export function UsageRunsTable({
 							sortKey="accurateTokens"
 							sort={sort}
 							onSort={onSort}
-							hint="仅完整 llmUsage 的记录计入；不完整或无 usage 显示 —，历史部分 Token 单独保留可查看，不计入总量。"
+							hint="仅完整 llmUsage 的记录计入；不完整或无 usage 显示 —，部分用量 单独保留可查看，不计入总量。"
 						/>
+						{visible.has("cache") && (
+							<th
+								scope="col"
+								title={`缓存命中 Token / 非命中 Token（加权命中率）；未上报缓存字段显示 —，不计入分母。${CACHE_HIT_HINT}${CACHE_MISS_HINT}`}
+							>
+								缓存命中
+							</th>
+						)}
 						{visible.has("llm") && (
 							<SortHeader
 								label="LLM 调用"
@@ -395,7 +580,7 @@ export function UsageRunsTable({
 							sortKey="durationMs"
 							sort={sort}
 							onSort={onSort}
-							hint="执行耗时 = assignment 开始到结束，不包含排队时间；无法计算时显示 —。"
+							hint="执行耗时 = assignment 开始到结束，不包含排队时间；无记录显示 —，真实的 0 毫秒显示 0 ms。"
 						/>
 						{visible.has("coverage") && <th scope="col">Token 覆盖</th>}
 						{visible.has("version") && <th scope="col">冻结版本</th>}
@@ -411,7 +596,7 @@ export function UsageRunsTable({
 						</tr>
 					) : (
 						runs.map((run) => (
-							<tr key={run.id}>
+							<tr key={`${run.source ?? ""}:${run.id}`}>
 								<td className={styles.nowrap}>{formatRunTime(run.createdAt)}</td>
 								<td>
 									<span className={styles.idCell}>
@@ -419,7 +604,7 @@ export function UsageRunsTable({
 										<CopyButton value={run.id} />
 									</span>
 								</td>
-								<td>{run.groupName}</td>
+								<td>{usageSourceLabel(run.groupName)}</td>
 								{visible.has("state") && (
 									<td>
 										<StateCell state={run.state} />
@@ -429,6 +614,11 @@ export function UsageRunsTable({
 								<td className={styles.numeric}>
 									<AccurateTokens run={run} />
 								</td>
+								{visible.has("cache") && (
+									<td className={styles.numeric}>
+										<CacheHitMiss run={run} />
+									</td>
+								)}
 								{visible.has("llm") && (
 									<td className={styles.numeric}>
 										{run.accurateLlmCallCount === null ? (
@@ -466,7 +656,7 @@ export function UsageRunsTable({
 function coverageHint(run: AdminUsageRunRow): string {
 	if (run.tokenCoverage === "complete") return "本记录每次 LLM 调用都有 provider usage，已计入准确总量。";
 	if (run.tokenCoverage === "partial")
-		return `历史部分 Token ${formatInteger(run.partialTokens)}：仅有最后一次调用的 usage，不计入准确总量。`;
+		return `已知部分用量 ${formatInteger(run.partialTokens)}，单独统计。`;
 	return "没有持久化的 provider usage，准确 Token 与 LLM 调用次数均显示 —。";
 }
 
@@ -488,36 +678,85 @@ export function UsageGroupTable({
 						<th scope="col">数量</th>
 						<th scope="col">完整 / 部分 / 无 usage</th>
 						<th scope="col">准确 Token</th>
+						<th
+							scope="col"
+							title={`仅统计完整 provider usage 且明确上报缓存字段的记录；无命中也有 0 值。${CACHE_HIT_HINT}`}
+						>
+							缓存命中 Token
+						</th>
+						<th
+							scope="col"
+							title={`命中率 = 缓存命中 Token / Prompt Token（按 Prompt Token 加权）；没有上报记录时显示 —。${PROMPT_TOKEN_HINT}`}
+						>
+							缓存命中率
+						</th>
+						<th
+							scope="col"
+							title="缓存覆盖 = 上报了缓存字段的 LLM 调用次数 / (上报 + 未上报)；未上报的调用按未知处理，不当作未命中。"
+						>
+							缓存覆盖
+						</th>
 						<th scope="col">LLM 调用</th>
 						<th scope="col">平均 / 最长耗时</th>
-						<th scope="col">历史部分 Token</th>
+						<th scope="col">部分用量</th>
 						<th scope="col">覆盖率</th>
 					</tr>
 				</thead>
 				<tbody>
 					{rows.length === 0 ? (
 						<tr>
-							<td colSpan={8} className={styles.emptyCell}>
+							<td colSpan={11} className={styles.emptyCell}>
 								{emptyText}
 							</td>
 						</tr>
 					) : (
 						rows.map((row) => (
 							<tr key={row.key}>
-								<td>{row.label}</td>
+								<td>{usageSourceLabel(row.label)}</td>
 								<td className={styles.numeric}>{formatInteger(row.runCount)}</td>
 								<td className={styles.numeric}>
 									{row.completeCount} / {row.partialCount} / {row.noUsageCount}
 								</td>
-								<td className={styles.numeric}>{formatInteger(row.accurateTokens)}</td>
-								<td className={styles.numeric}>{formatInteger(row.llmCallCount)}</td>
+								<td className={styles.numeric}>
+									{/* No complete record in this group → the accurate total is unknown, not zero. */}
+									{row.completeCount === 0 ? (
+										<span
+											className={styles.muted}
+											title="该分组没有完整 provider usage 的记录，准确 Token 未知。"
+										>
+											—
+										</span>
+									) : (
+										formatInteger(row.accurateTokens)
+									)}
+								</td>
+								<td className={styles.numeric}>
+									{row.cacheReportedRuns === 0 ? (
+										<span className={styles.muted} title="该分组没有上报缓存字段的记录，命中 Token 未知。">
+											—
+										</span>
+									) : (
+										formatInteger(row.cacheHitTokens)
+									)}
+								</td>
+								<td className={styles.numeric}>{formatPercent(row.cacheHitRate)}</td>
+								<td className={styles.numeric}>
+									{formatCacheCoverage(row.cacheReportedCalls, row.cacheUnknownCalls)}
+								</td>
+								<td className={styles.numeric}>
+								{row.llmCallCount === 0 ? "—" : formatInteger(row.llmCallCount)}
+								</td>
 								<td className={styles.nowrap}>
+									{/*
+									 * 服务端在「该分组没有耗时记录」时给出 avg/max = 0，因此这里把 0 转成
+									 * null（未知 → 「—」）；真实测到的 0 毫秒仍由 formatDuration 渲染成 "0 ms"。
+									 */}
 									{formatDuration(row.avgDurationMs === 0 ? null : row.avgDurationMs)} /{" "}
 									{formatDuration(row.maxDurationMs === 0 ? null : row.maxDurationMs)}
 								</td>
 								<td
 									className={styles.numeric}
-									title="历史仅保存最后一次 LLM 调用的 usage，单独列示，不计入准确总量。"
+									title="不完整或取消 Turn 已确认的用量，或历史仅最后一次调用；不计入准确总量。"
 								>
 									{formatInteger(row.partialTokens)}
 								</td>

@@ -304,6 +304,12 @@ button {
 	padding: 0;
 }
 
+@media (max-width: 560px) {
+	.admin-shell:is([data-route="aaas-keys"], [data-route="mcp"]) .admin-shell__main {
+		padding-inline: 12px;
+	}
+}
+
 /* ==========================================================================
    v2 Visual Override（设计收口）
    - 旧 .tsx 业务代码继续引用旧类名；这里用更高 specificity + 新 token 覆写

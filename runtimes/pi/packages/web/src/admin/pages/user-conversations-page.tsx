@@ -1,24 +1,61 @@
-/**
- * 用户会话列表与详情（WB-002 路由 + WB-006 实施；v2 = Aurora）。
- *
- * - `/conversations`          → 用户会话列表（跨主体、筛选、脱敏）
- * - `/conversations/:convId`  → 会话详情（概览 / 事件日志 / Summary / 续接导航）
- *
- * Spec §5.4 与 WB-006。详情与事件端点会产生 `conversation.read-*` 审计事件。
- *
- * List 页已迁移到 Aurora 视觉（direction-b-aurora 的 session-row + metric
- * grid + pill tabs），ConversationsApi 拉取链路与 mock fallback 保持不变。
- */
-
 import { AdminConversationsIndexView } from "../aurora/conversations-index-view.tsx";
-import type { AdminRoute } from "../router.ts";
+import { AuroraPillTabs } from "../aurora/PillTabs.tsx";
+import { type AdminRoute, navigate } from "../router.ts";
 import { AdminConversationDetail } from "../user-conversations/conversation-detail.tsx";
+import { AdminLegacyIntegrationPanel } from "./legacy-integration-panel.tsx";
+import styles from "./orchestration-page.module.css";
+import { RouterExecutionDetail } from "./router-execution-detail.tsx";
+import { AdminRouterExecutionsPage } from "./router-executions-page.tsx";
 
-export function AdminUserConversationsPage({ route }: { route: AdminRoute }): React.ReactElement {
+const executionSources = [
+	{ value: "/conversations", label: "Chat" },
+	{ value: "/conversations/integration", label: "Integration Run" },
+	{ value: "/conversations/router", label: "Router" },
+] as const;
+
+export function AdminUserConversationsPage({ route }: { route: AdminRoute }): React.JSX.Element {
 	if (route.id === "user-conversation-detail") {
 		const conversationId = route.params.conversationId;
 		if (conversationId === undefined) return <p role="alert">缺少 conversationId</p>;
 		return <AdminConversationDetail conversationId={conversationId} />;
 	}
-	return <AdminConversationsIndexView />;
+	const { keyId, taskId, operationId } = route.params;
+	if (route.id === "router-executions" && keyId && taskId && operationId) {
+		return (
+			<RouterExecutionDetail key={`${keyId}:${taskId}`} keyId={keyId} taskId={taskId} operationId={operationId} />
+		);
+	}
+	const source =
+		route.id === "orchestration"
+			? "/conversations/integration"
+			: route.id === "router-executions"
+				? "/conversations/router"
+				: "/conversations";
+	const navigation = (
+		<AuroraPillTabs
+			ariaLabel="执行来源"
+			items={executionSources}
+			value={route.id === "aaas-executions" ? "" : source}
+			onChange={navigate}
+		/>
+	);
+	if (route.id === "user-conversations" || route.id === "aaas-executions") {
+		return (
+			<AdminConversationsIndexView
+				key={source}
+				source={route.id === "aaas-executions" ? "aaas_key" : "chat"}
+				navigation={navigation}
+			/>
+		);
+	}
+	return (
+		<>
+			<div className={styles.sectionNav}>{navigation}</div>
+			{route.id === "orchestration" ? (
+				<AdminLegacyIntegrationPanel key="executions" />
+			) : (
+				<AdminRouterExecutionsPage key={keyId ?? "all"} keyId={keyId} />
+			)}
+		</>
+	);
 }

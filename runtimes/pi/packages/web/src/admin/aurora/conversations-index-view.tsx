@@ -1,38 +1,41 @@
 /**
- * 用户会话列表 — Aurora 视觉迁移（与 Agent List / Apps 共用同一 Design System）。
+ * Session 日志 — 管理端会话列表页。
  *
- * 视觉：PageHeader + 工具行（SearchBox + chip 行） + AuroraMetricGrid（6 指标）
- * + PillTabs（按状态过滤） + 会话 SessionRow 列表 + Pagination。
+ * 数据全部来自 `GET /api/control/v1/conversations`：服务端按 last_active_at
+ * 倒序、cursor 分页，并承担搜索与筛选。页面不做前端全集过滤，也不回退到
+ * 示例数据；失败时展示错误与重试。
  *
- * 数据：保留原 ConversationsApi 拉取链路 + mock fallback。过滤器（status /
- * app / agent / channel / date / query）的所有组合语义不变；只是把 11 列
- * 表格替换为紧凑的 SessionRow 形式（来自 direction-b-aurora 的 .session-row），
- * 保留用户、agent、对话预览、状态、token、响应时间等关键信息。
+ * `status` 表示会话生命周期，`executionState` 来自 Run 或最近 Turn 的事件。
  */
-import type { ConversationAdminListResponse } from "@earendil-works/pi-protocol";
+import type { ConversationAdminSummary } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ConversationListArgs, ConversationsApi } from "../api/conversations-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { beijingBoundary, beijingDate, beijingDay, formatBeijing } from "../beijing-time.ts";
 import { useDialogs } from "../components/use-dialogs.tsx";
+import { WORK_STATUS } from "../pages/orchestration-ui.ts";
 import { navigate } from "../router.ts";
 import { readInitialQueryParam } from "../user-conversations/query-params.ts";
 import styles from "./conversations-index-view.module.css";
-import { AuroraPagination } from "./index.ts";
+import { AuroraSearchBox } from "./index.ts";
+import {
+	compactSessionId,
+	type SessionLifecycleTone,
+	sessionLifecycleView,
+	sessionOriginLabel,
+	shortAgentLabel,
+	summarizeSessionPage,
+} from "./session-list-model.ts";
 
 type ListState =
 	| { kind: "loading" }
-	| { kind: "loaded"; data: ConversationAdminListResponse }
+	| {
+			kind: "loaded";
+			data: { readonly items: readonly ConversationAdminSummary[]; readonly nextCursor: string | null };
+	  }
 	| { kind: "error"; message: string };
 
-/**
- * 时间范围：起止日期常驻 + 右侧快捷预设（Grafana / CloudWatch 的常见组合）。
- *
- * 默认落在「近 30 天」而不是空区间：原生 input[type=date] 空值时会显示
- * yyyy/mm/dd 占位，对使用者不友好；给一个默认区间即可避开。
- */
 type RangePreset = "all" | "today" | "7d" | "30d" | "90d" | "custom";
-
-const DEFAULT_RANGE: "today" | "7d" | "30d" | "90d" = "30d";
 
 const RANGE_PRESETS: readonly { readonly value: RangePreset; readonly label: string }[] = [
 	{ value: "today", label: "今天" },
@@ -42,421 +45,215 @@ const RANGE_PRESETS: readonly { readonly value: RangePreset; readonly label: str
 	{ value: "all", label: "不限" },
 ];
 
+type StatusTab = "all" | "active" | "archived" | "deleted";
+type OriginTab = "all" | "chat" | "integration" | "aaas_key";
+
+const STATUS_TAB_OPTIONS: ReadonlyArray<{ readonly value: string; readonly label: string }> = [
+	{ value: "all", label: "全部状态" },
+	{ value: "active", label: "未关闭" },
+	{ value: "archived", label: "已归档" },
+	{ value: "deleted", label: "已删除" },
+];
+
+const ORIGIN_TAB_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
+	{ value: "all", label: "全部来源" },
+	{ value: "integration", label: "Integration" },
+	{ value: "aaas_key", label: "AaaS Key" },
+	{ value: "chat", label: "Chat" },
+];
+
+const PUBLIC_ID_PATTERN: Record<"app" | "agent", RegExp> = {
+	app: /^app_[0-9a-fA-F-]{36}$/,
+	agent: /^agent_[0-9a-fA-F-]{36}$/,
+};
+
 function toDateValue(date: Date): string {
-	const year = date.getFullYear();
-	const month = String(date.getMonth() + 1).padStart(2, "0");
-	const day = String(date.getDate()).padStart(2, "0");
-	return `${year}-${month}-${day}`;
+	return beijingDay(date);
 }
 
-function presetRange(preset: "today" | "7d" | "30d" | "90d"): { readonly from: string; readonly to: string } {
+function presetRange(preset: Exclude<RangePreset, "all" | "custom">): { readonly from: string; readonly to: string } {
 	const to = new Date();
 	const from = new Date();
-	if (preset === "7d") from.setDate(from.getDate() - 6);
-	if (preset === "90d") from.setDate(from.getDate() - 89);
-	if (preset === "30d") from.setDate(from.getDate() - 29);
+	if (preset === "today") return { from: toDateValue(to), to: toDateValue(to) };
+	if (preset === "7d") from.setTime(from.getTime() - 6 * 86400000);
+	if (preset === "90d") from.setTime(from.getTime() - 89 * 86400000);
+	if (preset === "30d") from.setTime(from.getTime() - 29 * 86400000);
 	return { from: toDateValue(from), to: toDateValue(to) };
 }
 
-interface MockConversation {
-	readonly id: string;
-	readonly title: string;
-	readonly principalDisplayId: string;
-	readonly principalType: "external_user" | "anonymous_visitor" | "platform_user" | "service";
-	readonly appName: string;
-	readonly agentName: string;
-	readonly status: "active" | "archived" | "deleted";
-	readonly messageCount: number;
-	readonly errorCount: number;
-	readonly tokenTotal: number;
-	readonly avgResponseMs: number;
-	readonly channel: "Web Embed" | "Direct" | "API";
-	readonly lastActiveAt: string;
+/** Date inputs are Beijing calendar dates; API bounds remain UTC instants. */
+function toIsoBoundary(date: string, endOfDay: boolean): string | undefined {
+	return beijingBoundary(date, endOfDay);
 }
 
-const MOCK_CONVERSATIONS: readonly MockConversation[] = [
-	{
-		id: "cvs_01JZ8K3E2M0Q9P7FQ1R8",
-		title: "退款流程咨询",
-		principalDisplayId: "user_382",
-		principalType: "external_user",
-		appName: "官网客服",
-		agentName: "客服 Agent",
-		status: "active",
-		messageCount: 14,
-		errorCount: 0,
-		tokenTotal: 2432,
-		avgResponseMs: 1230,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 16:48",
-	},
-	{
-		id: "cvs_01JZ8JH5P8N6B2Y4D3K7",
-		title: "订单状态查询",
-		principalDisplayId: "user_193",
-		principalType: "external_user",
-		appName: "内部客服工作台",
-		agentName: "客服 Agent",
-		status: "archived",
-		messageCount: 22,
-		errorCount: 1,
-		tokenTotal: 4105,
-		avgResponseMs: 1560,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 16:32",
-	},
-	{
-		id: "cvs_01JZ7X6R3L9T4VQG2H5Q",
-		title: "产品功能咨询",
-		principalDisplayId: "user_492",
-		principalType: "external_user",
-		appName: "产品助手",
-		agentName: "产品助手 Agent",
-		status: "archived",
-		messageCount: 9,
-		errorCount: 0,
-		tokenTotal: 1203,
-		avgResponseMs: 1010,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 15:20",
-	},
-	{
-		id: "cvs_01JZ7P4M1B8S9N6C3D0E",
-		title: "销售报价生成",
-		principalDisplayId: "user_725",
-		principalType: "external_user",
-		appName: "销售助手",
-		agentName: "销售 Agent",
-		status: "active",
-		messageCount: 6,
-		errorCount: 0,
-		tokenTotal: 890,
-		avgResponseMs: 980,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 14:11",
-	},
-	{
-		id: "cvs_01JZ6W2H7R5T3Y9B1N5P",
-		title: "合同条款比对",
-		principalDisplayId: "user_820",
-		principalType: "platform_user",
-		appName: "官网客服",
-		agentName: "客服 Agent",
-		status: "archived",
-		messageCount: 18,
-		errorCount: 0,
-		tokenTotal: 3021,
-		avgResponseMs: 1320,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 13:45",
-	},
-	{
-		id: "cvs_01JZ6M0Q9P2L8V4K7R1D",
-		title: "数据可视化请求",
-		principalDisplayId: "user_553",
-		principalType: "platform_user",
-		appName: "内部客服工作台",
-		agentName: "客服 Agent",
-		status: "archived",
-		messageCount: 11,
-		errorCount: 2,
-		tokenTotal: 1742,
-		avgResponseMs: 1410,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 12:03",
-	},
-	{
-		id: "cvs_01JZ5K7B3N8R1Q6T9V2X",
-		title: "知识库检索",
-		principalDisplayId: "user_301",
-		principalType: "anonymous_visitor",
-		appName: "产品助手",
-		agentName: "产品助手 Agent",
-		status: "archived",
-		messageCount: 13,
-		errorCount: 0,
-		tokenTotal: 2210,
-		avgResponseMs: 1190,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 11:22",
-	},
-	{
-		id: "cvs_01JZ5A9C6T3M2Y8H4R0W",
-		title: "客户跟进建议",
-		principalDisplayId: "user_177",
-		principalType: "platform_user",
-		appName: "销售助手",
-		agentName: "销售 Agent",
-		status: "archived",
-		messageCount: 7,
-		errorCount: 0,
-		tokenTotal: 1112,
-		avgResponseMs: 870,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 10:10",
-	},
-	{
-		id: "cvs_01JZ4V1P8Q6N4B2S7D3E",
-		title: "退款申诉",
-		principalDisplayId: "user_662",
-		principalType: "external_user",
-		appName: "官网客服",
-		agentName: "客服 Agent",
-		status: "archived",
-		messageCount: 20,
-		errorCount: 1,
-		tokenTotal: 3654,
-		avgResponseMs: 1670,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 09:33",
-	},
-	{
-		id: "cvs_01JZ4C3M9R0T7Y5H1K6L",
-		title: "内部工单创建",
-		principalDisplayId: "user_909",
-		principalType: "platform_user",
-		appName: "内部客服工作台",
-		agentName: "客服 Agent",
-		status: "archived",
-		messageCount: 15,
-		errorCount: 0,
-		tokenTotal: 2689,
-		avgResponseMs: 1250,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 08:51",
-	},
-	{
-		id: "cvs_01JZ3W8E2N7L9K5B1H4F",
-		title: "匿名访客咨询",
-		principalDisplayId: "anon_7421",
-		principalType: "anonymous_visitor",
-		appName: "知识库检索",
-		agentName: "知识问答 Agent",
-		status: "archived",
-		messageCount: 4,
-		errorCount: 0,
-		tokenTotal: 612,
-		avgResponseMs: 980,
-		channel: "Web Embed",
-		lastActiveAt: "2026-08-19 08:11",
-	},
-	{
-		id: "cvs_01JZ3R5K0B2N4T8H7M9P",
-		title: "API 集成调试",
-		principalDisplayId: "service_pipeline_a",
-		principalType: "service",
-		appName: "数据 API",
-		agentName: "数据分析 Agent",
-		status: "active",
-		messageCount: 27,
-		errorCount: 3,
-		tokenTotal: 5210,
-		avgResponseMs: 1850,
-		channel: "API",
-		lastActiveAt: "2026-08-19 07:42",
-	},
-];
-
-const APP_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-	{ value: "", label: "全部应用" },
-	{ value: "app_demo_001", label: "官网客服" },
-	{ value: "app_demo_002", label: "内部客服工作台" },
-	{ value: "app_demo_003", label: "客服测试环境预览" },
-	{ value: "app_demo_004", label: "合同审查控制台" },
-	{ value: "app_demo_005", label: "数据分析控制台" },
-	{ value: "app_demo_006", label: "知识库检索" },
-];
-
-const AGENT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-	{ value: "", label: "全部 Agent" },
-	{ value: "agent_demo_customer_service", label: "客服 Agent" },
-	{ value: "agent_demo_contract_review", label: "合同审查 Agent" },
-	{ value: "agent_demo_data_analyst", label: "数据分析 Agent" },
-	{ value: "agent_demo_knowledge_qa", label: "知识问答 Agent" },
-];
-
-type StatusTab = "all" | "active" | "archived" | "deleted";
-
-const STATUS_LABEL: Record<StatusTab, string> = {
-	all: "全部",
-	active: "进行中",
-	archived: "已归档",
-	deleted: "已删除",
-};
-
-const STATUS_TAB_OPTIONS: ReadonlyArray<{ value: string; label: string }> = (
-	Object.entries(STATUS_LABEL) as [StatusTab, string][]
-).map(([value, label]) => ({ value, label: label === "全部" ? "全部状态" : label }));
-
-type SelectOption = { readonly value: string; readonly label: string };
-
-function principalLabel(principalType: string): string {
-	switch (principalType) {
-		case "external_user":
-			return "注册用户";
-		case "anonymous_visitor":
-			return "匿名访客";
-		case "platform_user":
-			return "平台用户";
-		case "service":
-			return "服务";
-		default:
-			return principalType;
-	}
+function formatTimestamp(iso: string): string {
+	return formatBeijing(iso);
 }
 
-function formatRelativeTime(s: string): string {
-	// 极简的"X 分钟前"显示，输入形如 "2026-08-19 16:48"。
-	const date = new Date(s.replace(" ", "T"));
-	if (Number.isNaN(date.getTime())) return s;
+function formatShortTimestamp(iso: string): string {
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return iso;
+	const local = beijingDate(date);
+	const month = String(local.getUTCMonth() + 1).padStart(2, "0");
+	const day = String(local.getUTCDate()).padStart(2, "0");
+	const hour = String(local.getUTCHours()).padStart(2, "0");
+	const minute = String(local.getUTCMinutes()).padStart(2, "0");
+	return `${month}/${day} ${hour}:${minute}`;
+}
+
+function relativeTime(iso: string): string {
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return "";
 	const diff = Date.now() - date.getTime();
-	const min = Math.round(diff / 60000);
-	if (min < 1) return "刚刚";
+	if (diff < 60_000) return "刚刚";
+	const min = Math.floor(diff / 60_000);
 	if (min < 60) return `${min} 分钟前`;
-	const hr = Math.round(min / 60);
+	const hr = Math.floor(min / 60);
 	if (hr < 24) return `${hr} 小时前`;
-	const day = Math.round(hr / 24);
-	return `${day} 天前`;
+	const day = Math.floor(hr / 24);
+	return day < 30 ? `${day} 天前` : "";
 }
 
-interface DisplayConversation {
-	readonly id: string;
-	readonly lastActiveAt: string;
-	readonly lastRelative: string;
-	readonly principalDisplayId: string;
-	readonly principalType: string;
-	readonly appName: string;
-	readonly agentName: string;
-	readonly status: string;
-	readonly messageCount: number;
-	readonly tokenTotal: number;
-	readonly avgResponseMs: number;
-	readonly channel: string;
-	readonly errorCount: number;
-	readonly title: string;
-}
-
-function mapApiToDisplay(items: ConversationAdminListResponse["items"]): readonly DisplayConversation[] {
-	const now = Date.now();
-	return items.map((item) => {
-		const d = new Date(item.lastActiveAt);
-		const diff = now - d.getTime();
-		const min = Math.round(diff / 60000);
-		const rel =
-			Number.isNaN(d.getTime()) || diff < 0
-				? item.lastActiveAt
-				: min < 60
-					? `${Math.max(0, min)} 分钟前`
-					: `${Math.round(min / 60)} 小时前`;
-		return {
-			id: item.id,
-			lastActiveAt: d.toLocaleString(),
-			lastRelative: rel,
-			principalDisplayId: item.principalDisplayId,
-			principalType: principalLabel(item.principalType),
-			appName: item.appName,
-			agentName: item.title || "—",
-			status: item.status,
-			messageCount: item.messageCount,
-			tokenTotal: 0,
-			avgResponseMs: 0,
-			channel: "Web Embed",
-			errorCount: item.errorCount,
-			title: item.title,
-		};
-	});
-}
-
-function mockToDisplay(items: readonly MockConversation[]): readonly DisplayConversation[] {
-	return items.map((item) => ({
-		id: item.id,
-		lastActiveAt: item.lastActiveAt,
-		lastRelative: formatRelativeTime(item.lastActiveAt),
-		principalDisplayId: item.principalDisplayId,
-		principalType: principalLabel(item.principalType),
-		appName: item.appName,
-		agentName: item.agentName,
-		status: item.status,
-		messageCount: item.messageCount,
-		tokenTotal: item.tokenTotal,
-		avgResponseMs: item.avgResponseMs,
-		channel: item.channel,
-		errorCount: item.errorCount,
-		title: item.title,
-	}));
+function lifecycleClass(tone: SessionLifecycleTone): string {
+	if (tone === "open") return styles.statusOpen;
+	if (tone === "archived") return styles.statusArchived;
+	if (tone === "deleted") return styles.statusDeleted;
+	return styles.statusUnknown;
 }
 
 function statusBadge(status: string): React.ReactNode {
-	if (status === "active") return <span className={`${styles.status} ${styles.statusActive}`}>进行中</span>;
-	if (status === "archived") return <span className={styles.status}>已结束</span>;
-	if (status === "deleted") return <span className={`${styles.status} ${styles.statusFailed}`}>已删除</span>;
-	return <span className={`${styles.status} ${styles.statusFailed}`}>未知</span>;
+	const view = sessionLifecycleView(status);
+	return (
+		<span className={`${styles.status} ${lifecycleClass(view.tone)}`} title={view.hint}>
+			<i aria-hidden="true" />
+			{view.label}
+		</span>
+	);
 }
 
-export function AdminConversationsIndexView(): React.ReactElement {
+export function AdminConversationsIndexView({
+	source,
+	navigation,
+}: { source?: "chat" | "aaas_key"; navigation?: React.ReactNode } = {}): React.ReactElement {
 	const { dialog, ...dialogs } = useDialogs();
 	const { controller } = useAdminAuth();
 	const api = useRef(new ConversationsApi({ auth: controller })).current;
 	const requestSequence = useRef(0);
+	const copyTimer = useRef<number | null>(null);
+	const actionMenuRef = useRef<HTMLDivElement | null>(null);
+
 	const [state, setState] = useState<ListState>({ kind: "loading" });
 	const [statusTab, setStatusTab] = useState<StatusTab>("all");
+	const [originTab, setOriginTab] = useState<OriginTab>("all");
+	const [executionState, setExecutionState] = useState("");
 	const [appFilter, setAppFilter] = useState(() => readInitialQueryParam("appId"));
 	const [agentFilter, setAgentFilter] = useState("");
 	const [query, setQuery] = useState("");
-	const [rangePreset, setRangePreset] = useState<RangePreset>(DEFAULT_RANGE);
-	const [dateFrom, setDateFrom] = useState(() => presetRange(DEFAULT_RANGE).from);
-	const [dateTo, setDateTo] = useState(() => presetRange(DEFAULT_RANGE).to);
+	const [search, setSearch] = useState("");
+	const [rangePreset, setRangePreset] = useState<RangePreset>("all");
+	const [dateFrom, setDateFrom] = useState("");
+	const [dateTo, setDateTo] = useState("");
 	const [rangeOpen, setRangeOpen] = useState(false);
-	const [draftFrom, setDraftFrom] = useState(() => presetRange(DEFAULT_RANGE).from);
-	const [draftTo, setDraftTo] = useState(() => presetRange(DEFAULT_RANGE).to);
+	const [draftFrom, setDraftFrom] = useState("");
+	const [draftTo, setDraftTo] = useState("");
 	const rangeRef = useRef<HTMLDivElement | null>(null);
-	const [page, setPage] = useState(1);
-	const [pageSize, setPageSize] = useState(20);
-	const [useMock, setUseMock] = useState(false);
+	const [pageSize, setPageSize] = useState(10);
+	const [cursorStack, setCursorStack] = useState<readonly (string | null)[]>([null]);
+	const [pageIndex, setPageIndex] = useState(0);
+	const [copiedId, setCopiedId] = useState<string | null>(null);
 	const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
+	const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+	useEffect(
+		() => () => {
+			if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+		},
+		[],
+	);
+
+	const resetPaging = useCallback((): void => {
+		setCursorStack((prev) => (prev.length === 1 && prev[0] === null ? prev : [null]));
+		setPageIndex((prev) => (prev === 0 ? prev : 0));
+	}, []);
+
+	// Search is applied on the server after a short pause; stale responses are
+	// dropped by requestSequence in load().
+	useEffect(() => {
+		const trimmed = query.trim();
+		const timer = window.setTimeout(() => {
+			setSearch(trimmed);
+			resetPaging();
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [query, resetPaging]);
 
 	const load = useCallback(
 		(args: ConversationListArgs) => {
 			const request = ++requestSequence.current;
 			setState({ kind: "loading" });
+			setOpenMenuId(null);
 			void api.list(args).then(
 				(data) => {
-					if (request === requestSequence.current) setState({ kind: "loaded", data });
+					if (request === requestSequence.current) {
+						setState({
+							kind: "loaded",
+							data: { items: data.items, nextCursor: data.nextCursor },
+						});
+					}
 				},
 				(error: Error) => {
-					if (request === requestSequence.current) {
-						setUseMock(true);
-						setState({ kind: "error", message: error.message });
-					}
+					if (request === requestSequence.current) setState({ kind: "error", message: error.message });
 				},
 			);
 		},
 		[api],
 	);
 
+	const appId = appFilter.trim();
+	const agentId = agentFilter.trim();
+	const appIdValid = appId === "" || PUBLIC_ID_PATTERN.app.test(appId);
+	const agentIdValid = agentId === "" || PUBLIC_ID_PATTERN.agent.test(agentId);
+	const cursor = cursorStack[pageIndex] ?? null;
+
 	const apiFilters = useMemo<ConversationListArgs>(
 		() => ({
-			limit: 100,
+			limit: pageSize,
+			cursor: cursor ?? undefined,
 			status: statusTab === "all" ? undefined : statusTab,
-			appId: appFilter,
-			agentId: agentFilter,
+			origin: source ?? (originTab === "all" ? undefined : originTab),
+			executionState: executionState || undefined,
+			appId: appIdValid ? appId : undefined,
+			agentId: agentIdValid ? agentId : undefined,
+			search,
+			lastActiveAfter: toIsoBoundary(dateFrom, false),
+			lastActiveBefore: toIsoBoundary(dateTo, true),
 		}),
-		[appFilter, agentFilter, statusTab],
+		[pageSize, cursor, statusTab, originTab, source, executionState, appId, agentId, appIdValid, agentIdValid, search, dateFrom, dateTo],
 	);
 
-	// 选预设 = 把起止输入填成对应区间；手动改日期则自动降级为「自定义」
-	const applyRangePreset = useCallback((next: RangePreset): void => {
-		setRangePreset(next);
-		if (next === "custom") return;
-		if (next === "all") {
-			setDateFrom("");
-			setDateTo("");
-			return;
-		}
-		const range = presetRange(next);
-		setDateFrom(range.from);
-		setDateTo(range.to);
-	}, []);
+	useEffect(() => {
+		// An incomplete public id is only a local draft: do not send an
+		// invalid request on every keystroke.
+		if (!appIdValid || !agentIdValid) return;
+		load(apiFilters);
+	}, [apiFilters, appIdValid, agentIdValid, load]);
+
+	const applyRangePreset = useCallback(
+		(next: RangePreset): void => {
+			setRangePreset(next);
+			resetPaging();
+			if (next === "custom") return;
+			if (next === "all") {
+				setDateFrom("");
+				setDateTo("");
+				return;
+			}
+			const range = presetRange(next);
+			setDateFrom(range.from);
+			setDateTo(range.to);
+		},
+		[resetPaging],
+	);
 
 	const rangeHint = useMemo(() => {
 		if (dateFrom === "" && dateTo === "") return undefined;
@@ -468,11 +265,10 @@ export function AdminConversationsIndexView(): React.ReactElement {
 		return dateFrom !== "" ? `≥ ${short(dateFrom)}` : `≤ ${short(dateTo)}`;
 	}, [dateFrom, dateTo]);
 
-	// 触发按钮只显示摘要；区间详情收进弹出面板，避免工具条被撑到换行
 	const rangeSummary = useMemo(() => {
 		if (rangePreset === "all") return "不限";
 		if (rangePreset === "custom") return rangeHint ?? "自定义";
-		return RANGE_PRESETS.find((option) => option.value === rangePreset)?.label ?? "近 30 天";
+		return RANGE_PRESETS.find((option) => option.value === rangePreset)?.label ?? "不限";
 	}, [rangePreset, rangeHint]);
 
 	const toggleRangePanel = useCallback((): void => {
@@ -489,8 +285,9 @@ export function AdminConversationsIndexView(): React.ReactElement {
 		setDateFrom(draftFrom);
 		setDateTo(draftTo);
 		setRangePreset(draftFrom === "" && draftTo === "" ? "all" : "custom");
+		resetPaging();
 		setRangeOpen(false);
-	}, [draftFrom, draftTo]);
+	}, [draftFrom, draftTo, resetPaging]);
 
 	useEffect(() => {
 		if (!rangeOpen) return;
@@ -510,40 +307,82 @@ export function AdminConversationsIndexView(): React.ReactElement {
 	}, [rangeOpen]);
 
 	useEffect(() => {
-		load(apiFilters);
-	}, [apiFilters, load]);
+		if (openMenuId === null) return;
+		const onPointerDown = (event: MouseEvent): void => {
+			const node = actionMenuRef.current;
+			if (node !== null && !node.contains(event.target as Node)) setOpenMenuId(null);
+		};
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") setOpenMenuId(null);
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [openMenuId]);
 
-	const rows = useMemo<readonly DisplayConversation[]>(() => {
-		const source = useMock
-			? mockToDisplay(MOCK_CONVERSATIONS)
-			: state.kind === "loaded"
-				? mapApiToDisplay(state.data.items)
-				: [];
-		const needle = query.trim().toLowerCase();
-		return source.filter((item) => {
-			if (statusTab !== "all" && item.status !== statusTab) return false;
-			if (dateFrom && item.lastActiveAt < dateFrom) return false;
-			if (dateTo && item.lastActiveAt > `${dateTo} 23:59`) return false;
-			return (
-				needle === "" ||
-				item.id.toLowerCase().includes(needle) ||
-				item.title.toLowerCase().includes(needle) ||
-				item.principalDisplayId.toLowerCase().includes(needle) ||
-				item.appName.toLowerCase().includes(needle)
-			);
-		});
-	}, [useMock, state, query, statusTab, dateFrom, dateTo]);
+	const items = state.kind === "loaded" ? state.data.items : [];
+	const nextCursor = state.kind === "loaded" ? state.data.nextCursor : null;
+	const overview = useMemo(() => summarizeSessionPage(items), [items]);
+	const latest = overview.latest;
+	const latestActivity =
+		latest === null ? "—" : relativeTime(latest.lastActiveAt) || formatShortTimestamp(latest.lastActiveAt);
+	const hasFilters =
+		search !== "" ||
+		statusTab !== "all" ||
+		executionState !== "" ||
+		originTab !== "all" ||
+		appId !== "" ||
+		agentId !== "" ||
+		dateFrom !== "" ||
+		dateTo !== "";
 
-	const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-	const safePage = Math.min(page, totalPages);
-	const pagedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
-	const updateLifecycle = async (row: DisplayConversation) => {
-		if (useMock || row.status === "deleted") return;
+	const clearFilters = (): void => {
+		setQuery("");
+		setSearch("");
+		setStatusTab("all");
+		setExecutionState("");
+		setOriginTab("all");
+		setAppFilter("");
+		setAgentFilter("");
+		setRangePreset("all");
+		setDateFrom("");
+		setDateTo("");
+		resetPaging();
+	};
+
+	const openDetail = (id: string): void => navigate(`/conversations/${id}`);
+
+	const goNext = (): void => {
+		if (nextCursor === null || nextCursor === "") return;
+		setCursorStack((prev) => [...prev.slice(0, pageIndex + 1), nextCursor]);
+		setPageIndex(pageIndex + 1);
+	};
+	const goPrev = (): void => setPageIndex((prev) => Math.max(0, prev - 1));
+
+	const copyId = async (id: string): Promise<void> => {
+		try {
+			await navigator.clipboard.writeText(id);
+			setCopiedId(id);
+			if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+			copyTimer.current = window.setTimeout(() => setCopiedId(null), 1600);
+		} catch {
+			await dialogs.alert("复制失败，请手动选择 Session ID。");
+		}
+	};
+
+	const updateLifecycle = async (row: ConversationAdminSummary): Promise<void> => {
+		if (row.status === "deleted") return;
 		const archive = row.status === "active";
+		const message = archive
+			? "归档后会话不再接受新消息；该操作不会中止正在执行的任务。确定归档吗？"
+			: "删除后会话将从列表移除（软删除），审计记录仍保留。确定删除吗？";
 		if (
-			!(await dialogs.confirm(archive ? "确定结束这条会话吗？" : "确定软删除这条会话吗？审计记录仍会保留。", {
-				title: archive ? "结束会话" : "删除会话",
-				confirmLabel: archive ? "确认结束" : "确认删除",
+			!(await dialogs.confirm(message, {
+				title: archive ? "归档会话" : "删除会话",
+				confirmLabel: archive ? "确认归档" : "确认删除",
 				destructive: true,
 			}))
 		)
@@ -560,37 +399,119 @@ export function AdminConversationsIndexView(): React.ReactElement {
 		}
 	};
 
+	const metricValue = (value: number): React.ReactNode => (state.kind === "loading" ? "—" : value);
+
 	return (
-		<section className={styles.shell} aria-label="用户会话列表">
+		<section className={styles.shell} aria-label="执行记录">
 			{dialog}
+			{navigation && <div className={styles.sourceNav}>{navigation}</div>}
 			<header className={styles.header}>
-				<div>
-					<h1>Session 日志</h1>
+				<div className={styles.titleBlock}>
+					<h1>执行记录</h1>
+					<p className={styles.subtitle}>{source === "aaas_key" ? "旧 AaaS Run 与关联会话" : "查看会话状态、任务摘要与最近活动"}</p>
 				</div>
-				<button type="button" className={styles.refresh} onClick={() => load(apiFilters)}>
-					<Icon name="refresh" />
-					刷新
-				</button>
 			</header>
 
-			<div className={styles.toolbar}>
-				<label className={styles.search}>
-					<Icon name="search" />
-					<input
+			<section className={styles.overview} aria-label="当前页 Session 概览">
+				<article className={`${styles.metricCard} ${styles.metricPrimary}`}>
+					<p className={styles.metricLabel}>当前页未关闭</p>
+					<div className={styles.metricValue}>{metricValue(overview.openCount)}</div>
+					<p className={styles.metricHint}>会话生命周期状态 · 仅当前页</p>
+				</article>
+				<article className={styles.metricCard}>
+					<p className={styles.metricLabel}>今日新增</p>
+					<div className={styles.metricValue}>{metricValue(overview.createdTodayCount)}</div>
+					<p className={styles.metricHint}>按创建时间统计 · 仅当前页</p>
+				</article>
+				<article className={styles.metricCard}>
+					<p className={styles.metricLabel}>异常会话</p>
+					<div className={styles.metricValue}>{metricValue(overview.withErrorsCount)}</div>
+					<p className={styles.metricHint}>存在错误事件 · 非运行结果</p>
+				</article>
+				<article className={styles.metricCard}>
+					<p className={styles.metricLabel}>最近活动</p>
+					<div className={`${styles.metricValue} ${styles.metricValueText}`}>{latestActivity}</div>
+					<p className={styles.metricHint} title={latest?.appName}>
+						{latest === null
+							? "暂无可展示记录"
+							: `${latest.appName || "未命名应用"} · ${shortAgentLabel(latest)}`}
+					</p>
+				</article>
+				<article className={styles.noticeCard}>
+					<p className={styles.noticeTitle}>阅读提示</p>
+					<p>{source === "aaas_key" ? "Run 状态与会话生命周期独立记录。" : "最近一轮状态来自已记录的执行事件。"}</p>
+					<p>错误事件计数来自列表 API；查看轨迹与用量请进入详情。</p>
+				</article>
+			</section>
+
+			<div className={styles.filterBar}>
+				<div className={styles.searchField}>
+					<AuroraSearchBox
 						value={query}
-						onChange={(e) => setQuery(e.currentTarget.value)}
-						placeholder="搜索会话 ID、用户标识或会话内容"
+						onChange={setQuery}
+						placeholder={source === "aaas_key" ? "搜索 Run、Key、Session ID 或任务摘要" : "搜索 Session ID、任务摘要、应用或用户标识"}
 					/>
-					<kbd>/</kbd>
+				</div>
+				<label className={styles.filterInput}>
+					<span>应用 ID</span>
+					<input
+						value={appFilter}
+						onChange={(e) => {
+							setAppFilter(e.currentTarget.value);
+							resetPaging();
+						}}
+						placeholder="全部应用"
+						aria-label="应用 ID 筛选"
+						aria-invalid={!appIdValid}
+						title={appIdValid ? undefined : "应用 ID 格式为 app_<uuid>"}
+					/>
 				</label>
-				<SelectMenu label="应用筛选" value={appFilter} options={APP_OPTIONS} onChange={setAppFilter} />
-				<SelectMenu label="Agent 筛选" value={agentFilter} options={AGENT_OPTIONS} onChange={setAgentFilter} />
+				<label className={styles.filterInput}>
+					<span>Agent ID</span>
+					<input
+						value={agentFilter}
+						onChange={(e) => {
+							setAgentFilter(e.currentTarget.value);
+							resetPaging();
+						}}
+						placeholder="全部 Agent"
+						aria-label="Agent ID 筛选"
+						aria-invalid={!agentIdValid}
+						title={agentIdValid ? undefined : "Agent ID 格式为 agent_<uuid>"}
+					/>
+				</label>
 				<SelectMenu
 					label="状态筛选"
+					caption="状态"
 					value={statusTab}
 					options={STATUS_TAB_OPTIONS}
-					onChange={(next) => setStatusTab(next as StatusTab)}
+					onChange={(next) => {
+						setStatusTab(next as StatusTab);
+						resetPaging();
+					}}
 				/>
+				{source && <SelectMenu
+					label={source === "aaas_key" ? "Run 状态筛选" : "最近一轮状态筛选"}
+					caption={source === "aaas_key" ? "Run 状态" : "最近一轮状态"}
+					value={executionState}
+					options={[{ value: "", label: "全部执行状态" }, ...Object.entries(WORK_STATUS)
+						.filter(([value]) => source === "aaas_key" || value !== "queued")
+						.map(([value, status]) => ({ value, label: source === "chat" && value === "running" ? "已开始" : status.label }))]}
+					onChange={(next) => {
+						setExecutionState(next);
+						resetPaging();
+					}}
+				/>}
+				{!source && <SelectMenu
+					label="来源筛选"
+					caption="来源"
+					value={originTab}
+					options={ORIGIN_TAB_OPTIONS}
+					onChange={(next) => {
+						setOriginTab(next as OriginTab);
+						resetPaging();
+					}}
+				/>}
 				<div className={styles.filterField}>
 					<div className={styles.rangePicker} ref={rangeRef}>
 						<button
@@ -601,10 +522,12 @@ export function AdminConversationsIndexView(): React.ReactElement {
 							aria-expanded={rangeOpen}
 						>
 							<Icon name="calendar" />
-							<span>{rangeSummary}</span>
+							<span className={styles.rangeLabel}>最近活动</span>
+							<strong>{rangeSummary}</strong>
+							<Icon name="chevronDown" />
 						</button>
 						{rangeOpen ? (
-							<div className={styles.rangePanel} role="dialog" aria-label="选择时间范围">
+							<div className={styles.rangePanel} role="dialog" aria-label="选择最近活动时间范围">
 								<div className={styles.rangePresets}>
 									{RANGE_PRESETS.map((option) => (
 										<button
@@ -650,110 +573,307 @@ export function AdminConversationsIndexView(): React.ReactElement {
 						) : null}
 					</div>
 				</div>
+				<div className={styles.filterActions}>
+					{hasFilters ? (
+						<button type="button" className={styles.clearButton} onClick={clearFilters}>
+							清除
+						</button>
+					) : null}
+					<button type="button" className={styles.refresh} onClick={() => load(apiFilters)}>
+						<Icon name="refresh" />
+						刷新
+					</button>
+				</div>
 			</div>
 
-			<div className={styles.count}>
-				共 <strong>{rows.length.toLocaleString()}</strong> 条会话{useMock ? <span>示例数据</span> : null}
-			</div>
-			{state.kind === "loading" ? <p className={styles.loading}>加载中…</p> : null}
-			{state.kind !== "loading" && pagedRows.length === 0 ? (
-				<div className={styles.empty}>
-					<div className={styles.emptyTitle}>没有匹配的会话</div>
-					<div className={styles.emptyDesc}>尝试调整搜索关键词或筛选条件。</div>
-				</div>
-			) : null}
-			{state.kind !== "loading" && pagedRows.length > 0 ? (
-				<div className={styles.tableWrap}>
-					<table>
-						<thead>
-							<tr>
-								<th>会话 ID</th>
-								<th>用户标识</th>
-								<th>应用</th>
-								<th>Agent</th>
-								<th>状态</th>
-								<th>消息数</th>
-								<th>最后活跃时间</th>
-								<th>错误</th>
-								<th aria-label="操作" />
-							</tr>
-						</thead>
-						<tbody>
-							{pagedRows.map((row) => (
-								<tr key={row.id} onClick={() => navigate(`/conversations/${row.id}`)}>
-									<td className={styles.sessionId}>
-										{row.id}
-										<span>»</span>
-									</td>
-									<td>{row.principalDisplayId}</td>
-									<td>{row.appName}</td>
-									<td>{row.agentName}</td>
-									<td>{statusBadge(row.status)}</td>
-									<td>{row.messageCount}</td>
-									<td>{row.lastActiveAt}</td>
-									<td>
-										{row.errorCount > 0 ? (
-											<span className={styles.errorIcon} title={`${row.errorCount} 次错误`}>
-												<Icon name="warning" />
-											</span>
-										) : (
-											"-"
-										)}
-									</td>
-									<td className={styles.chevron}>
-										{row.status !== "deleted" ? (
-											<button
-												type="button"
-												disabled={useMock || lifecycleBusy !== null}
-												onClick={(event) => {
-													event.stopPropagation();
-													void updateLifecycle(row);
-												}}
-											>
-												{lifecycleBusy === row.id ? "处理中" : row.status === "active" ? "结束" : "删除"}
-											</button>
-										) : null}
-									</td>
+			<section className={styles.listCard} aria-label="Session 列表">
+				<header className={styles.listHeader}>
+					<div>
+						<h2>Session 列表</h2>
+						<p>
+							{state.kind === "loaded"
+								? `当前页 ${overview.pageCount.toLocaleString()} 条会话 · 第 ${pageIndex + 1} 页`
+								: "正在读取会话…"}
+						</p>
+					</div>
+					<span className={styles.lifecycleNote}>点击任意行查看详情、轨迹与用量</span>
+				</header>
+
+				{state.kind === "loading" ? <p className={styles.loading}>正在加载 Session…</p> : null}
+				{state.kind === "error" ? (
+					<div className={styles.errorPanel} role="alert">
+						<div className={styles.emptyTitle}>Session 列表加载失败</div>
+						<div className={styles.emptyDesc}>{state.message}</div>
+						<button type="button" className={styles.errorRetry} onClick={() => load(apiFilters)}>
+							重试
+						</button>
+					</div>
+				) : null}
+				{state.kind === "loaded" && items.length === 0 ? (
+					<div className={styles.empty}>
+						<div className={styles.emptyTitle}>{hasFilters ? "没有匹配的 Session" : "暂无 Session 记录"}</div>
+						<div className={styles.emptyDesc}>
+							{hasFilters ? "尝试调整搜索关键词或筛选条件。" : "新的会话运行后会自动出现在这里。"}
+						</div>
+						{hasFilters ? (
+							<button type="button" className={styles.errorRetry} onClick={clearFilters}>
+								清除筛选
+							</button>
+						) : null}
+					</div>
+				) : null}
+
+				{state.kind === "loaded" && items.length > 0 ? (
+					<div className={styles.tableWrap}>
+						<table>
+							<thead>
+								<tr>
+									<th>最近活动</th>
+									<th>应用 / Agent</th>
+									<th>来源</th>
+									<th>Session ID</th>
+									<th>最近任务摘要</th>
+									<th>
+										当前状态 <span title="只表示会话生命周期，不代表最近一次执行结果">ⓘ</span>
+									</th>
+									<th>Turn 数</th>
+									<th className={styles.actionColumn}>操作</th>
 								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-			) : null}
+							</thead>
+							<tbody>
+								{items.map((row) => {
+									const relative = relativeTime(row.lastActiveAt);
+									const view = sessionLifecycleView(row.status);
+									return (
+										<tr
+											key={row.id}
+											onClick={() => openDetail(row.id)}
+											tabIndex={0}
+											onKeyDown={(event) => {
+												if (event.target !== event.currentTarget) return;
+												if (event.key === "Enter") openDetail(row.id);
+											}}
+										>
+											<td>
+												<div className={styles.primaryText} title={formatTimestamp(row.lastActiveAt)}>
+													{formatShortTimestamp(row.lastActiveAt)}
+												</div>
+												<div className={styles.secondaryText}>
+													{relative || formatTimestamp(row.lastActiveAt)}
+												</div>
+											</td>
+											<td>
+												<div className={styles.primaryText} title={row.appName}>
+													{row.appName || "未命名应用"}
+												</div>
+												<div className={styles.secondaryText}>{shortAgentLabel(row)}</div>
+												</td>
+												<td>
+												<span className={styles.status} title={`来源：${sessionOriginLabel(row)}`}>
+													{sessionOriginLabel(row)}
+												</span>
+												{row.runId ? (
+													<div className={styles.secondaryText} title={row.runId}>
+														Run {compactSessionId(row.runId)}
+													</div>
+												) : null}
+												</td>
+												<td>
+												<div className={styles.sessionCell}>
+													<span className={styles.sessionId} title={row.id}>
+														{compactSessionId(row.id)}
+													</span>
+													<button
+														type="button"
+														className={styles.copyButton}
+														aria-label={`复制 Session ID ${row.id}`}
+														onClick={(event) => {
+															event.stopPropagation();
+															void copyId(row.id);
+														}}
+													>
+														<Icon name="copy" />
+														{copiedId === row.id ? "已复制" : ""}
+													</button>
+												</div>
+											</td>
+											<td>
+												<div className={styles.taskCell} title={row.title || undefined}>
+													{row.title || <span className={styles.mutedText}>暂无任务摘要</span>}
+												</div>
+											</td>
+											<td>
+												{row.executionState && <div className={styles.primaryText}>
+													{row.runId ? "Run" : "最近一轮"} · {row.executionState === "running" && !row.runId ? "已开始" : WORK_STATUS[row.executionState as keyof typeof WORK_STATUS]?.label ?? row.executionState}
+												</div>}
+												<div>{statusBadge(row.status)}</div>
+												{row.errorCount > 0 ? (
+													<div
+														className={styles.errorEvents}
+														title="列表 API 统计到的错误事件数，不代表执行结果"
+													>
+														<Icon name="warning" />
+														{row.errorCount} 个错误事件
+													</div>
+												) : null}
+											</td>
+											<td className={styles.turnCell}>
+												{row.turnCount === undefined ? "—" : row.turnCount}
+											</td>
+											<td className={styles.actionCell}>
+												<div className={styles.actionButtons}>
+													<button
+														type="button"
+														className={styles.detailButton}
+														onClick={(event) => {
+															event.stopPropagation();
+															openDetail(row.id);
+														}}
+													>
+														查看详情
+													</button>
+													<div className={styles.actionMenuWrap}>
+														<button
+															type="button"
+															className={styles.moreButton}
+															aria-label={`更多操作：${view.label} ${row.id}`}
+															aria-haspopup="menu"
+															aria-expanded={openMenuId === row.id}
+															onClick={(event) => {
+																event.stopPropagation();
+																setOpenMenuId((current) => (current === row.id ? null : row.id));
+															}}
+														>
+															<Icon name="more" />
+														</button>
+														{openMenuId === row.id ? (
+															<div className={styles.actionMenu} role="menu" ref={actionMenuRef}>
+																<button
+																	type="button"
+																	role="menuitem"
+																	onClick={(event) => {
+																		event.stopPropagation();
+																		setOpenMenuId(null);
+																		void copyId(row.id);
+																	}}
+																>
+																	复制 Session ID
+																</button>
+																<button
+																	type="button"
+																	role="menuitem"
+																	onClick={(event) => {
+																		event.stopPropagation();
+																		openDetail(row.id);
+																	}}
+																>
+																	查看详情
+																</button>
+																{row.status === "active" ? (
+																	<button
+																		type="button"
+																		role="menuitem"
+																		disabled={lifecycleBusy !== null}
+																		onClick={(event) => {
+																			event.stopPropagation();
+																			setOpenMenuId(null);
+																			void updateLifecycle(row);
+																		}}
+																	>
+																		归档会话
+																	</button>
+																) : null}
+																{row.status === "archived" ? (
+																	<button
+																		type="button"
+																		role="menuitem"
+																		disabled={lifecycleBusy !== null}
+																		onClick={(event) => {
+																			event.stopPropagation();
+																			setOpenMenuId(null);
+																			void updateLifecycle(row);
+																		}}
+																	>
+																		删除会话（软删除）
+																	</button>
+																) : null}
+															</div>
+														) : null}
+													</div>
+												</div>
+											</td>
+										</tr>
+									);
+								})}
+							</tbody>
+						</table>
+					</div>
+				) : null}
 
-			<footer className={styles.footer}>
-				<div />
-				<AuroraPagination
-					page={safePage}
-					totalPages={totalPages}
-					pageSize={pageSize}
-					pageSizeOptions={[10, 20, 50, 100]}
-					onPageChange={setPage}
-					onPageSizeChange={(size) => {
-						setPageSize(size);
-						setPage(1);
-					}}
-				/>
-			</footer>
+				<footer className={styles.listFooter}>
+					<span className={styles.pageStatus}>
+						{state.kind === "loaded"
+							? nextCursor === null || nextCursor === ""
+								? "已到最后一页"
+								: "可继续查看下一页"
+							: "—"}
+					</span>
+					<div className={styles.pager}>
+						<button
+							type="button"
+							className={styles.pageBtn}
+							disabled={pageIndex === 0}
+							onClick={goPrev}
+							aria-label="上一页"
+						>
+							‹
+						</button>
+						<span className={styles.pageCurrent}>{pageIndex + 1}</span>
+						<button
+							type="button"
+							className={styles.pageBtn}
+							disabled={nextCursor === null || nextCursor === ""}
+							onClick={goNext}
+							aria-label="下一页"
+						>
+							›
+						</button>
+					</div>
+					<label className={styles.pageSize}>
+						每页
+						<select
+							value={pageSize}
+							onChange={(e) => {
+								setPageSize(Number(e.currentTarget.value));
+								resetPaging();
+							}}
+						>
+							{[10, 20, 50, 100].map((size) => (
+								<option key={size} value={size}>
+									{size}
+								</option>
+							))}
+						</select>
+						条
+					</label>
+				</footer>
+			</section>
 		</section>
 	);
 }
 
-/**
- * 自绘下拉菜单。
- *
- * 不用原生 select：它的宽度按「最长的 option」计算，而当前选中项往往很短，
- * 于是文字与箭头之间会出现大片空白（原生 select 无法跟随当前值收缩）。
- */
+/** 自绘下拉菜单，宽度随当前项收缩。 */
 function SelectMenu({
 	label,
+	caption,
 	value,
 	options,
 	onChange,
 }: {
 	readonly label: string;
+	readonly caption?: string;
 	readonly value: string;
-	readonly options: readonly SelectOption[];
+	readonly options: readonly { readonly value: string; readonly label: string }[];
 	readonly onChange: (value: string) => void;
 }): React.ReactElement {
 	const [open, setOpen] = useState(false);
@@ -787,6 +907,7 @@ function SelectMenu({
 				aria-expanded={open}
 				aria-label={label}
 			>
+				{caption ? <span className={styles.selectCaption}>{caption}</span> : null}
 				<span>{current?.label ?? value}</span>
 				<Icon name="chevronDown" />
 			</button>
@@ -816,15 +937,9 @@ function SelectMenu({
 function Icon({
 	name,
 }: {
-	name: "search" | "calendar" | "refresh" | "warning" | "chevron" | "chevronDown";
+	name: "calendar" | "refresh" | "warning" | "copy" | "more" | "chevronDown";
 }): React.ReactElement {
 	const paths = {
-		search: (
-			<>
-				<circle cx="11" cy="11" r="7" />
-				<path d="m20 20-4-4" />
-			</>
-		),
 		calendar: (
 			<>
 				<rect x="3" y="5" width="18" height="16" rx="2" />
@@ -843,7 +958,19 @@ function Icon({
 				<path d="M12 9v4M12 17h.01" />
 			</>
 		),
-		chevron: <path d="m9 18 6-6-6-6" />,
+		copy: (
+			<>
+				<rect x="9" y="9" width="11" height="11" rx="2" />
+				<path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+			</>
+		),
+		more: (
+			<>
+				<circle cx="5" cy="12" r="1.4" />
+				<circle cx="12" cy="12" r="1.4" />
+				<circle cx="19" cy="12" r="1.4" />
+			</>
+		),
 		chevronDown: <path d="m6 9 6 6 6-6" />,
 	};
 	return (

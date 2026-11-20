@@ -25,6 +25,9 @@ describe("ConversationsApi", () => {
 			publishedAppVersionId: "pav_1",
 			createdAfter: "2026-08-01T00:00:00.000Z",
 			createdBefore: "2026-08-18T00:00:00.000Z",
+			search: "refund",
+			lastActiveAfter: "2026-08-10T00:00:00.000Z",
+			lastActiveBefore: "2026-08-17T23:59:59.999Z",
 		});
 
 		const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -38,6 +41,9 @@ describe("ConversationsApi", () => {
 			publishedAppVersionId: "pav_1",
 			createdAfter: "2026-08-01T00:00:00.000Z",
 			createdBefore: "2026-08-18T00:00:00.000Z",
+			search: "refund",
+			lastActiveAfter: "2026-08-10T00:00:00.000Z",
+			lastActiveBefore: "2026-08-17T23:59:59.999Z",
 		});
 	});
 
@@ -707,6 +713,132 @@ describe("ConversationsApi", () => {
 					vi.useRealTimers();
 				}
 			});
+		});
+	});
+
+	describe("Session V1 — summary / on-demand raw / usage endpoints", () => {
+		it("requests the detail endpoint without any LLM payload query", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversation: { id: "conv_1" },
+								rollover: { previousConversationId: null, nextConversationId: null, rolledOverAt: null },
+								latestSummary: null,
+								source: "chat",
+								requestContract: null,
+								taskInput: null,
+								trace: {
+									available: false,
+									reason: "chat_untraced",
+									recordedCalls: 0,
+									expectedCalls: null,
+									coverage: "unknown",
+								},
+							},
+							requestId: "req_1",
+						}),
+					),
+			);
+			const api = new ConversationsApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+			const detail = await api.getDetail("conv_1");
+			expect(detail.source).toBe("chat");
+			const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(url).toBe("http://localhost/api/control/v1/conversations/conv_1");
+		});
+
+		it("serializes the llm-calls summary pagination", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_1",
+								items: [],
+								nextCursor: "50",
+								trace: {
+									available: true,
+									reason: "collected",
+									recordedCalls: 50,
+									expectedCalls: 50,
+									coverage: "complete",
+								},
+							},
+							requestId: "req_2",
+						}),
+					),
+			);
+			const api = new ConversationsApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+			const page = await api.listLlmCalls("conv_1", { limit: 50, after: 20 });
+			expect(page.nextCursor).toBe("50");
+			const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			const parsed = new URL(url);
+			expect(parsed.pathname).toBe("/api/control/v1/conversations/conv_1/llm-calls");
+			expect(Object.fromEntries(parsed.searchParams)).toMatchObject({ limit: "50", after: "20" });
+		});
+
+		it("requests one raw record on demand", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_1",
+								turnId: "turn_1",
+								callIndex: 3,
+								model: "custom/Qwen",
+								startedAt: "2026-11-10T05:08:00.000Z",
+								completedAt: null,
+								request: { systemPrompt: "x" },
+								response: null,
+								redacted: false,
+							},
+							requestId: "req_3",
+						}),
+					),
+			);
+			const api = new ConversationsApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+			const raw = await api.getLlmCallDetail("conv_1", "turn_1", 3);
+			expect(raw.callIndex).toBe(3);
+			const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(url).toBe("http://localhost/api/control/v1/conversations/conv_1/llm-calls/turn_1/3");
+		});
+
+		it("reads session usage from the dedicated endpoint", async () => {
+			const fetchMock = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: {
+								conversationId: "conv_1",
+								totals: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12, reasoning: null },
+								calls: [],
+								turns: [],
+								accurateTurns: 1,
+								partialTurns: 0,
+								legacyTurns: 0,
+								missingTurns: 0,
+								toolCallCount: 0,
+								toolErrorCount: 0,
+								trace: {
+									available: false,
+									reason: "chat_untraced",
+									recordedCalls: 0,
+									expectedCalls: null,
+									coverage: "unknown",
+								},
+								notes: [],
+							},
+							requestId: "req_4",
+						}),
+					),
+			);
+			const api = new ConversationsApi({ auth: controller, fetchImpl: fetchMock as unknown as typeof fetch });
+			const usage = await api.getSessionUsage("conv_1");
+			expect(usage.totals?.totalTokens).toBe(12);
+			const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+			expect(url).toBe("http://localhost/api/control/v1/conversations/conv_1/usage");
 		});
 	});
 });

@@ -47,6 +47,7 @@ import type {
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConversationsApi } from "../api/conversations-api.ts";
+import { formatBeijing } from "../beijing-time.ts";
 import { EmptyState } from "../components/EmptyState.tsx";
 import { createStaleResponseGuard, type DataState, describeError, toDataStateError } from "../data-state.ts";
 
@@ -334,7 +335,7 @@ export function ReasoningTab({ conversationId, api }: ReasoningTabProps): React.
 	return (
 		<div className="card reasoning-tab">
 			<p className="conversation-meta">
-				会话 {currentState.conversationId} · 最近覆盖时间 {new Date(currentState.updatedAt).toLocaleString()}
+				会话 {currentState.conversationId} · 最近覆盖时间 {formatBeijing(currentState.updatedAt)}
 			</p>
 			{currentState.effort === null ? (
 				(() => {

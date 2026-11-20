@@ -18,6 +18,9 @@ import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminAppShell } from "../../src/admin/app-shell.tsx";
+import { AdminAuthProvider } from "../../src/admin/auth/admin-auth-context.tsx";
+import { AdminAccessPage } from "../../src/admin/pages/access-page.tsx";
+import { AdminUserConversationsPage } from "../../src/admin/pages/user-conversations-page.tsx";
 import { navigate, parseRoute } from "../../src/admin/router.ts";
 
 function resetHash(): void {
@@ -39,11 +42,13 @@ describe("AdminAppShell (WB-002)", () => {
 		const html = renderToStaticMarkup(<AdminAppShell />);
 		// Chat 入口已从侧边栏移除（路由 `/chat` 仍可直达，供 Agent 调试按钮使用）；
 		// 发布（apps）入口也已从侧边栏移除。这里只断言真正显示在侧边栏里的标签：
-		// Agent / Skills / MCP / Usage / Session 日志 / 设置。
-		for (const term of ["Agent", "Skills", "MCP", "Usage", "Session 日志", "设置"]) {
+		for (const term of ["Agent", "Skills", "MCP", "接入管理", "执行记录", "用量统计", "设置"]) {
 			// 模块导航为左侧竖排 AppSidebar，label 渲染为独立 span。
 			expect(html).toContain(`>${term}</span>`);
 		}
+		expect(html).not.toContain(">Agent 编排</span>");
+		expect(html).not.toContain(">Session 日志</span>");
+		expect(html).not.toContain(">AaaS</span>");
 		expect(html).not.toContain(">Chat</span>");
 		expect(html).not.toContain(">发布</span>");
 		// 顶部 AuroraTopNav 不再渲染模块 tabs；模块导航只由侧边栏持有。
@@ -98,6 +103,15 @@ describe("AdminAppShell (WB-002)", () => {
 		expect(parseRoute("/apps").id).toBe("agents"); // removed Application routes fall back to Agents
 		expect(parseRoute("/usage").id).toBe("usage");
 		expect(parseRoute("/conversations").id).toBe("user-conversations");
+		expect(parseRoute("/orchestration").id).toBe(parseRoute("/conversations/integration").id);
+		expect(parseRoute("/aaas-keys").id).toBe(parseRoute("/access").id);
+		expect(parseRoute("/access/integrations").id).toBe("access-integrations");
+		expect(parseRoute("/conversations/aaas").id).toBe("aaas-executions");
+		const keyId = "00000000-0000-4000-8000-000000000001";
+		const taskId = "00000000-0000-4000-8000-000000000002";
+		const operationId = "00000000-0000-4000-8000-000000000003";
+		expect(parseRoute(`/conversations/router/${keyId}/${taskId}/${operationId}`))
+			.toMatchObject({ id: "router-executions", params: { keyId, taskId, operationId } });
 		expect(parseRoute("/conversations/conv_00000000-0000-0000-0000-000000000000").id).toBe(
 			"user-conversation-detail",
 		);
@@ -111,6 +125,23 @@ describe("AdminAppShell (WB-002)", () => {
 		const html = renderToStaticMarkup(<AdminAppShell />);
 		expect(html).not.toContain("admin-unlock-backdrop");
 		expect(html).not.toContain("Admin Token");
+	});
+
+	it("places Integration tools in access management and all source tabs in executions", () => {
+		const access = renderToStaticMarkup(<AdminAuthProvider><AdminAccessPage integration /></AdminAuthProvider>);
+		expect(access).toContain("旧 Integration");
+		expect(access).toContain("动态任务调试");
+		expect(access).toContain("新建接入");
+		expect(access).not.toContain("Integration 记录类型");
+
+		const executions = renderToStaticMarkup(
+			<AdminAuthProvider><AdminUserConversationsPage route={parseRoute("/orchestration")} /></AdminAuthProvider>,
+		);
+		for (const source of ["Chat", "Integration Run", "Router"]) {
+			expect(executions).toContain(`>${source}</span>`);
+		}
+		expect(executions).not.toContain(">旧 AaaS Run</span>");
+		expect(executions).not.toContain("动态任务调试");
 	});
 
 	it("AdminAuthController locks the session on 401 and clears tenant data", async () => {

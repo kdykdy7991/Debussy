@@ -10,6 +10,19 @@ import type {
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
 import { newIdempotencyKey } from "./idempotency.ts";
 
+export type McpSensitiveBinding = { mcpServerId: string; toolName: string; parameter: string; credentialId: string };
+
+export function groupMcpSensitiveBindings(bindings: readonly McpSensitiveBinding[]) {
+	const groups = new Map<string, Omit<McpSensitiveBinding, "toolName"> & { toolNames: string[] }>();
+	for (const { toolName, ...binding } of bindings) {
+		const key = JSON.stringify([binding.mcpServerId, binding.parameter, binding.credentialId]);
+		const group = groups.get(key);
+		if (group) group.toolNames.push(toolName);
+		else groups.set(key, { ...binding, toolNames: [toolName] });
+	}
+	return groups;
+}
+
 export class McpApiError extends Error {
 	readonly httpStatus: number;
 	readonly requestId: string | null;
@@ -83,6 +96,31 @@ export class McpApi {
 	}
 	get(id: string): Promise<McpServerDetail> {
 		return this.request({ method: "GET", path: `/api/control/v1/mcp-servers/${encodeURIComponent(id)}` });
+	}
+	sensitiveRules(id: string): Promise<{ revision: number; sensitive_bindings: McpSensitiveBinding[] | null }> {
+		return this.request({
+			method: "GET",
+			path: `/api/control/v1/mcp-servers/${encodeURIComponent(id)}/sensitive-rules`,
+		});
+	}
+	async publishSensitiveRules(
+		id: string,
+		revision: number,
+		bindings: readonly McpSensitiveBinding[],
+	): Promise<{ revision: number }> {
+		const rules = [];
+		for (const group of groupMcpSensitiveBindings(bindings).values()) {
+			for (let index = 0; index < group.toolNames.length; index += 128) {
+				rules.push({ ...group, toolNames: group.toolNames.slice(index, index + 128) });
+			}
+		}
+		if (rules.length > 128) throw new Error("映射数量超过发布上限，请减少规则。");
+		return this.request({
+			method: "POST",
+			path: `/api/control/v1/mcp-servers/${encodeURIComponent(id)}/sensitive-rules`,
+			write: true,
+			body: { expected_revision: revision, reuse_equivalent: false, rules },
+		});
 	}
 	create(name: string, config: McpStreamableHttpConfig): Promise<McpServerDetail> {
 		return this.request({ method: "POST", path: "/api/control/v1/mcp-servers", body: { name, config }, write: true });

@@ -8,6 +8,7 @@ export function OrchestrationDrawer({
 	children,
 	footer,
 	busy = false,
+	className,
 	onClose,
 }: {
 	title: string;
@@ -15,6 +16,7 @@ export function OrchestrationDrawer({
 	children: ReactNode;
 	footer?: ReactNode;
 	busy?: boolean;
+	className?: string;
 	onClose: () => void;
 }): React.JSX.Element {
 	const ref = useRef<HTMLDialogElement>(null),
@@ -36,7 +38,7 @@ export function OrchestrationDrawer({
 	return (
 		<dialog
 			ref={ref}
-			className={styles.drawer}
+			className={`${styles.drawer} ${className ?? ""}`}
 			aria-labelledby={titleId}
 			aria-describedby={subtitle ? descriptionId : undefined}
 			onCancel={(event) => {

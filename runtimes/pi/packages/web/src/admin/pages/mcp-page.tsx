@@ -2,6 +2,7 @@ import type { McpServerDetail, McpServerSummary, McpStreamableHttpConfig } from 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { McpApi, McpApiError } from "../api/mcp-api.ts";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { AuroraButton } from "../aurora/Button.tsx";
 import dialogStyles from "../components/dialog.module.css";
 import { Dialog } from "../components/dialog.tsx";
 import { McpTokenDialog, type McpTokenTarget } from "../components/mcp-token-dialog.tsx";
@@ -9,6 +10,7 @@ import { useDialogs } from "../components/use-dialogs.tsx";
 import { navigate } from "../router.ts";
 import { deleteMcpWithConfirmation } from "./mcp-delete.ts";
 import styles from "./mcp-page.module.css";
+import { SensitiveRulesEditor, sensitiveRulesSectionId } from "./mcp-sensitive-rules.tsx";
 
 type DetailTab = "overview" | "tools" | "revisions" | "agents";
 
@@ -368,7 +370,19 @@ export function AdminMcpPage(): React.ReactElement {
 								}}
 							/>
 						) : null}
-						{tab === "tools" ? <Tools detail={selected} /> : null}
+						{tab === "tools" ? (
+							<>
+								<Tools detail={selected} />
+								{selected.status === "enabled" && (
+									<SensitiveRulesEditor
+										key={selected.id}
+										detail={selected}
+										api={api}
+										onPublished={() => void load(false)}
+									/>
+								)}
+							</>
+						) : null}
 						{tab === "revisions" ? <Revisions detail={selected} /> : null}
 						{tab === "agents" ? <Agents detail={selected} /> : null}
 					</main>
@@ -610,7 +624,18 @@ function Tools({ detail }: { readonly detail: McpServerDetail }): React.ReactEle
 	const tools = detail.revisions.find((revision) => revision.revision === detail.currentRevision)?.tools ?? [];
 	return (
 		<>
-			<h2>Tools（{tools.length}）</h2>
+			<header className={styles.toolsHeader}>
+				<h2>Tools（{tools.length}）</h2>
+				{detail.status === "enabled" && (
+					<AuroraButton
+						size="sm"
+						variant="ghost"
+						onClick={() => document.getElementById(sensitiveRulesSectionId)?.focus()}
+					>
+						敏感参数规则 ↓
+					</AuroraButton>
+				)}
+			</header>
 			{tools.length === 0 ? (
 				<div className={styles.tabEmpty}>尚未同步 Tools</div>
 			) : (
@@ -627,6 +652,7 @@ function Tools({ detail }: { readonly detail: McpServerDetail }): React.ReactEle
 		</>
 	);
 }
+
 function Revisions({ detail }: { readonly detail: McpServerDetail }): React.ReactElement {
 	return (
 		<>

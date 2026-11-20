@@ -9,6 +9,10 @@
  * - `loaded` 且 `stats.available=false` → 200 但空态（合法分支，不是错误）；
  * - `loaded` 且 `stats.available=true` → 渲染 `MetricsRow` + 明细表；
  * - `error` → `EmptyState` 错误壳（title/description 由 `describeError` 给出）。
+ *
+ * 临时隐藏（仅渲染层）：TTFT、生成耗时、输出 tokens/s 三项指标与逐轮明细里的
+ * 对应三列不再渲染——服务端把 `firstOutputAtMs` 固定写成 null，这三项在生产环境
+ * 恒为未知。派生逻辑、接口与数据结构保持原样，见 `buildMetricItems` 的注释。
  */
 import type {
 	ConversationMetricsResponse,
@@ -49,25 +53,14 @@ interface MetricsTabProps {
 /**
  * 把会话级 stats 映射为 `MetricsRow` 项。失败/缺值字段保留 `null`，由 `MetricsRow`
  * 走"value=—"展示，**不**伪造 0。这是 V2 指标口径的硬约束（不静默写 0）。
+ *
+ * 临时隐藏（仅渲染层）：TTFT、生成耗时、输出 tokens/s 三项在生产环境恒为 null——
+ * 服务端把 `firstOutputAtMs` 固定写成 null（`packages/server/src/embed/conversations/service.ts`），
+ * 因此这三项与逐轮明细里的对应列只会显示「—」。先隐藏，等真实计时数据落库后再恢复；
+ * 派生逻辑、接口与数据结构保持原样。
  */
-function buildMetricItems(stats: ConversationMetricsResponse["stats"]): readonly MetricItem[] {
+export function buildMetricItems(stats: ConversationMetricsResponse["stats"]): readonly MetricItem[] {
 	return [
-		{
-			id: "ttft",
-			label: "TTFT (ms) 均值",
-			value: stats.ttftMs.mean === null ? "—" : stats.ttftMs.mean.toFixed(1),
-			comparison: `p50 ${stats.ttftMs.p50 === null ? "—" : stats.ttftMs.p50.toFixed(1)} · p95 ${
-				stats.ttftMs.p95 === null ? "—" : stats.ttftMs.p95.toFixed(1)
-			} · n=${stats.ttftMs.count}`,
-		},
-		{
-			id: "generation",
-			label: "生成耗时 (ms) 均值",
-			value: stats.generationMs.mean === null ? "—" : stats.generationMs.mean.toFixed(1),
-			comparison: `p50 ${stats.generationMs.p50 === null ? "—" : stats.generationMs.p50.toFixed(1)} · p95 ${
-				stats.generationMs.p95 === null ? "—" : stats.generationMs.p95.toFixed(1)
-			} · n=${stats.generationMs.count}`,
-		},
 		{
 			id: "totalLatency",
 			label: "总耗时 (ms) 均值",
@@ -76,16 +69,14 @@ function buildMetricItems(stats: ConversationMetricsResponse["stats"]): readonly
 				stats.totalLatencyMs.p95 === null ? "—" : stats.totalLatencyMs.p95.toFixed(1)
 			} · n=${stats.totalLatencyMs.count}`,
 		},
-		{
-			id: "outputTps",
-			label: "输出 (tokens/s) 均值",
-			value: stats.outputTokensPerSecond.mean === null ? "—" : stats.outputTokensPerSecond.mean.toFixed(2),
-			comparison: `p50 ${stats.outputTokensPerSecond.p50 === null ? "—" : stats.outputTokensPerSecond.p50.toFixed(2)} · p95 ${
-				stats.outputTokensPerSecond.p95 === null ? "—" : stats.outputTokensPerSecond.p95.toFixed(2)
-			} · n=${stats.outputTokensPerSecond.count}`,
-		},
 	];
 }
+
+/**
+ * 临时隐藏的逐轮明细列（TTFT / 生成耗时 / 输出 tokens/s），与 `buildMetricItems`
+ * 隐藏的三项一一对应；「总耗时」列保留。
+ */
+export const HIDDEN_METRICS_TABLE_COLUMNS = ["TTFT (ms)", "生成 (ms)", "输出 tokens/s"] as const;
 
 /**
  * `ConversationsApiError` 已经按协议 `AGENT_V2_METRICS_ERRORS` 携带 `retryable`；
@@ -231,7 +222,12 @@ function LoadedMetrics({
 	);
 }
 
-function MetricsTable({ items }: { readonly items: readonly ConversationTurnMetric[] }): React.ReactElement {
+/**
+ * 逐轮明细表。TTFT / 生成耗时 / 输出 tokens/s 三列临时隐藏：服务端把
+ * `firstOutputAtMs` 固定写成 null，这三列在生产环境恒为「—」（见文件头的说明）。
+ * 字段、派生逻辑与接口保持原样，等真实计时数据落库后再恢复渲染。
+ */
+export function MetricsTable({ items }: { readonly items: readonly ConversationTurnMetric[] }): React.ReactElement {
 	if (items.length === 0) {
 		return <p className="empty-cell">本会话暂无任何轮次。</p>;
 	}
@@ -242,10 +238,7 @@ function MetricsTable({ items }: { readonly items: readonly ConversationTurnMetr
 					<th>序号</th>
 					<th>结果</th>
 					<th>模型</th>
-					<th>TTFT (ms)</th>
-					<th>生成 (ms)</th>
 					<th>总耗时 (ms)</th>
-					<th>输出 tokens/s</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -256,10 +249,7 @@ function MetricsTable({ items }: { readonly items: readonly ConversationTurnMetr
 							<td>{item.sequence}</td>
 							<td>{m.outcome}</td>
 							<td>{item.modelId}</td>
-							<td>{m.ttftMs === null ? "—" : m.ttftMs.toFixed(1)}</td>
-							<td>{m.generationMs === null ? "—" : m.generationMs.toFixed(1)}</td>
 							<td>{m.totalLatencyMs.toFixed(1)}</td>
-							<td>{m.outputTokensPerSecond === null ? "—" : m.outputTokensPerSecond.toFixed(2)}</td>
 						</tr>
 					);
 				})}

@@ -6,8 +6,11 @@
  *
  * 渲染口径：
  * - `loaded` 且 `available=false` → 200 但空态（合法分支：旧会话/未生成快照）；
- * - `loaded` 且 `available=true` 且 `latest` 非空 → 渲染 breakdown；
+ * - `loaded` 且 `available=true` 且 `latest` 非空 → 渲染快照标题（估算占用）；
  * - `error` → `EmptyState` 错误壳（title/description 由 `describeError` 给出）。
+ *
+ * 临时隐藏（仅渲染层）：分项构成表与「预留输出」不再渲染——它们是 chars/4
+ * 估算且缺少数据来源，见 `ContextSnapshotCard` 的注释。组件、接口与服务端快照保持原样。
  */
 import type {
 	ContextUsageBreakdown,
@@ -156,15 +159,28 @@ function ContextSnapshotCard({ snapshot }: { readonly snapshot: ContextUsageSnap
 		<div className="context-snapshot-card">
 			<p>
 				<strong>{snapshot.usedTokens.toLocaleString()}</strong> / {snapshot.contextWindow.toLocaleString()}{" "}
-				tokens（使用率 {formatUsagePercent(snapshot)}，剩余 {snapshot.remainingTokens.toLocaleString()}
-				，预留输出 {snapshot.reservedOutputTokens.toLocaleString()}）
+				tokens（估算占用，使用率 {formatUsagePercent(snapshot)}，剩余 {snapshot.remainingTokens.toLocaleString()}）
 			</p>
-			<BreakdownTable breakdown={snapshot.breakdown} />
+			{/*
+			 * 临时隐藏（仅 UI 渲染层）：分项构成与「预留输出」都来自按字符数 / 4 的估算，
+			 * 系统性少于真实请求（缺 MCP 资源指引、可信身份块、MCP 工具 schema、
+			 * 工具调用/结果与更早的助手回合），且 reservedOutputTokens 没有数据来源。
+			 * 组件、接口与服务端快照代码保持原样，接入真实 tokenizer 后再恢复渲染。
+			 */}
+			<p>
+				<small>
+					分项构成与预留输出暂时隐藏：当前为字符数估算，未覆盖真实请求的全部内容，待接入真实 tokenizer 后再展示。
+				</small>
+			</p>
 		</div>
 	);
 }
 
-function BreakdownTable({ breakdown }: { readonly breakdown: ContextUsageBreakdown }): React.ReactElement {
+/**
+ * 临时隐藏：分项构成仍是 chars/4 估算（见 `ContextSnapshotCard` 的说明），
+ * 组件与数据结构保留，等接入真实 tokenizer 后再恢复渲染。
+ */
+export function BreakdownTable({ breakdown }: { readonly breakdown: ContextUsageBreakdown }): React.ReactElement {
 	const rows: ReadonlyArray<{ readonly key: keyof ContextUsageBreakdown; readonly label: string }> = [
 		{ key: "systemPrompt", label: "系统提示" },
 		{ key: "skillInstructions", label: "Skill 指令" },

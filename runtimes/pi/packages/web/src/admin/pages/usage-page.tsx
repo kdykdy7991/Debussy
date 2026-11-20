@@ -1,4 +1,5 @@
 import {
+	type AdminExecutionUsageSource,
 	type AdminUsageRunRow,
 	type AdminUsageSummary,
 	type AdminUsageViewStats,
@@ -8,24 +9,31 @@ import {
 } from "@earendil-works/pi-protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OrchestrationApi } from "../api/orchestration-api.ts";
-import { UsageApi } from "../api/usage-api.ts";
+import { usageCacheFor } from "../api/usage-cache.ts";
 import { AuroraButton } from "../aurora/Button.tsx";
 import { AuroraPageHeader } from "../aurora/PageHeader.tsx";
 import { AuroraPillTabs } from "../aurora/PillTabs.tsx";
 import { AuroraSearchBox } from "../aurora/SearchBox.tsx";
 import { useAdminAuth } from "../auth/admin-auth-context.tsx";
+import { BEIJING_OFFSET_MS, beijingDay } from "../beijing-time.ts";
 import { navigate } from "../router.ts";
 import { errorMessage, WORK_STATUS } from "./orchestration-ui.ts";
 import { OrchestrationWorkDetail } from "./orchestration-work-detail.tsx";
 import {
+	CACHE_HIT_HINT,
 	downloadCsv,
 	EMPTY_FILTERS,
 	filterUsageRuns,
+	formatCacheCoverage,
 	formatCompact,
 	formatCoveragePercent,
+	formatPercent,
 	formatRunTime,
+	PROMPT_TOKEN_HINT,
 	shortId,
 	sortUsageRuns,
+	usageExecutionSourceLabel,
+	usageSourceLabel,
 	type UsageFilters,
 	type UsageSort,
 	type UsageSortKey,
@@ -36,6 +44,7 @@ import styles from "./usage-page.module.css";
 import {
 	OPTIONAL_COLUMNS,
 	type OptionalColumn,
+	UsageCaliberLine,
 	UsageColumnsMenu,
 	type UsageFilterOption,
 	UsageFilterSelect,
@@ -50,7 +59,7 @@ import {
 	UsageViewStatsEmpty,
 } from "./usage-view.tsx";
 
-type UsageKind = "orchestration" | "chat";
+type UsageKind = "all" | AdminExecutionUsageSource;
 type UsageState =
 	| { readonly kind: "loading" }
 	| { readonly kind: "loaded"; readonly summary: AdminUsageSummary }
@@ -61,7 +70,7 @@ type DetailState =
 	| { readonly kind: "error"; readonly runId: string; readonly message: string };
 
 const PAGE_SIZE = 10;
-const DEFAULT_COLUMNS: readonly OptionalColumn[] = ["state", "model"];
+export const DEFAULT_COLUMNS: readonly OptionalColumn[] = ["state", "model", "cache"];
 
 const REFRESH_ICON = (
 	<svg
@@ -96,61 +105,125 @@ const EXPORT_ICON = (
 
 function periodForDays(days: number): { from: Date; to: Date } {
 	const to = new Date();
-	const from = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate() - (days - 1)));
+	const from = new Date(Date.parse(`${beijingDay(to)}T00:00:00+08:00`) - (days - 1) * 86400000);
 	return { from, to };
 }
 
-function metricItems(kind: UsageKind, coverage: AdminUsageViewStats["coverage"]): readonly UsageMetricItem[] {
-	const isRun = kind === "orchestration";
+/** Rebucket the returned rows for Beijing days without changing API timestamps or UTC contract. */
+export function buildBeijingUsageStats(input: {
+	readonly runs: readonly AdminUsageRunRow[];
+	readonly from: string;
+	readonly to: string;
+}): AdminUsageViewStats {
+	const original = buildUsageViewStats(input);
+	const shifted = (value: string): string => new Date(Date.parse(value) + BEIJING_OFFSET_MS).toISOString();
+	const beijing = buildUsageViewStats({
+		runs: input.runs.map((run) => ({ ...run, createdAt: shifted(run.createdAt) })),
+		from: shifted(input.from),
+		to: shifted(input.to),
+	});
+	return { ...original, byDay: beijing.byDay };
+}
+
+export function metricItems(kind: UsageKind, coverage: AdminUsageViewStats["coverage"]): readonly UsageMetricItem[] {
+	const recordName = kind === "chat" ? "请求" : kind === "router" ? "Operation" : kind === "all" ? "执行记录" : "Run";
+	// Cache coverage is counted per LLM call: a record may hold several model
+	// calls and only some of them may report cache fields.
+	const cacheCoverage = formatCacheCoverage(coverage.cacheReportedCalls, coverage.cacheUnknownCalls);
 	return [
 		{
 			id: "runs",
-			label: isRun ? "编排 Run 数" : "请求数",
-			hint: isRun
-				? "统计周期内创建的编排 Run 总数，含排队中、执行中、成功、失败与取消；不含 Chat Agent 请求。"
-				: "统计周期内已结束的 Chat Agent Turn 数（turn/end 事件），不含编排 Run。",
+			label: `${recordName}数`,
+			hint: "Chat 按结束的 Turn 统计，旧入口按 Run 统计，Router 按 Operation 统计。",
 			value: formatCompact(coverage.runCount),
 			icon: "run",
 		},
 		{
 			id: "tokens",
 			label: "准确 Token",
-			hint: "仅累加每次 LLM 调用都有完整 provider usage 的记录；历史部分 Token 与无 usage 记录不计入，也不会用 0 代替。",
-			value: formatCompact(coverage.accurateTokens),
+			hint: "仅累加每次 LLM 调用都有完整 provider usage 的记录；部分用量 与无 usage 记录不计入，也不会用 0 代替。",
+			// Without a single complete record the total is unknown, not zero.
+			value: coverage.completeCount === 0 ? "—" : formatCompact(coverage.accurateTokens),
+			note: coverage.partialCount > 0 ? `已知部分 ${formatCompact(coverage.partialTokens)}` : undefined,
 			icon: "token",
 		},
 		{
 			id: "calls",
-			label: "LLM 调用次数",
-			hint: "只统计完整 llmUsage 记录中可准确覆盖的调用次数；历史部分记录无法准确覆盖，显示为 —。",
-			value: formatCompact(coverage.llmCallCount),
+			label: "已记录 LLM 调用次数",
+			hint: "只统计完整用量且保存了调用记录的执行。Router 调用次数来自逐次模型记录。",
+			value: coverage.llmCallCount === 0 ? "—" : formatCompact(coverage.llmCallCount),
 			icon: "call",
 		},
 		{
 			id: "complete",
-			label: isRun ? "完整记录 Run 数" : "完整记录请求数",
+			label: `完整记录${recordName}数`,
 			hint: "拥有完整 provider usage 的记录数；覆盖率 = 完整记录数 / 当前视图总数。",
 			value: formatCompact(coverage.completeCount),
 			badge: formatCoveragePercent(coverage.completeCount, coverage.runCount),
 			icon: "check",
 		},
+		{
+			id: "cacheHitTokens",
+			label: "缓存命中 Token",
+			hint: `仅统计完整 provider usage 且明确上报缓存字段的 LLM 调用；同一轮里未上报缓存的调用按未知处理，既不计入命中也不计入 Prompt Token，不当作 0 或未命中。badge 为缓存数据覆盖率（按调用次数），无有效分母时显示 —。${CACHE_HIT_HINT}${PROMPT_TOKEN_HINT}`,
+			// With no reported cache calls the aggregate is 0, but showing 0 would
+			// imply "zero hits" for unknown data; show the same unknown marker.
+			value: coverage.cacheReportedCalls === 0 ? "—" : formatCompact(coverage.cacheHitTokens),
+			badge: cacheCoverage,
+			icon: "cache",
+		},
+		{
+			id: "cacheHitRate",
+			label: "缓存命中率",
+			hint: `仅统计完整 provider usage 且明确上报缓存字段的 LLM 调用；命中率按 Prompt Token 加权；未上报的调用按未知处理，不当作 0 或未命中。${PROMPT_TOKEN_HINT}`,
+			value: formatPercent(coverage.cacheHitRate),
+			badge: cacheCoverage,
+			icon: "cache",
+		},
 	];
 }
 
 export function AdminUsagePage(): React.ReactElement {
-	const { controller } = useAdminAuth();
-	const apiRef = useRef<UsageApi | null>(null);
+	const { snapshot } = useAdminAuth();
+	return <ConnectedUsagePage key={`${snapshot.state}:${snapshot.baseUrl}:${snapshot.tenant?.id ?? ""}`} />;
+}
+
+export function executionUsageRows(summary: AdminUsageSummary, kind: UsageKind): readonly AdminUsageRunRow[] | null {
+	const orchestration = summary.orchestration;
+	const sources = new Map(orchestration?.byIntegration.map((row) => [row.integrationId, row.source]));
+	const legacy = orchestration?.view?.runs.map((run): AdminUsageRunRow => ({
+		...run,
+		source: run.source ?? (sources.get(run.groupId) === "aaas_key" || run.groupName.startsWith("aaas_key:") ? "aaas_key" : "integration"),
+	}));
+	const chat = summary.chat?.runs.map((run): AdminUsageRunRow => ({ ...run, source: "chat" }));
+	const router = summary.router?.runs;
+	if (kind === "chat") return chat ?? null;
+	if (kind === "router") return router ?? null;
+	if (kind !== "all") return legacy?.filter((run) => run.source === kind) ?? null;
+	if (!chat && !legacy && !router) return null;
+	return [...(chat ?? []), ...(legacy ?? []), ...(router ?? [])].map((run) => ({
+		...run,
+		groupId: `${run.source}:${run.groupId}`,
+		groupName: run.source === undefined ? run.groupName : `${usageExecutionSourceLabel[run.source]} · ${run.groupName.replace(/^aaas_key:/, "")}`,
+	}));
+}
+
+function ConnectedUsagePage(): React.ReactElement {
+	const { controller, snapshot } = useAdminAuth();
 	const orchestrationApiRef = useRef<OrchestrationApi | null>(null);
-	if (apiRef.current === null) apiRef.current = new UsageApi({ auth: controller });
 	if (orchestrationApiRef.current === null) orchestrationApiRef.current = new OrchestrationApi(controller);
-	const api = apiRef.current;
+	const cache = usageCacheFor(controller);
 	const orchestrationApi = orchestrationApiRef.current;
 	const sequence = useRef(0);
 
 	const [days, setDays] = useState(14);
-	const [kind, setKind] = useState<UsageKind>("orchestration");
-	const [state, setState] = useState<UsageState>({ kind: "loading" });
+	const [kind, setKind] = useState<UsageKind>("all");
+	const [state, setState] = useState<UsageState>(() => {
+		const cached = cache.get(periodForDays(14).from);
+		return cached ? { kind: "loaded", summary: cached.summary } : { kind: "loading" };
+	});
 	const [refreshing, setRefreshing] = useState(false);
+	const [refreshError, setRefreshError] = useState<string | null>(null);
 	const [filters, setFilters] = useState<UsageFilters>(EMPTY_FILTERS);
 	const [tab, setTab] = useState<UsageTab>("runs");
 	const [sort, setSort] = useState<UsageSort>({ key: "createdAt", direction: "desc" });
@@ -158,44 +231,56 @@ export function AdminUsagePage(): React.ReactElement {
 	const [visible, setVisible] = useState<ReadonlySet<OptionalColumn>>(new Set(DEFAULT_COLUMNS));
 	const [detail, setDetail] = useState<DetailState | null>(null);
 
-	const load = useCallback(() => {
-		const current = ++sequence.current;
-		const { from, to } = periodForDays(days);
-		setRefreshing(true);
-		void api.getSummary({ from, to }).then(
-			(summary) => {
-				if (current !== sequence.current) return;
-				setState({ kind: "loaded", summary });
+	const load = useCallback(
+		(force = false) => {
+			const current = ++sequence.current;
+			if (snapshot.state !== "connected" || snapshot.tenant === null) return;
+			const { from } = periodForDays(days);
+			const cached = cache.get(from);
+			setRefreshError(null);
+			setState(cached ? { kind: "loaded", summary: cached.summary } : { kind: "loading" });
+			if (!force && cached && cache.isFresh(cached)) {
 				setRefreshing(false);
-			},
-			(error: Error) => {
-				if (current !== sequence.current) return;
-				setState({ kind: "error", message: error.message });
-				setRefreshing(false);
-			},
-		);
-	}, [api, days]);
+				return;
+			}
+			setRefreshing(true);
+			void cache.request(from, force).then(
+				(summary) => {
+					if (current !== sequence.current) return;
+					setState({ kind: "loaded", summary });
+					setRefreshing(false);
+				},
+				(error: Error) => {
+					if (current !== sequence.current) return;
+					if (cached) setRefreshError(error.message);
+					else setState({ kind: "error", message: error.message });
+					setRefreshing(false);
+				},
+			);
+		},
+		[cache, days, snapshot.state, snapshot.tenant],
+	);
 
 	useEffect(() => {
 		load();
+		return () => {
+			sequence.current++;
+		};
 	}, [load]);
 
 	const summary = state.kind === "loaded" ? state.summary : null;
-	const viewStats: AdminUsageViewStats | null = useMemo(() => {
-		if (summary === null) return null;
-		return kind === "orchestration" ? (summary.orchestration?.view ?? null) : (summary.chat ?? null);
-	}, [summary, kind]);
+	const viewRuns = useMemo(() => (summary === null ? null : executionUsageRows(summary, kind)), [summary, kind]);
 
 	const narrowed = useMemo(
-		() => (viewStats === null ? null : filterUsageRuns(viewStats.runs, { ...filters, query: "" })),
-		[viewStats, filters],
+		() => (viewRuns === null ? null : filterUsageRuns(viewRuns, { ...filters, query: "" })),
+		[viewRuns, filters],
 	);
 	/** Same shared aggregator as the server: filtering never changes the caliber. */
 	const aggregated = useMemo(
 		() =>
 			summary === null || narrowed === null
 				? null
-				: buildUsageViewStats({
+				: buildBeijingUsageStats({
 						runs: narrowed,
 						from: summary.period.from,
 						to: summary.period.to,
@@ -213,34 +298,34 @@ export function AdminUsagePage(): React.ReactElement {
 
 	const groupOptions: readonly UsageFilterOption[] = useMemo(
 		() =>
-			viewStats === null
+			viewRuns === null
 				? []
-				: [...new Map(viewStats.runs.map((run) => [run.groupId, run.groupName])).entries()].map(
+				: [...new Map(viewRuns.map((run) => [run.groupId, usageSourceLabel(run.groupName)])).entries()].map(
 						([value, label]) => ({ value, label }),
 					),
-		[viewStats],
+		[viewRuns],
 	);
 	const modelOptions: readonly UsageFilterOption[] = useMemo(
 		() =>
-			viewStats === null
+			viewRuns === null
 				? []
-				: [...new Set(viewStats.runs.map((run) => run.model ?? UNKNOWN_MODEL_LABEL))].map((value) => ({
+				: [...new Set(viewRuns.map((run) => run.model ?? UNKNOWN_MODEL_LABEL))].map((value) => ({
 						value,
 						label: value,
 					})),
-		[viewStats],
+		[viewRuns],
 	);
 	const stateOptions: readonly UsageFilterOption[] = useMemo(
 		() =>
-			viewStats === null
+			viewRuns === null
 				? []
 				: [
-						...new Set(viewStats.runs.map((run) => run.state).filter((value): value is string => value !== null)),
+						...new Set(viewRuns.map((run) => run.state).filter((value): value is string => value !== null)),
 					].map((value) => ({
 						value,
-						label: WORK_STATUS[value as keyof typeof WORK_STATUS]?.label ?? value,
+						label: WORK_STATUS[value as keyof typeof WORK_STATUS]?.label ?? (value === "completed" ? "已完成" : value === "canceled" ? "已取消（Router）" : value),
 					})),
-		[viewStats],
+		[viewRuns],
 	);
 
 	const updateFilter = (patch: Partial<UsageFilters>): void => {
@@ -280,34 +365,42 @@ export function AdminUsagePage(): React.ReactElement {
 	const exportCurrent = (): void => {
 		if (aggregated === null) return;
 		const content = usageCsv(tab, aggregated, sortedRuns);
-		const stamp = new Date().toISOString().slice(0, 10);
+		const stamp = beijingDay(new Date());
 		downloadCsv(`usage-${kind}-${tab}-${stamp}.csv`, content);
 	};
 	const openDetail = (run: AdminUsageRunRow): void => {
-		if (kind === "chat") {
-			if (run.conversationId !== null) navigate(`/conversations/${run.conversationId}`);
-			else setDetail({ kind: "error", runId: run.id, message: "该请求没有关联的会话记录。" });
+		if (run.routerTaskId && run.routerKeyId) {
+			navigate(`/conversations/router/${run.routerKeyId}/${run.routerTaskId}/${run.id}`);
+			return;
+		}
+		if (run.conversationId !== null) {
+			navigate(`/conversations/${run.conversationId}`);
+			return;
+		}
+		if (run.source !== "integration") {
+			setDetail({ kind: "error", runId: run.id, message: "该记录没有关联的会话。" });
 			return;
 		}
 		setDetail({ kind: "loading", runId: run.id });
 		void orchestrationApi.request<AnalysisWorkItem>(`work-items/${encodeURIComponent(run.id)}`).then(
-			(item) => setDetail({ kind: "loaded", item, sourceName: run.groupName }),
+			(item) => setDetail({ kind: "loaded", item, sourceName: usageSourceLabel(run.groupName) }),
 			(error: unknown) => setDetail({ kind: "error", runId: run.id, message: errorMessage(error) }),
 		);
 	};
 
-	const isRun = kind === "orchestration";
+	const isRun = kind !== "chat";
+	const groupLabel = kind === "chat" ? "Agent" : kind === "all" ? "归属" : "接入";
 	return (
 		<section className={styles.page} aria-labelledby="usage-title">
 			<AuroraPageHeader
 				title="用量统计"
 				titleId="usage-title"
 				meta={
-					<UsageHint text="Agent 编排与 Chat Agent 为两套独立统计口径，切换后所有指标、趋势与明细均只使用该口径的真实数据。" />
+					<UsageHint text="按来源区分 Chat Turn、旧 Run 和 Router Operation。已知部分用量单独展示。" />
 				}
 				actions={
 					<div className={styles.headerActions}>
-						<AuroraButton size="sm" icon={REFRESH_ICON} disabled={refreshing} onClick={load}>
+						<AuroraButton size="sm" icon={REFRESH_ICON} disabled={refreshing} onClick={() => load(true)}>
 							{refreshing ? "正在刷新…" : "刷新"}
 						</AuroraButton>
 						<AuroraButton size="sm" icon={EXPORT_ICON} disabled={aggregated === null} onClick={exportCurrent}>
@@ -328,18 +421,20 @@ export function AdminUsagePage(): React.ReactElement {
 				</label>
 				<div className={styles.kindTabs}>
 					<AuroraPillTabs
-						ariaLabel="统计口径"
+						ariaLabel="用量来源"
 						value={kind}
 						onChange={changeKind}
 						items={[
-							{ value: "orchestration", label: "Agent 编排" },
-							{ value: "chat", label: "Chat Agent" },
+							{ value: "all", label: "全部来源" },
+							{ value: "chat", label: usageExecutionSourceLabel.chat },
+							{ value: "integration", label: usageExecutionSourceLabel.integration },
+							{ value: "router", label: usageExecutionSourceLabel.router },
 						]}
 					/>
 				</div>
 				<UsageFilterSelect
-					label={isRun ? "接入" : "Agent"}
-					allLabel={isRun ? "全部接入" : "全部 Agent"}
+					label={groupLabel}
+					allLabel={`全部${groupLabel}`}
 					value={filters.group}
 					options={groupOptions}
 					onChange={(value) => updateFilter({ group: value })}
@@ -358,8 +453,15 @@ export function AdminUsagePage(): React.ReactElement {
 						onChange={(value) => updateFilter({ state: value })}
 					/>
 				)}
-				{summary && <span className={styles.updated}>更新于 {formatRunTime(summary.generatedAt)} UTC</span>}
+				{summary && <span className={styles.updated}>更新于 {formatRunTime(summary.generatedAt)} 北京时间</span>}
 			</div>
+
+			<UsageCaliberLine />
+			{refreshError && (
+				<div className={styles.error} role="alert">
+					刷新失败，当前显示上次的数据：{refreshError}
+				</div>
+			)}
 
 			{state.kind === "loading" && <output className={styles.state}>正在汇总用量…</output>}
 			{state.kind === "error" && (
@@ -369,13 +471,16 @@ export function AdminUsagePage(): React.ReactElement {
 						<p>请确认管理服务已升级并可访问 Usage 聚合接口。</p>
 						<code>{state.message}</code>
 					</div>
-					<AuroraButton size="sm" onClick={load}>
+					<AuroraButton size="sm" onClick={() => load(true)}>
 						重试
 					</AuroraButton>
 				</div>
 			)}
-			{state.kind === "loaded" && viewStats === null && (
+			{state.kind === "loaded" && viewRuns === null && (
 				<UsageViewStatsEmpty message="当前服务版本尚未提供该口径的明细聚合，请升级管理服务后刷新。" />
+			)}
+			{kind === "all" && summary && (!summary.chat || !summary.orchestration?.view || !summary.router) && (
+				<p className={styles.state}>当前管理服务仅提供部分来源的用量数据。</p>
 			)}
 			{state.kind === "loaded" && aggregated !== null && (
 				<>
@@ -427,7 +532,7 @@ export function AdminUsagePage(): React.ReactElement {
 							) : (
 								<UsageGroupTable
 									rows={tab === "groups" ? aggregated.byGroup : aggregated.byModel}
-									label={tab === "groups" ? (isRun ? "接入" : "Agent") : "模型"}
+									label={tab === "groups" ? groupLabel : "模型"}
 									emptyText="当前筛选条件下没有统计数据。"
 								/>
 							)}
@@ -454,7 +559,7 @@ export function AdminUsagePage(): React.ReactElement {
 					initial={detail.item}
 					sourceName={detail.sourceName}
 					onClose={() => setDetail(null)}
-					onChanged={load}
+					onChanged={() => load(true)}
 				/>
 			)}
 		</section>

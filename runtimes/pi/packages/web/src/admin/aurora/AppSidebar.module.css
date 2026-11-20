@@ -86,6 +86,25 @@
 	white-space: nowrap;
 }
 
+/* —— 导航分组（AaaS 双入口） —— */
+.group {
+	display: flex;
+	flex-direction: column;
+	gap: var(--aurora-space-1);
+}
+
+.groupLabel {
+	padding: 8px 12px 2px;
+	color: var(--aurora-ink-3);
+	font-size: var(--aurora-text-xs);
+	font-weight: var(--aurora-weight-semibold);
+	letter-spacing: 0.04em;
+}
+
+.childItem {
+	padding-left: 22px;
+}
+
 /* —— 导航项 —— */
 .item {
 	display: flex;

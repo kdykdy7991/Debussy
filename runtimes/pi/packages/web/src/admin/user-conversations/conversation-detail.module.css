@@ -10,6 +10,10 @@
 .actions select, .actions button, .timelineHeader button { height: 34px; padding: 0 14px; border: 1px solid #d9dee6; border-radius: 6px; background: #fff; color: #343b46; font: inherit; font-size: 12px; }
 .actions .danger { border-color: #efb7b7; color: #d9363e; }
 .summaryGrid { display: grid; grid-template-columns: 1.06fr .94fr; gap: 12px; margin-bottom: 18px; }
+.tabPanel { margin-bottom: 18px; }
+.rawEvents { margin-bottom: 18px; border: 1px solid #dfe3e9; border-radius: 7px; background: #fff; }
+.rawEvents > summary { padding: 13px 18px; cursor: pointer; font-size: 12px; font-weight: 600; color: #485260; }
+.rawEvents > .workspace { padding: 0 18px 18px; }
 .infoCard { min-height: 132px; padding: 17px 24px; border: 1px solid #dfe3e9; border-radius: 7px; background: #fff; }
 .infoCard h2, .detailPanel h2 { margin: 0 0 18px; font-size: 13px; }
 .infoCard > div { display: grid; grid-template-columns: 1fr 1fr; column-gap: 40px; row-gap: 14px; }

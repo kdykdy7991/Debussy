@@ -28,7 +28,13 @@ export type AdminRouteId =
 	| "mcp"
 	| "usage"
 	| "orchestration"
+	| "access-integrations"
+	| "aaas-keys"
+	| "aaas-configurations"
 	| "user-conversations"
+	| "aaas-executions"
+	| "router-executions"
+	| "sandbox"
 	| "user-conversation-detail"
 	| "settings";
 
@@ -40,6 +46,7 @@ export interface AdminRoute {
 
 const AGENT_PUBLIC_ID_PATTERN = /^agent_[0-9a-fA-F-]{36}$/;
 const CONV_PUBLIC_ID_PATTERN = /^conv_[0-9a-fA-F-]{36}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 function stripHashAndQuery(rawHash: string): string {
 	const qIdx = rawHash.indexOf("?");
@@ -55,7 +62,26 @@ function readHash(): string {
 }
 
 export function parseRoute(path: string): AdminRoute {
-	if (path === "/orchestration") return { id: "orchestration", path, params: {} };
+	if (path === "/sandbox") return { id: "sandbox", path, params: {} };
+	if (path === "/access" || path === "/aaas-keys") return { id: "aaas-keys", path, params: {} };
+	if (path === "/access/integrations") return { id: "access-integrations", path, params: {} };
+	if (path === "/aaas-configurations") return { id: "aaas-configurations", path, params: {} };
+	if (path === "/orchestration" || path === "/conversations/integration") {
+		return { id: "orchestration", path, params: {} };
+	}
+	if (path === "/conversations/aaas") return { id: "aaas-executions", path, params: {} };
+	if (path.startsWith("/conversations/router")) {
+		const parts = path.split("/").slice(2);
+		if (parts[0] === "router") {
+			const [, keyId, taskId, operationId] = parts;
+			if (parts.length === 1) return { id: "router-executions", path, params: {} };
+			if (keyId && UUID_PATTERN.test(keyId) &&
+				(parts.length === 2 || (parts.length === 4 && taskId && operationId &&
+					UUID_PATTERN.test(taskId) && UUID_PATTERN.test(operationId)))) {
+				return { id: "router-executions", path, params: { keyId, ...(taskId && operationId ? { taskId, operationId } : {}) } };
+			}
+		}
+	}
 	const r = ADMIN_WORKBENCH_ROUTES;
 	// 默认入口：空路径 / `/` 走 Agent 列表。Chat 入口已从侧边栏移除，
 	// 不再让未带路径的工作台落进一个没有导航的孤岛页面。

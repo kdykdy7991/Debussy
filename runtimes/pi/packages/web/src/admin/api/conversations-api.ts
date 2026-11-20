@@ -15,14 +15,18 @@ import {
 	AGENT_V2_REASONING_ERRORS,
 	type AgentV2MetricsErrorCode,
 	type AgentV2ReasoningErrorCode,
+	type ConversationAdminDetailResponse,
 	type ConversationAdminEventListResponse,
 	type ConversationAdminListResponse,
+	type ConversationAdminLlmCallDetailResponse,
+	type ConversationAdminLlmCallListResponse,
 	type ConversationAdminSummaryListResponse,
 	type ConversationContextResponse,
 	type ConversationExportMode,
 	type ConversationMetricsQuery,
 	type ConversationMetricsResponse,
 	type ConversationReasoningState,
+	type ConversationSessionUsageResponse,
 	type ReasoningUpdateRequest,
 } from "@earendil-works/pi-protocol";
 import type { AdminAuthController } from "../../publishing/auth-controller.ts";
@@ -102,9 +106,16 @@ export interface ConversationListArgs {
 	readonly appId?: string;
 	readonly agentId?: string;
 	readonly principalType?: "external_user" | "anonymous_visitor" | "";
+	readonly origin?: "chat" | "integration" | "aaas_key" | "";
+	readonly keyId?: string;
+	readonly runId?: string;
+	readonly executionState?: string;
 	readonly publishedAppVersionId?: string;
 	readonly createdAfter?: string;
 	readonly createdBefore?: string;
+	readonly search?: string;
+	readonly lastActiveAfter?: string;
+	readonly lastActiveBefore?: string;
 }
 
 export class ConversationsApi {
@@ -222,18 +233,29 @@ export class ConversationsApi {
 		const params = new URLSearchParams({ limit: String(input.limit ?? 50) });
 		if (input.cursor !== undefined && input.cursor !== "") params.set("cursor", input.cursor);
 		if (input.status !== undefined && input.status !== "") params.set("status", input.status);
+		if (input.executionState) params.set("executionState", input.executionState);
 		if (input.hasErrors !== undefined) params.set("hasErrors", String(input.hasErrors));
 		if (input.appId !== undefined && input.appId !== "") params.set("appId", input.appId);
 		if (input.agentId !== undefined && input.agentId !== "") params.set("agentId", input.agentId);
 		if (input.principalType !== undefined && input.principalType !== "") {
 			params.set("principalType", input.principalType);
 		}
+		if (input.origin !== undefined && input.origin !== "") params.set("origin", input.origin);
+		if (input.keyId !== undefined && input.keyId !== "") params.set("keyId", input.keyId);
+		if (input.runId !== undefined && input.runId !== "") params.set("runId", input.runId);
 		if (input.publishedAppVersionId !== undefined && input.publishedAppVersionId !== "") {
 			params.set("publishedAppVersionId", input.publishedAppVersionId);
 		}
 		if (input.createdAfter !== undefined && input.createdAfter !== "") params.set("createdAfter", input.createdAfter);
 		if (input.createdBefore !== undefined && input.createdBefore !== "")
 			params.set("createdBefore", input.createdBefore);
+		if (input.search !== undefined && input.search !== "") params.set("search", input.search);
+		if (input.lastActiveAfter !== undefined && input.lastActiveAfter !== "") {
+			params.set("lastActiveAfter", input.lastActiveAfter);
+		}
+		if (input.lastActiveBefore !== undefined && input.lastActiveBefore !== "") {
+			params.set("lastActiveBefore", input.lastActiveBefore);
+		}
 		return this.request<ConversationAdminListResponse>(`/api/control/v1/conversations?${params.toString()}`);
 	}
 
@@ -272,16 +294,47 @@ export class ConversationsApi {
 		return response.blob();
 	}
 
-	getDetail(conversationId: string): Promise<{
-		readonly conversation: import("@earendil-works/pi-protocol").ConversationAdminSummary;
-		readonly rollover: {
-			readonly previousConversationId: string | null;
-			readonly nextConversationId: string | null;
-			readonly rolledOverAt: string | null;
-		};
-		readonly latestSummary: import("@earendil-works/pi-protocol").ConversationAdminSummaryEntry | null;
-	}> {
-		return this.request(`/api/control/v1/conversations/${encodeURIComponent(conversationId)}`);
+	/** Session V1: detail carries no raw LLM payload; use the endpoints below. */
+	getDetail(conversationId: string, signal?: AbortSignal): Promise<ConversationAdminDetailResponse> {
+		return this.request<ConversationAdminDetailResponse>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}`,
+			signal !== undefined ? { signal } : {},
+		);
+	}
+
+	/** Lightweight per-request summaries (paged by integer offset cursor). */
+	listLlmCalls(
+		conversationId: string,
+		args: { readonly limit?: number; readonly after?: number } = {},
+		signal?: AbortSignal,
+	): Promise<ConversationAdminLlmCallListResponse> {
+		const params = new URLSearchParams({ limit: String(args.limit ?? 50) });
+		if (args.after !== undefined && args.after > 0) params.set("after", String(args.after));
+		return this.request<ConversationAdminLlmCallListResponse>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/llm-calls?${params.toString()}`,
+			signal !== undefined ? { signal } : {},
+		);
+	}
+
+	/** One raw Request/Response, fetched only when the user expands a row. */
+	getLlmCallDetail(
+		conversationId: string,
+		turnId: string,
+		callIndex: number,
+		signal?: AbortSignal,
+	): Promise<ConversationAdminLlmCallDetailResponse> {
+		return this.request<ConversationAdminLlmCallDetailResponse>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/llm-calls/${encodeURIComponent(turnId)}/${callIndex}`,
+			signal !== undefined ? { signal } : {},
+		);
+	}
+
+	/** Session-level usage aggregated from `turn/end.payload.llmUsage`. */
+	getSessionUsage(conversationId: string, signal?: AbortSignal): Promise<ConversationSessionUsageResponse> {
+		return this.request<ConversationSessionUsageResponse>(
+			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/usage`,
+			signal !== undefined ? { signal } : {},
+		);
 	}
 
 	archive(conversationId: string): Promise<{ readonly id: string; readonly status: "archived" }> {
@@ -301,6 +354,7 @@ export class ConversationsApi {
 	listEvents(
 		conversationId: string,
 		args: { limit?: number; afterSequence?: number },
+		signal?: AbortSignal,
 	): Promise<ConversationAdminEventListResponse> {
 		const params = new URLSearchParams({ limit: String(args.limit ?? 50) });
 		if (args.afterSequence !== undefined && args.afterSequence > 0) {
@@ -308,12 +362,14 @@ export class ConversationsApi {
 		}
 		return this.request<ConversationAdminEventListResponse>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/events?${params.toString()}`,
+			signal !== undefined ? { signal } : {},
 		);
 	}
 
-	listSummaries(conversationId: string): Promise<ConversationAdminSummaryListResponse> {
+	listSummaries(conversationId: string, signal?: AbortSignal): Promise<ConversationAdminSummaryListResponse> {
 		return this.request<ConversationAdminSummaryListResponse>(
 			`/api/control/v1/conversations/${encodeURIComponent(conversationId)}/summaries`,
+			signal !== undefined ? { signal } : {},
 		);
 	}
 

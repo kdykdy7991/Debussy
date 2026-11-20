@@ -15,6 +15,7 @@ export interface AuroraAppSidebarItem {
 	readonly label: string;
 	readonly path: string;
 	readonly icon?: ReactNode;
+	readonly children?: readonly AuroraAppSidebarItem[];
 }
 
 export interface AuroraAppSidebarProps {
@@ -52,6 +53,33 @@ export function AuroraAppSidebar({
 
 			<nav className={styles.navigation} aria-label={ariaLabel}>
 				{items.map((item) => {
+					if (item.children?.length) {
+						return (
+							<div className={styles.group} key={item.id}>
+								<div className={styles.groupLabel}>{item.label}</div>
+								{item.children.map((child) => {
+									const active = child.id === currentItemId;
+									return (
+										<button
+											key={child.id}
+											type="button"
+											className={`${styles.item} ${styles.childItem} ${active ? styles.itemActive : ""}`}
+											aria-current={active ? "page" : undefined}
+											aria-label={child.label}
+											onClick={() => navigate(child.path)}
+										>
+											{child.icon ? (
+												<span className={styles.icon} aria-hidden="true">
+													{child.icon}
+												</span>
+											) : null}
+											<span className={styles.label}>{child.label}</span>
+										</button>
+									);
+								})}
+							</div>
+						);
+					}
 					const active = item.id === currentItemId;
 					return (
 						<button
